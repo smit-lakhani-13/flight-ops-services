@@ -36,7 +36,7 @@ RUN mvn clean package -DskipTests -B
 # Pinned to a major version, never :latest. In a real pipeline this would be
 # pinned by digest (@sha256:...) so the base image cannot change underneath a
 # rebuild of the same commit.
-FROM eclipse-temurin:21-jre-alpine
+FROM eclipse-temurin:25-jre-alpine
 WORKDIR /app
 
 # Non-root, with an EXPLICIT NUMERIC UID.
