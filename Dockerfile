@@ -14,7 +14,7 @@
 # image already pins Maven 3.9 alongside JDK 21, which is the job the wrapper
 # does elsewhere. Copying the wrapper in would download a second copy of the same
 # Maven on every cache miss. The image tag is the pin at this layer.
-FROM maven:3.9-eclipse-temurin-21 AS build
+FROM maven:3-eclipse-temurin-26 AS build
 WORKDIR /app
 
 # Copy the pom alone first. Docker caches layers, so dependencies are only
