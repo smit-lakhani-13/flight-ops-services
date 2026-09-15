@@ -1,0 +1,109 @@
+# ------------------------------------------------------------------------------
+#  Build output
+# ------------------------------------------------------------------------------
+target/
+build/
+out/
+bin/
+*.class
+# The shade plugin writes this next to the pom when it rewrites dependencies.
+dependency-reduced-pom.xml
+# start.spring.io ships this; it is scaffolding, not documentation.
+HELP.md
+
+# mvnw, mvnw.cmd and .mvn/wrapper/maven-wrapper.properties ARE committed on
+# purpose: `./mvnw` pins the Maven version and its SHA-256, so a clone builds with
+# the same Maven this was built with. The wrapper is distributionType=only-script,
+# so there is no maven-wrapper.jar to ignore or to justify — the rules below
+# exclude build output only.
+*.jar
+*.war
+*.ear
+
+# ------------------------------------------------------------------------------
+#  IDE and tooling
+# ------------------------------------------------------------------------------
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.settings/
+.classpath
+.project
+.factorypath
+.apt_generated/
+nbproject/
+.gradle/
+
+# ------------------------------------------------------------------------------
+#  OS noise
+# ------------------------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+Desktop.ini
+
+# Editor swap and backup files. `vim` on a crashed session leaves .swp behind and
+# it is easy to commit one by accident with `git add .`.
+*.swp
+*.swo
+*~
+*.orig
+*.rej
+
+# ------------------------------------------------------------------------------
+#  Secrets — the real ones never go in Git
+#
+#  A credential in Git history is a credential you have to rotate: `git rm`
+#  removes it from HEAD, not from history, and GitHub keeps unreachable objects
+#  reachable through the API for a while after a force-push. So the rule is
+#  prevention, not cleanup.
+#
+#  k8s/secret.example.yaml IS committed — it holds placeholder values only.
+#  k8s/secret.yaml is the copy with real values, and it stays local.
+# ------------------------------------------------------------------------------
+k8s/secret.yaml
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.jks
+*.keystore
+*credentials*
+.aws/
+samconfig.toml
+# kubeconfigs embed cluster CA data and, depending on the auth plugin, tokens.
+kubeconfig
+kubeconfig.*
+*.kubeconfig
+
+# ------------------------------------------------------------------------------
+#  Infrastructure artefacts
+# ------------------------------------------------------------------------------
+# SAM / CloudFormation
+.aws-sam/
+packaged.yaml
+# Terraform is not used here, but state files are the single most damaging thing
+# to leak by accident: they store resource attributes including secrets in plain
+# text. Excluded pre-emptively so adding Terraform later cannot start with a leak.
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+
+# ------------------------------------------------------------------------------
+#  Logs and local scratch
+# ------------------------------------------------------------------------------
+*.log
+logs/
+# JVM crash and OOM dumps. A heap dump contains everything that was in memory,
+# which includes request bodies and database passwords.
+hs_err_pid*
+replay_pid*
+*.hprof

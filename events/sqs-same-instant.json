@@ -1,0 +1,36 @@
+{
+  "Records": [
+    {
+      "messageId": "aaaaaaaa-1111-4111-8111-aaaaaaaaaaaa",
+      "receiptHandle": "AQEBsameInstantOne...",
+      "body": "{\"bookingId\":\"2001\",\"flightNumber\":\"UA2402\",\"seats\":3,\"timestamp\":\"2026-09-15T09:41:12.481923Z\"}",
+      "attributes": {
+        "ApproximateReceiveCount": "1",
+        "SentTimestamp": "1789465272481",
+        "SenderId": "AIDAIENQZJOLO23YVJ4VO",
+        "ApproximateFirstReceiveTimestamp": "1789465272495"
+      },
+      "messageAttributes": {},
+      "md5OfBody": "00000000000000000000000000000001",
+      "eventSource": "aws:sqs",
+      "eventSourceARN": "arn:aws:sqs:ap-south-1:123456789012:booking-events",
+      "awsRegion": "ap-south-1"
+    },
+    {
+      "messageId": "bbbbbbbb-2222-4222-8222-bbbbbbbbbbbb",
+      "receiptHandle": "AQEBsameInstantTwo...",
+      "body": "{\"bookingId\":\"2002\",\"flightNumber\":\"UA2402\",\"seats\":1,\"timestamp\":\"2026-09-15T09:41:12.481923Z\"}",
+      "attributes": {
+        "ApproximateReceiveCount": "1",
+        "SentTimestamp": "1789465272481",
+        "SenderId": "AIDAIENQZJOLO23YVJ4VO",
+        "ApproximateFirstReceiveTimestamp": "1789465272495"
+      },
+      "messageAttributes": {},
+      "md5OfBody": "00000000000000000000000000000002",
+      "eventSource": "aws:sqs",
+      "eventSourceARN": "arn:aws:sqs:ap-south-1:123456789012:booking-events",
+      "awsRegion": "ap-south-1"
+    }
+  ]
+}

@@ -1,0 +1,52 @@
+# Dependency updates. The reason this file exists rather than being left to
+# manual bumps: lambda/pom.xml has no parent POM, so nothing manages its versions
+# and nothing tells you when they go stale. That is exactly the case Dependabot
+# covers.
+version: 2
+
+updates:
+  # Root module. Boot's starter parent manages most versions, so the PRs that
+  # matter here are the AWS SDK BOM and the parent itself.
+  - package-ecosystem: maven
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels: ["dependencies"]
+    groups:
+      # One PR for the whole SDK rather than one per artifact — the AWS SDK
+      # releases almost daily and ungrouped updates bury everything else.
+      aws-sdk:
+        patterns: ["software.amazon.awssdk:*"]
+      spring:
+        patterns: ["org.springframework*:*"]
+
+  # The Lambda module is a separate, parentless build and needs its own entry;
+  # Dependabot does not discover it from the root directory.
+  - package-ecosystem: maven
+    directory: "/lambda"
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    labels: ["dependencies", "lambda"]
+    groups:
+      aws:
+        patterns: ["software.amazon.awssdk:*", "com.amazonaws:*"]
+
+  # The workflow pins actions to major tags (@v4), which is the common trade-off:
+  # you get patches for free but the tag is mutable, so you are trusting the
+  # publisher. Dependabot at least surfaces the major bumps; SHA pinning would be
+  # the next hardening step, at the cost of a PR for every patch release.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    labels: ["ci"]
+
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: monthly
+    labels: ["docker"]

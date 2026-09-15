@@ -1,0 +1,36 @@
+{
+  "Records": [
+    {
+      "messageId": "9f1c8a2e-4b7d-4c31-8a5f-1e2d3c4b5a60",
+      "receiptHandle": "AQEBwJnKyrHigUMZj6rYigCgxlaS3SLy0a...",
+      "body": "{\"bookingId\":\"1001\",\"flightNumber\":\"UA2402\",\"seats\":2,\"timestamp\":\"2026-09-15T09:41:12.481923Z\"}",
+      "attributes": {
+        "ApproximateReceiveCount": "1",
+        "SentTimestamp": "1789465272481",
+        "SenderId": "AIDAIENQZJOLO23YVJ4VO",
+        "ApproximateFirstReceiveTimestamp": "1789465272495"
+      },
+      "messageAttributes": {},
+      "md5OfBody": "7b270e59b47ff90a553787216d55d91d",
+      "eventSource": "aws:sqs",
+      "eventSourceARN": "arn:aws:sqs:ap-south-1:123456789012:booking-events",
+      "awsRegion": "ap-south-1"
+    },
+    {
+      "messageId": "c3d4e5f6-a7b8-49c0-b1d2-e3f4a5b6c7d8",
+      "receiptHandle": "AQEBzWwaftRI0KuVm4tP+/7q1rGgj0qLOwUY...",
+      "body": "{\"bookingId\":\"1002\",\"flightNumber\":\"UA1187\",\"seats\":1,\"timestamp\":\"2026-09-15T09:41:13.902117Z\"}",
+      "attributes": {
+        "ApproximateReceiveCount": "1",
+        "SentTimestamp": "1789465273902",
+        "SenderId": "AIDAIENQZJOLO23YVJ4VO",
+        "ApproximateFirstReceiveTimestamp": "1789465273915"
+      },
+      "messageAttributes": {},
+      "md5OfBody": "a1b2c3d4e5f60718293a4b5c6d7e8f90",
+      "eventSource": "aws:sqs",
+      "eventSourceARN": "arn:aws:sqs:ap-south-1:123456789012:booking-events",
+      "awsRegion": "ap-south-1"
+    }
+  ]
+}

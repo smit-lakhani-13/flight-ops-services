@@ -1,0 +1,215 @@
+name: build-and-deploy
+
+# PRs get the build and the tests. Only a push to main can deploy.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Two pushes to main in quick succession would otherwise race: both run
+# `kubectl set image`, and whichever finishes last wins regardless of which
+# commit is newer — so main can end up running the older SHA. This serialises
+# the pipeline per ref.
+#
+# cancel-in-progress is FALSE on purpose. Cancelling a half-finished deploy
+# leaves the cluster mid-rollout, which is worse than waiting.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-south-1
+  ECR_REPOSITORY: flight-ops-service
+  EKS_CLUSTER: flight-ops-cluster
+  K8S_NAMESPACE: flight-ops
+  DEPLOYMENT: flight-ops
+
+permissions:
+  # Required for OIDC. This is the whole point: GitHub mints a short-lived
+  # signed token, AWS trusts GitHub's OIDC provider, and STS hands back
+  # temporary credentials. No AWS_ACCESS_KEY_ID in repository secrets — nothing
+  # long-lived to leak, rotate, or find in a fork.
+  #
+  # The IAM role's trust policy must pin the subject, or ANY GitHub repository
+  # in the world can assume it:
+  #   "Condition": {
+  #     "StringEquals": {
+  #       "token.actions.githubusercontent.com:aud": "sts.amazonaws.com",
+  #       "token.actions.githubusercontent.com:sub": "repo:<owner>/<repo>:ref:refs/heads/main"
+  #     }
+  #   }
+  # A `sub` of "repo:*" or a StringLike with a bare wildcard is a full account
+  # compromise waiting to happen.
+  id-token: write
+  contents: read
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    env:
+      # One place that decides whether the deploy half of this pipeline runs, so
+      # the condition is not copy-pasted onto five steps and edited on four.
+      #
+      # DEPLOY_ENABLED is a repository VARIABLE, and the default of "not set"
+      # means build-and-test only. That default is deliberate. Without it, the
+      # first push to a fresh clone of this repository tries to assume
+      # arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-deploy —
+      # an unset secret interpolates to empty, so the ARN is malformed and the
+      # job fails on configuration rather than on code. A red build that means
+      # "the deploy target was never provisioned" is worse than no build at all:
+      # it teaches everyone reading the repository to ignore the colour.
+      #
+      # So the pipeline degrades instead of failing. Enable the deploy path by
+      # provisioning the OIDC role and the cluster, then:
+      #   gh variable set DEPLOY_ENABLED --body true
+      #   gh secret set AWS_ACCOUNT_ID --body <account-id>
+      # A `vars` value is readable by anyone who can read the repository, which
+      # is why the switch is a variable and the account ID is a secret.
+      # `>-` folds these three lines into one. Every continuation sits at the SAME
+      # indentation on purpose: in a folded scalar a MORE-indented line keeps its
+      # newline instead of folding, which would hand Actions a broken expression.
+      DEPLOY: >-
+        ${{ github.event_name == 'push'
+        && github.ref == 'refs/heads/main'
+        && vars.DEPLOY_ENABLED == 'true' }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          # Caches ~/.m2 keyed on the pom hash. Turns a 3-minute dependency
+          # download into a few seconds on every run after the first.
+          cache: maven
+
+      # The gate. `verify` rather than `test`: this build has no failsafe plugin,
+      # so surefire runs the whole suite either way, but `verify` also runs the
+      # packaging and the plugin checks bound after it. If the JAR cannot be
+      # assembled, that should fail here and not later in `docker build`.
+      #
+      # Docker IS available on ubuntu-latest, so the Testcontainers tests in
+      # BookingIntegrationTest actually execute here even though they skip on a
+      # laptop without a container runtime. CI is the only place the real
+      # PostgreSQL path — Flyway + ddl-auto=validate + SELECT FOR UPDATE under
+      # 20-way contention — gets exercised. If this step is green, that ran.
+      #
+      # `./mvnw` rather than `mvn`: the runner image happens to ship Maven, but
+      # which version is the runner's business, not this project's. The wrapper
+      # pins the version and its SHA-256, so CI and a laptop build with the same
+      # Maven and a runner image bump cannot change the build underneath you.
+      - name: Build and test
+        run: ./mvnw -B clean verify
+
+      # The Lambda is a separate, parentless Maven build. It is NOT reached by
+      # the reactor above, so without this step its tests never run in CI and a
+      # compile error in the consumer merges green. It builds on every trigger
+      # because the tests are the point; publishing the shaded artifact is a
+      # separate `sam deploy` (see template.yaml) that this pipeline does not do.
+      - name: Build and test Lambda consumer
+        run: ./mvnw -B -f lambda/pom.xml clean verify
+
+      - name: Publish test report
+        # `always()` so a failing build still uploads the reports — the run you
+        # most need the surefire XML from is the one that failed.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: |
+            target/surefire-reports/
+            lambda/target/surefire-reports/
+          if-no-files-found: warn
+          retention-days: 5
+
+      # ---- Everything below only runs for a configured push to main ----
+      # Step-level guards rather than a second job: a separate deploy job would
+      # have to either rebuild the JAR or shuttle it through an artifact, and
+      # neither buys anything here.
+
+      - name: Configure AWS credentials (OIDC)
+        if: env.DEPLOY == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-deploy
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: gha-${{ github.run_id }}
+
+      - name: Log in to Amazon ECR
+        if: env.DEPLOY == 'true'
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      # Tagged with the commit SHA, never `latest`.
+      #
+      # An immutable tag is what makes a rollback possible: `kubectl rollout
+      # undo` needs the previous image to still mean what it meant. With
+      # `:latest` you cannot tell what is running, cannot reproduce a build, and
+      # cannot roll back — the tag has already been overwritten.
+      #
+      # Runners are linux/amd64 and t3.medium nodes are amd64, so no --platform
+      # flag is needed here. Building on an Apple Silicon Mac is a different
+      # story: a plain `docker build` produces arm64 and the pod crash-loops
+      # with `exec /bin/sh: exec format error`. See README.
+      - name: Build and push image
+        if: env.DEPLOY == 'true'
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t "$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" .
+          docker push "$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          echo "IMAGE=$REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> "$GITHUB_ENV"
+
+      # kubectl ships on ubuntu-latest, so there is no install step. Worth
+      # knowing that its version therefore drifts with the runner image; kubectl
+      # supports +/-1 minor from the cluster, so a large enough skew will start
+      # warning and eventually break. A pinned azure/setup-kubectl@v4 step is
+      # the fix if that ever bites.
+      - name: Deploy to EKS
+        if: env.DEPLOY == 'true'
+        run: |
+          aws eks update-kubeconfig --name "$EKS_CLUSTER" --region "$AWS_REGION"
+
+          # `set image` rather than `apply`: it changes exactly one field and
+          # leaves everything else — notably the replica count the HPA owns —
+          # alone. A full `apply` of deployment.yaml would reset replicas to 2
+          # mid-traffic on every deploy.
+          # No --record: it has been deprecated since kubectl 1.22 and is a no-op
+          # on a modern server. The commit SHA is already the image tag, so
+          # `kubectl rollout history` plus the tag tells you what a revision was.
+          kubectl set image "deployment/$DEPLOYMENT" \
+            "$DEPLOYMENT=$IMAGE" \
+            -n "$K8S_NAMESPACE"
+
+          # The actual gate on success. Without this the job goes green the
+          # instant the API server accepts the patch — before a single new pod
+          # has passed a readiness probe — so a crash-looping image reports as a
+          # successful deploy.
+          #
+          # `rollout status` returns non-zero on timeout, so with
+          # maxUnavailable: 0 the old pods are still serving traffic and the job
+          # fails loudly instead of silently half-deploying.
+          kubectl rollout status "deployment/$DEPLOYMENT" \
+            -n "$K8S_NAMESPACE" --timeout=5m
+
+      # Diagnostics on failure, so you are not left reading "timed out waiting
+      # for the condition" with no idea why.
+      - name: Diagnose failed rollout
+        if: failure() && env.DEPLOY == 'true'
+        run: |
+          kubectl get pods -n "$K8S_NAMESPACE" -o wide || true
+          kubectl describe deployment/"$DEPLOYMENT" -n "$K8S_NAMESPACE" || true
+          kubectl logs -n "$K8S_NAMESPACE" -l app=flight-ops --tail=100 --all-containers || true
+          kubectl get events -n "$K8S_NAMESPACE" --sort-by=.lastTimestamp | tail -30 || true
+
+      # Deliberately NOT automated: an auto-rollback on a failed rollout sounds
+      # great and is how you get a flapping deploy that hides a real bug. With
+      # maxUnavailable: 0 a failed rollout has not taken traffic anyway — the old
+      # pods are still serving. Roll back by hand once you have read the logs:
+      #   kubectl rollout undo deployment/flight-ops -n flight-ops

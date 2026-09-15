@@ -1,0 +1,31 @@
+# Normalise line endings in the repository to LF regardless of the checkout
+# platform. Without this, a Windows clone commits CRLF and every subsequent diff
+# on those files is 100% changed lines.
+* text=auto eol=lf
+
+# Files that MUST be LF even on a Windows checkout: a shell script or a
+# Dockerfile RUN line with a CR at the end fails inside a Linux container with
+# messages like "$'\r': command not found".
+*.sh          text eol=lf
+*.yml         text eol=lf
+*.yaml        text eol=lf
+Dockerfile    text eol=lf
+.dockerignore text eol=lf
+mvnw          text eol=lf
+
+# Windows-only scripts keep CRLF.
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+
+# Binary: never diffed, never line-ending-converted.
+*.jar   binary
+*.class binary
+*.png   binary
+*.jpg   binary
+*.gif   binary
+*.pdf   binary
+*.zip   binary
+
+# Language statistics on the repo page: infrastructure YAML is real work, but it
+# should not make GitHub label a Java service as a "Dockerfile" project.
+*.java linguist-language=Java

@@ -1,0 +1,83 @@
+# ==============================================================================
+#  ⚠  THIS FILE COSTS MONEY. IT IS IN optional/ ON PURPOSE.
+#
+#  `kubectl apply -f k8s/` is NOT recursive, so it cannot reach this file. That
+#  is the entire reason for the subdirectory: applying the app should never
+#  create a billable load balancer by accident.
+#
+#  Applying this provisions a real AWS Application Load Balancer (~$16–22/month
+#  plus LCU charges) that keeps billing until it is deleted.
+#
+#  TEARDOWN ORDER IS NOT OPTIONAL:
+#      kubectl delete -f k8s/optional/ingress.yaml   # FIRST — wait for it
+#      # confirm the ALB is gone before continuing:
+#      aws elbv2 describe-load-balancers --region ap-south-1 \
+#        --query 'LoadBalancers[].LoadBalancerName'
+#      eksctl delete cluster -f cluster.yaml         # only then
+#
+#  Delete the cluster first and the controller that owns this ALB dies with it.
+#  Nothing is left to clean up the load balancer, so it becomes orphaned: still
+#  running, still billing, invisible in `kubectl`, and only findable in the EC2
+#  console. This is the single most common way a "deleted" lab keeps charging.
+#
+#  Deploy without this file: the app is fully testable via port-forward, for $0.
+#      kubectl port-forward -n flight-ops svc/flight-ops 8080:80
+#      curl localhost:8080/actuator/health
+# ==============================================================================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: flight-ops-ingress
+  namespace: flight-ops
+  annotations:
+    # An Ingress object on its own does nothing. A controller has to watch for it
+    # and provision the actual load balancer. On EKS that is the AWS Load
+    # Balancer Controller, which is NOT installed by default:
+    #   helm repo add eks https://aws.github.io/eks-charts
+    #   helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
+    #     -n kube-system --set clusterName=flight-ops-cluster \
+    #     --set serviceAccount.create=false \
+    #     --set serviceAccount.name=aws-load-balancer-controller
+    # Without it this manifest applies cleanly, reports no error, and nothing
+    # happens — `kubectl get ingress` shows an empty ADDRESS forever.
+    alb.ingress.kubernetes.io/scheme: internet-facing
+
+    # target-type: ip registers pod IPs directly in the target group, so traffic
+    # goes ALB -> pod. The alternative, `instance`, targets the NodePort and adds
+    # a kube-proxy hop, which loses the client IP and breaks the ALB's own
+    # per-pod health checking. `ip` requires the VPC CNI, which EKS has.
+    alb.ingress.kubernetes.io/target-type: ip
+
+    # The ALB does its own health checks, independently of the kubelet's probes.
+    # Point it at readiness, not liveness: the question the load balancer is
+    # asking is "should I send traffic here?", which is exactly readiness.
+    alb.ingress.kubernetes.io/healthcheck-path: /actuator/health/readiness
+    alb.ingress.kubernetes.io/healthcheck-interval-seconds: "15"
+    alb.ingress.kubernetes.io/healthy-threshold-count: "2"
+    alb.ingress.kubernetes.io/unhealthy-threshold-count: "3"
+
+    # Deregistration delay must be shorter than terminationGracePeriodSeconds
+    # (45s) or the ALB is still draining a target the kubelet has already
+    # SIGKILLed. Together with the 5s preStop hook this is what makes rolling
+    # updates actually zero-downtime through the load balancer.
+    alb.ingress.kubernetes.io/target-group-attributes: deregistration_delay.timeout_seconds=30
+
+    alb.ingress.kubernetes.io/tags: Project=flight-ops
+
+    # Production would add: certificate-arn (ACM), listen-ports for 443,
+    # ssl-redirect to force HTTPS, and WAF. Omitted here — an ACM certificate
+    # needs a domain, and this lab has no domain.
+spec:
+  # ingressClassName, not the deprecated kubernetes.io/ingress.class annotation.
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: flight-ops
+                # The SERVICE port (80), not the container port (8080).
+                port:
+                  number: 80
