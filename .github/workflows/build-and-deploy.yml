@@ -77,10 +77,10 @@ jobs:
         && vars.DEPLOY_ENABLED == 'true' }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v6
         with:
           java-version: '21'
           distribution: 'temurin'
@@ -118,7 +118,7 @@ jobs:
         # `always()` so a failing build still uploads the reports — the run you
         # most need the surefire XML from is the one that failed.
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: surefire-reports
           path: |
@@ -134,7 +134,7 @@ jobs:
 
       - name: Configure AWS credentials (OIDC)
         if: env.DEPLOY == 'true'
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v5
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-deploy
           aws-region: ${{ env.AWS_REGION }}
