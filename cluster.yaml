@@ -1,0 +1,145 @@
+# ==============================================================================
+#  eksctl cluster definition — declarative alternative to a 12-flag CLI command.
+#
+#      eksctl create cluster -f cluster.yaml     # ~15-20 minutes
+#      eksctl delete cluster -f cluster.yaml     # DO THIS THE SAME DAY
+#
+#  COST, read before running:
+#    * The EKS control plane bills ~$0.10/hour (~$73/month) from the moment it
+#      exists, even with zero nodes and zero traffic. There is no free tier and
+#      stopping is not a thing — the only way to stop paying is to delete it.
+#    * 2 x t3.medium on-demand adds roughly $0.08/hour combined.
+#    * Set a billing alarm BEFORE the first `create`, not after.
+#    * Budget under 4 hours of total cluster life.
+#    * Delete k8s/optional/ingress.yaml BEFORE deleting the cluster, or the ALB
+#      is orphaned and bills indefinitely.
+# ==============================================================================
+apiVersion: eksctl.io/v1alpha5
+kind: ClusterConfig
+
+metadata:
+  name: flight-ops-cluster
+
+  # ONE region for everything: cluster, ECR, SQS, DynamoDB, RDS. Cross-region
+  # traffic is billed, and IRSA and ECR failures across regions are confusing to
+  # debug — the error surfaces as an authentication or image-pull problem, not as
+  # a region mismatch.
+  #
+  # This value is the source of truth. Three other places must agree with it:
+  # AWS_REGION in k8s/configmap.yaml, AWS_REGION in
+  # .github/workflows/build-and-deploy.yml, and your CLI default
+  # (`aws configure set region ap-south-1`) so that ad-hoc commands do not
+  # quietly target somewhere else.
+  region: ap-south-1
+
+  # -----------------------------------------------------------------------------
+  # KUBERNETES VERSION IS DELIBERATELY NOT PINNED.  ← re-verify before creating
+  #
+  # Omitting it makes eksctl use its own default, which tracks a version in EKS
+  # *standard* support. That is the safe default, because the cost difference is
+  # not small: once a version passes end-of-standard-support, EKS moves the
+  # cluster to EXTENDED SUPPORT and the control plane rate jumps from $0.10 to
+  # $0.60 per cluster-hour — 6x, silently, with no warning at create time,
+  # because extended support is ENABLED BY DEFAULT (upgrade policy EXTENDED) on
+  # every new cluster. A version hardcoded in a doc written months ago is
+  # exactly how that happens.
+  #
+  # Standard support = 14 months from the EKS release date. Then 12 months of
+  # extended support. Then the control plane is auto-upgraded regardless.
+  #
+  # Verified against the AWS EKS release calendar on 15 Sep 2026:
+  #   STANDARD support: 1.36 (std ends 2027-08-02)
+  #                     1.35 (std ends 2027-03-27)
+  #                     1.34 (std ends 2026-12-02)
+  #   EXTENDED support: 1.33, 1.32, 1.31   <-- $0.60/cluster-hour
+  #
+  # So pin 1.34 or newer. To make the trap concrete: "1.31" is the kind of value
+  # that looks current in a runbook written a year ago. It left standard support
+  # on 2025-11-26, so creating a cluster with it today succeeds and bills 6x.
+  #
+  # Re-check before you create anything (note the field is `status`, NOT
+  # `clusterVersionStatus` — the latter silently returns an empty list):
+  #   aws eks describe-cluster-versions --region ap-south-1 \
+  #     --query 'clusterVersions[?status==`STANDARD_SUPPORT`].[clusterVersion,endOfStandardSupportDate]' \
+  #     --output table
+  # then pin it explicitly for reproducibility:
+  #   version: "1.XX"
+  # -----------------------------------------------------------------------------
+
+  tags:
+    # Applied to every resource eksctl creates. This is how you find the strays
+    # afterwards:
+    #   aws resourcegroupstaggingapi get-resources \
+    #     --tag-filters Key=Project,Values=flight-ops --region ap-south-1
+    Project: flight-ops
+    Owner: smit
+    Environment: lab
+
+iam:
+  # Creates an OIDC provider for the cluster. This is the prerequisite for IRSA
+  # (IAM Roles for Service Accounts) — without it,
+  # `eksctl create iamserviceaccount` fails, and the pod cannot get AWS
+  # credentials without an access key.
+  #
+  # How it works: the pod gets a projected, short-lived JWT signed by the
+  # cluster; the SDK exchanges it with STS via AssumeRoleWithWebIdentity for
+  # temporary credentials, auto-rotated. Nothing long-lived is ever stored.
+  # DefaultCredentialsProvider in AwsConfig finds it with zero code changes,
+  # which is precisely why the code never constructs a credentials provider.
+  withOIDC: true
+
+managedNodeGroups:
+  # Managed, not self-managed: AWS handles AMI updates, drains nodes respecting
+  # PodDisruptionBudgets during upgrades, and reports node health. A
+  # self-managed ASG makes all of that your problem.
+  - name: ng-1
+    instanceType: t3.medium
+    # 2 vCPU / 4 GiB. The floor for this workload, not a preference: the pod
+    # requests 512Mi/250m, and roughly 0.5-0.7 GiB per node goes to the kubelet,
+    # kube-proxy, the VPC CNI and CoreDNS before your app gets anything.
+    #
+    # The non-obvious t3.medium constraint is IP addresses, not CPU or RAM: with
+    # the VPC CNI each pod takes a real VPC IP from the ENI limits, and a
+    # t3.medium caps out at 17 pods. Add CoreDNS, kube-proxy and the CNI
+    # DaemonSets and the practical ceiling is well under maxReplicas: 10 plus
+    # anything else on the node. Prefix delegation raises this if needed.
+    desiredCapacity: 2
+    minSize: 2
+    maxSize: 4
+    volumeSize: 20
+
+    # Nodes get private IPs only, reaching the internet through a NAT gateway.
+    # Nothing from outside can open a connection to a node — inbound traffic has
+    # to come through the ALB, which is the point.
+    #
+    # Cost note: private networking means eksctl creates a NAT gateway, which
+    # bills ~$0.045/hour plus data processing. It is a real line item on a
+    # short-lived lab. `privateNetworking: false` avoids it at the price of
+    # public node IPs.
+    privateNetworking: true
+
+    iam:
+      withAddonPolicies:
+        # Lets the AWS Load Balancer Controller create the ALB for the Ingress.
+        albIngress: true
+        # Node-level logs and metrics to CloudWatch. Keep an eye on log
+        # retention — CloudWatch with no retention policy bills forever.
+        cloudWatch: true
+        # Lets the Cluster Autoscaler add nodes when the HPA asks for pods that
+        # do not fit. Note the two-level scaling: HPA adds PODS, Cluster
+        # Autoscaler adds NODES, and without the second one the HPA's extra pods
+        # just sit Pending.
+        autoScaler: true
+
+    labels:
+      role: worker
+    tags:
+      Project: flight-ops
+
+# Control-plane logging. Off by default and genuinely useful — the `authenticator`
+# log is how you diagnose "kubectl says Unauthorized". Commented out because
+# CloudWatch Logs bills on ingest and storage, and this lab is short-lived.
+# cloudWatch:
+#   clusterLogging:
+#     enableTypes: ["audit", "authenticator"]
+#     logRetentionInDays: 1

@@ -1,0 +1,435 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!--
+      DELIBERATELY A STANDALONE PROJECT, NOT A MAVEN MODULE.
+
+      There is no <parent> and the root pom.xml has no <modules>. Two reasons:
+
+      1. This has nothing to do with Spring. Inheriting spring-boot-starter-parent
+         would drag the Spring BOM, the Spring dependency-management and the
+         spring-boot-maven-plugin into a function whose whole selling point is not
+         paying for framework initialisation on every cold start.
+
+         The jar this produces measures 10.3 MB at the versions pinned below
+         (AWS SDK, Jackson, and 644 KB of Joda-Time that comes with the events
+         library — see the exclusion note on aws-lambda-java-events). A Boot fat
+         jar would be roughly 45 MB on top of that.
+
+         NO COLD-START FIGURE IS CLAIMED FOR THIS FUNCTION, because none has been
+         measured against a deployed version. For orientation only, published
+         figures for a plain SDK handler at 1024 MB land around 1-2s, dominated by
+         building the DynamoDB client rather than by JVM startup, and Spring Boot
+         on Lambda is the 3-6s case. Those are other people's benchmarks. The
+         design decisions above (no framework, static client, IODH) follow from
+         that shape, not from a number this project produced.
+
+      2. Turning the root into an aggregator pom would break ../Dockerfile, which
+         copies a single pom.xml and expects `mvn package` to build one artifact.
+         A reactor build needs the parent AND every module's pom present before
+         dependency resolution, which is a materially more complicated Dockerfile
+         for zero benefit here.
+
+      Consequence to be aware of: nothing manages versions for this pom, so every
+      version below is pinned by hand and nothing tells you when they go stale.
+      That is the honest trade-off of not having a parent — see the AWS SDK
+      comment in ../pom.xml for the same problem in the other direction.
+
+          mvn -f lambda/pom.xml clean package    # -> lambda/target/booking-event-handler.jar
+    -->
+
+    <groupId>com.smit</groupId>
+    <artifactId>booking-event-handler</artifactId>
+    <version>1.0.0</version>
+    <packaging>jar</packaging>
+    <name>booking-event-handler</name>
+    <description>SQS-triggered Lambda that projects booking events into DynamoDB</description>
+    <url>https://github.com/smit-lakhani-13/flight-ops-services</url>
+    <inceptionYear>2026</inceptionYear>
+
+    <licenses>
+        <license>
+            <name>MIT License</name>
+            <url>https://opensource.org/licenses/MIT</url>
+            <distribution>repo</distribution>
+        </license>
+    </licenses>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+
+        <!--
+          `release` rather than `source` + `target`. The difference matters here:
+          source/target only control syntax and bytecode level, so compiling with a
+          newer JDK will happily link against methods that do not exist in Java 21
+          and the failure shows up as a NoSuchMethodError at runtime, in
+          production, inside a Lambda. `release` compiles against the Java 21 API
+          signatures, so that mistake becomes a compile error instead.
+
+          Not academic on any developer machine with more than one JDK installed:
+          a stray JAVA_HOME really can pick the wrong one, and `release` turns
+          that into a build failure instead of a runtime one.
+        -->
+        <maven.compiler.release>21</maven.compiler.release>
+
+        <!--
+          Must match `Runtime: java21` in ../template.yaml. If the bytecode is
+          newer than the runtime, every invocation dies with
+          UnsupportedClassVersionError and CloudWatch shows nothing else.
+
+          Lambda also offers java25 (Corretto 25, added Nov 2025). Staying on 21
+          is a deliberate choice, not inertia: 21 is the LTS the main service
+          targets, and keeping both modules on one toolchain means one JAVA_HOME
+          to get right. Bumping the runtime without bumping
+          maven.compiler.release is the UnsupportedClassVersionError above in
+          reverse, so the two move together or not at all.
+        -->
+        <aws.lambda.core.version>1.4.0</aws.lambda.core.version>
+        <aws.lambda.events.version>3.16.1</aws.lambda.events.version>
+        <aws.lambda.tests.version>1.1.2</aws.lambda.tests.version>
+
+        <!-- Same pin as ../pom.xml. Keep the two in step. -->
+        <aws.sdk.version>2.54.18</aws.sdk.version>
+
+        <!--
+          Jackson is pinned explicitly because the AWS SDK BOM does NOT manage
+          jackson-databind for you — the SDK shades its own copy internally. Rely
+          on a transitive Jackson and a future SDK bump can silently change the
+          serialisation behaviour of this handler.
+        -->
+        <jackson.version>2.22.2</jackson.version>
+
+        <!--
+          JUnit 5.14.4, not 6.1.3. JUnit 6 is current, but the main service is on
+          the 5.x line that Spring Boot 3.5.16 manages (5.12.2), and having two
+          JUnit majors in one repository is a trap when you are revising: the
+          idioms diverge subtly and the failure messages differ.
+        -->
+        <junit.version>5.14.4</junit.version>
+        <mockito.version>5.23.0</mockito.version>
+        <assertj.version>3.27.7</assertj.version>
+
+        <maven.compiler.plugin.version>3.16.0</maven.compiler.plugin.version>
+        <maven.surefire.plugin.version>3.6.0</maven.surefire.plugin.version>
+        <maven.shade.plugin.version>3.6.2</maven.shade.plugin.version>
+    </properties>
+
+    <dependencyManagement>
+        <dependencies>
+            <!-- Aligns every software.amazon.awssdk:* artifact to one version. -->
+            <dependency>
+                <groupId>software.amazon.awssdk</groupId>
+                <artifactId>bom</artifactId>
+                <version>${aws.sdk.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <dependency>
+                <groupId>org.junit</groupId>
+                <artifactId>junit-bom</artifactId>
+                <version>${junit.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+
+    <dependencies>
+        <!-- Context, RequestHandler, LambdaLogger. -->
+        <dependency>
+            <groupId>com.amazonaws</groupId>
+            <artifactId>aws-lambda-java-core</artifactId>
+            <version>${aws.lambda.core.version}</version>
+        </dependency>
+
+        <!--
+          SQSEvent / SQSBatchResponse. The batch-response type is what makes
+          ReportBatchItemFailures work; without it there is nothing to return.
+
+          Brings joda-time 2.10.8 with it: 644 KB, 247 classes, ~6% of the
+          deployment package. DO NOT EXCLUDE IT — tried, and it fails.
+
+          The reasoning that says you can is seductive and wrong. Only six event
+          types reference Joda (SNSEvent, ScheduledEvent, CodeCommitEvent,
+          S3EventNotification, APIGatewayV2CustomAuthorizerEvent,
+          LambdaDestinationEvent — verified against the constant pool of all 331
+          classes), and SQSEvent is not one of them. But deserialisation does not go
+          through SQSEvent's own bytecode: LambdaEventSerializers registers a Jackson
+          Joda module for the whole event model, so the class is needed to build the
+          serializer at all. Excluding it fails with
+            ClassNotFoundException: org.joda.time.DateTime
+          from EventLoader — caught by BookingEventHandlerTest, which is the reason
+          those two EventLoader-based tests earn their keep.
+
+          Re-adding joda-time at <scope>test</scope> would make the build green
+          again and is the trap to avoid: the deployed jar would then differ from the
+          tested classpath on exactly the path that just broke, and `sam local
+          invoke` is not available here to catch it.
+        -->
+        <dependency>
+            <groupId>com.amazonaws</groupId>
+            <artifactId>aws-lambda-java-events</artifactId>
+            <version>${aws.lambda.events.version}</version>
+        </dependency>
+
+        <!--
+          The LOW-LEVEL DynamoDB client, deliberately not dynamodb-enhanced.
+
+          The enhanced client is the nicer API — annotated beans, no
+          AttributeValue.fromS() by hand. It also uses reflection over a
+          @DynamoDbBean class to build a TableSchema at runtime, which costs cold
+          start time and is exactly the kind of thing that breaks under GraalVM
+          native-image without extra config. For a handler that writes five
+          attributes, the low-level client is smaller, faster to initialise, and
+          makes the conditional write completely explicit.
+        -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>dynamodb</artifactId>
+
+            <!--
+              THESE EXCLUSIONS ARE LOAD-BEARING. Measured, not assumed.
+
+              Every SDK service module drags in THREE HTTP clients transitively:
+              netty-nio-client (async), apache5-client (sync, httpclient5) and
+              apache-client (sync, httpclient 4.x). Declaring a fourth one below
+              does NOT displace them — Maven has no such mechanism, and believing
+              it does was the original mistake here.
+
+              Measured on this project: leaving them in put 2,576 io/netty classes
+              and two redundant Apache stacks into an 18 MB uber-jar, for a handler
+              that makes one synchronous PutItem call. Excluding them takes it to
+              10.3 MB. Every megabyte is code Lambda downloads and unpacks before
+              the first invocation.
+
+              The subtler problem is correctness, and it is the real reason for
+              this block. Both sync clients register through
+              META-INF/services/software.amazon.awssdk.http.SdkHttpService, and
+              shade merges those files, so the uber-jar advertises TWO
+              implementations and the SDK picks one by classpath order. Verified
+              with ServiceLoader against the built jar. SDK 2.54.18 does not throw
+              on this — it silently resolves one — which is worse than failing,
+              because it means a dependency bump can change how this function talks
+              to DynamoDB with no signal at all. Other SDK versions do fail here:
+                "Multiple HTTP implementations were found on the classpath"
+
+              Excluding the ASYNC client is safe only because this uses the
+              synchronous DynamoDbClient. Switch to DynamoDbAsyncClient and it dies
+              at init with "Unable to load an HTTP implementation" — that is the
+              trade, and it is deliberate.
+            -->
+            <exclusions>
+                <exclusion>
+                    <groupId>software.amazon.awssdk</groupId>
+                    <artifactId>netty-nio-client</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>software.amazon.awssdk</groupId>
+                    <artifactId>apache5-client</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>software.amazon.awssdk</groupId>
+                    <artifactId>apache-client</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
+        <!--
+          The one HTTP client that remains, chosen for Lambda specifically.
+
+          UrlConnectionHttpClient wraps java.net.HttpURLConnection, so the whole
+          artifact is 34 KB and pulls in NOTHING. Apache brings ~723 classes of
+          httpclient/httpcore/commons-codec with it. In Lambda that difference is
+          paid on every cold start, and this function is a single PutItem — there
+          is no sustained connection pool to amortise a heavier client over. AWS
+          documents this client as the one to prefer for Lambda for exactly that
+          reason.
+
+          What you give up, honestly: no HTTP/2, no configurable connection pool
+          (HttpURLConnection does its own keep-alive and you cannot tune it), and
+          no async support. On a long-lived server handling steady traffic those
+          matter and apache5-client is the right answer instead — which is why the
+          main service in ../pom.xml does not copy this choice.
+
+          NOT apache-client: software.amazon.awssdk.http.apache.ApacheHttpClient is
+          DEPRECATED as of 2.54.18 (javap confirms the annotation). apache5-client
+          is its non-deprecated successor. Either would work; neither is worth
+          723 classes here.
+        -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>url-connection-client</artifactId>
+        </dependency>
+
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>${jackson.version}</version>
+        </dependency>
+
+        <!-- Test scope only from here down. -->
+
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <version>${mockito.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-junit-jupiter</artifactId>
+            <version>${mockito.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.assertj</groupId>
+            <artifactId>assertj-core</artifactId>
+            <version>${assertj.version}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <!--
+          aws-lambda-java-tests deserialises a real SQS event JSON file into an
+          SQSEvent, so the test exercises the same shape Lambda actually delivers
+          instead of a hand-built object that might not match. Used by
+          BookingEventHandlerTest to load ../events/sqs.json.
+        -->
+        <dependency>
+            <groupId>com.amazonaws</groupId>
+            <artifactId>aws-lambda-java-tests</artifactId>
+            <version>${aws.lambda.tests.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <!-- Lambda's Handler string names a class, not a jar, so the file name is
+             free. A stable name (no version suffix) keeps template.yaml and the
+             deploy commands from needing an edit on every version bump. -->
+        <finalName>booking-event-handler</finalName>
+
+        <!--
+          ../events is on the TEST classpath so BookingEventHandlerTest and
+          `sam local invoke -e events/sqs.json` read the SAME fixture files.
+
+          Two copies of a sample event is how a test ends up passing against a
+          payload shape that Lambda no longer sends. EventLoader resolves its
+          argument through ClassLoader.getResourceAsStream, so copying ../events
+          to target/test-classes makes loadSQSEvent("sqs.json") find it.
+
+          Declaring <testResources> at all overrides the default, hence
+          src/test/resources has to be listed again explicitly. Maven skips a
+          <directory> that does not exist, so the src/test/resources entry costs
+          nothing while that directory is empty.
+        -->
+        <testResources>
+            <testResource>
+                <directory>src/test/resources</directory>
+            </testResource>
+            <testResource>
+                <directory>../events</directory>
+            </testResource>
+        </testResources>
+
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>${maven.compiler.plugin.version}</version>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>${maven.surefire.plugin.version}</version>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>${maven.shade.plugin.version}</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals><goal>shade</goal></goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <!--
+                      Shade rewrites the pom to strip the dependencies it inlined
+                      and, by default, installs that rewritten pom. Harmless when
+                      nothing depends on this artifact, confusing the moment
+                      something does. Off.
+                    -->
+                    <createDependencyReducedPom>false</createDependencyReducedPom>
+
+                    <transformers>
+                        <!--
+                          THE ONE THAT BREAKS THINGS IF YOU FORGET IT.
+
+                          The AWS SDK finds its HTTP client implementation through
+                          META-INF/services/ — the ServiceLoader SPI. Several SDK
+                          jars each ship a file at the SAME path, and a plain jar
+                          merge is last-one-wins, so all but one silently vanish.
+                          The symptom is
+                            "Unable to load an HTTP implementation from any
+                             provider in the chain"
+                          at runtime — never at build time. This transformer
+                          concatenates them instead of overwriting.
+                        -->
+                        <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+
+                        <!--
+                          Same collision, different mechanism. Multiple SDK
+                          modules contribute execution interceptors through this
+                          one file; keeping only the last one loses the others.
+                          Nothing fails loudly, the interceptors just do not run.
+                        -->
+                        <transformer implementation="org.apache.maven.plugins.shade.resource.AppendingTransformer">
+                            <resource>software/amazon/awssdk/global/handlers/execution.interceptors</resource>
+                        </transformer>
+                    </transformers>
+
+                    <filters>
+                        <filter>
+                            <artifact>*:*</artifact>
+                            <excludes>
+                                <!--
+                                  Signed jars carry digests of their own contents.
+                                  Repackaging invalidates them and the JVM refuses
+                                  to load the classes:
+                                    "Invalid signature file digest for Manifest
+                                     main attributes"
+                                  Dropping the signature files is the standard fix
+                                  and the reason is worth knowing: an uber-jar
+                                  cannot preserve a signature it has just broken.
+                                -->
+                                <exclude>META-INF/*.SF</exclude>
+                                <exclude>META-INF/*.DSA</exclude>
+                                <exclude>META-INF/*.RSA</exclude>
+
+                                <!--
+                                  A merged uber-jar cannot be a valid JPMS module —
+                                  several inlined jars each declare their own
+                                  module-info. Lambda runs this on the classpath,
+                                  so the descriptors are dead weight at best and a
+                                  split-package error at worst.
+                                -->
+                                <exclude>module-info.class</exclude>
+                                <exclude>META-INF/versions/*/module-info.class</exclude>
+                            </excludes>
+                        </filter>
+                    </filters>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

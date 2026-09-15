@@ -1,0 +1,46 @@
+# Horizontal Pod Autoscaler: add pods, not bigger pods.
+#
+# REQUIRES metrics-server. On a fresh EKS cluster it is NOT installed, and
+# without it the HPA reports `<unknown>/70%` and never scales:
+#   kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+#
+# It also requires resource *requests* on the container — the target is a
+# percentage OF THE REQUEST, not of the node. 70% here means 175m of the 250m
+# request, so scaling starts well before the 1000m limit throttles anything.
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: flight-ops-hpa
+  namespace: flight-ops
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: flight-ops
+  minReplicas: 2
+  # Cost guard. Pods are cheap, but pods on nodes the Cluster Autoscaler has to
+  # add are not. 10 is a ceiling, not a target.
+  maxReplicas: 10
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    # A second metric is worth knowing about: with two metrics the HPA computes
+    # a desired count for each and takes the MAX. Memory is a poor scaling
+    # signal for a JVM though — the heap grows to MaxRAMPercentage and stays
+    # there, so memory utilisation is high and flat regardless of load, and a
+    # memory-target HPA would scale out once and never scale back in.
+    # RPS or queue depth via KEDA/Prometheus adapter is the real answer.
+  behavior:
+    scaleUp:
+      # React fast to load.
+      stabilizationWindowSeconds: 0
+    scaleDown:
+      # Five minutes of sustained low CPU before removing a pod. Without this,
+      # a bursty workload flaps: scale up, scale down, scale up. Every scale-down
+      # drops connections and every scale-up pays JVM warm-up again, so the
+      # asymmetry (instant up, slow down) is intentional.
+      stabilizationWindowSeconds: 300

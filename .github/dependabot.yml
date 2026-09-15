@@ -1,0 +1,98 @@
+# Dependency updates. The reason this file exists rather than being left to
+# manual bumps: lambda/pom.xml has no parent POM, so nothing manages its versions
+# and nothing tells you when they go stale. That is exactly the case Dependabot
+# covers.
+#
+# Two things about this config are deliberate and worth knowing before editing.
+#
+# 1. open-pull-requests-limit is set on EVERY ecosystem. The default is 5 per
+#    ecosystem, not 5 overall, so four ecosystems with no explicit limit can open
+#    twenty pull requests the first time Dependabot runs on a new repository.
+#    Grouping plus an explicit limit keeps a monthly run to a handful.
+#
+# 2. The ignore rules below are scoped to three specific artifacts, not applied
+#    broadly, because an ignore condition suppresses Dependabot SECURITY updates
+#    for that dependency as well as version updates. That is a real cost. It is
+#    accepted here only where a major bump would contradict a decision the project
+#    has already made and documented, so the bump has to be a human's call:
+#      - the JDK: pom.xml sets <java.version>21</java.version>, and a major base
+#        image bump moves the runtime out from under that
+#      - Spring Boot: staying on 3.5.x is a documented choice, and Boot 4 is not a
+#        drop-in (see README)
+#    A major upgrade of any of the three is a deliberate piece of work, not a
+#    merge. Everything else — minors, patches, and every dependency not named
+#    here — still flows automatically.
+version: 2
+
+updates:
+  # Root module. Boot's starter parent manages most versions, so the PRs that
+  # matter here are the AWS SDK BOM and the parent itself.
+  - package-ecosystem: maven
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 3
+    labels: ["dependencies"]
+    groups:
+      # One PR for the whole SDK rather than one per artifact — the AWS SDK
+      # releases almost daily and ungrouped updates bury everything else.
+      aws-sdk:
+        patterns: ["software.amazon.awssdk:*"]
+      spring:
+        patterns: ["org.springframework*:*"]
+      # Test-only dependencies move together and are reviewed together: a broken
+      # test dependency cannot reach production, so these are the cheapest PRs to
+      # merge and there is no reason to read them one at a time.
+      test:
+        patterns: ["org.junit*:*", "org.mockito:*", "org.testcontainers:*"]
+    ignore:
+      - dependency-name: "org.springframework.boot:spring-boot-starter-parent"
+        update-types: ["version-update:semver-major"]
+
+  # The Lambda module is a separate, parentless build and needs its own entry;
+  # Dependabot does not discover it from the root directory.
+  - package-ecosystem: maven
+    directory: "/lambda"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+    labels: ["dependencies", "lambda"]
+    groups:
+      aws:
+        patterns: ["software.amazon.awssdk:*", "com.amazonaws:*"]
+      test:
+        patterns: ["org.junit*:*", "org.mockito:*"]
+
+  # The workflow pins actions to major tags (@v4), which is the common trade-off:
+  # you get patches for free but the tag is mutable, so you are trusting the
+  # publisher. Dependabot at least surfaces the major bumps; SHA pinning would be
+  # the next hardening step, at the cost of a PR for every patch release.
+  #
+  # Grouped into a single PR: an action major bump is usually a one-line change
+  # and reviewing five of them separately is five times the ceremony for the same
+  # decision.
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 1
+    labels: ["ci"]
+    groups:
+      actions:
+        patterns: ["*"]
+
+  # Both image tags in the Dockerfile: the maven build stage and the JRE runtime
+  # stage. Minor and patch bumps are wanted — that is how the base image picks up
+  # OS-level CVE fixes. Major bumps are the JDK version and are pinned; see the
+  # header.
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+    labels: ["docker"]
+    ignore:
+      - dependency-name: "eclipse-temurin"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "maven"
+        update-types: ["version-update:semver-major"]

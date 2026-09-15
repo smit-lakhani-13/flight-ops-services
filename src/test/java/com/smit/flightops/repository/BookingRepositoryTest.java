@@ -1,0 +1,91 @@
+package com.smit.flightops.repository;
+
+import com.smit.flightops.entity.Booking;
+import com.smit.flightops.entity.Flight;
+import org.hibernate.Hibernate;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.autoconfigure.orm.jpa.DataJpaTest;
+import org.springframework.boot.test.autoconfigure.orm.jpa.TestEntityManager;
+import org.springframework.dao.DataIntegrityViolationException;
+
+import java.time.Duration;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+
+/**
+ * The two things worth proving at this layer: the unique index on
+ * {@code idempotency_key} really exists (it is the last line of defence against
+ * a double booking), and the {@code JOIN FETCH} really avoids the lazy load.
+ */
+@DataJpaTest
+class BookingRepositoryTest {
+
+    @Autowired private BookingRepository bookingRepository;
+    @Autowired private FlightRepository flightRepository;
+    @Autowired private TestEntityManager entityManager;
+
+    private static final Instant SOON = Instant.now().plus(Duration.ofHours(8)).truncatedTo(ChronoUnit.MICROS);
+
+    private Flight flight(String number) {
+        return flightRepository.saveAndFlush(new Flight(number, "EWR", "LHR", 180, SOON));
+    }
+
+    @Test
+    void findByIdempotencyKeyReturnsTheBooking() {
+        Flight flight = flight("UA123");
+        bookingRepository.saveAndFlush(new Booking(flight, "Smit Lakhani", 3, "demo-1"));
+
+        assertThat(bookingRepository.findByIdempotencyKey("demo-1"))
+                .get()
+                .extracting(Booking::getSeats)
+                .isEqualTo(3);
+        assertThat(bookingRepository.findByIdempotencyKey("demo-999")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("the unique index — not the service check — is what makes a replay impossible")
+    void duplicateIdempotencyKeyIsRejectedByTheDatabase() {
+        Flight flight = flight("UA123");
+        bookingRepository.saveAndFlush(new Booking(flight, "Smit Lakhani", 3, "demo-1"));
+
+        assertThatThrownBy(() ->
+                bookingRepository.saveAndFlush(new Booking(flight, "Someone Else", 1, "demo-1")))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    @DisplayName("JOIN FETCH loads the flight eagerly — no N+1 when listing bookings")
+    void joinFetchInitialisesTheFlight() {
+        Flight flight = flight("UA123");
+        bookingRepository.saveAndFlush(new Booking(flight, "Smit Lakhani", 3, "demo-1"));
+        bookingRepository.saveAndFlush(new Booking(flight, "Someone Else", 1, "demo-2"));
+        // Detach everything, so the flight can only be present if the query fetched it.
+        entityManager.clear();
+
+        List<Booking> bookings = bookingRepository.findByFlightNumber("UA123");
+
+        assertThat(bookings).hasSize(2);
+        assertThat(bookings)
+                .extracting(Booking::getPassengerName)
+                .containsExactlyInAnyOrder("Smit Lakhani", "Someone Else");
+        assertThat(Hibernate.isInitialized(bookings.get(0).getFlight()))
+                .as("@ManyToOne is LAZY, so an initialised proxy proves the JOIN FETCH ran")
+                .isTrue();
+        assertThat(bookings.get(0).getFlight().getFlightNumber()).isEqualTo("UA123");
+    }
+
+    @Test
+    void findByFlightNumberIgnoresOtherFlights() {
+        bookingRepository.saveAndFlush(new Booking(flight("UA123"), "Smit Lakhani", 3, "demo-1"));
+        bookingRepository.saveAndFlush(new Booking(flight("UA456"), "Someone Else", 1, "demo-2"));
+
+        assertThat(bookingRepository.findByFlightNumber("UA123")).hasSize(1);
+        assertThat(bookingRepository.findByFlightNumber("XX999")).isEmpty();
+    }
+}

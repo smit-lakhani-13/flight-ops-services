@@ -1,0 +1,221 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flight-ops
+  namespace: flight-ops
+  labels:
+    app: flight-ops
+spec:
+  # 2, not 1. One replica means every rolling update and every node drain is an
+  # outage. It is also the minimum that makes the PodDisruptionBudget meaningful.
+  #
+  # Note: once the HPA is applied it owns this field. Leaving `replicas` here is
+  # still correct for the first apply — but editing it later is pointless, the
+  # HPA will just scale back. (The clean fix is to omit replicas entirely and let
+  # the HPA set it; kept explicit here so the intent is readable.)
+  replicas: 2
+
+  # Keeps `kubectl get rs` readable instead of 10 dead ReplicaSets deep.
+  revisionHistoryLimit: 3
+
+  selector:
+    matchLabels:
+      app: flight-ops
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      # maxUnavailable: 0 is the important half. It means capacity never dips
+      # below `replicas` during a deploy: a new pod must pass its readiness probe
+      # before an old one is removed. With maxUnavailable: 1 you would run at
+      # half capacity mid-deploy, which is how a "safe" rollout causes a latency
+      # spike under load.
+      maxUnavailable: 0
+  template:
+    metadata:
+      labels:
+        app: flight-ops
+    spec:
+      # IRSA. This service account is annotated with an IAM role ARN by eksctl,
+      # and the pod gets short-lived, auto-rotated STS credentials via a
+      # projected OIDC token. No access keys anywhere — not in the image, not in
+      # a Secret, not in an env var. DefaultCredentialsProvider in AwsConfig
+      # picks them up with no code change, which is exactly why the code uses
+      # the default provider chain instead of anything explicit.
+      #
+      # CREATE THIS BEFORE APPLYING THIS FILE, or pods stay Pending with
+      # `error looking up service account flight-ops/flight-ops-sa`:
+      #   eksctl create iamserviceaccount \
+      #     --name flight-ops-sa --namespace flight-ops \
+      #     --cluster flight-ops-cluster \
+      #     --attach-policy-arn arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess \
+      #     --attach-policy-arn arn:aws:iam::aws:policy/AmazonSQSFullAccess \
+      #     --approve
+      #
+      # (Those two managed policies are far too broad for production — the real
+      # version is an inline policy scoped to this one table and one queue ARN.
+      # They are used here because the lab is torn down the same day.)
+      serviceAccountName: flight-ops-sa
+
+      # Pod-level security context: applies to every container.
+      securityContext:
+        # Enforced by the kubelet, which reads the UID out of the image config.
+        # This is why the Dockerfile uses `USER 1001:1001` and not `USER spring`:
+        # a non-numeric user cannot be verified as non-root and the pod fails
+        # with CreateContainerConfigError. Both halves have to agree.
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        # Files created by the app are group-owned by 1001, which matters the
+        # moment a volume is mounted.
+        fsGroup: 1001
+        seccompProfile:
+          type: RuntimeDefault
+
+      # A PDB protects against voluntary disruption (drains, upgrades). It does
+      # nothing about a node dying. If both replicas land on the same node, one
+      # node loss is a full outage. `preferred` rather than `required` so a
+      # single-node cluster can still schedule both pods instead of wedging one
+      # in Pending forever.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app: flight-ops
+
+      # Must exceed the app's own shutdown budget, with room for the preStop hook:
+      #   5s preStop + 30s spring.lifecycle.timeout-per-shutdown-phase = 35s < 45s.
+      # If this were shorter than the app needs, the kubelet would SIGKILL
+      # mid-request and graceful shutdown would be decoration.
+      terminationGracePeriodSeconds: 45
+
+      containers:
+        - name: flight-ops
+          # <ACCOUNT_ID> is a deliberate placeholder — a real account number does
+          # not belong in a committed manifest. Substitute at deploy time:
+          #   sed "s/<ACCOUNT_ID>/$(aws sts get-caller-identity --query Account --output text)/" \
+          #     k8s/deployment.yaml | kubectl apply -f -
+          # CI does not need this: it sets the image with `kubectl set image`.
+          #
+          # The tag is a version, never `:latest`. With `:latest` you cannot tell
+          # what is running, and `imagePullPolicy: Always` turns every restart
+          # into a coin flip about which build you get. CI tags by git SHA.
+          image: <ACCOUNT_ID>.dkr.ecr.ap-south-1.amazonaws.com/flight-ops-service:1.0.0
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+
+          # Whole ConfigMap and Secret as env vars. Spring's relaxed binding
+          # turns SPRING_PROFILES_ACTIVE into spring.profiles.active and
+          # DB_PASSWORD into the ${DB_PASSWORD} placeholder in the prod profile.
+          envFrom:
+            - configMapRef:
+                name: flight-ops-config
+            - secretRef:
+                name: flight-ops-secret
+
+          # Container-level context, layered on the pod-level one above.
+          securityContext:
+            allowPrivilegeEscalation: false
+            # false because the JVM writes to /tmp (Tomcat work dir, and
+            # perf/hsperfdata). The hardened version sets this to true and mounts
+            # an emptyDir at /tmp — worth mentioning, not done here because a
+            # broken demo teaches nothing.
+            readOnlyRootFilesystem: false
+            capabilities:
+              # This process binds a port above 1024 and does nothing else
+              # privileged. It needs no Linux capabilities at all.
+              drop: ["ALL"]
+
+          resources:
+            # requests = what the scheduler reserves. Too low and pods get packed
+            # onto a node and throttled; too high and the node looks full while
+            # sitting idle.
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            # limits = the hard ceiling. The two behave completely differently
+            # when exceeded, and the difference is the whole reason for the JVM
+            # flag below:
+            #   - over the CPU limit  -> THROTTLED (cgroup quota). Slow, alive.
+            #   - over the memory limit -> OOMKilled. Memory is incompressible;
+            #     the kernel cannot hand out a fraction of a page.
+            # Hence -XX:MaxRAMPercentage=75.0 in the Dockerfile: the heap is
+            # sized from this limit, leaving 25% for metaspace, thread stacks,
+            # code cache and direct buffers. Setting -Xmx1g against a 1Gi limit
+            # is the standard way to get OOMKilled with a heap that looks fine.
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+
+          # ---- Three probes, three different jobs ----
+
+          # READINESS: "should traffic come here?" Fails -> removed from the
+          # Service endpoints, pod keeps running. This is the one that makes
+          # maxUnavailable: 0 mean anything, and the one Spring flips to
+          # OUT_OF_SERVICE the instant SIGTERM arrives.
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          # LIVENESS: "is this process wedged?" Fails -> the container is KILLED
+          # and restarted. Deliberately slower and more forgiving than readiness,
+          # because a trigger-happy liveness probe under load turns a slow
+          # service into a restart loop and takes the whole deployment down.
+          #
+          # Note: it also must NOT depend on the database. Spring's liveness
+          # group excludes the db indicator by design — if it included it, a
+          # brief RDS failover would restart every pod in the fleet for no
+          # reason. Restarting a JVM does not fix a database.
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          # STARTUP: covers slow boot (JVM + Spring context + Flyway) so the
+          # liveness probe cannot kill a pod that is merely still starting.
+          # 30 x 10s = up to 300s of grace, then liveness takes over at its
+          # normal aggressive cadence.
+          #
+          # While a startup probe is running, readiness and liveness are BOTH
+          # suspended — which makes the initialDelaySeconds above mostly
+          # belt-and-braces. Keeping the startup probe is the better pattern:
+          # a generous initialDelay slows down every future restart, whereas
+          # this exits as soon as the app is actually up.
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 30
+
+          lifecycle:
+            # Pod deletion is not ordered: the kubelet's SIGTERM and the
+            # endpoint removal that pulls this pod out of the ALB target group
+            # race each other. Lose that race and in-flight requests get routed
+            # to a JVM that has already started shutting down — an intermittent
+            # 502 on every deploy that is miserable to debug.
+            #
+            # preStop runs BEFORE SIGTERM, so sleeping here gives kube-proxy and
+            # the AWS load balancer controller time to deregister the target
+            # first. Doing nothing for 5 seconds is the fix.
+            preStop:
+              exec:
+                command: ["sleep", "5"]

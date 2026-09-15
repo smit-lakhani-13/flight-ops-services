@@ -1,0 +1,143 @@
+spring:
+  application:
+    name: flight-ops-service
+
+  # ---------------------------------------------------------------------------
+  # Default profile = zero setup. In-memory H2, Hibernate owns the schema,
+  # demo data seeded on boot. `mvn spring-boot:run` and it works.
+  # ---------------------------------------------------------------------------
+  datasource:
+    url: jdbc:h2:mem:flightops;DB_CLOSE_DELAY=-1
+    username: sa
+    password: ""
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 30000
+
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    # Never leave the Hibernate session open for view rendering: it hides N+1
+    # queries in the serialisation phase, outside any @Transactional boundary.
+    open-in-view: false
+    properties:
+      hibernate:
+        jdbc:
+          batch_size: 50
+        order_inserts: true
+        format_sql: true
+
+  flyway:
+    # Migrations are PostgreSQL-specific; H2 uses Hibernate's generated schema.
+    enabled: false
+
+  data:
+    web:
+      pageable:
+        # Serialise pages as PagedModel: {content: [...], page: {size, number,
+        # totalElements, totalPages}}. The default (`direct`) dumps PageImpl's
+        # own fields, which Spring Data explicitly warns is not a stable JSON
+        # contract — it can change between versions and it leaks the internal
+        # `pageable` object to clients. Opting in here is a one-line fix; doing
+        # it after clients have shipped is a breaking change.
+        serialization-mode: via-dto
+
+  threads:
+    virtual:
+      enabled: true
+
+  # Pinned explicitly even though 30s is Spring Boot's default, because
+  # k8s/deployment.yaml does arithmetic on this number:
+  #   5s preStop + 30s drain = 35s < terminationGracePeriodSeconds: 45.
+  # A framework default that another file's comment depends on is a default
+  # waiting to change underneath you.
+  lifecycle:
+    timeout-per-shutdown-phase: 30s
+
+server:
+  port: ${SERVER_PORT:8080}
+  shutdown: graceful
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+  endpoint:
+    health:
+      # Splits /actuator/health into /liveness and /readiness for Kubernetes.
+      probes:
+        enabled: true
+      show-details: when-authorized
+
+app:
+  events:
+    # log | sqs  -- which EventPublisher implementation gets wired in.
+    publisher: log
+  seed:
+    enabled: true
+  aws:
+    region: ${AWS_REGION:ap-south-1}
+    sqs-queue-url: ${SQS_QUEUE_URL:}
+    dynamodb-table: ${DDB_TABLE:flight-status-events}
+
+logging:
+  level:
+    com.smit.flightops: INFO
+    org.hibernate.SQL: ${SQL_LOG_LEVEL:WARN}
+
+---
+# -----------------------------------------------------------------------------
+# postgres -- real database on localhost, Flyway owns the schema.
+#   docker run --name pg -e POSTGRES_PASSWORD=pass -e POSTGRES_DB=flightops \
+#     -p 5432:5432 -d postgres:16-alpine
+#   mvn spring-boot:run -Dspring-boot.run.profiles=postgres
+# -----------------------------------------------------------------------------
+spring:
+  config:
+    activate:
+      on-profile: postgres
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/flightops}
+    username: ${DB_USER:postgres}
+    password: ${DB_PASSWORD:pass}
+  jpa:
+    hibernate:
+      # Flyway creates the schema; Hibernate verifies the entities still match
+      # it and fails fast on drift.
+      ddl-auto: validate
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+logging:
+  level:
+    org.hibernate.SQL: DEBUG
+
+---
+# -----------------------------------------------------------------------------
+# prod -- everything from the environment. Set by k8s/configmap.yaml.
+# -----------------------------------------------------------------------------
+spring:
+  config:
+    activate:
+      on-profile: prod
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USER}
+    password: ${DB_PASSWORD}
+  jpa:
+    hibernate:
+      ddl-auto: validate
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+app:
+  events:
+    publisher: ${APP_EVENTS_PUBLISHER:sqs}
+  seed:
+    enabled: false
+management:
+  endpoint:
+    health:
+      show-details: never

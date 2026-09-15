@@ -1,0 +1,36 @@
+# PodDisruptionBudget: the guardrail that stops a cluster operation from taking
+# the service down.
+#
+# `kubectl drain` (node upgrade, instance replacement, Cluster Autoscaler
+# consolidation, spot reclaim) evicts pods. Without a PDB it will happily evict
+# both replicas at once and the service is gone. With this, the eviction API
+# refuses the second eviction until a replacement pod is Ready.
+#
+# The distinction that matters:
+#   VOLUNTARY   disruption — drains, evictions, rollouts. A PDB applies.
+#   INVOLUNTARY disruption — node hardware failure, kernel panic, OOM.
+#                            A PDB does NOTHING. Nobody asks the API server for
+#                            permission before a node dies. Surviving that is
+#                            what replicas + podAntiAffinity are for, which is
+#                            why the Deployment spreads pods across hosts.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: flight-ops-pdb
+  namespace: flight-ops
+spec:
+  # maxUnavailable, NOT minAvailable, specifically because an HPA owns the
+  # replica count here (2..10).
+  #
+  # `minAvailable: 1` looks equivalent at replicas: 2 and is not. It is a floor,
+  # not a rate limit: at 10 replicas it permits the eviction API to take 9 pods
+  # at once and still be satisfied. `maxUnavailable: 1` is a rate limit, so the
+  # budget means "one pod at a time" at every replica count the HPA can choose.
+  #
+  # The opposite trap is `minAvailable` equal to replicas (2 of 2): a permanently
+  # unsatisfiable budget where every eviction is denied forever, so `kubectl
+  # drain` hangs and node upgrades never finish. Always leave slack.
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app: flight-ops

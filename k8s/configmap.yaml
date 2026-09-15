@@ -1,0 +1,44 @@
+# Non-secret configuration. These land as environment variables via `envFrom`
+# in the Deployment, and Spring Boot's relaxed binding maps SPRING_PROFILES_ACTIVE
+# to spring.profiles.active, AWS_REGION to app.aws.region, and so on.
+#
+# The split is deliberate: config that differs per environment lives here, not
+# in application.yml. The image is built once and behaves differently per cluster.
+#
+# Caveat to know: a ConfigMap change does NOT restart pods. Spring reads env vars
+# once at startup, so an edit here is invisible until
+#   kubectl rollout restart deployment/flight-ops -n flight-ops
+# (Reloadable config is Spring Cloud Kubernetes territory, which this does not use.)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: flight-ops-config
+  namespace: flight-ops
+data:
+  # Selects the `prod` profile document in application.yml: Flyway on,
+  # ddl-auto=validate, seeder off, actuator health details hidden.
+  SPRING_PROFILES_ACTIVE: "prod"
+
+  # Must match cluster.yaml and the AWS_REGION in the GitHub Actions workflow.
+  # ONE region everywhere (cluster, ECR, SQS, DynamoDB): cross-region traffic is
+  # billed, and if these disagree the failure shows up as an IRSA auth error or
+  # an ECR image-pull error rather than as an obvious region mismatch.
+  AWS_REGION: "ap-south-1"
+
+  DDB_TABLE: "flight-status-events"
+
+  # Quoted because ConfigMap values must be strings. `8080` unquoted is a YAML
+  # integer and the apply is rejected.
+  SERVER_PORT: "8080"
+
+  # The prod profile resolves ${APP_EVENTS_PUBLISHER:sqs}, so this could be left
+  # out. It is set explicitly so the running config is greppable in one place.
+  APP_EVENTS_PUBLISHER: "sqs"
+
+  # Filled in after `sam deploy` prints the QueueUrl output. Left empty here so
+  # the manifest applies cleanly; SqsEventPublisher fails fast at startup if the
+  # publisher is `sqs` and this is blank, which is the behaviour you want.
+  SQS_QUEUE_URL: ""
+
+  DB_URL: "jdbc:postgresql://flight-ops-db.example.rds.amazonaws.com:5432/flightops"
+  DB_USER: "flightops"

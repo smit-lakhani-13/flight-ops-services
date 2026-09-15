@@ -1,0 +1,22 @@
+# A namespace is the unit of teardown. `kubectl delete namespace flight-ops`
+# removes every Deployment, Service, HPA, PDB and Secret inside it in one
+# command, which is exactly what you want when the cluster is costing money.
+#
+# It is also the boundary for ResourceQuota, LimitRange, NetworkPolicy and RBAC.
+#
+# APPLY THIS FIRST, ON ITS OWN:
+#   kubectl apply -f k8s/namespace.yaml
+#   kubectl apply -f k8s/
+#
+# Why two commands? `kubectl apply -f <dir>` sends the files in alphabetical
+# order and does not retry. "configmap.yaml" and "deployment.yaml" both sort
+# before "namespace.yaml", so a single bulk apply fails with
+# `namespaces "flight-ops" not found` for everything before the namespace exists.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: flight-ops
+  labels:
+    name: flight-ops
+    # Every billable thing carries this tag/label so nothing gets orphaned.
+    project: flight-ops

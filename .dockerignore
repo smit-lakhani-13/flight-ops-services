@@ -1,0 +1,48 @@
+# Keep the build context small and keep secrets out of the image.
+#
+# Everything listed here is either useless in the image or actively unwanted.
+# A large context is slow to send to the daemon and every file in it is a file
+# that could accidentally be COPYed in.
+
+# Build output — the image builds its own inside stage 1. There is deliberately
+# no negation re-including target/*.jar: nothing here COPYs a host-built JAR, and
+# a 71MB stale one in the context would only be dead weight the daemon has to
+# read and a file a careless `COPY . .` could pick up ahead of the real build.
+target/
+
+# The Maven wrapper is for humans and CI, not for the image. The build stage
+# starts FROM maven:3.9-eclipse-temurin-21, which already pins Maven, so copying
+# the wrapper in would only make the build download a second copy of the same
+# version. Excluding it also stops a `COPY . .` from ever shadowing that.
+.mvn/
+mvnw
+mvnw.cmd
+
+# VCS and IDE
+.git/
+.gitignore
+.gitattributes
+.editorconfig
+.idea/
+*.iml
+.vscode/
+.DS_Store
+
+# Docs and infrastructure: not needed to run the app
+*.md
+k8s/
+cluster.yaml
+template.yaml
+.github/
+lambda/
+events/
+# The build recipe itself is not an input to the build.
+Dockerfile
+.dockerignore
+
+# Anything that could carry credentials
+.env
+.env.*
+*.pem
+*.key
+**/secret.yaml
