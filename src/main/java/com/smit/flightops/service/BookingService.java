@@ -8,6 +8,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Locale;
@@ -83,7 +84,17 @@ public class BookingService {
      * The canonical read for one booking. This exists because {@code POST
      * /api/v1/bookings} returns {@code Location: /api/v1/bookings/{id}}, and a
      * Location header pointing at a URL that 404s is worse than no header at all.
+     *
+     * <p>{@code @Transactional(readOnly = true)}, not left implicit: unlike
+     * {@link #findByFlightNumber}, {@link BookingRepository#findById} is the
+     * plain inherited {@code JpaRepository} method, not a {@code JOIN FETCH}
+     * query — it opens and closes its own short session around just that call.
+     * Without a wider transaction here, {@code BookingDto.from} dereferences
+     * the lazy {@code Booking.flight} proxy after that session has already
+     * closed, throwing {@code LazyInitializationException} on every real
+     * lookup. See {@code BookingFindByIdLazyLoadingTest} for the repro.
      */
+    @Transactional(readOnly = true)
     public BookingDto findById(Long bookingId) {
         return bookingRepository.findById(bookingId)
                 .map(BookingDto::from)
