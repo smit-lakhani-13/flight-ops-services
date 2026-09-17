@@ -82,7 +82,7 @@ What has been executed, and what has not. This table is the contract for every c
 | | What |
 |---|---|
 | ✅ **Built, tested, and exercised over HTTP** | The whole app module. Every endpoint hit with `curl` against a running instance; every status code in the tables below observed, not inferred. The Lambda handler's logic, via 12 unit tests. |
-| ✅ **Verified against real PostgreSQL in CI** | All 84 tests, including the 5 Testcontainers integration tests: the Flyway migration applied to an empty database, `ddl-auto: validate` checked against the schema that migration produced, and `SELECT … FOR UPDATE` under 20 threads competing for 5 seats. The runners have Docker, so these execute there and skip on a laptop without one. |
+| ✅ **Verified against real PostgreSQL in CI** | All 92 tests, including the 5 Testcontainers integration tests: the Flyway migration applied to an empty database, `ddl-auto: validate` checked against the schema that migration produced, `SELECT … FOR UPDATE` under 20 threads competing for 5 seats, and the same idempotency key replayed by 20 threads at once. The runners have Docker, so these execute there and skip on a laptop without one. |
 | ⚠️ **Authored and reviewed, never executed** | The container image. `sam build`, `sam local invoke`, `sam deploy`. Every `kubectl` and `eksctl` step. The deploy half of the GitHub Actions workflow — gated off deliberately, see below. |
 | ❌ **Not implemented** | Authentication/authorisation. A Solace binding. A flight-status transition graph. Contract tests. |
 
@@ -154,7 +154,7 @@ Two further things this repository does not claim:
 ├── src/main/resources/
 │   ├── application.yml            profiles: default (H2), postgres, prod
 │   └── db/migration/V1__init.sql  Flyway — owns the PostgreSQL schema
-├── src/test/java/                 9 test classes, layered — see Tests
+├── src/test/java/                 10 test classes, layered — see Tests
 ├── lambda/                        separate parentless Maven module: SQS → DynamoDB consumer
 ├── k8s/                           6 manifests + secret.example.yaml
 │   └── optional/ingress.yaml      separated because applying it provisions a billed ALB
@@ -198,7 +198,7 @@ Every error has one JSON shape — `{code, message, timestamp}`, or `{code, fiel
 | `FLIGHT_NOT_BOOKABLE` | 409 | flight is `CANCELLED`/`DEPARTED`/`ARRIVED` — **retrying can never succeed** |
 | `DUPLICATE_FLIGHT` | 409 | flight number already exists |
 | `CONCURRENT_MODIFICATION` | 409 | `@Version` rejected a stale write |
-| `DUPLICATE_REQUEST` | 409 | two requests raced on one idempotency key; the DB constraint arbitrated |
+| `DUPLICATE_REQUEST` | 409 | two flight-creation requests raced on `flight_number`; the DB constraint arbitrated — a raced *booking* no longer lands here, see below |
 | `VALIDATION_FAILED` | 400 | Bean Validation, reported per field |
 | `MALFORMED_REQUEST` | 400 | unreadable body, unknown enum constant, bad path variable, missing query param |
 | `RESOURCE_NOT_FOUND` | 404 | unmapped path |
@@ -221,7 +221,7 @@ Two requests both read "3 seats available", both book 2, and you have sold 5. Fo
 
 1. **`@Version` optimistic locking** on `Flight` — a conflicting concurrent commit throws `OptimisticLockingFailureException` (→ 409) instead of quietly overwriting.
 2. **Pessimistic `SELECT … FOR UPDATE`** on the booking path only, via `findByFlightNumberForUpdate`. Last-seat contention is genuinely high there, so serialising is worth the cost; read paths stay lock-free.
-3. **An idempotency key with a unique DB constraint.** The service checks for a replay first and returns the original booking. If two concurrent requests both pass that check, the constraint decides and the loser gets 409 — the database is the arbiter, because an application-level check can always be raced.
+3. **An idempotency key with a unique DB constraint.** The service checks for a replay first and returns the original booking. If two concurrent requests both pass that check — an application-level check can always be raced — the constraint decides who writes first, in `BookingWriter.insertNewBooking`. **The loser does not get 409.** `BookingService.book` catches the constraint violation and re-reads the winner's row in a fresh transaction (`BookingWriter.recoverReplay`), so both callers get the same 201 and the same booking. Found and fixed after a concurrency test showed the two Javadocs describing this path disagreed with each other — one claimed every replay gets 201, the other said a race loser gets 409 and called that "the same answer." It wasn't; now it is.
 4. **The invariants live on the entity, not the service.** `Flight.reserveSeats` is the only way seats move, so no caller can forget the rules — including a caller written later by someone else.
 
 The fourth is the one worth dwelling on, because violating it is what produced the defect below.
@@ -268,22 +268,22 @@ Four deliberate choices in five lines:
 ## Tests
 
 ```bash
-./mvnw clean verify                       # 72 tests: 67 run, 5 skipped, 0 failures
+./mvnw clean verify                       # 80 tests: 75 run, 5 skipped, 0 failures
 ./mvnw -f lambda/pom.xml clean verify     # 12 tests, 0 failures
 ```
 
 | Layer | Tests | Tooling |
 |---|---|---|
 | Domain entity | 12 | plain JUnit — no Spring, no database. A domain rule should be provable without either. |
-| Service | 16 | `@ExtendWith(MockitoExtension.class)`, `@Mock`, `@InjectMocks`, `@Captor` |
+| Service | 21 | `@ExtendWith(MockitoExtension.class)`, `@Mock`, `@InjectMocks`, `@Captor` — split across `BookingServiceTest` (orchestration), `BookingWriterTest` (the write path), `FlightServiceTest` |
 | Web slice | 21 | `@WebMvcTest` + `@MockitoBean` — status codes, `Location` headers, error JSON |
-| Repository slice | 12 | `@DataJpaTest` + `TestEntityManager` — derived queries, JPQL, `JOIN FETCH`, constraints |
-| Full context (H2) | 6 | `@SpringBootTest(webEnvironment = NONE)` — the idempotency guarantee end to end |
+| Repository slice | 13 | `@DataJpaTest` + `TestEntityManager` — derived queries, JPQL, `JOIN FETCH`, constraints |
+| Full context (H2) | 8 | `@SpringBootTest(webEnvironment = NONE)` — the idempotency guarantee end to end (a 10-thread race on one key) and a sequential lazy-loading regression with no mocking anywhere in the chain |
 | Lambda handler | 12 | separate module — batch parsing, partial batch failure, conditional write |
-| **Run** | **79** | **0 failures** (12 + 16 + 21 + 12 + 6 + 12) |
+| **Run** | **87** | **0 failures** (12 + 21 + 21 + 13 + 8 + 12) |
 | PostgreSQL integration | 5 | `@Testcontainers(disabledWithoutDocker = true)` — skipped without a container runtime |
 
-84 tests exist across the two modules; 79 run without Docker, 5 skip. CI runs all 84 and they pass — the runner has Docker, so it is the only place the real PostgreSQL path (Flyway + `ddl-auto=validate` + `SELECT FOR UPDATE` under 20-way contention) gets exercised. The surefire summary there reads `Tests run: 72, Failures: 0, Errors: 0, Skipped: 0` for this module and `Tests run: 12 … Skipped: 0` for the Lambda. `Skipped: 0` rather than `Skipped: 5` is the part worth reading: it is the difference between the integration tests passing and the integration tests quietly opting out, and a green build alone does not distinguish the two.
+92 tests exist across the two modules; 87 run without Docker, 5 skip. CI runs all 92 and they pass — the runner has Docker, so it is the only place the real PostgreSQL path (Flyway + `ddl-auto=validate` + `SELECT FOR UPDATE` under 20-way contention, and a 20-thread idempotency-key race) gets exercised. The surefire summary there reads `Tests run: 80, Failures: 0, Errors: 0, Skipped: 0` for this module and `Tests run: 12 … Skipped: 0` for the Lambda. `Skipped: 0` rather than `Skipped: 5` is the part worth reading: it is the difference between the integration tests passing and the integration tests quietly opting out, and a green build alone does not distinguish the two.
 
 `@MockitoBean`, not `@MockBean` — the latter is deprecated as of Boot 3.4 and removed in 4.0.
 
@@ -306,6 +306,48 @@ mockMvc.perform(get(location)).andExpect(status().isOk());       // this would h
 Same lesson as the cancelled-flight bug, in a different place: **a test that asserts the mechanism passes; a test that asserts the consequence catches things.** Both defects here were found by probing a running instance, not by reading code, and both are now pinned by tests that follow through to the outcome.
 
 **The build logs alarming things that are tests passing.** H2 `SqlExceptionHelper` ERRORs about `CONSTRAINT_INDEX_A ON PUBLIC.BOOKINGS(IDEMPOTENCY_KEY)`, a `GlobalExceptionHandler` WARN naming `uk_bookings_idempotency_key`, and an enum parse failure for a status of `TELEPORTED` are the duplicate-key and malformed-request tests doing their job. Don't "fix" them.
+
+### The third bug: a concurrency test found a contract two Javadocs disagreed about
+
+`BookingController`'s Javadoc promised every replay of the same idempotency key gets `201`. `GlobalExceptionHandler`'s Javadoc promised a race loser gets `409`. Both read as confident, and they contradicted each other — no single request can tell you which one is true, because a single request never races itself. Ten threads hitting the same key did:
+
+```
+4 callers -> 201
+6 callers -> 409
+```
+
+— for one logical booking. The controller's Javadoc was the one that was false.
+
+The fix splits the write into two transactions on a second bean, `BookingWriter`, so the recovery step can run in a fresh transaction instead of one Postgres has already marked aborted:
+
+```java
+try {
+    return bookingWriter.insertNewBooking(request);
+} catch (DataIntegrityViolationException e) {
+    return bookingWriter.recoverReplay(request.idempotencyKey());   // ← the fix: 201, not 409
+}
+```
+
+`BookingService.book` is deliberately **not** `@Transactional` any more — both transaction boundaries live on `BookingWriter`, called through Spring's proxy rather than through `this.`, which is what makes `REQUIRES_NEW` on `recoverReplay` actually take effect: `insertNewBooking`'s transaction is already aborted by the time the constraint violation is caught, so even a plain read on that same connection would fail. `BookingIdempotencyTest.racingTenCallersOnTheSameKeyAllGetTheSameBooking` pins the fix: ten threads, one idempotency key, every caller gets the same booking id back, exactly one row exists, exactly one seat is debited.
+
+Same lesson as the first two bugs, from a new angle: **some contracts are only false under concurrency**, so the test that catches them has to actually create the race, not restate the single-request behaviour twice.
+
+### The fourth bug: the endpoint the second bug's fix pointed at was itself broken
+
+Bug 2's fix made `GET /api/v1/bookings/{id}` something a real request would follow through to. Following it far enough exposed that the endpoint threw `LazyInitializationException` on every real lookup — sequential, no concurrency involved:
+
+```
+org.hibernate.LazyInitializationException: Could not initialize proxy [Flight#4] - no session
+```
+
+`Booking.flight` is `@ManyToOne(fetch = LAZY)`. `BookingDto.from` dereferences it. `BookingService.findById` had no `@Transactional` and called the plain inherited `JpaRepository.findById` — not the `JOIN FETCH` query `findByIdempotencyKey` and `findByFlightNumber` were given when the third bug was fixed — so the repository's own short-lived session had already closed by the time the DTO mapping ran. `BookingControllerTest.locationHeaderResolves()` mocks `bookingService.findById(...)` directly, which is exactly why a passing suite never caught it: that test proves the controller calls the method, not that the method works.
+
+```java
+@Transactional(readOnly = true)               // ← the fix
+public BookingDto findById(Long bookingId) {
+```
+
+`BookingFindByIdLazyLoadingTest` pins it, and pins it properly: no mocking anywhere in the chain, and deliberately no `@Transactional` on the test class itself — a test-managed transaction would keep the session open for the whole test and let this exact bug pass silently even with the fix reverted.
 
 ---
 
