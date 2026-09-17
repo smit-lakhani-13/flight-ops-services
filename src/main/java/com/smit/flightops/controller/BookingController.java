@@ -24,6 +24,16 @@ public class BookingController {
      * 201 with a Location header on both the first call and every replay — a
      * retry is not an error, so it does not get an error status. The client
      * cannot tell the difference, which is exactly the point of idempotency.
+     *
+     * <p>That includes a replay that races the original: same key, original
+     * still in-flight. {@link com.smit.flightops.service.BookingService#book}'s
+     * own {@code findByIdempotencyKey} check only sees committed rows, so
+     * both requests can pass it and reach the database at the same time —
+     * but the loser doesn't surface that as an error. It recovers the
+     * winner's booking and returns 201 too. See {@code BookingService.book}
+     * and {@code BookingWriter} for the mechanism, and its Javadoc history
+     * for the bug this fixed: the loser used to get 409, which broke the
+     * "cannot tell the difference" claim this comment is now making truthfully.
      */
     @PostMapping
     public ResponseEntity<BookingDto> book(@Valid @RequestBody BookingRequest request) {

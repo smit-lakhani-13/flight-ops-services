@@ -5,17 +5,15 @@ import com.smit.flightops.dto.BookingRequest;
 import com.smit.flightops.entity.Booking;
 import com.smit.flightops.entity.Flight;
 import com.smit.flightops.exception.BookingNotFoundException;
-import com.smit.flightops.exception.FlightNotBookableException;
 import com.smit.flightops.exception.FlightNotFoundException;
-import com.smit.flightops.exception.InsufficientSeatsException;
 import com.smit.flightops.repository.BookingRepository;
-import com.smit.flightops.repository.FlightRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -29,12 +27,17 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+/**
+ * {@code BookingService.book} is pure orchestration now: replay check, then
+ * delegate to {@link BookingWriter}, then recover if the writer lost a race.
+ * The write path itself (locking, debiting, publishing) is
+ * {@link BookingWriterTest}'s job — this class only pins the orchestration.
+ */
 @ExtendWith(MockitoExtension.class)
 class BookingServiceTest {
 
-    @Mock private FlightRepository flightRepository;
     @Mock private BookingRepository bookingRepository;
-    @Mock private EventPublisher eventPublisher;
+    @Mock private BookingWriter bookingWriter;
 
     @InjectMocks private BookingService bookingService;
 
@@ -49,25 +52,21 @@ class BookingServiceTest {
     }
 
     @Test
-    @DisplayName("a first-time booking locks the flight, debits seats, persists, then publishes")
-    void happyPath() {
-        Flight flight = flight();
+    @DisplayName("no existing row -> delegates straight to the writer")
+    void firstTimeBookingDelegatesToTheWriter() {
         when(bookingRepository.findByIdempotencyKey("demo-1")).thenReturn(Optional.empty());
-        when(flightRepository.findByFlightNumberForUpdate("UA123")).thenReturn(Optional.of(flight));
-        when(bookingRepository.save(any(Booking.class))).thenAnswer(i -> i.getArgument(0));
+        BookingDto written = new BookingDto(1L, "UA123", "Smit Lakhani", 3, "demo-1", Instant.now());
+        when(bookingWriter.insertNewBooking(any())).thenReturn(written);
 
         BookingDto dto = bookingService.book(request(3, "demo-1"));
 
-        assertThat(flight.getAvailableSeats()).isEqualTo(177);
-        assertThat(dto.flightNumber()).isEqualTo("UA123");
-        assertThat(dto.seats()).isEqualTo(3);
-        assertThat(dto.idempotencyKey()).isEqualTo("demo-1");
-        verify(eventPublisher).publishBookingCreated(dto);
+        assertThat(dto).isEqualTo(written);
+        verify(bookingWriter, never()).recoverReplay(any());
     }
 
     @Test
-    @DisplayName("a replayed key returns the original booking and debits nothing")
-    void replayIsAServedFromTheExistingBooking() {
+    @DisplayName("a replay after the original committed returns the original, and never touches the writer")
+    void replayIsServedFromTheExistingBooking() {
         Flight flight = flight();
         flight.reserveSeats(3);
         Booking original = new Booking(flight, "Smit Lakhani", 3, "demo-1");
@@ -76,61 +75,34 @@ class BookingServiceTest {
         BookingDto dto = bookingService.book(request(3, "demo-1"));
 
         assertThat(dto.seats()).isEqualTo(3);
-        assertThat(flight.getAvailableSeats()).isEqualTo(177);   // still 177, not 174
-        verify(flightRepository, never()).findByFlightNumberForUpdate(any());
-        verify(bookingRepository, never()).save(any());
-        verifyNoInteractions(eventPublisher);
+        verifyNoInteractions(bookingWriter);
     }
 
     @Test
-    @DisplayName("the flight row is read FOR UPDATE, not with a plain lookup")
-    void bookingTakesAPessimisticLock() {
-        when(bookingRepository.findByIdempotencyKey("demo-2")).thenReturn(Optional.empty());
-        when(flightRepository.findByFlightNumberForUpdate("UA123")).thenReturn(Optional.of(flight()));
-        when(bookingRepository.save(any(Booking.class))).thenAnswer(i -> i.getArgument(0));
+    @DisplayName("REGRESSION: a lost idempotency-key race recovers the winner's booking instead of surfacing 409")
+    void racingTheWriterRecoversTheWinner() {
+        when(bookingRepository.findByIdempotencyKey("raced-key")).thenReturn(Optional.empty());
+        when(bookingWriter.insertNewBooking(any())).thenThrow(new DataIntegrityViolationException("dup"));
+        BookingDto winner = new BookingDto(2L, "UA123", "Smit Lakhani", 3, "raced-key", Instant.now());
+        when(bookingWriter.recoverReplay("raced-key")).thenReturn(winner);
 
-        bookingService.book(request(1, "demo-2"));
+        BookingDto dto = bookingService.book(request(3, "raced-key"));
 
-        verify(flightRepository).findByFlightNumberForUpdate("UA123");
-        verify(flightRepository, never()).findByFlightNumber(any());
+        assertThat(dto).isEqualTo(winner);
+        verify(bookingWriter).recoverReplay("raced-key");
     }
 
     @Test
-    @DisplayName("overselling aborts before anything is written or published")
-    void oversellIsRejected() {
-        Flight flight = flight();
-        flight.reserveSeats(179);
-        when(bookingRepository.findByIdempotencyKey("demo-3")).thenReturn(Optional.empty());
-        when(flightRepository.findByFlightNumberForUpdate("UA123")).thenReturn(Optional.of(flight));
+    @DisplayName("a non-constraint failure from the writer propagates, not recovered")
+    void unknownFlightPropagatesWithoutRecovery() {
+        when(bookingRepository.findByIdempotencyKey("demo-4")).thenReturn(Optional.empty());
+        when(bookingWriter.insertNewBooking(any())).thenThrow(new FlightNotFoundException("XX999"));
 
-        assertThatThrownBy(() -> bookingService.book(request(2, "demo-3")))
-                .isInstanceOf(InsufficientSeatsException.class);
+        assertThatThrownBy(() -> bookingService.book(
+                new BookingRequest("xx999", "Smit Lakhani", 1, "demo-4")))
+                .isInstanceOf(FlightNotFoundException.class);
 
-        assertThat(flight.getAvailableSeats()).isEqualTo(1);
-        verify(bookingRepository, never()).save(any());
-        verifyNoInteractions(eventPublisher);
-    }
-
-    @Test
-    @DisplayName("REGRESSION: booking a cancelled flight writes nothing and publishes nothing")
-    void cancelledFlightIsRejected() {
-        // The service does not repeat the check — it calls reserveSeats and lets
-        // the entity refuse. What this test pins is the CONSEQUENCE of the throw
-        // landing where it does: before bookingRepository.save() and before the
-        // event is published, so a cancelled flight produces no booking row and
-        // no downstream DynamoDB projection of a booking that never happened.
-        Flight flight = flight();
-        flight.cancel();
-        when(bookingRepository.findByIdempotencyKey("demo-5")).thenReturn(Optional.empty());
-        when(flightRepository.findByFlightNumberForUpdate("UA123")).thenReturn(Optional.of(flight));
-
-        assertThatThrownBy(() -> bookingService.book(request(1, "demo-5")))
-                .isInstanceOf(FlightNotBookableException.class)
-                .hasMessageContaining("CANCELLED");
-
-        assertThat(flight.getAvailableSeats()).isEqualTo(180);
-        verify(bookingRepository, never()).save(any());
-        verifyNoInteractions(eventPublisher);
+        verify(bookingWriter, never()).recoverReplay(any());
     }
 
     @Test
@@ -154,19 +126,5 @@ class BookingServiceTest {
         assertThatThrownBy(() -> bookingService.findById(999L))
                 .isInstanceOf(BookingNotFoundException.class)
                 .hasMessageContaining("999");
-
-        verifyNoInteractions(eventPublisher);
-    }
-
-    @Test
-    void unknownFlightIsA404() {
-        when(bookingRepository.findByIdempotencyKey("demo-4")).thenReturn(Optional.empty());
-        when(flightRepository.findByFlightNumberForUpdate("XX999")).thenReturn(Optional.empty());
-
-        assertThatThrownBy(() -> bookingService.book(
-                new BookingRequest("xx999", "Smit Lakhani", 1, "demo-4")))
-                .isInstanceOf(FlightNotFoundException.class);
-
-        verifyNoInteractions(eventPublisher);
     }
 }

@@ -154,7 +154,8 @@ class BookingIntegrationTest {
     }
 
     @Test
-    @DisplayName("the same idempotency key replayed concurrently still creates exactly one booking")
+    @DisplayName("REGRESSION: " + CONTENDERS + " threads replay one idempotency key concurrently — "
+                 + "ONE booking, and every caller gets it back, zero errors")
     void concurrentReplaysOfOneKeyBookOnce() throws Exception {
         String flightNumber = createFlight("CC002", 50);
 
@@ -165,10 +166,16 @@ class BookingIntegrationTest {
                 })
                 .toList();
 
-        countSuccesses(attempts);
+        // Unlike concurrentBookingsCannotOversell above, losing this race is NOT
+        // a legitimate failure — BookingWriter.recoverReplay exists precisely so
+        // every caller on the same key gets the winner's booking back instead of
+        // a 409. countSuccesses would previously report ~1 success and
+        // (CONTENDERS - 1) caught exceptions for this same test; it now reports
+        // CONTENDERS, which is the whole point of the fix.
+        int booked = countSuccesses(attempts);
 
-        // Some threads pass the findByIdempotencyKey check simultaneously; the
-        // unique constraint rejects every loser, so the seat count can only move once.
+        assertThat(booked).as("no caller should see an exception on a raced replay")
+                .isEqualTo(CONTENDERS);
         assertThat(bookingRepository.findByFlightNumber(flightNumber)).hasSize(1);
         assertThat(availableSeats(flightNumber)).isEqualTo(48);
     }

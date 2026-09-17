@@ -49,6 +49,22 @@ class BookingRepositoryTest {
     }
 
     @Test
+    @DisplayName("REGRESSION: JOIN FETCH on findByIdempotencyKey too — the caller reads it after BookingService.book's transaction already closed")
+    void findByIdempotencyKeyAlsoJoinFetchesTheFlight() {
+        Flight flight = flight("UA123");
+        bookingRepository.saveAndFlush(new Booking(flight, "Smit Lakhani", 3, "demo-1"));
+        entityManager.clear();
+
+        Booking found = bookingRepository.findByIdempotencyKey("demo-1").orElseThrow();
+
+        assertThat(Hibernate.isInitialized(found.getFlight()))
+                .as("BookingService.book is not @Transactional; an unfetched proxy here " +
+                    "would throw LazyInitializationException the moment BookingDto.from touches it")
+                .isTrue();
+        assertThat(found.getFlight().getFlightNumber()).isEqualTo("UA123");
+    }
+
+    @Test
     @DisplayName("the unique index — not the service check — is what makes a replay impossible")
     void duplicateIdempotencyKeyIsRejectedByTheDatabase() {
         Flight flight = flight("UA123");

@@ -99,10 +99,18 @@ public class GlobalExceptionHandler {
     }
 
     /**
-     * A unique constraint fired — in this service that means two concurrent
-     * requests carried the same idempotency key (or the same flight number) and
-     * both passed their application-level check. The database is the arbiter;
-     * the loser gets 409, which is the same answer the replay path gives.
+     * A unique constraint fired. In practice that is
+     * {@link com.smit.flightops.service.FlightService#create} losing the
+     * {@code uk_flights_flight_number} race — its own Javadoc explains why
+     * the courtesy check can't prevent it and lands here.
+     *
+     * <p>A booking that races on {@code idempotency_key} does <b>not</b> reach
+     * this handler: {@link com.smit.flightops.service.BookingService#book}
+     * catches that specific violation itself and recovers the winner's
+     * booking, so the race loser also gets 201, not this 409. That recovery
+     * is why this handler no longer needs to reason about idempotency keys at
+     * all — see {@code BookingService.book} and {@code BookingWriter} for the
+     * mechanism.
      */
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<ErrorResponse> handleDataIntegrity(DataIntegrityViolationException e) {

@@ -21,6 +21,14 @@ import org.springframework.boot.test.context.SpringBootTest;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -133,5 +141,53 @@ class BookingIdempotencyTest {
         bookingService.book(new BookingRequest(" ua002 ", "Smit Lakhani", 1, "norm-1"));
 
         assertThat(availableSeats("UA002")).isEqualTo(9);
+    }
+
+    /**
+     * REGRESSION for the idempotency-race fix. Ten threads hit {@code book()}
+     * with the SAME idempotency key at the same time — a genuine race, not a
+     * sequential replay, so {@code findByIdempotencyKey} cannot short-circuit
+     * any of them. Before the fix, the nine losers got 409 {@code
+     * DUPLICATE_REQUEST} from {@code GlobalExceptionHandler}; this pins that
+     * every caller now gets the SAME booking back instead, with seats debited
+     * exactly once, which is the contract {@code BookingController.book}'s
+     * Javadoc actually claims.
+     */
+    @Test
+    @Order(7)
+    @DisplayName("REGRESSION: 10 concurrent callers, same key -> one booking, ALL ten get it back, zero errors")
+    void racingTenCallersOnTheSameKeyAllGetTheSameBooking() throws Exception {
+        flightService.create(new CreateFlightRequest("ua003", "ewr", "ord", 50,
+                Instant.now().plus(Duration.ofHours(6))));
+
+        int callers = 10;
+        ExecutorService pool = Executors.newFixedThreadPool(callers);
+        try {
+            List<Callable<BookingDto>> attempts = IntStream.range(0, callers)
+                    .<Callable<BookingDto>>mapToObj(i -> () ->
+                            bookingService.book(new BookingRequest("ua003", "Racer " + i, 1, "race-1")))
+                    .toList();
+
+            List<Future<BookingDto>> futures = pool.invokeAll(attempts);
+            List<BookingDto> results = futures.stream().map(f -> {
+                try {
+                    return f.get();
+                } catch (Exception e) {
+                    throw new AssertionError("no caller should see an exception", e);
+                }
+            }).collect(Collectors.toList());
+
+            assertThat(results).hasSize(callers);
+            assertThat(results.stream().map(BookingDto::bookingId).distinct())
+                    .as("every caller gets back the SAME booking id")
+                    .hasSize(1);
+            assertThat(availableSeats("UA003"))
+                    .as("one seat debited, not ten")
+                    .isEqualTo(49);
+            assertThat(bookingRepository.findByFlightNumber("UA003")).hasSize(1);
+        } finally {
+            pool.shutdown();
+            pool.awaitTermination(10, TimeUnit.SECONDS);
+        }
     }
 }
