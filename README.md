@@ -31,6 +31,21 @@ curl localhost:8080/api/v1/flights/UA123
 curl "localhost:8080/api/v1/flights?origin=EWR&page=0&size=5"
 ```
 
+### Or run the whole tour at once
+
+With the app running, in a second terminal:
+
+```bash
+./demo.sh          # pauses between acts, so you can talk over it
+./demo.sh --fast   # no pauses
+```
+
+Five acts over real HTTP: the paged API and the normalised `Location` header; idempotent
+replay; the deliberate error codes including the cancelled-flight refusal; **ten concurrent
+callers racing on one idempotency key**; and the actuator surface Kubernetes probes. It
+preflights that the app is up, and falls back to `python3 -m json.tool` if `jq` is absent.
+State is in-memory — restart the app to reset it.
+
 ### The two behaviours worth demonstrating
 
 **1. A retry doesn't double-book.**
