@@ -7,6 +7,8 @@ import com.smit.flightops.entity.Flight;
 import com.smit.flightops.exception.FlightNotFoundException;
 import com.smit.flightops.repository.BookingRepository;
 import com.smit.flightops.repository.FlightRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,6 +25,8 @@ import java.util.Locale;
  */
 @Component
 public class BookingWriter {
+
+    private static final Logger log = LoggerFactory.getLogger(BookingWriter.class);
 
     private final FlightRepository flightRepository;
     private final BookingRepository bookingRepository;
@@ -57,6 +61,10 @@ public class BookingWriter {
 
         Booking booking = bookingRepository.save(new Booking(
                 flight, request.passengerName(), request.seats(), request.idempotencyKey()));
+
+        log.info("Booked {} seat(s) on {} for {} (booking {}, {} seats left)",
+                 booking.getSeats(), flightNumber, booking.getPassengerName(),
+                 booking.getId(), flight.getAvailableSeats());
 
         BookingDto dto = BookingDto.from(booking);
         eventPublisher.publishBookingCreated(dto);
