@@ -149,10 +149,24 @@ public class GlobalExceptionHandler {
                                        "Request could not be read. Check the field names, types and enum values."));
     }
 
-    /** An argument the domain rejects outright, e.g. reserving zero seats. */
+    /**
+     * A stray {@code IllegalArgumentException} — a backstop, not a business
+     * path. The domain's own guard ({@link com.smit.flightops.entity.Flight#reserveSeats}
+     * on a non-positive count) is unreachable over HTTP, because
+     * {@code BookingRequest.seats} is {@code @Min(1) @Max(9)} and bean
+     * validation answers first with {@code VALIDATION_FAILED}.
+     *
+     * <p>So the message is fixed rather than {@code e.getMessage()}. This
+     * handler is bound to a JDK type that Spring, Hibernate, Jackson and the
+     * JDK itself all throw, and echoing their text would leak internals for
+     * exactly the reason {@link #handleUnexpected} says nothing. The operator
+     * gets the detail from the log instead.
+     */
     @ExceptionHandler(IllegalArgumentException.class)
     public ResponseEntity<ErrorResponse> handleIllegalArgument(IllegalArgumentException e) {
-        return ResponseEntity.badRequest().body(ErrorResponse.of("MALFORMED_REQUEST", e.getMessage()));
+        log.warn("Rejected argument", e);
+        return ResponseEntity.badRequest()
+                .body(ErrorResponse.of("MALFORMED_REQUEST", "The request contained an invalid value."));
     }
 
     /**
