@@ -171,7 +171,7 @@ Two further things this repository does not claim:
 ├── src/main/resources/
 │   ├── application.yml            profiles: default (H2), postgres, prod
 │   └── db/migration/V1__init.sql  Flyway — owns the PostgreSQL schema
-├── src/test/java/                 11 test classes, layered — see Tests
+├── src/test/java/                 11 test classes, layered — see Tests (12 with the Lambda's)
 ├── lambda/                        separate parentless Maven module: SQS → DynamoDB consumer
 ├── k8s/                           6 manifests + secret.example.yaml
 │   └── optional/ingress.yaml      separated because applying it provisions a billed ALB
@@ -476,6 +476,25 @@ Every row is a decision, not an oversight. Left column: what the code does. Righ
 | H2 uses `create-drop` | already done for PostgreSQL: Flyway + `validate` | Migrations on a throwaway in-memory database buy nothing. |
 | `events/*.json` `md5OfBody` values are placeholders | real captured messages | Nothing reads the field, but it is not real traffic. |
 
+### Found in review, not yet changed
+
+The table above is design. This one is not: these are defects a careful reader will find, each
+verified against a running instance rather than reasoned about. They are listed because a limitation
+you can name costs less than one somebody else finds.
+
+| What happens | What should happen | The fix |
+|---|---|---|
+| `GET /api/v1/flights?sort=nonsense` returns **500 `INTERNAL_ERROR`**. Spring Data raises `PropertyReferenceException` resolving the property, and nothing handles it, so it reaches the `Exception.class` handler. | 400, naming the bad parameter. The client sent a bad request; the server did not break. | One handler for `PropertyReferenceException` returning `MALFORMED_REQUEST`. Roughly ten lines with a test. |
+| Re-using an idempotency key with a **different payload** returns the original booking with 201. Same key, different passenger, different seat count, even a different flight — all replay the first booking. | 422, refusing the reuse, because the client has a bug and hiding it makes that bug invisible. | Compare the stored request against the incoming one before replaying; new code `IDEMPOTENCY_KEY_REUSED`. Requires persisting a request fingerprint, so a migration and a column. |
+| The readiness probe ignores the database. Point the datasource at an unreachable host and `/actuator/health` returns **503 DOWN** with `db` DOWN, while `/actuator/health/readiness` still returns **200 UP** and every API call returns 500. Kubernetes would keep routing traffic to a pod that cannot answer a single request. | Readiness reflects the dependency the pod needs in order to serve. | One line: `management.endpoint.health.group.readiness.include: readinessState,db`. Verified: readiness then reports exactly `db` and `readinessState`, and goes DOWN with the database. |
+| `SELECT … FOR UPDATE` has no lock timeout. A stuck holder blocks every other booker on that flight until the JDBC socket gives up. | A bounded wait, failing fast with a retryable error. | `@QueryHint(name = "jakarta.persistence.lock.timeout", value = "3000")` on the locking query, plus a handler for the resulting exception. |
+| `SqsClient` is built with SDK defaults: no `apiCallTimeout`, no `apiCallAttemptTimeout`. Since the publish happens inside the transaction, a slow SQS endpoint holds a row lock and one of ten pool connections for as long as the SDK waits. | A timeout shorter than the pool's `connection-timeout`, so a slow dependency degrades one endpoint instead of exhausting the pool. | Three lines of `ClientOverrideConfiguration` in `AwsConfig`. |
+| The DynamoDB sort key is `timestamp#bookingId`, where `timestamp` comes from `Instant.toString()`. That prints 0, 3, 6 or 9 fractional digits depending on the value, so `…:01Z` sorts **after** `…:01.000001Z` and same-second events can come back out of order. | A fixed-width timestamp, so lexicographic order is chronological order. | Format with an explicit nine-digit pattern on the producer side. Two lines and a test; it changes the key format, so it wants doing before there is data. |
+| `PATCH /api/v1/flights/{n}/status` accepts any transition, including `CANCELLED` → `SCHEDULED`, after which the flight sells seats again. | A state machine where `CANCELLED` and `ARRIVED` are terminal. | A permitted-transitions map on `FlightStatus`. About twenty lines with tests. |
+| `POST /api/v1/flights` accepts `origin` equal to `destination`. | 400 — a flight from EWR to EWR is not a flight. | A class-level constraint on the request record, or a check in the service. |
+| The passenger name is logged at INFO on every booking, there is no correlation id, and logs are plain text. | Structured JSON with a request id, and no personal data in the message. | `logstash-logback-encoder`, a filter that puts a request id in the MDC, and dropping the name from the log line. |
+
+
 ---
 
 ## Versions
@@ -492,7 +511,7 @@ Dependency updates are automated: [`.github/dependabot.yml`](.github/dependabot.
 Two details in that file are easy to get wrong and are worth knowing before editing it:
 
 - **`open-pull-requests-limit` is set on every ecosystem**, because the default is 5 **per ecosystem**, not 5 overall. Four ecosystems left implicit can therefore open twenty pull requests the first time Dependabot runs on a new repository — which is exactly what happened here before the limits and the grouping went in.
-- **The `ignore` rules are scoped to three artifacts and no more**, because an `ignore` condition suppresses Dependabot's *security* updates for that dependency as well as its version updates. That is a real cost, so it is only accepted where a major bump would contradict a pin this project has already made and documented: the JDK in the two base images, and the Spring Boot parent. Everything else — every minor, every patch, every dependency not named — still flows automatically.
+- **The `ignore` rules are scoped to four artifacts and no more**, because an `ignore` condition suppresses Dependabot's *security* updates for that dependency as well as its version updates. That is a real cost, so it is only accepted where a major bump would contradict a pin this project has already made and documented: `eclipse-temurin` and `maven` in the two base images, `org.springframework.boot:spring-boot-starter-parent`, and `org.junit:junit-bom` under `lambda/` — the last one because the app module takes JUnit 5.12.2 from the Boot BOM, so accepting JUnit 6 on the Lambda alone would put two JUnit majors in one repository. Everything else — every minor, every patch, every dependency not named — still flows automatically.
 
 ---
 
