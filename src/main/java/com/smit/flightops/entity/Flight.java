@@ -8,9 +8,12 @@ import java.time.Instant;
 import java.util.Objects;
 
 @Entity
+// No @Index for flightNumber: @Column(unique = true) below already makes
+// ddl-auto emit a unique constraint, and every database backs that with an
+// index. Declaring both asks for a second index on the same column — write
+// cost paid twice for no read benefit. Same reasoning as Booking.java.
 @Table(name = "flights", indexes = {
-    @Index(name = "idx_flight_number", columnList = "flightNumber", unique = true),
-    @Index(name = "idx_origin_dest",   columnList = "origin,destination")
+    @Index(name = "idx_origin_dest", columnList = "origin,destination")
 })
 public class Flight {
 

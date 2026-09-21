@@ -15,11 +15,6 @@ CREATE TABLE flights
     status          VARCHAR(255)                NOT NULL,
     departure_time  TIMESTAMP(6) WITH TIME ZONE NOT NULL,
     version         BIGINT,
-    -- The entity also declares @Index(name = "idx_flight_number", unique = true)
-    -- on this column. That is only used by ddl-auto: create-drop on H2; here the
-    -- UNIQUE constraint already creates the index, and adding a second one would
-    -- double the write cost for no read benefit. Hibernate's validate does not
-    -- compare indexes, so the two schemas do not disagree.
     CONSTRAINT uk_flights_flight_number UNIQUE (flight_number)
 );
 
