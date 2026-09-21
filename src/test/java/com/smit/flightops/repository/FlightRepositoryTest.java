@@ -78,18 +78,23 @@ class FlightRepositoryTest {
     }
 
     @Test
-    @DisplayName("findBookable skips flights that are full or not SCHEDULED")
+    @DisplayName("findBookable skips full and non-bookable flights, and keeps DELAYED ones")
     void findBookableFiltersOnSeatsAndStatus() {
         save("UA123", "EWR", "LHR", 180);
         Flight full = save("UA124", "EWR", "LHR", 2);
         full.reserveSeats(2);
         Flight cancelled = save("UA125", "EWR", "LHR", 180);
         cancelled.cancel();
+        // A delayed flight is still selling seats — FlightStatus.isBookable()
+        // says so, and this query has to agree with it. It did not until the
+        // JPQL stopped hardcoding status = 'SCHEDULED'.
+        Flight delayed = save("UA126", "EWR", "LHR", 180);
+        delayed.updateStatus(FlightStatus.DELAYED);
         flightRepository.flush();
 
         assertThat(flightRepository.findBookable(1))
                 .extracting(Flight::getFlightNumber)
-                .containsExactly("UA123");
+                .containsExactlyInAnyOrder("UA123", "UA126");
     }
 
     @Test

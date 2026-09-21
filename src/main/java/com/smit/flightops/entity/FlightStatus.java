@@ -1,5 +1,8 @@
 package com.smit.flightops.entity;
 
+import java.util.Arrays;
+import java.util.List;
+
 /**
  * Lifecycle of a flight, and the one question the booking path needs answered
  * about it: can this flight still take a reservation?
@@ -44,5 +47,19 @@ public enum FlightStatus {
             case SCHEDULED, BOARDING, DELAYED -> true;
             case DEPARTED, ARRIVED, CANCELLED -> false;
         };
+    }
+
+    /**
+     * The same answer as {@link #isBookable()}, in the form a database query
+     * needs.
+     *
+     * <p>This exists so a JPQL {@code status IN :statuses} can be driven by the
+     * enum instead of repeating the list as a literal. A hardcoded
+     * {@code status = 'SCHEDULED'} in a query is precisely the "second caller
+     * that forgets" this class's Javadoc warns about — it compiles, it passes,
+     * and it silently stops selling seats on every delayed flight.
+     */
+    public static List<FlightStatus> bookableStatuses() {
+        return Arrays.stream(values()).filter(FlightStatus::isBookable).toList();
     }
 }

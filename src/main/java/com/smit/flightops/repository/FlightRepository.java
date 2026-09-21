@@ -11,6 +11,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -24,8 +25,18 @@ public interface FlightRepository extends JpaRepository<Flight, Long> {
 
     boolean existsByFlightNumber(String flightNumber);
 
-    @Query("SELECT f FROM Flight f WHERE f.availableSeats >= :min AND f.status = 'SCHEDULED'")
-    List<Flight> findBookable(@Param("min") int min);
+    // Bookability is FlightStatus.isBookable()'s answer, not this query's. The
+    // status list is derived from the enum rather than spelled out here, so a
+    // new constant cannot quietly get one answer from the entity and another
+    // from the database — this being the "second caller that forgets" is the
+    // exact failure FlightStatus's Javadoc exists to prevent.
+    @Query("SELECT f FROM Flight f WHERE f.availableSeats >= :min AND f.status IN :statuses")
+    List<Flight> findBookable(@Param("min") int min,
+                              @Param("statuses") Collection<FlightStatus> statuses);
+
+    default List<Flight> findBookable(int min) {
+        return findBookable(min, FlightStatus.bookableStatuses());
+    }
 
     // LIMIT is not Oracle syntax. Native queries trade portability for control —
     // the JPQL/derived equivalents above run unchanged on Oracle and PostgreSQL.
