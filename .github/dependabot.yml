@@ -10,7 +10,7 @@
 #    twenty pull requests the first time Dependabot runs on a new repository.
 #    Grouping plus an explicit limit keeps a monthly run to a handful.
 #
-# 2. The ignore rules below are scoped to three specific artifacts, not applied
+# 2. The ignore rules below are scoped to four specific artifacts, not applied
 #    broadly, because an ignore condition suppresses Dependabot SECURITY updates
 #    for that dependency as well as version updates. That is a real cost. It is
 #    accepted here only where a major bump would contradict a decision the project
@@ -19,7 +19,9 @@
 #        image bump moves the runtime out from under that
 #      - Spring Boot: staying on 3.5.x is a documented choice, and Boot 4 is not a
 #        drop-in (see README)
-#    A major upgrade of any of the three is a deliberate piece of work, not a
+#      - JUnit: lambda/pom.xml pins the 5.x line so both modules share one JUnit
+#        major; the comment above <junit.version> gives the reason
+#    A major upgrade of any of the four is a deliberate piece of work, not a
 #    merge. Everything else — minors, patches, and every dependency not named
 #    here — still flows automatically.
 version: 2
@@ -62,6 +64,14 @@ updates:
         patterns: ["software.amazon.awssdk:*", "com.amazonaws:*"]
       test:
         patterns: ["org.junit*:*", "org.mockito:*"]
+    ignore:
+      # The JUnit 5.x pin is a documented decision — see the comment above
+      # <junit.version> in lambda/pom.xml. The app module gets JUnit 5.12.2 from
+      # the Boot 3.5.16 BOM, so a major here means two JUnit majors in one
+      # repository. Minors and patches on the 5.x line still flow. Without this,
+      # the same 6.x bump keeps reopening (it has already come back twice).
+      - dependency-name: "org.junit:junit-bom"
+        update-types: ["version-update:semver-major"]
 
   # The workflow pins actions to major tags (@v4), which is the common trade-off:
   # you get patches for free but the tag is mutable, so you are trusting the
