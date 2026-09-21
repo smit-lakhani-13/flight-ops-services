@@ -50,12 +50,27 @@ pause
 # ── Act 2 ────────────────────────────────────────────────────────────────────
 act "ACT 2 — idempotency: a retry is not an error"
 say "POST a booking. 201, with a Location header."
-run "curl -s -i -X POST '$API/bookings' -H 'Content-Type: application/json' \\
-  -d '{\"flightNumber\":\"UA123\",\"passengerName\":\"Smit Lakhani\",\"seats\":2,\"idempotencyKey\":\"demo-key-1\"}' | head -4"
+POST_BOOKING="curl -s -i -X POST '$API/bookings' -H 'Content-Type: application/json' \\
+  -d '{\"flightNumber\":\"UA123\",\"passengerName\":\"Smit Lakhani\",\"seats\":2,\"idempotencyKey\":\"demo-key-1\"}'"
+echo "${ylw}\$ $POST_BOOKING | head -4${off}"
+HDRS=$(eval "$POST_BOOKING")
+printf '%s\n' "$HDRS" | head -4
+echo
 
-say "Follow that Location header. It resolves — this endpoint threw"
+# Read the Location value the server actually sent rather than assuming
+# /bookings/1. This is the same discipline as the fix for bug 2, where the
+# test asserted the header's text instead of following it — a demo that
+# hardcodes the id would be committing the very mistake this repo documents.
+LOC=$(printf '%s\n' "$HDRS" | awk 'tolower($1)=="location:"{print $2}' | tr -d '\r')
+if [[ -z "$LOC" ]]; then
+  echo "${red}No Location header on that 201 — which is itself the bug this act is about.${off}"
+  exit 1
+fi
+
+say "Follow that header — the script reads the value the server sent rather than"
+say "assuming /bookings/1. It resolves; this endpoint threw"
 say "LazyInitializationException until I found and fixed it (bug 4)."
-run "curl -s '$API/bookings/1' | jq_or_cat"
+run "curl -s '$BASE$LOC' | jq_or_cat"
 pause
 
 say "Now replay the EXACT same idempotency key. Still 201, same bookingId,"
