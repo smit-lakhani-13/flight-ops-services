@@ -75,12 +75,20 @@ public class BookingWriter {
      * Re-reads the winner of a lost idempotency-key race, in a brand-new
      * transaction.
      *
-     * <p>{@code REQUIRES_NEW}, not the default propagation: {@code
-     * insertNewBooking} above just failed and PostgreSQL marks that
-     * connection's transaction aborted until it rolls back — any further
-     * statement on it, including a plain read, gets {@code current
-     * transaction is aborted} instead of a row. A fresh transaction sidesteps
-     * that entirely.
+     * <p>{@code REQUIRES_NEW} is belt-and-braces here, not the thing that
+     * makes this work — worth being precise about, because the obvious story
+     * is the wrong one. What makes it work is that {@link BookingService#book}
+     * is not {@code @Transactional}: by the time {@code
+     * DataIntegrityViolationException} reaches its catch block, Spring's
+     * interceptor has already rolled {@code insertNewBooking}'s transaction
+     * back and returned its connection, so there is no transaction left to
+     * join and a plain {@code @Transactional(readOnly = true)} would behave
+     * identically. Before the {@code BookingWriter} split, {@code book} *was*
+     * transactional, and then this read genuinely did run on the connection
+     * PostgreSQL had marked aborted — it got {@code current transaction is
+     * aborted} instead of a row, which is how the race loser ended up with a
+     * 409. {@code REQUIRES_NEW} keeps that guarantee if {@code book} ever
+     * becomes transactional again.
      *
      * <p>Safe to assume the winning row is already committed and visible:
      * PostgreSQL does not let the loser's {@code INSERT} discover the

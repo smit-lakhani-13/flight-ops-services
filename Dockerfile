@@ -1,8 +1,9 @@
 # =============================================================================
 # Multi-stage build.
 #
-# Stage 1 needs Maven, the full JDK and the source: ~800MB.
-# Stage 2 needs a JRE and one JAR: ~180MB.
+# Stage 1 needs Maven, the full JDK and the source. Stage 2 needs a JRE and one
+# JAR. No figures are quoted for either: this image has never been built (see
+# the Project status table in README.md), so any number here would be invented.
 #
 # The point is not just size. The runtime image contains no compiler, no build
 # tooling and no source code, so none of that is available to an attacker who

@@ -1,5 +1,7 @@
 # flight-ops-service
 
+[![build & tests](https://img.shields.io/github/actions/workflow/status/smit-lakhani-13/flight-ops-services/build-and-deploy.yml?branch=main&label=build%20%26%20tests)](https://github.com/smit-lakhani-13/flight-ops-services/actions/workflows/build-and-deploy.yml)
+
 Flight inventory and booking microservice: a Spring Boot REST API over PostgreSQL that publishes booking events to SQS, where an AWS Lambda consumer projects them into DynamoDB.
 
 **Java 21 · Spring Boot 3.5.16 · Spring Data JPA · PostgreSQL / H2 · Flyway · AWS SQS + Lambda + DynamoDB · Docker · Kubernetes / EKS · SAM · GitHub Actions**
@@ -14,16 +16,16 @@ The airline domain is deliberate. Seat inventory is a genuinely hard consistency
 
 ## Run it in 30 seconds
 
-No database, no AWS account, no Docker, no local Maven install.
+**Prerequisite: a JDK 21.** Nothing else — no database, no AWS account, no Docker, no local Maven install.
 
 ```bash
-export JAVA_HOME=/opt/homebrew/opt/openjdk@21   # any JDK 21; `java -version` must say 21
+java -version          # must report 21
 ./mvnw spring-boot:run
 ```
 
 In-memory H2, schema created by Hibernate, three demo flights seeded on boot (`UA123` EWR→LHR 180 seats, `UA456` ORD→SFO 150, `UA789` EWR→SFO 200). Boots in **under 3s** — 2.59s / 2.67s / 2.79s across three local runs.
 
-> **A JDK-selection trap worth knowing.** `/usr/libexec/java_home -v 21` only resolves JDKs registered with macOS, and Homebrew's are not. On a machine that also has an Oracle JDK 17 installed it therefore exits 0 and hands back *17* — and the build dies several steps later on `release version 21 not supported`, a long way from the actual cause. Set `JAVA_HOME` to the path explicitly.
+> **On macOS, a JDK-selection trap worth knowing.** `/usr/libexec/java_home -v 21` only resolves JDKs registered with macOS, and Homebrew's are not. On a machine that also has an Oracle JDK 17 installed it therefore exits 0 and hands back *17* — and the build dies several steps later on `release version 21 not supported`, a long way from the actual cause. Set `JAVA_HOME` explicitly: `export JAVA_HOME=/opt/homebrew/opt/openjdk@21` on Apple Silicon, `/usr/local/opt/openjdk@21` on Intel.
 
 ```bash
 curl localhost:8080/actuator/health
@@ -169,7 +171,7 @@ Two further things this repository does not claim:
 ├── src/main/resources/
 │   ├── application.yml            profiles: default (H2), postgres, prod
 │   └── db/migration/V1__init.sql  Flyway — owns the PostgreSQL schema
-├── src/test/java/                 10 test classes, layered — see Tests
+├── src/test/java/                 11 test classes, layered — see Tests
 ├── lambda/                        separate parentless Maven module: SQS → DynamoDB consumer
 ├── k8s/                           6 manifests + secret.example.yaml
 │   └── optional/ingress.yaml      separated because applying it provisions a billed ALB
@@ -343,7 +345,7 @@ try {
 }
 ```
 
-`BookingService.book` is deliberately **not** `@Transactional` any more — both transaction boundaries live on `BookingWriter`, called through Spring's proxy rather than through `this.`, which is what makes `REQUIRES_NEW` on `recoverReplay` actually take effect: `insertNewBooking`'s transaction is already aborted by the time the constraint violation is caught, so even a plain read on that same connection would fail. `BookingIdempotencyTest.racingTenCallersOnTheSameKeyAllGetTheSameBooking` pins the fix: ten threads, one idempotency key, every caller gets the same booking id back, exactly one row exists, exactly one seat is debited.
+`BookingService.book` is deliberately **not** `@Transactional` any more — both transaction boundaries live on `BookingWriter`, called through Spring's proxy rather than through `this.`, which is what makes the annotations apply at all. That split *is* the fix: while `book` was `@Transactional`, the recovery read ran inside the transaction PostgreSQL had already marked aborted and got `current transaction is aborted` instead of the winner's row. Now that `book` sits outside any transaction, Spring has rolled that one back before the catch block runs, so `REQUIRES_NEW` on `recoverReplay` is insurance for the day `book` becomes transactional again rather than the thing carrying the fix. `BookingIdempotencyTest.racingTenCallersOnTheSameKeyAllGetTheSameBooking` pins the fix: ten threads, one idempotency key, every caller gets the same booking id back, exactly one row exists, exactly one seat is debited.
 
 Same lesson as the first two bugs, from a new angle: **some contracts are only false under concurrency**, so the test that catches them has to actually create the race, not restate the single-request behaviour twice.
 
@@ -404,7 +406,7 @@ docker build -t flight-ops-service:1.0.0 .
 kubectl apply -f k8s/          # note: -f, NOT -R
 ```
 
-`k8s/` holds six manifests (`namespace`, `configmap`, `deployment`, `service`, `hpa`, `pdb`) plus `secret.example.yaml`, which is a template and is never applied. **`k8s/optional/ingress.yaml` is in a subdirectory on purpose**: applying it provisions an AWS ALB that bills continuously, so it takes a deliberate second command rather than being swept up by `kubectl apply -f k8s/`.
+`k8s/` holds six manifests (`namespace`, `configmap`, `deployment`, `service`, `hpa`, `pdb`) plus `secret.example.yaml`, a placeholder template. `apply -f k8s/` **does** sweep that one up — it is in the directory like everything else — so copy it to `k8s/secret.yaml` (gitignored), put the real password there, and apply that file explicitly afterwards; the manifest's own header explains why the apply ordering makes the directory sweep harmless. **`k8s/optional/ingress.yaml` is in a subdirectory on purpose**: applying it provisions an AWS ALB that bills continuously, so it takes a deliberate second command rather than being swept up by `kubectl apply -f k8s/`.
 
 What the manifests get right:
 
