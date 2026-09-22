@@ -4,12 +4,12 @@
 #   ./deploy/aws/cost-check.sh        # the last 7 days
 #   ./deploy/aws/cost-check.sh 14     # the last 14 days
 #
-# Run it the morning after up.sh, and then daily. The forecast is the number
-# that matters: a demo left running is not noticed by the daily figure, it is
-# noticed by the invoice.
+# Run it the morning after up.sh, and then daily. Watch the forecast: a demo
+# left running barely moves the daily figure, and the month's total is where
+# it shows.
 #
-# Cost Explorer lags by 8-24 hours. Today's row is always incomplete and often
-# missing entirely. That is the API, not this script.
+# Cost Explorer lags by 8-24 hours, so today's row is always incomplete and
+# often missing.
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -36,22 +36,20 @@ fi
 TODAY=$(date -u +%Y-%m-%d)
 START=$(ago "$DAYS")
 
-# Cost Explorer itself charges $0.01 per paginated request. Four calls a day is
-# $1.20/year, which is worth knowing about and not worth worrying about.
+# Cost Explorer charges per API request. This script makes four; the price is
+# small enough that running it daily is fine.
 step "Daily cost by service, $START to $TODAY (account $ACCOUNT_ID)"
 
-# Formatting a day-by-service breakdown is more than awk wants to do, and
-# --output table prints one row per service per day with no totals. Ten lines
-# of Python is the smaller thing to read.
+# --output table prints one row per service per day with no totals, and a
+# day-by-service breakdown is more than awk should do. A few lines of Python
+# are easier to read.
 read -r -d '' FORMAT_DAYS <<'PYEOF' || true
 import json, sys
 
 # Read and check before parsing. `json.load` on an empty stream raises
-# JSONDecodeError, and the stream is empty in every case this block exists to
-# explain: Cost Explorer not enabled on the account, no ce:GetCostAndUsage on
-# the caller, an expired token. Reporting those as a Python traceback in a
-# script whose whole job is reassurance about money is the worst possible
-# output.
+# JSONDecodeError, and the stream is empty whenever the call failed: Cost
+# Explorer not enabled, no ce:GetCostAndUsage, an expired token. Each gets a
+# sentence here instead of a traceback.
 raw = sys.stdin.read().strip()
 if not raw:
     print("  Cost Explorer returned nothing. One of:")
@@ -89,10 +87,11 @@ aws ce get-cost-and-usage \
     --metrics UnblendedCost \
     --group-by Type=DIMENSION,Key=SERVICE \
     --query 'ResultsByTime[].{Date: TimePeriod.Start, Items: Groups[?Metrics.UnblendedCost.Amount!=`0`].{Service: Keys[0], Cost: Metrics.UnblendedCost.Amount}}' \
-    --output json 2>/dev/null | python3 -c "$FORMAT_DAYS"
-# The 2>/dev/null above keeps the raw botocore error out of a report a human is
-# reading; the formatter says what to check instead. If it reports nothing at
-# all, this is the command that prints the real reason:
+    --output json 2>/dev/null | python3 -c "$FORMAT_DAYS" || true
+# `|| true`: when the call fails, pipefail makes the pipeline fail with it, and
+# `set -e` would end the script before the forecast and the budgets. The
+# formatter has already said what to check. 2>/dev/null keeps the raw botocore
+# error out of the report; this command prints the real reason:
 #   aws ce get-cost-and-usage --time-period Start=$START,End=$TODAY \
 #     --granularity DAILY --metrics UnblendedCost
 
@@ -142,7 +141,8 @@ aws budgets describe-budgets --account-id "$ACCOUNT_ID" \
 
 cat <<NOTE
 
-  Expected, for the EKS shape, once everything is up: about \$7.72/day.
+  Expected, for the EKS shape, once everything is up: about \$7.72/day
+  (DEPLOYMENT.md section 5 has the breakdown).
 
   Materially higher usually means one of three things:
     - a second NAT gateway (one per AZ if cluster.yaml's nat.gateway is not Single)

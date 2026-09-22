@@ -7,83 +7,51 @@ Description: >
   consumes the queue and projects each event into a DynamoDB table of flight
   events. Deployed by deploy/aws/up.sh, and deletable on its own.
 
-# Deploy, by hand:
-#   sam build
-#   sam deploy --stack-name flight-ops-lambda --resolve-s3 --capabilities CAPABILITY_IAM
+# Deploy by hand with Maven, not `sam build`: SAM builds in a scratch copy of
+# lambda/, where the tests cannot find ../events and ../contracts. sam deploy
+# prefers an existing .aws-sam/build/template.yaml, so delete .aws-sam/ first.
+#   ./mvnw -B -f lambda/pom.xml clean package
+#   sam deploy --template-file template.yaml --stack-name flight-ops-lambda \
+#     --resolve-s3 --capabilities CAPABILITY_IAM
 #   sam local invoke BookingEventFunction -e events/sqs.json
 #   sam logs -n booking-event-handler --stack-name flight-ops-lambda --tail
 #
-# Tear down:
-#   sam delete --stack-name flight-ops-lambda --region ap-south-1
-# or ./deploy/aws/down.sh, which also removes the bucket `--resolve-s3` creates
-# behind your back and then proves nothing is left.
+# Tear down with `sam delete --stack-name flight-ops-lambda --region ap-south-1`
+# or ./deploy/aws/down.sh. The shared bucket `--resolve-s3` creates is kept
+# unless you pass --delete-sam-bucket.
 #
-# COST. Everything here is pay-per-use and idles at effectively $0: two SQS
-# queues (1M requests/month free, forever), a PAY_PER_REQUEST DynamoDB table
-# (charged per write, not per hour), and a Lambda that costs nothing when it is
-# not invoked. That is the opposite of the EKS cluster in cluster.yaml, which
-# bills $0.10/hour for the control plane whether or not anything runs — which
-# is why this half is worth deploying on its own and that half is not.
-#
-# The one line item that is not free-tier friendly is X-Ray (Tracing: Active
-# below) — still cents at this volume, but a real charge.
-#
-# CloudFormation caps Description at 1024 characters and rejects the stack at
-# create time, not at build time. Hence the split: the summary is the
-# Description, the reasoning is comments, and comments are not uploaded.
+# Everything here is pay-per-use and idles at about $0 (DEPLOYMENT.md section
+# 5). X-Ray stays inside its free tier at this volume: 100,000 traces recorded
+# and 1,000,000 retrieved a month.
 
 Globals:
   Function:
-    # Must match <maven.compiler.release>21</maven.compiler.release> in
-    # lambda/pom.xml. Bytecode newer than the runtime is an
-    # UnsupportedClassVersionError on every single invocation, and CloudWatch
-    # shows you nothing more useful than that.
-    #
-    # Lambda also offers java25 now. Staying on 21 is deliberate: it is the LTS
-    # the main service targets, and one language level across both artifacts
-    # means the shared DTO contract cannot drift on a compiler difference.
+    # Must match maven.compiler.release in lambda/pom.xml, or every invocation
+    # is an UnsupportedClassVersionError. 21, not java25: it is the main
+    # service's LTS, so one JDK builds both modules and there is one JAVA_HOME
+    # to get right.
     Runtime: java21
 
-    # arm64 (Graviton2) is ~20% cheaper per GB-second than x86_64 and usually a
-    # little faster for JVM workloads.
-    #
-    # Safe here specifically because the artifact is pure JVM bytecode — there is
-    # nothing architecture-specific to cross-compile, so `sam build` on an Apple
-    # Silicon Mac produces a working arm64 function with no --platform gymnastics.
-    # This is exactly the trap the Docker image in ./Dockerfile DOES hit: an
-    # image built on an Apple Silicon machine is arm64 and crash-loops on amd64
-    # nodes with "exec format error". The CI workflow sidesteps it by building on
-    # an amd64 runner; a local build needs --platform linux/amd64. The difference
-    # is that a container ships an OS, and a Lambda zip of .class files does not.
-    #
-    # It would NOT be safe if this used the AWS CRT HTTP client, or any other
-    # dependency with bundled native libraries. It uses url-connection-client,
-    # which is a thin wrapper over java.net.HttpURLConnection and therefore pure
-    # Java — see the <exclusions> block in lambda/pom.xml for why that client and
-    # not one of the three the SDK ships by default.
+    # arm64: about 20% cheaper per GB-second than x86_64. Safe because the jar
+    # is pure bytecode (url-connection-client, not the native AWS CRT client;
+    # see the <exclusions> in lambda/pom.xml). The Docker image is different:
+    # it ships an OS and must be built for the nodes' amd64.
     Architectures:
       - arm64
 
-    # Memory is the only performance dial Lambda gives you — CPU is allocated
-    # proportionally, so 1024 MB is roughly twice the CPU of 512 MB. For a JVM
-    # function that matters more than the RAM does: a bigger size can be CHEAPER
-    # overall, because halving the duration cancels out doubling the rate.
-    # 1024 MB is the usual sweet spot for JVM cold starts. Worth measuring rather
-    # than guessing — AWS Lambda Power Tuning exists for this.
+    # CPU scales with memory. For a JVM, 1024 MB can cost less than 512 MB,
+    # because halving the duration cancels doubling the rate.
     MemorySize: 1024
 
-    # Deliberately 6x smaller than the queue's VisibilityTimeout (180s). See the
-    # comment on BookingEventQueue — this relationship is the classic SQS-Lambda
-    # misconfiguration.
+    # A sixth of the queue's VisibilityTimeout; see BookingEventQueue.
     Timeout: 30
 
     Tracing: Active
 
     Environment:
       Variables:
-        # Read by BookingEventHandler's no-arg constructor, which throws
-        # IllegalStateException at init if it is missing rather than failing one
-        # message at a time with an opaque SDK validation error.
+        # BookingEventHandler throws at init if this is missing, instead of
+        # failing each message with an opaque SDK validation error.
         DDB_TABLE: !Ref FlightEventsTable
 
     Tags:
@@ -91,42 +59,23 @@ Globals:
 
 Resources:
 
-  # ---------------------------------------------------------------------------
-  # Queues
-  # ---------------------------------------------------------------------------
-
   BookingEventQueue:
     Type: AWS::SQS::Queue
     Properties:
       QueueName: booking-events
 
-      # Encryption at rest, with the SQS-owned key rather than a customer KMS
-      # key. Free, and it costs nothing in latency; a customer key would add
-      # $1/month plus a KMS request per message batch. What the SQS-owned key
-      # does not give you is a key policy of your own — so for data with a
-      # compliance requirement naming KMS, this line is not the answer. For
-      # booking ids and flight numbers, it is.
+      # The SQS-owned key: free, with no key policy of your own. Data under a
+      # rule that names KMS would need a customer key; booking ids do not.
       SqsManagedSseEnabled: true
 
-      # THE RULE: VisibilityTimeout must be at least the function Timeout, and
-      # the AWS guidance is at least 6x it. This is 6 x 30s exactly.
-      #
-      # Why it matters: while the function is processing a message, the message
-      # is invisible to other consumers. If visibility expires before the
-      # function finishes, SQS hands the SAME message to a SECOND concurrent
-      # invocation — so a slow function silently doubles its work, and any
-      # non-idempotent side effect happens twice. The 6x margin covers retries
-      # inside the SDK and the batch of 10 being processed serially.
-      #
-      # This handler is idempotent (conditional write), so the damage would be
-      # bounded here. That is a reason to relax, not a reason to skip it.
+      # AWS advises 6x the function Timeout; this is 6 x 30s. If visibility
+      # expires mid-batch, SQS hands the same message to a second invocation.
       VisibilityTimeout: 180
 
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt BookingEventDLQ.Arn
-        # 3 total attempts. Low on purpose: with a poison message, every extra
-        # attempt is a paid invocation that cannot succeed. High enough to ride
-        # out a DynamoDB throttle or a transient network fault.
+        # Enough to ride out a throttle; each extra try at a poison message is
+        # a paid invocation that cannot succeed.
         maxReceiveCount: 3
 
       Tags:
@@ -138,43 +87,26 @@ Resources:
     Properties:
       QueueName: booking-events-dlq
 
-      # Encryption at rest, with the SQS-owned key rather than a customer KMS
-      # key. Free, and it costs nothing in latency; a customer key would add
-      # $1/month plus a KMS request per message batch. What the SQS-owned key
-      # does not give you is a key policy of your own — so for data with a
-      # compliance requirement naming KMS, this line is not the answer. For
-      # booking ids and flight numbers, it is.
       SqsManagedSseEnabled: true
 
-      # 14 days, the SQS maximum. A DLQ that expires its messages is worse than
-      # no DLQ: it looks like a safety net and quietly deletes the evidence.
-      # 14 days means a Friday-night failure is still there on Monday week.
+      # 14 days, the SQS maximum: a Friday-night failure is still there on
+      # Monday week.
       MessageRetentionPeriod: 1209600
       Tags:
         - Key: Project
           Value: flight-ops
 
-  # ---------------------------------------------------------------------------
-  # Table
-  # ---------------------------------------------------------------------------
-
   FlightEventsTable:
-    # AWS::DynamoDB::Table, not SAM's AWS::Serverless::SimpleTable, because
-    # SimpleTable only supports a partition key and this needs a sort key.
+    # Not AWS::Serverless::SimpleTable, which has no sort key.
     Type: AWS::DynamoDB::Table
     Properties:
       TableName: flight-status-events
 
-      # On-demand. No capacity planning, no throttling under a burst, and $0
-      # when idle — the right trade for a spiky, low-average-volume event
-      # stream. Provisioned capacity with autoscaling is cheaper at sustained
-      # high volume, and that crossover (very roughly 15-20% duty cycle) is the
-      # real answer to "on-demand or provisioned?".
+      # On-demand: $0 when idle and no throttling under a burst. Provisioned
+      # wins above very roughly a 15-20% duty cycle.
       BillingMode: PAY_PER_REQUEST
 
-      # Only key attributes are declared. DynamoDB is schemaless for everything
-      # else, which is why bookingId/seats/eventType/bookingTime appear nowhere
-      # here even though the handler writes them on every item.
+      # Key attributes only; the other item fields need no declaration.
       AttributeDefinitions:
         - AttributeName: flightNumber
           AttributeType: S
@@ -182,47 +114,19 @@ Resources:
           AttributeType: S
 
       KeySchema:
-        # Partition key. Chosen because every query in this domain is
-        # "what happened to flight X" — a query inside one partition, which is
-        # the cheap, fast, single-digit-millisecond access pattern DynamoDB is
-        # good at. It also means one very busy flight is one hot partition; the
-        # standard fix is a write-sharding suffix, unnecessary at this scale.
+        # Every query is "what happened to flight X", inside one partition.
         - AttributeName: flightNumber
           KeyType: HASH
 
-        # Sort key. IMPORTANT: the handler writes this as
-        #   <ISO-8601 timestamp>#<bookingId>
-        # NOT the bare timestamp.
-        #
-        # A bare timestamp is not unique. Two different bookings on the same
-        # flight in the same instant would land on the same primary key, the
-        # handler's conditional write would reject the second one, and the event
-        # would be logged as "Duplicate ignored" and silently lost. Appending
-        # the bookingId makes the key unique per booking while still being
-        # derived entirely from the persisted event, so it stays identical
-        # across SQS redeliveries — which is the property that makes the
-        # conditional write a real idempotency check.
-        #
-        # Range queries still work: the timestamp is still the prefix, so
-        # Query(flightNumber=..) returns time-ordered events and
-        # begins_with(eventTime, "2026-09-15") still filters by day.
-        #
-        # "Time-ordered" holds because the handler writes the timestamp at a
-        # FIXED WIDTH -- always six fractional digits -- not because ISO-8601
-        # sorts lexicographically on its own. It does not: Instant.toString()
-        # prints the shortest round-tripping form, so a whole second and the
-        # microsecond after it compare in the wrong order. See
-        # BookingEventHandler#sortKey, which is where the reasoning lives and
-        # the only place it should be restated.
-        #
-        # See events/sqs-same-instant.json — feed it to `sam local invoke` and
-        # the bare-timestamp design loses an event; this one writes both.
+        # <fixed-width ISO-8601 timestamp>#<bookingId>. The bookingId keeps two
+        # bookings in the same instant apart, and the key is the same on every
+        # redelivery, so the conditional write is an idempotency check.
+        # BookingEventHandler#sortKey has the reasoning;
+        # events/sqs-same-instant.json exercises it.
         - AttributeName: eventTime
           KeyType: RANGE
 
-      # Point-in-time recovery is off. Free tier does not cover it and this
-      # table holds regenerable demo data. It would be indefensible to leave off
-      # on anything real.
+      # Off: not in the free tier, and this is regenerable demo data.
       # PointInTimeRecoverySpecification:
       #   PointInTimeRecoveryEnabled: true
 
@@ -230,25 +134,13 @@ Resources:
         - Key: Project
           Value: flight-ops
 
-  # ---------------------------------------------------------------------------
-  # Function
-  # ---------------------------------------------------------------------------
-
-  # Lambda creates its own log group on first invocation, with retention set to
-  # "Never expire". Nothing deletes it — not `sam delete`, not deleting the
-  # function — because CloudFormation never owned it. It bills $0.03/GB/month
-  # forever, which is small enough that nobody notices and permanent enough
-  # that it accumulates across every stack anyone has ever deployed.
-  #
-  # Declaring it here means the stack owns it, so it is deleted with the stack,
-  # and it carries a retention period from the first log line rather than from
-  # whenever somebody remembers.
+  # Declared, so the stack owns it and deletes it. Left to itself, Lambda makes
+  # one that never expires and that no stack removes.
   BookingEventFunctionLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: /aws/lambda/booking-event-handler
-      # 7 days. Long enough to debug last week's failure, short enough that the
-      # DLQ is the durable record rather than the logs.
+      # A week is enough; the DLQ is the durable record of a failure.
       RetentionInDays: 7
       Tags:
         - Key: Project
@@ -256,57 +148,23 @@ Resources:
 
   BookingEventFunction:
     Type: AWS::Serverless::Function
-    # Without this, the function can be created before its log group and will
-    # create its own — with no retention — and the stack then fails because the
-    # log group it is trying to create already exists.
+    # Otherwise Lambda can create the group first, and the stack then fails.
     DependsOn: BookingEventFunctionLogGroup
     Properties:
-      # SAM sees a pom.xml here and builds it with its own Maven workflow.
-      #
-      # Worth knowing: that workflow produces an EXPLODED artifact (classes plus
-      # copied dependency jars), so it does NOT use the shaded uber-jar that
-      # lambda/pom.xml goes to some trouble to build correctly. Both are valid
-      # Lambda artifacts. The shade config is kept because `mvn package` alone
-      # then yields something deployable by hand:
-      #   aws lambda update-function-code --function-name <name> \
-      #     --zip-file fileb://lambda/target/booking-event-handler.jar
-      # and because getting the ServicesResourceTransformer wrong is one of the
-      # more instructive ways to break an AWS SDK uber-jar.
-      CodeUri: ./lambda
+      # The shaded jar, deployed as built; CI checks it holds the Handler.
+      CodeUri: lambda/target/booking-event-handler.jar
 
-      # Fully-qualified class :: method. A typo here is a Handler-not-found
-      # error at invoke time, never at deploy time — CloudFormation has no idea
-      # what classes are in the zip.
       Handler: com.smit.flightops.lambda.BookingEventHandler::handleRequest
 
       Description: Projects BookingCreated events from SQS into DynamoDB
 
-      # Named explicitly, which CloudFormation would otherwise do for us with a
-      # stack-and-hash suffix. The cost of a fixed name is that two copies of
-      # this stack cannot coexist in one region, and that a change requiring
-      # replacement needs the old function deleted first. The benefit is the
-      # one below: a log group can only be declared for a function whose name
-      # is known before deployment.
+      # Fixed, so the log group above can name it. Two copies of this stack
+      # cannot share a region.
       FunctionName: booking-event-handler
 
-      # Blast-radius and cost cap. Without it, a 10,000-message backlog scales
-      # this out to the account's full concurrency and hammers DynamoDB.
-      #
-      # TRADE-OFF, and it is a real one: reserved concurrency plus an SQS trigger
-      # means that once the limit is hit, Lambda THROTTLES the poller. Throttled
-      # messages go back to the queue with ApproximateReceiveCount incremented,
-      # so a sustained backlog can burn through maxReceiveCount: 3 and land
-      # perfectly good messages in the DLQ. The mitigations are a higher
-      # maxReceiveCount, a MaximumConcurrency on the event source instead of
-      # reserved concurrency on the function, or accepting the risk. For a demo
-      # stack on a live personal account, the cost cap is worth more than the
-      # throughput.
-      ReservedConcurrentExecutions: 10
-
-      # Least privilege, from a SAM policy template: PutItem/UpdateItem/DeleteItem
-      # on exactly this table and nothing else. Not AmazonDynamoDBFullAccess,
-      # not Resource: "*". The handler only ever calls PutItem, so even this is
-      # slightly broader than needed.
+      # PutItem, UpdateItem and BatchWriteItem on this table and its indexes;
+      # the handler only calls PutItem. The SQS event adds
+      # AWSLambdaSQSQueueExecutionRole, whose SQS actions are on Resource "*".
       Policies:
         - DynamoDBWritePolicy:
             TableName: !Ref FlightEventsTable
@@ -317,44 +175,29 @@ Resources:
           Properties:
             Queue: !GetAtt BookingEventQueue.Arn
 
-            # 10 messages per invocation. Fewer invocations, and the fixed cost
-            # of a cold start is amortised across the batch.
             BatchSize: 10
 
-            # The setting that makes the whole partial-failure design work.
-            #
-            # Without it, Lambda's contract is all-or-nothing: the function
-            # either returns successfully and SQS deletes all 10 messages, or it
-            # throws and all 10 come back — including the 9 that already
-            # succeeded, which then get reprocessed. With it, the handler's
-            # returned SQSBatchResponse lists only the message IDs that failed
-            # and only those return to the queue.
-            #
-            # Two things bite people here:
-            #  - The function must return an SQSBatchResponse. Returning null or
-            #    the wrong type is treated as "everything failed".
-            #  - A message the handler does not report is DELETED. That is why
-            #    BookingEventHandler reports unparseable JSON as a failure
-            #    instead of shrugging it off: dropping it would destroy the
-            #    event, whereas reporting it preserves it in the DLQ.
+            # Caps a backlog at five invocations. Unlike reserved concurrency,
+            # it takes nothing from the account pool, so it deploys on a small
+            # quota. Messages over the cap wait in the queue instead of being
+            # throttled back with a raised receive count and sent to the DLQ.
+            # The value must be 2 to 1000. It limits only the poller, so an
+            # account pool that runs dry can still throttle.
+            ScalingConfig:
+              MaximumConcurrency: 5
+
+            # Only the ids in the returned SQSBatchResponse go back to the
+            # queue. A null response or an empty list counts as complete
+            # success and deletes the whole batch, so every exit path must
+            # return the failures it found, unparseable JSON included. An
+            # invalid response or an unknown itemIdentifier fails the batch.
             FunctionResponseTypes:
               - ReportBatchItemFailures
 
-  # SnapStart is deliberately NOT enabled.
-  #
-  # It is the obvious cold-start answer for Java (snapshot the initialised JVM,
-  # restore in ~200ms instead of 3-6s), and it is free on Java runtimes. But:
-  #  - it requires a published version and an AutoPublishAlias, and an SQS event
-  #    source pointed at the alias, which is real added moving parts;
-  #  - the benefit here is close to zero. This is an ASYNCHRONOUS consumer. No
-  #    user is waiting on it, so a one-second cold start on the first message of
-  #    a batch is invisible;
-  #  - restored execution environments resume from a snapshot, so anything
-  #    cached at init — a random seed, a timestamp, a DB connection, a
-  #    credential with an expiry — is stale on restore. The DynamoDB client here
-  #    would be fine; that is a property to verify, not assume.
-  # Enable it for a synchronous, user-facing Java function behind API Gateway.
-  # Knowing when NOT to reach for it is the more useful half of the answer.
+  # No SnapStart. Commonly reported figures (not measured here) put a restore
+  # at a few hundred ms against 1-2s for a plain SDK handler. It needs a
+  # published version and an alias, state cached at init is stale on restore,
+  # and no one waits on this asynchronous consumer's cold start.
 
 Outputs:
   QueueUrl:

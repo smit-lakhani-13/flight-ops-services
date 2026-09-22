@@ -3,34 +3,24 @@ name: codeql
 # Static analysis for the Java in both modules, reported into the repository's
 # Security tab.
 #
-# ADVANCED setup, not GitHub's default setup, and the two are mutually
-# exclusive: with default setup enabled, an uploaded analysis from a workflow is
-# rejected with "CodeQL analyses from advanced configurations cannot be
-# processed when the default setup is enabled", and every run of this file goes
-# red. Before merging this, default setup was confirmed off — the check is that
-# Settings → Code security → Code scanning shows no default setup, or
-# equivalently that the Actions workflow list contains no dynamic "CodeQL"
-# entry. If somebody turns it on later, delete this file rather than fighting
-# it; default setup does the same job with less to maintain.
+# Advanced setup, which cannot coexist with GitHub's default setup. With both
+# on, every upload here fails with "CodeQL analyses from advanced
+# configurations cannot be processed when the default setup is enabled".
+# Default setup is off (Settings → Code security → Code scanning). If someone
+# turns it on, delete this file; default setup does the same job.
 #
-# A separate file rather than a job in build-and-deploy.yml, for two reasons.
-# The schedule below wants to run on its own cadence without dragging a full
-# Maven build and a deploy gate along with it, and the README badge for
-# build-and-deploy should mean "it builds and the tests pass" rather than also
-# meaning "and no new CodeQL alert appeared overnight".
+# A separate file, so the weekly schedule runs without a Maven build and a
+# deploy gate, and the build-and-deploy badge means only that it builds and the
+# tests pass.
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
   schedule:
-    # Weekly, Monday 04:17 UTC. The schedule is the point rather than a nicety:
-    # CodeQL ships new queries, so code that was clean when it merged can be
-    # found to be vulnerable months later without a line of it changing. A push
-    # trigger alone would never look again.
-    #
-    # 04:17 rather than 04:00 — GitHub queues everything scheduled on the hour
-    # and the run can be delayed by a long way.
+    # Weekly, Monday 04:17 UTC. CodeQL ships new queries, so code that was
+    # clean at merge can be flagged later without changing. Off the hour,
+    # because GitHub queues everything scheduled on it.
     - cron: '17 4 * * 1'
 
 permissions:
@@ -44,8 +34,7 @@ jobs:
 
     permissions:
       contents: read
-      # To write the analysis into the Security tab. Without it the run
-      # completes and the results go nowhere.
+      # Writes the analysis into the Security tab.
       security-events: write
       # CodeQL reads workflow run metadata to attribute results to a run.
       actions: read
@@ -56,34 +45,25 @@ jobs:
       - name: Initialise CodeQL
         uses: github/codeql-action/init@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
         with:
-          # One language identifier covers both — CodeQL analyses Java and
-          # Kotlin with the same extractor. Both Maven modules are in scope:
-          # lambda/ is a parentless build the reactor never reaches, and it
-          # would be invisible to anything that worked from the root POM.
+          # One extractor covers Java and Kotlin. It reads both Maven modules,
+          # including lambda/, a parentless build the root reactor never
+          # reaches.
           languages: java-kotlin
 
-          # Buildless. The alternative is `autobuild`, which runs Maven again —
-          # a second full `mvn package` for no analytical gain, since the
-          # extractor reads the source either way. It also removes a whole class
-          # of failure where CodeQL goes red because a build step broke rather
-          # than because it found anything.
-          #
-          # The cost, stated because it is real: without a build, CodeQL
-          # resolves fewer third-party types, so a data-flow path that runs
-          # through a library method may not be traced. For a codebase whose
-          # risky paths are its own controllers, repositories and the outbox,
-          # that is a trade worth taking.
+          # Buildless. `autobuild` would run a second full `mvn package`, and
+          # CodeQL could then fail because a build step broke. The cost: fewer
+          # third-party types resolve, so a data-flow path through a library
+          # method may go untraced. The risky paths here are the project's own
+          # controllers, repositories and outbox, so I accept that.
           build-mode: none
 
-          # More security queries than the default suite, without the
-          # `security-and-quality` style rules — which fire on formatting and
-          # naming and would bury a genuine finding under a hundred opinions.
+          # More security queries than the default suite, without the style
+          # rules in `security-and-quality`, which would bury a real finding.
           queries: security-extended
 
       - name: Analyse
         uses: github/codeql-action/analyze@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
         with:
-          # Namespaces these results so they sit alongside the Trivy SARIF that
-          # build-and-deploy.yml uploads under `trivy-fs`, rather than one
-          # replacing the other.
+          # Keeps these results beside the Trivy SARIF that build-and-deploy.yml
+          # uploads under `trivy-fs`, instead of replacing it.
           category: /language:java-kotlin

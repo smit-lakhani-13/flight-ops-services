@@ -1,41 +1,35 @@
-# Non-secret configuration. These land as environment variables via `envFrom`
-# in the Deployment, and Spring Boot's relaxed binding maps SPRING_PROFILES_ACTIVE
-# to spring.profiles.active, AWS_REGION to app.aws.region, and so on.
+# Non-secret configuration, as environment variables through `envFrom` in the
+# Deployment. Relaxed binding maps SPRING_PROFILES_ACTIVE to
+# spring.profiles.active; the rest (AWS_REGION, DB_URL, SQS_QUEUE_URL, ...) are
+# read by name through ${...} placeholders in application.yml. The image is
+# built once, and what differs per cluster lives here.
 #
-# The split is deliberate: config that differs per environment lives here, not
-# in application.yml. The image is built once and behaves differently per cluster.
-#
-# Caveat to know: a ConfigMap change does NOT restart pods. Spring reads env vars
-# once at startup, so an edit here is invisible until
+# A change here does not restart pods. Spring reads the environment once, so
+# follow an edit with
 #   kubectl rollout restart deployment/flight-ops -n flight-ops
-# (Reloadable config is Spring Cloud Kubernetes territory, which this does not use.)
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: flight-ops-config
 data:
-  # Selects the `prod` profile document in application.yml: Flyway on,
-  # ddl-auto=validate, seeder off, actuator health details hidden.
+  # The `prod` profile: Flyway on, ddl-auto=validate, seeder off, health
+  # details hidden.
   SPRING_PROFILES_ACTIVE: "prod"
 
-  # Must match cluster.yaml and the AWS_REGION in the GitHub Actions workflow.
-  # ONE region everywhere (cluster, ECR, SQS, DynamoDB): cross-region traffic is
-  # billed, and if these disagree the failure shows up as an IRSA auth error or
-  # an ECR image-pull error rather than as an obvious region mismatch.
+  # Must match cluster.yaml and the workflow's AWS_REGION. A mismatch shows up
+  # as an IRSA auth error or an ECR image-pull error.
   AWS_REGION: "ap-south-1"
 
 
-  # Quoted because ConfigMap values must be strings. `8080` unquoted is a YAML
-  # integer and the apply is rejected.
+  # Quoted: ConfigMap values must be strings, and a bare 8080 is an integer.
   SERVER_PORT: "8080"
 
-  # The prod profile resolves ${APP_EVENTS_PUBLISHER:sqs}, so this could be left
-  # out. It is set explicitly so the running config is greppable in one place.
+  # The prod profile defaults to sqs already; set here so the running config is
+  # greppable in one place.
   APP_EVENTS_PUBLISHER: "sqs"
 
-  # Filled in after `sam deploy` prints the QueueUrl output. Left empty here so
-  # the manifest applies cleanly; SqsEventPublisher fails fast at startup if the
-  # publisher is `sqs` and this is blank, which is the behaviour you want.
+  # The aws overlay fills this in. Empty here, SqsEventPublisher stops the pod
+  # at startup when the publisher is sqs.
   SQS_QUEUE_URL: ""
 
   DB_URL: "jdbc:postgresql://flight-ops-db.example.rds.amazonaws.com:5432/flightops"

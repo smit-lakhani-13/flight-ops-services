@@ -4,16 +4,14 @@
 #   ALERT_EMAIL=you@example.com ./deploy/aws/up.sh
 #
 # Roughly 50 minutes of wall clock, nearly all of it waiting for EKS (~20 min)
-# and RDS (~10 min). Every step is safe to re-run: each checks whether its
-# resource already exists before creating it, so an interrupted run is resumed
-# by running it again rather than by unpicking it by hand.
+# and RDS (~10 min). Every step checks whether its resource already exists
+# before creating it, so an interrupted run is resumed by running it again.
 #
 # It costs money from step 4 onwards. Step 1 prints the rate and asks.
 #
-# What this script does NOT do: build or push the image, and apply the
-# Deployment. Those are CI's job (.github/workflows/build-and-deploy.yml),
-# because the image tag must be a commit SHA and the thing that knows the
-# commit is the thing that built it. This script prints the three values CI
+# CI builds and pushes the image and applies the Deployment
+# (.github/workflows/build-and-deploy.yml): the image tag is a commit SHA, and
+# the job that built the commit knows it. This script prints the values CI
 # needs and waits.
 set -euo pipefail
 
@@ -29,9 +27,12 @@ LBC_POLICY_TAG=v3.5.0            # the matching iam_policy.json tag
 # ---------------------------------------------------------------------------
 step "1/12  Preflight, and what this is about to cost"
 # ---------------------------------------------------------------------------
-require_tool aws eksctl kubectl helm sam openssl htpasswd envsubst
+require_tool aws eksctl kubectl helm sam openssl htpasswd
 [ -n "${ALERT_EMAIL:-}" ] || die "ALERT_EMAIL is required (budget alerts go there). Example:
     ALERT_EMAIL=you@example.com $0"
+
+# Step 3 builds the Lambda jar with the Maven wrapper.
+require_jdk21 "$repo/mvnw"
 
 ACCOUNT_ID=$(require_credentials)
 ok "account $ACCOUNT_ID, region $AWS_REGION"
@@ -67,12 +68,12 @@ cat <<COST
   Tear it all down with:  $here/down.sh
 
 COST
-confirm "This will start billing. Nothing else in this script asks again."
+confirm "This will start billing. The only other prompts are the two hand-offs at steps 9 and 10."
 
 # ---------------------------------------------------------------------------
 step "2/12  Foundation stack — ECR, OIDC trust, deploy role, budgets"
 # ---------------------------------------------------------------------------
-# An account may hold exactly one OIDC provider per URL, so creating a second
+# An account holds at most one OIDC provider per URL, so creating a second
 # fails. Detect an existing one and hand it to the template instead.
 existing_oidc=$(aws iam list-open-id-connect-providers \
     --query "OpenIDConnectProviderList[?contains(Arn, 'token.actions.githubusercontent.com')].Arn" \
@@ -108,12 +109,20 @@ fi
 # ---------------------------------------------------------------------------
 step "3/12  Lambda stack — SQS, DLQ, DynamoDB, the consumer"
 # ---------------------------------------------------------------------------
-# Built and deployed before the cluster on purpose: it is the cheap half, it
-# has no dependency on EKS, and its queue URL is an input the cluster needs.
+# Before the cluster: it is the cheap half, it does not depend on EKS, and the
+# cluster needs its queue URL.
+#
+# Maven builds the jar, not `sam build`. SAM copies only the CodeUri directory
+# into a scratch directory, and the Lambda tests read ../events and
+# ../contracts, so they fail there. template.yaml points CodeUri at the shaded
+# jar. sam deploy prefers .aws-sam/build/template.yaml when one exists, so a
+# stale build from an earlier `sam build` is removed first.
 (
     cd "$repo"
-    sam build
+    rm -rf .aws-sam
+    ./mvnw -B -q -f lambda/pom.xml clean package
     sam deploy \
+        --template-file template.yaml \
         --stack-name "$SAM_STACK" \
         --resolve-s3 \
         --capabilities CAPABILITY_IAM \
@@ -136,18 +145,14 @@ else
 fi
 
 # eksctl does not always set the upgrade policy, and the default on some paths
-# is EXTENDED. Extended support costs an extra \$0.50/hr in Mumbai — six times
-# the control plane itself — and it applies silently the moment the version
-# leaves standard support. STANDARD means the cluster refuses to enter extended
-# support instead of quietly billing for it.
+# is EXTENDED. Extended support bills the control plane at six times the
+# standard rate from the moment the version leaves standard support, with no
+# error anywhere. STANDARD makes the cluster refuse extended support instead.
 #
-# The update call is best-effort -- it fails with a ResourceInUseException if
-# the cluster is still settling, and with nothing useful if the CLI is too old
-# to know the flag. What is NOT best-effort is the result: this reads the
-# policy back and says what it actually is, because "the call returned
-# non-zero" and "the policy is already STANDARD" are different facts and
-# guessing the second from the first is how a cluster quietly bills six times
-# the expected rate for the rest of the demo.
+# The update call is best-effort: it fails with ResourceInUseException while
+# the cluster is still settling, and an old CLI does not know the flag. The
+# policy is then read back, because a failed call and a policy that was
+# already STANDARD look the same from the exit code.
 aws eks update-cluster-config --name "$CLUSTER_NAME" \
     --upgrade-policy supportType=STANDARD >/dev/null 2>&1 || true
 
@@ -179,21 +184,11 @@ step "5/12  Cluster access for the CI role"
 # API access entries, not aws-auth ConfigMap edits. The ConfigMap is the old
 # mechanism and a malformed edit locks everyone out of the cluster with no way
 # back in short of recreating it.
-DEPLOY_ROLE_ARN="arn:aws:iam::${ACCOUNT_ID}:role/github-actions-deploy"
-aws eks create-access-entry \
-    --cluster-name "$CLUSTER_NAME" \
-    --principal-arn "$DEPLOY_ROLE_ARN" \
-    --type STANDARD >/dev/null 2>&1 || log "access entry already exists"
-
+#
 # Scoped to one namespace. The CI role can roll out the application and cannot
-# touch kube-system, the LB controller, or another team's namespace — which is
-# what makes "CI has cluster access" an acceptable sentence.
-aws eks associate-access-policy \
-    --cluster-name "$CLUSTER_NAME" \
-    --principal-arn "$DEPLOY_ROLE_ARN" \
-    --policy-arn arn:aws:eks::aws:cluster-access-policy/AmazonEKSEditPolicy \
-    --access-scope "type=namespace,namespaces=$NAMESPACE" >/dev/null 2>&1 \
-    || log "access policy already associated"
+# touch kube-system, the LB controller, or another namespace.
+grant_namespace_access "arn:aws:iam::${ACCOUNT_ID}:role/github-actions-deploy" \
+    arn:aws:eks::aws:cluster-access-policy/AmazonEKSEditPolicy "$NAMESPACE"
 ok "github-actions-deploy may edit namespace/$NAMESPACE and nothing else"
 
 # ---------------------------------------------------------------------------
@@ -207,7 +202,7 @@ if [ -z "$VPC_ID" ] || [ -z "$PRIVATE_SUBNETS" ]; then
     die "could not read the eksctl stack outputs"
 fi
 
-if stack_exists "$DATA_STACK"; then
+if stack_ready "$DATA_STACK"; then
     ok "data stack already exists — not touching the password"
 else
     # Generated here, used twice (the RDS parameter and the Kubernetes
@@ -227,6 +222,7 @@ else
         --no-fail-on-empty-changeset
 fi
 DB_URL=$(stack_output "$DATA_STACK" JdbcUrl)
+require_jdbc_url "$DB_URL"
 state_set DB_URL "$DB_URL"
 ok "$DB_URL"
 
@@ -265,8 +261,8 @@ if ! aws iam get-policy --policy-arn "$LBC_POLICY_ARN" >/dev/null 2>&1; then
     ok "created AWSLoadBalancerControllerIAMPolicy from $LBC_POLICY_TAG"
 fi
 
-# Here eksctl DOES create the ServiceAccount, because nothing else owns it —
-# it lives in kube-system and is referenced by the Helm chart.
+# Here eksctl DOES create the ServiceAccount, because nothing else owns it: it
+# lives in kube-system and the Helm chart refers to it.
 eksctl create iamserviceaccount \
     --cluster "$CLUSTER_NAME" \
     --namespace kube-system \
@@ -312,13 +308,13 @@ else
     API_PASSWORD_PLAIN=$(openssl rand -base64 18 | tr -d '/+= ')
     OPS_PASSWORD_PLAIN=$(openssl rand -base64 18 | tr -d '/+= ')
 
-    # bcrypt, cost 10. The service's ApiSecurityProperties REJECTS a value with
-    # no {id} prefix at startup, so a hash pasted without it fails the pod
-    # rather than silently storing a plaintext password.
+    # bcrypt, cost 10, with the {bcrypt} prefix. ApiSecurityProperties refuses
+    # a value with no {id} prefix at startup, so a hash pasted without one
+    # stops the pod instead of being stored as a plaintext password.
     api_hash="{bcrypt}$(htpasswd -bnBC 10 "" "$API_PASSWORD_PLAIN" | tr -d ':\n')"
     ops_hash="{bcrypt}$(htpasswd -bnBC 10 "" "$OPS_PASSWORD_PLAIN" | tr -d ':\n')"
     # shellcheck disable=SC2016  # '$2' is bcrypt's version marker in a glob,
-    # not a variable: single quotes are exactly what this line needs.
+    # not a variable, so it stays in single quotes.
     case "$api_hash" in
         '{bcrypt}$2'*) : ;;
         *) die "htpasswd produced something that is not a bcrypt hash: ${api_hash:0:20}..." ;;
@@ -332,16 +328,11 @@ else
         --dry-run=client -o yaml | kubectl apply -f -
     ok "secret created"
 
-    # PRINTED HERE, NOT AT THE END, and the ordering is the whole point.
-    #
-    # Only the bcrypt hash reaches the cluster, so these two strings exist
-    # nowhere else in the universe once this shell exits. Every step after this
-    # one can fail -- the rollout can time out, the ALB can never go healthy,
-    # the demo can hit an endpoint that is not there -- and under `set -e` a
-    # failure anywhere below means a closing summary never runs. Putting the
-    # only copy of a password behind three things that can fail is how an
-    # operator ends up deleting and recreating a Secret and restarting every
-    # pod to get back into their own deployment.
+    # Printed here, before anything else can fail. Only the bcrypt hash
+    # reaches the cluster, so these two strings exist nowhere else once this
+    # shell exits. Under `set -e`, a timed-out rollout or an ALB that never
+    # goes healthy ends the run before the closing summary. Getting back in
+    # would then mean replacing the Secret and restarting every pod.
     cat <<CREDS
 
   ${C_BOLD}Credentials — written down now, before anything else can fail.${C_RESET}
@@ -351,7 +342,7 @@ else
     ops user     ops / $OPS_PASSWORD_PLAIN      (ROLE_OPS, the actuator)
 
   The cluster holds the bcrypt hashes, not these. Reading the Secret back gives
-  you \$2b\$10\$... and no way to reverse it. Save them somewhere now.
+  you \$2y\$10\$... and no way to reverse it. Save them somewhere now.
 
 CREDS
     confirm "Copy those two passwords somewhere safe." "saved"
@@ -378,30 +369,20 @@ cat <<HANDOFF
 HANDOFF
 confirm "Waiting for the rollout. Set those, start the workflow, then continue." "done"
 
-log "waiting for the deployment to appear and become available (up to 20 min)..."
-kubectl wait --for=condition=available deployment/flight-ops \
-    -n "$NAMESPACE" --timeout=20m \
-    || die "the deployment did not become available. Diagnose with:
-    kubectl get pods -n $NAMESPACE -o wide
-    kubectl logs -n $NAMESPACE -l app=flight-ops --tail=100 --all-containers
-    kubectl get events -n $NAMESPACE --sort-by=.lastTimestamp | tail -30"
+wait_for_deployment
 ok "pods are serving"
 
 # ---------------------------------------------------------------------------
 step "11/12  Ingress and the public URL"
 # ---------------------------------------------------------------------------
-# -f, not -k, and not `-k ... || -f ...` either. kustomize cannot build a
-# Component as a build root -- a root has to be a Kustomization -- so `-k` here
-# always failed, the 2>/dev/null always hid it, and the `-f` fallback always
-# did the work. That is fine while the Component holds one resource and no
-# transformers, and stops being fine the moment somebody adds a label or a
-# patch to it: the transformed manifest would never be applied and nothing
-# would say so.
+# -f, not -k: kustomize cannot build a Component as a build root. A label or
+# patch added to the Component's kustomization.yaml is therefore not applied
+# here.
 #
-# The Ingress is deliberately outside render-aws.sh. That script renders the
-# six resources CI owns and applies on every push; this one object is opt-in,
-# bills from the moment it exists, and is created once by the operator who
-# accepted that cost. See the header of k8s/components/ingress/kustomization.yaml.
+# The Ingress stays out of render-aws.sh, which renders the six resources CI
+# applies on every push. This one bills from the moment it exists, so the
+# operator who accepted that cost creates it once. See the header of
+# k8s/components/ingress/kustomization.yaml.
 kubectl apply -f "$repo/k8s/components/ingress/ingress.yaml" -n "$NAMESPACE"
 
 log "waiting for the ALB to be provisioned (2-4 minutes)..."
@@ -417,12 +398,9 @@ done
 state_set ALB_HOST "$ALB_HOST"
 ok "http://$ALB_HOST"
 
-# Bounded. An unbounded `until curl ...; do sleep 5; done` is the wrong shape
-# for the one step most likely to never succeed: a security group that does not
-# admit the ALB, or a target group health check pointed at the wrong port, both
-# look exactly like "not ready yet" and neither ever resolves. The script would
-# sit there overnight with the whole stack billing, which is the failure this
-# repository spends the most effort avoiding.
+# Bounded. A security group that does not admit the ALB, or a health check on
+# the wrong port, looks like "not ready yet" and never resolves. An unbounded
+# loop would sit there overnight with the whole stack billing.
 log "waiting for the ALB target group to report healthy (up to 5 minutes)..."
 alb_healthy=0
 for _ in $(seq 1 60); do
@@ -447,11 +425,9 @@ step "12/12  Proving it works, over the internet"
 if [ "$API_PASSWORD_PLAIN" = '(unchanged — see your earlier run)' ]; then
     warn "skipping demo.sh — the API password is from an earlier run and is not known here"
 else
-    # `|| warn`, not a bare call. The demo is the nice-to-have at the end of a
-    # 50-minute run that has already succeeded; a failing act must not take the
-    # exit code of the whole deployment down with it, and must not stop the
-    # summary below from printing. (A command followed by `||` is exempt from
-    # `set -e`, so no set +e is needed here.)
+    # `|| warn`: the deployment has already succeeded, so a failing act must
+    # not fail the run or stop the summary below from printing. A command
+    # followed by `||` is exempt from `set -e`.
     BASE="http://$ALB_HOST" \
     AUTH="-u api:$API_PASSWORD_PLAIN" \
     OPS_AUTH="-u ops:$OPS_PASSWORD_PLAIN" \
@@ -471,7 +447,7 @@ cat <<SUMMARY
     ops user     ops / $OPS_PASSWORD_PLAIN
 
   Repeated from step 9 for convenience, not as the only copy. The cluster
-  stores bcrypt hashes; this reads back \$2b\$10\$... and nothing reversible:
+  stores bcrypt hashes; this reads back \$2y\$10\$... and nothing reversible:
     kubectl get secret flight-ops-secret -n $NAMESPACE -o jsonpath='{.data.API_PASSWORD}' | base64 -d
 
   Running cost: about \$7.72/day. Check it tomorrow with:

@@ -4,45 +4,32 @@
 #   ./demo.sh                          # the eight acts, against the container
 #   docker compose down -v             # -v also drops the database volume
 #
-# This is not how it is deployed. DEPLOYMENT.md covers that. This exists so
-# that "does the container actually work" has an answer that does not cost
-# $7.72/day, and so the PostgreSQL-only behaviour — Flyway migrations,
-# `SELECT ... FOR UPDATE`, `SET lock_timeout` — can be exercised without a
-# cluster. The H2 profile the tests use has none of it.
-#
-# The queue is not here. `APP_EVENTS_PUBLISHER=log` means outbox rows are
-# written, claimed, logged and marked published — the whole of the service's
-# behaviour except the `SendMessage` itself. A local SQS would be LocalStack, a
-# second large image, to test one API call.
+# Not the deployment (DEPLOYMENT.md). It adds what the H2 test profile lacks:
+# Flyway migrations, `SELECT ... FOR UPDATE`, `SET lock_timeout`. There is no
+# queue. With `APP_EVENTS_PUBLISHER=log`, outbox rows go through every step
+# but the `SendMessage` call, so no LocalStack image is needed.
 
 services:
   db:
-    # 17-alpine, matching the RDS engine version in deploy/aws/data.yaml.
-    # Matching it is the point: Flyway migrations that pass against one major
-    # version and fail against another are a class of bug this removes for free,
-    # and the cost of removing it is keeping two numbers in step.
+    # 17, matching the RDS engine version in deploy/aws/data.yaml, so a
+    # migration that works here works there. Keep the two in step.
     image: postgres:17-alpine
     environment:
       POSTGRES_DB: flightops
       POSTGRES_USER: postgres
-      # Local only, on a port that is not published outside the compose network
-      # unless you uncomment the mapping below. Nothing here is a real secret.
+      # Local only, and unpublished outside the compose network unless the
+      # mapping below is uncommented. Nothing here is a real secret.
       POSTGRES_PASSWORD: pass
     volumes:
       - pgdata:/var/lib/postgresql/data
-    # Uncomment to reach the database from the host with psql. Left off by
-    # default because 5432 is a commonly occupied port and the error when it is
-    # already taken ("port is already allocated") sends people looking at the
-    # application rather than at their other container.
+    # Uncomment to reach the database from the host with psql. Off by default,
+    # because 5432 is often taken on a laptop.
     # ports:
     #   - "5432:5432"
     healthcheck:
-      # `pg_isready -U postgres` and not a bare `pg_isready`: without the user,
-      # it reports ready as soon as the server accepts connections, which on
-      # first start happens *before* the init scripts have created the database.
-      # The application then starts, Flyway connects to a database that does not
-      # exist yet, and the whole stack fails on a race that does not reproduce
-      # on the second run.
+      # With -U and -d. On a first start, a bare `pg_isready` passes before the
+      # init scripts create the database, and Flyway fails in a way a second
+      # run does not reproduce.
       test: ["CMD-SHELL", "pg_isready -U postgres -d flightops"]
       interval: 5s
       timeout: 3s
@@ -54,30 +41,18 @@ services:
       context: .
       args:
         # Stamped into org.opencontainers.image.revision, where CI passes the
-        # real commit. The literal `local` is the sentinel for "built from a
-        # working tree", and it is a word rather than an empty string on
-        # purpose: `docker inspect` on an unset label and on a label set to ""
-        # print the same thing, so an empty value cannot be told apart from a
-        # Dockerfile that forgot to set it. The Dockerfile's own ARG default is
-        # `unknown`, for an image built with no --build-arg at all; three
-        # states, three readable answers.
+        # commit. `local` means a working tree; the Dockerfile's default,
+        # `unknown`, means no --build-arg at all.
         GIT_SHA: local
     depends_on:
       db:
-        # Not `depends_on: [db]`, which only waits for the container to be
-        # *created*. The application would start, fail to connect, and exit
-        # before PostgreSQL had finished initialising.
+        # Not `depends_on: [db]`, which waits only for the container to be
+        # created, so the app would exit before PostgreSQL finished initialising.
         condition: service_healthy
     environment:
-      # The single most important line in this file.
-      #
-      # With no profile, the application runs its default configuration, which
-      # is H2 in memory — so `docker compose up` would appear to work perfectly,
-      # serve every endpoint, pass the demo, and be storing nothing. Every
-      # restart would be a clean database and nobody would notice until the
-      # question was "where did my booking go".
-      #
-      # Fail-open defaults are the dangerous kind. This pins it.
+      # The image defaults to prod, which expects RDS, IRSA and the SQS
+      # publisher. This selects the postgres profile: the local database, with
+      # Flyway and the log publisher.
       SPRING_PROFILES_ACTIVE: postgres
 
       # `db` is the compose service name, resolved by compose's own DNS.
@@ -85,36 +60,23 @@ services:
       DB_USER: postgres
       DB_PASSWORD: pass
 
-      # log or sqs, and nothing else: EventProperties rejects a third value at
-      # startup naming the property. This file used to say `noop`, which is not
-      # a mode — neither publisher's @ConditionalOnProperty matched it, so no
-      # EventPublisher bean was defined and the container died on an
-      # unsatisfied dependency instead.
-      #
-      # Outbox rows are written and drained locally; nothing is sent to AWS.
-      # Setting this to `sqs` without a queue URL is a startup failure, by
-      # design — see SqsEventPublisher.
+      # log or sqs; any other value stops startup. `log` drains the outbox and
+      # sends nothing to AWS. `sqs` without SQS_QUEUE_URL also stops startup.
       APP_EVENTS_PUBLISHER: log
 
-      # Bcrypt of "dev-secret" and "dev-ops", which is what demo.sh defaults to.
-      # Hashed rather than {noop} so that the local stack exercises the same
-      # PasswordEncoder path as the deployed one: a {noop} value that works
-      # locally and a bcrypt value that fails in the cluster is a difference
-      # worth not having.
+      # Bcrypt of "dev-secret" and "dev-ops", demo.sh's defaults. Hashed, not
+      # {noop}, so the local stack takes the same PasswordEncoder path as the
+      # cluster. `$$` is compose's escape for a literal `$`.
       API_PASSWORD: "{bcrypt}$$2y$$10$$AebmD7.ds0witGfY6P.qC.K42KNLCYfOlzD4QPQ5Qo4Kp2wUA.NIW"
       OPS_PASSWORD: "{bcrypt}$$2y$$10$$ekIVCvlYn8UNZ2KYa2J/4.C4/StCIwfKJuVEJNcnAqQEzmYqUkjdq"
 
-      # Chattier than the deployed configuration, which is the point of running
-      # it here.
+      # Chattier than the deployed configuration.
       SQL_LOG_LEVEL: DEBUG
     ports:
       - "8080:8080"
     healthcheck:
-      # The readiness group, not /actuator/health: the liveness half reports UP
-      # while Flyway is still migrating, so a plain health check goes green
-      # before the application can serve a request.
-      #
-      # wget rather than curl — the runtime image is Alpine, which ships
+      # Readiness, not /actuator/health: the liveness half reports UP while
+      # Flyway is still migrating. wget, because the Alpine runtime image has
       # BusyBox wget and no curl.
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health/readiness | grep -q UP"]
       interval: 10s

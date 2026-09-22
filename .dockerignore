@@ -1,19 +1,11 @@
-# Keep the build context small and keep secrets out of the image.
-#
-# Everything listed here is either useless in the image or actively unwanted.
-# A large context is slow to send to the daemon and every file in it is a file
-# that could accidentally be COPYed in.
+# Keeps the build context small and secrets out of the image. Every file in
+# the context is sent to the daemon and could be picked up by a careless COPY.
 
-# Build output — the image builds its own inside stage 1. There is deliberately
-# no negation re-including target/*.jar: nothing here COPYs a host-built JAR, and
-# a 71MB stale one in the context would only be dead weight the daemon has to
-# read and a file a careless `COPY . .` could pick up ahead of the real build.
+# Build output. Stage 1 builds its own jar, and nothing COPYs a host-built one.
 target/
 
-# The Maven wrapper is for humans and CI, not for the image. The build stage
-# starts FROM maven:3.9-eclipse-temurin-21, which already pins Maven, so copying
-# the wrapper in would only make the build download a second copy of the same
-# version. Excluding it also stops a `COPY . .` from ever shadowing that.
+# The build stage's base image pins Maven, so the wrapper would only download
+# a second copy of the same version.
 .mvn/
 mvnw
 mvnw.cmd

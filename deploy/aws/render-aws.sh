@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
 # Renders the EKS manifests, fully substituted, to stdout.
 #
-# This is the ONE render path for the six resources the aws overlay owns —
-# Deployment, Service, ConfigMap, ServiceAccount, HPA, PDB. CI uses it,
-# infra-lint validates its output, up.sh uses it, and a human checking what is
-# about to be applied uses it, because three ways of producing the manifests is
-# three ways for them to differ and the difference only shows up in the cluster.
+# The one render path for the six resources the aws overlay owns: Deployment,
+# Service, ConfigMap, ServiceAccount, HPA, PDB. The deploy job applies its
+# output, infra-lint validates it, and a person checking what is about to be
+# applied runs it by hand. One path means the manifests CI checks are the ones
+# the cluster gets.
 #
-# Two manifests are deliberately NOT rendered here, and both are applied by
-# up.sh with `kubectl apply -f`:
+# Two manifests are left out, and up.sh applies both with `kubectl apply -f`:
 #
 #   k8s/namespace.yaml                     cluster-scoped, and CI's access entry
 #                                          is namespace-scoped, so CI may not
@@ -28,11 +27,12 @@ set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo=$(cd "$here/../.." && pwd)
 
-# Every variable is required. The alternative — substituting what is set and
-# leaving the rest — produces a manifest that applies cleanly and runs wrong:
-# an empty SQS_QUEUE_URL beside APP_EVENTS_PUBLISHER=sqs is a pod that goes
-# Ready and fails every publish, which is the single worst failure shape
-# available here. Missing values fail before anything reaches the cluster.
+# Every variable is required. Substituting what is set and leaving the rest
+# empty gives a manifest that applies and then fails in the cluster. An empty
+# SQS_QUEUE_URL beside APP_EVENTS_PUBLISHER=sqs is a rollout that applies
+# cleanly and then crash-loops, because SqsEventPublisher refuses a blank queue
+# URL at startup. Here a missing value fails before anything reaches the
+# cluster.
 missing=()
 for name in AWS_ACCOUNT_ID IMAGE_TAG SQS_QUEUE_URL DB_URL; do
     if [ -z "${!name:-}" ]; then
@@ -45,19 +45,17 @@ if [ ${#missing[@]} -gt 0 ]; then
     exit 2
 fi
 
-# envsubst is given an explicit variable list rather than being let loose on
-# the whole document. Unrestricted, it would also eat any other $NAME in the
-# manifests — a Kubernetes $(FIELD) reference, a shell fragment in a lifecycle
-# hook, a JVM flag — and replace it with an empty string, silently.
-# shellcheck disable=SC2016  # the single quotes are the point: envsubst is
-# given the literal names to substitute, and the shell must not expand them
-# first -- expanded, the list would arrive already substituted and empty.
+# envsubst gets an explicit variable list. Unrestricted, it would replace any
+# other $NAME in the manifests (a shell fragment in a lifecycle hook, a JVM
+# flag) with an empty string, and say nothing.
+# shellcheck disable=SC2016  # envsubst needs the literal names, so the shell
+# must not expand them first; expanded, the list would arrive empty.
 rendered=$(kubectl kustomize "$repo/k8s/overlays/aws" \
     | envsubst '${AWS_ACCOUNT_ID} ${IMAGE_TAG} ${SQS_QUEUE_URL} ${DB_URL}')
 
-# Belt and braces: if a placeholder survives, something was renamed in the
-# overlay and not here, and applying it would create a ServiceAccount
-# annotated with a literal dollar sign.
+# A placeholder that survives means something was renamed in the overlay and
+# not here. Applying it would annotate the ServiceAccount with a literal
+# dollar sign.
 # shellcheck disable=SC2016  # searching for a literal ${, not expanding one
 if printf '%s' "$rendered" | grep -q '\${'; then
     # shellcheck disable=SC2016
@@ -67,23 +65,21 @@ if printf '%s' "$rendered" | grep -q '\${'; then
     exit 3
 fi
 
-# ConfigMap values must stay strings, and one step above can stop them being
-# strings. kustomize drops quotes it considers unnecessary, so the overlay's
-# `DB_URL: "${DB_URL}"` is emitted as `DB_URL: ${DB_URL}` — and envsubst then
-# writes a bare scalar into it. YAML reads a bare `y`, `no`, `on`, `off` as a
-# BOOLEAN and a bare `12345` as an integer, and the Kubernetes API rejects a
-# ConfigMap whose value is not a string:
+# ConfigMap values must stay strings. kustomize drops quotes it considers
+# unnecessary, so the overlay's `DB_URL: "${DB_URL}"` is emitted as
+# `DB_URL: ${DB_URL}`, and envsubst then writes a bare scalar into it. YAML
+# reads a bare `no` or `off` as a boolean and `12345` as an integer, and the
+# API rejects the ConfigMap:
 #
 #   ConfigMap flight-ops-config is invalid: got boolean, want null or string
 #
-# A JDBC URL will not trip this. A queue name, a tag, or the next value someone
-# adds here might, and the failure arrives at apply time with a message about
-# JSON schemas. Re-quoting the four substituted keys is two lines and removes
-# the class of bug rather than this instance of it.
+# A JDBC URL will not trip this, but the next value someone adds might. So
+# these four ConfigMap keys (the two the overlay substitutes, plus AWS_REGION
+# and DB_USER) are always re-quoted.
 rendered=$(printf '%s' "$rendered" | sed -E \
     's/^([[:space:]]+)(SQS_QUEUE_URL|DB_URL|AWS_REGION|DB_USER):[[:space:]]*(.*[^[:space:]])[[:space:]]*$/\1\2: "\3"/')
 
-# ...which would double the quotes on a value kustomize DID quote, so undo that.
+# That doubles the quotes on a value kustomize did quote, so undo it.
 rendered=$(printf '%s' "$rendered" | sed -E 's/: ""(.*)""$/: "\1"/')
 
 printf '%s\n' "$rendered"

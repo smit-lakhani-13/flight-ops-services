@@ -1,36 +1,16 @@
-# PodDisruptionBudget: the guardrail that stops a cluster operation from taking
-# the service down.
-#
-# `kubectl drain` (node upgrade, instance replacement, Cluster Autoscaler
-# consolidation, spot reclaim) evicts pods. Without a PDB it will happily evict
-# both replicas at once and the service is gone. With this, the eviction API
-# refuses the second eviction until a replacement pod is Ready.
-#
-# The distinction that matters:
-#   VOLUNTARY   disruption — drains, evictions, rollouts. A PDB applies.
-#   INVOLUNTARY disruption — node hardware failure, kernel panic, OOM.
-#                            A PDB does NOTHING. Nobody asks the API server for
-#                            permission before a node dies. Surviving that is
-#                            what replicas + podAntiAffinity are for, which is
-#                            why the Deployment spreads pods across hosts.
+# Stops a drain (node upgrade, replacement, spot reclaim) evicting both
+# replicas at once: the second eviction waits until a replacement is Ready. It
+# covers voluntary disruption only. A node that dies asks no one, which is what
+# the Deployment's podAntiAffinity is for.
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: flight-ops-pdb
 spec:
-  # maxUnavailable, NOT minAvailable, specifically because an HPA owns the
-  # replica count here — 2 to 4, and the ceiling could be raised later.
-  #
-  # `minAvailable: 1` looks equivalent at replicas: 2 and is not. It is a floor,
-  # not a rate limit: at 4 replicas it permits the eviction API to take 3 pods
-  # at once and still be satisfied, and the wider the HPA range grows the worse
-  # that gets. `maxUnavailable: 1` is a rate limit, so the budget means "one pod
-  # at a time" at every replica count the HPA can choose, today and after
-  # somebody raises maxReplicas without reading this file.
-  #
-  # The opposite trap is `minAvailable` equal to replicas (2 of 2): a permanently
-  # unsatisfiable budget where every eviction is denied forever, so `kubectl
-  # drain` hangs and node upgrades never finish. Always leave slack.
+  # maxUnavailable, because the HPA moves the count between 2 and 4. At 4
+  # replicas, `minAvailable: 1` would let three go at once. `maxUnavailable: 1`
+  # means one at a time at any count. minAvailable equal to the replica count
+  # would block every drain for good.
   maxUnavailable: 1
   selector:
     matchLabels:

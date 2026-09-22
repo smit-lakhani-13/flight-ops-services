@@ -1,18 +1,10 @@
-# Horizontal Pod Autoscaler: add pods, not bigger pods.
+# Needs metrics-server, which a fresh EKS cluster lacks: without it the HPA
+# shows `<unknown>/70%` and never scales. up.sh installs it as a managed addon.
 #
-# REQUIRES metrics-server. On a fresh EKS cluster it is NOT installed, and
-# without it the HPA reports `<unknown>/70%` and never scales. deploy/aws/up.sh
-# installs it as an EKS managed addon, so there is no pinned upstream URL here
-# to go stale.
-#
-# It also requires resource *requests* on the container — the target is a
-# percentage OF THE REQUEST, not of the node. The Deployment requests 500m, so
-# 70% here is 350m of sustained CPU per pod before a fourth replica appears.
-#
-# There is no CPU *limit* to throttle against, deliberately — k8s/base/
-# deployment.yaml explains why. That is also what makes this metric readable:
-# with a limit, a throttled pod reports the throttle rather than the load, and
-# the HPA scales on a number the kernel chose rather than on demand.
+# The target is a percentage of the CPU request (500m), so 70% is 350m per pod.
+# With the default 10% tolerance, a third replica appears once the average
+# passes about 385m. There is no CPU limit (see deployment.yaml), so no
+# throttle skews the metric.
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
@@ -23,19 +15,11 @@ spec:
     kind: Deployment
     name: flight-ops
   minReplicas: 2
-  # 4, and the limit is the database, not the cluster.
-  #
-  # Each pod opens a Hikari pool of up to 10 connections. db.t4g.micro derives
-  # max_connections from DBInstanceClassMemory/9531392, which on its 1 GiB comes
-  # to about 112, of which a few are reserved for superuser sessions. Four pods
-  # is 40 connections at full stretch — room for a migration, a psql session and
-  # a second deployment's pods running alongside during a rolling update.
-  #
-  # Ten pods would be 100. That fits, arithmetically, and leaves nothing: the
-  # next `kubectl exec ... psql` fails with "remaining connection slots are
-  # reserved", which reads like a database fault and is a replica-count fault.
-  # Raising this means raising the instance class or lowering the pool, in that
-  # order.
+  # The limit is the database. Each pod's Hikari pool holds up to 10
+  # connections, and db.t4g.micro allows about 112 (DBInstanceClassMemory /
+  # 9531392 on 1 GiB). Four pods use 40, leaving room for a migration, a psql
+  # session and a rolling update's extra pod. Raise the instance class or lower
+  # the pool before raising this.
   maxReplicas: 4
   metrics:
     - type: Resource
@@ -44,19 +28,12 @@ spec:
         target:
           type: Utilization
           averageUtilization: 70
-    # A second metric is worth knowing about: with two metrics the HPA computes
-    # a desired count for each and takes the MAX. Memory is a poor scaling
-    # signal for a JVM though — the heap grows to MaxRAMPercentage and stays
-    # there, so memory utilisation is high and flat regardless of load, and a
-    # memory-target HPA would scale out once and never scale back in.
-    # RPS or queue depth via KEDA/Prometheus adapter is the real answer.
+    # Not memory: a JVM heap grows to MaxRAMPercentage and stays, so a memory
+    # target would scale out once and never back in.
   behavior:
     scaleUp:
-      # React fast to load.
       stabilizationWindowSeconds: 0
     scaleDown:
-      # Five minutes of sustained low CPU before removing a pod. Without this,
-      # a bursty workload flaps: scale up, scale down, scale up. Every scale-down
-      # drops connections and every scale-up pays JVM warm-up again, so the
-      # asymmetry (instant up, slow down) is intentional.
+      # Five minutes of low CPU before a pod goes. Each scale-down drops
+      # connections and each scale-up pays JVM warm-up, so down is slow.
       stabilizationWindowSeconds: 300

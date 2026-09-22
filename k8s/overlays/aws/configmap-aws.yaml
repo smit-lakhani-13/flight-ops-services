@@ -1,10 +1,7 @@
-# The two values that only exist once AWS does.
-#
-# SQS_QUEUE_URL is an output of the SAM stack; DB_URL is an output of the data
-# stack. Neither can be written down in the base, and neither should be a
-# secret: the queue URL is not a credential (publishing to it needs the IRSA
-# role) and the JDBC URL carries no password — that arrives from the Secret,
-# as DB_PASSWORD.
+# The two values that exist only once AWS does: SQS_QUEUE_URL is an output of
+# the SAM stack, DB_URL of the data stack. Neither is a secret. Publishing to
+# the queue needs the IRSA role, and the JDBC URL carries no password; that
+# comes from the Secret as DB_PASSWORD.
 apiVersion: v1
 kind: ConfigMap
 metadata:

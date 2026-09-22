@@ -1,35 +1,24 @@
-# Dependency updates. The reason this file exists rather than being left to
-# manual bumps: lambda/pom.xml has no parent POM, so nothing manages its versions
-# and nothing tells you when they go stale. That is exactly the case Dependabot
-# covers.
+# Dependency updates. lambda/pom.xml has no parent POM, so nothing else manages
+# its versions or reports when they go stale.
 #
-# Two things about this config are deliberate and worth knowing before editing.
+# Two things to know before editing:
 #
-# 1. open-pull-requests-limit is set on EVERY ecosystem. The default is 5 per
-#    ecosystem, not 5 overall, so four ecosystems with no explicit limit can open
-#    twenty pull requests the first time Dependabot runs on a new repository.
-#    Grouping plus an explicit limit keeps a monthly run to a handful.
+# 1. Every ecosystem sets open-pull-requests-limit. The default is 5 per
+#    ecosystem, so four ecosystems could open twenty pull requests on the first
+#    run. Groups and explicit limits keep a monthly run to a handful.
 #
-# 2. The ignore rules below are scoped to four specific artifacts, not applied
-#    broadly, because an ignore condition suppresses Dependabot SECURITY updates
-#    for that dependency as well as version updates. That is a real cost. It is
-#    accepted here only where a major bump would contradict a decision the project
-#    has already made and documented, so the bump has to be a human's call:
+# 2. The ignore rules name four artifacts, because an ignore condition also
+#    stops Dependabot's security updates for that dependency. Each one is a
+#    major bump that would reverse a documented decision, so a person makes it:
 #      - the JDK: pom.xml sets <java.version>21</java.version>, and a major base
-#        image bump moves the runtime out from under that
-#      - Spring Boot: a major is never a drop-in. The 3.5 -> 4.1 upgrade in this
-#        repository moved package names in four places, split three starters out
-#        of spring-boot-starter-test, renamed spring-boot-starter-web and moved
-#        the whole project from Jackson 2 to Jackson 3. None of that is a merge
-#        button, and the same will be true of 5.x
-#      - JUnit: lambda/pom.xml has no parent, so its version is whatever this
-#        file lets through, while the service module's is whatever Boot's BOM
-#        says. The pin exists to keep those two the same number, which is why
-#        it is the one rule here that covers minors and patches too; the
-#        comment above it gives the full reason
-#    An upgrade of any of the four is a deliberate piece of work, not a merge.
-#    Everything else — every dependency not named here, and majors aside, the
-#    minors and patches of the other three — still flows automatically.
+#        image bump moves the runtime away from it
+#      - Spring Boot: a major moves packages and splits or renames starters, so
+#        it is never a drop-in
+#      - JUnit: lambda/pom.xml copies the version Boot's BOM gives the service
+#        module. It is the one rule covering minors and patches too; the comment
+#        above it has the reason
+#    Every other dependency, and the minors and patches of the other three,
+#    still flow automatically.
 version: 2
 
 updates:
@@ -42,15 +31,14 @@ updates:
     open-pull-requests-limit: 3
     labels: ["dependencies"]
     groups:
-      # One PR for the whole SDK rather than one per artifact — the AWS SDK
-      # releases almost daily and ungrouped updates bury everything else.
+      # One PR for the whole SDK. It releases almost daily, and ungrouped
+      # updates bury everything else.
       aws-sdk:
         patterns: ["software.amazon.awssdk:*"]
       spring:
         patterns: ["org.springframework*:*"]
-      # Test-only dependencies move together and are reviewed together: a broken
-      # test dependency cannot reach production, so these are the cheapest PRs to
-      # merge and there is no reason to read them one at a time.
+      # Test-only dependencies cannot reach production, so they move and are
+      # reviewed together.
       test:
         patterns: ["org.junit*:*", "org.mockito:*", "org.testcontainers:*"]
     ignore:
@@ -71,51 +59,27 @@ updates:
       test:
         patterns: ["org.junit*:*", "org.mockito:*"]
     ignore:
-      # Every update type, not just majors, and the reason is narrower than it
-      # looks. <junit.version> in lambda/pom.xml is not an independent choice:
-      # it is a copy of whatever Boot's BOM manages for the service module, so
-      # that one repository does not run two JUnit versions. Today that is
-      # 6.0.3 on both sides. A Dependabot PR against this module alone cannot
-      # honour that - it sees a parentless POM and offers the newest release,
-      # which is how PR #15 arrived offering 6.1.3 here while the service stayed
-      # on 6.0.3. Accepting it would have split the repository for no gain.
+      # Every update type. <junit.version> in lambda/pom.xml copies what Boot's
+      # BOM manages for the service module, so the repository runs one JUnit
+      # version (6.0.3 on both sides today). Dependabot sees only a parentless
+      # POM here and would offer the newest release.
       #
-      # So this version moves when Boot's BOM moves and at no other time. The
-      # procedure is two lines: read the managed version with
-      # `./mvnw help:evaluate -Dexpression=junit-jupiter.version -DforceStdout`
-      # and copy it here, then run both builds.
+      # So it moves when Boot's BOM moves. Read the managed version with
+      # `./mvnw help:evaluate -Dexpression=junit-jupiter.version -DforceStdout`,
+      # copy it into lambda/pom.xml, then run both builds.
       #
-      # The cost, stated because the header says ignores have one: security
-      # advisories for junit-bom will not open a PR on this module either. JUnit
-      # is test scope, it never ships in the Lambda artifact, and the service
-      # module still receives Boot's own advisories - so the exposure is a test
-      # harness on a CI runner, which is a trade worth naming rather than
-      # discovering later.
+      # The cost: a junit-bom advisory opens no PR on this module either. JUnit
+      # is test scope and never ships in the Lambda artifact, and the service
+      # module still gets Boot's advisories.
       - dependency-name: "org.junit:junit-bom"
         update-types:
           - "version-update:semver-major"
           - "version-update:semver-minor"
           - "version-update:semver-patch"
 
-  # The workflow now pins every action to a full commit SHA rather than a major
-  # tag, so this ecosystem changed character. A tag is a mutable pointer in
-  # somebody else's repository; a SHA is not, and the rationale sits in the
-  # workflow itself above the first `uses:`.
-  #
-  # What that costs is PR volume, and it is the reason this entry matters more
-  # than it used to: with a tag, patch releases arrived silently and Dependabot
-  # only ever spoke up for a major. With a SHA, *every* release is a PR, and
-  # without one this repository would simply freeze on whatever commits were
-  # current the day the pins went in - which is the failure mode that makes
-  # people give up on SHA pinning and go back to tags. Dependabot understands
-  # the pin: it rewrites both the SHA and the trailing version comment.
-  #
-  # No version numbers in this comment on purpose — the last one said "@v4" and
-  # went stale the day the group's first PR merged.
-  #
-  # Grouped into a single PR: an action bump is a one-line change and reviewing
-  # five of them separately is five times the ceremony for the same decision.
-  # The limit stays at 1 so a month of patch releases is one PR, not five.
+  # Every action is pinned to a commit SHA (the reason is above the first
+  # `uses:` in build-and-deploy.yml), so without this entry the pins freeze.
+  # One grouped PR a month rewrites each SHA and the version comment beside it.
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
@@ -126,10 +90,9 @@ updates:
       actions:
         patterns: ["*"]
 
-  # Both image tags in the Dockerfile: the maven build stage and the JRE runtime
-  # stage. Minor and patch bumps are wanted — that is how the base image picks up
-  # OS-level CVE fixes. Major bumps are the JDK version and are pinned; see the
-  # header.
+  # Both image tags in the Dockerfile, the maven build stage and the JRE
+  # runtime. Minor and patch bumps bring OS-level CVE fixes. A major bump is a
+  # JDK change and is ignored; see the header.
   - package-ecosystem: docker
     directory: "/"
     schedule:

@@ -5,19 +5,19 @@
 #   ./deploy/aws/down.sh --keep-foundation   # leave ECR and the CI role
 #   ./deploy/aws/down.sh --delete-sam-bucket # also remove SAM's SHARED bucket
 #
-# Order matters, and the two places it matters are not obvious:
+# Order matters in two places:
 #
 #   1. The Ingress goes first. Deleting the namespace with an Ingress still in
-#      it removes the Kubernetes object while the controller — also being
-#      deleted — never gets to delete the ALB. The load balancer survives, with
-#      nothing left in the cluster pointing at it, at $0.62/day, forever.
+#      it removes the Kubernetes object while the controller, also being
+#      deleted, never gets to delete the ALB. The load balancer survives with
+#      nothing in the cluster pointing at it, and bills until someone finds it.
 #   2. The data stack goes before the cluster. Its security group lives in
 #      eksctl's VPC, and a security group with a rule referencing it blocks the
 #      VPC delete. eksctl then fails after 20 minutes with a message about a
 #      dependency it cannot name.
 #
-# Everything is best-effort: a resource that is already gone is not an error.
-# The final sweep is what decides whether this run succeeded, not the deletes.
+# Every delete is best-effort, and a resource that is already gone is not an
+# error. The sweep at the end decides whether the run succeeded.
 set -uo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -58,8 +58,8 @@ cat <<'PLAN'
 
   There is no snapshot and no backup. Both databases go with their data.
 
-  Two things are deliberately NOT deleted, because both are shared with the
-  rest of the account rather than owned by this project:
+  Two things are NOT deleted, because both are shared with the rest of the
+  account instead of owned by this project:
 
     - the GitHub OIDC provider for token.actions.githubusercontent.com. One per
       account; other repositories may authenticate through it. Free.
@@ -74,22 +74,35 @@ confirm "This deletes data permanently." "delete"
 # ---------------------------------------------------------------------------
 step "1/9  Ingress first, so the controller can delete its own load balancer"
 # ---------------------------------------------------------------------------
-# "kubectl said no" is two different facts and this step cannot afford to
-# conflate them. `kubectl get ingress` exits non-zero both when the Ingress is
-# absent and when the cluster is unreachable -- no kubeconfig context, an
-# expired token, a VPN that is down -- and treating the second as the first
-# skips the one step whose whole purpose is not orphaning a billed load
-# balancer. So connectivity is established first, separately.
-if ! kubectl cluster-info --request-timeout=15s >/dev/null 2>&1; then
-    warn "kubectl cannot reach a cluster, so the Ingress cannot be deleted first."
-    warn "If an ALB exists it will be ORPHANED by the cluster delete below and"
-    warn "will keep billing at about \$0.62/day with nothing pointing at it."
-    warn "Point kubectl at the cluster and re-run:"
-    warn "  aws eks update-kubeconfig --name $CLUSTER_NAME --region $AWS_REGION"
+# kubectl and helm use a kubeconfig written for this cluster alone, never the
+# caller's current context. That context may point at another cluster, and
+# steps 1-3 would then delete an Ingress, a controller and a namespace there.
+KUBECONFIG=$(mktemp)
+export KUBECONFIG
+trap 'rm -f "$KUBECONFIG"' EXIT
 
-    # up.sh recorded the hostname when it created the Ingress, so there is one
-    # more place to look before giving up on finding the load balancer. This is
-    # what the state file is for.
+# `kubectl get ingress` exits non-zero both when the Ingress is absent and when
+# the cluster is unreachable (an expired token, a VPN that is down). Treating
+# the second as the first would skip the step that stops a billed load
+# balancer being orphaned, so connectivity is checked first, separately.
+cluster_reachable=0
+if command -v kubectl >/dev/null 2>&1 \
+        && aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$AWS_REGION" \
+            --kubeconfig "$KUBECONFIG" >/dev/null 2>&1 \
+        && kubectl cluster-info --request-timeout=15s >/dev/null 2>&1; then
+    cluster_reachable=1
+fi
+
+if [ "$cluster_reachable" = 0 ]; then
+    warn "cannot reach cluster $CLUSTER_NAME, so the Ingress cannot be deleted first."
+    warn "If the cluster exists and has an ALB, the cluster delete below will ORPHAN it"
+    warn "and it will keep billing at about \$0.62/day with nothing pointing at it."
+    warn "Check that this works from this shell, then re-run:"
+    warn "  aws eks update-kubeconfig --name $CLUSTER_NAME --region $AWS_REGION"
+    warn "If the cluster is already gone, continuing is safe."
+
+    # up.sh recorded the hostname when it created the Ingress, which gives one
+    # more place to look for the load balancer.
     if saved_host=$(state_get ALB_HOST); then
         saved_arn=$(aws elbv2 describe-load-balancers \
             --query "LoadBalancers[?DNSName=='$saved_host'].LoadBalancerArn" \
@@ -126,9 +139,8 @@ elif kubectl get ingress flight-ops-ingress -n "$NAMESPACE" >/dev/null 2>&1; the
         if [ "$alb_gone" = 1 ]; then
             ok "ingress and ALB gone"
         else
-            # Not fatal here, and not silently "ok" either. The sweep at the end
-            # checks for load balancers by name and will fail the run if this
-            # one is still there, which is the check that matters.
+            # Not fatal here, and not "ok" either. The sweep checks for load
+            # balancers by name and fails the run if this one is still there.
             warn "the ALB behind $alb_host was still present after 10 minutes"
             warn "continuing; the sweep in step 9 decides whether this run passed"
         fi
@@ -143,22 +155,30 @@ fi
 step "2/9  The load balancer controller"
 # ---------------------------------------------------------------------------
 # After the Ingress, never before: uninstalling the controller first leaves
-# nothing able to delete the ALB, which is the expensive mistake.
-if command -v helm >/dev/null 2>&1; then
-    if helm uninstall aws-load-balancer-controller -n kube-system --wait 2>/dev/null; then
+# nothing able to delete the ALB.
+if [ "$cluster_reachable" = 0 ]; then
+    log "skipped: the cluster is not reachable"
+elif command -v helm >/dev/null 2>&1; then
+    if ! helm status aws-load-balancer-controller -n kube-system >/dev/null 2>&1; then
+        log "controller not installed"
+    elif helm uninstall aws-load-balancer-controller -n kube-system --wait; then
         ok "controller uninstalled"
     else
-        log "controller not installed"
+        warn "could not uninstall the controller; the cluster delete takes it anyway"
     fi
 fi
 
 # ---------------------------------------------------------------------------
 step "3/9  The namespace"
 # ---------------------------------------------------------------------------
-if kubectl delete namespace "$NAMESPACE" --timeout=5m 2>/dev/null; then
+if [ "$cluster_reachable" = 0 ]; then
+    log "skipped: the cluster is not reachable"
+elif ! kubectl get namespace "$NAMESPACE" >/dev/null 2>&1; then
+    log "no namespace"
+elif kubectl delete namespace "$NAMESPACE" --timeout=5m; then
     ok "namespace gone"
 else
-    log "no namespace"
+    warn "namespace $NAMESPACE did not finish deleting; the cluster delete takes it anyway"
 fi
 
 # ---------------------------------------------------------------------------
@@ -166,16 +186,18 @@ step "4/9  The Lambda stack, and the log group SAM does not own"
 # ---------------------------------------------------------------------------
 if stack_exists "$SAM_STACK"; then
     aws cloudformation delete-stack --stack-name "$SAM_STACK"
-    aws cloudformation wait stack-delete-complete --stack-name "$SAM_STACK" 2>/dev/null || true
-    ok "$SAM_STACK deleted"
+    if aws cloudformation wait stack-delete-complete --stack-name "$SAM_STACK" 2>/dev/null; then
+        ok "$SAM_STACK deleted"
+    else
+        warn "$SAM_STACK did not finish deleting; the sweep in step 9 will list it"
+    fi
 else
     log "no $SAM_STACK"
 fi
 
-# template.yaml declares the log group, so the stack delete above takes it and
-# this is a no-op. It stays because a function deployed before that declaration
-# existed owns a group CloudFormation never knew about, with retention set to
-# "Never expire". $0.03/GB/month: pennies, and permanent.
+# template.yaml declares the log group, so the stack delete above normally
+# takes it. This catches a group Lambda created by itself, outside the stack,
+# which never expires.
 if aws logs delete-log-group \
         --log-group-name /aws/lambda/booking-event-handler 2>/dev/null; then
     ok "lambda log group deleted"
@@ -187,8 +209,11 @@ step "5/9  The database, BEFORE the cluster"
 if stack_exists "$DATA_STACK"; then
     aws cloudformation delete-stack --stack-name "$DATA_STACK"
     log "waiting (RDS deletion takes 3-5 minutes)..."
-    aws cloudformation wait stack-delete-complete --stack-name "$DATA_STACK" 2>/dev/null || true
-    ok "$DATA_STACK deleted"
+    if aws cloudformation wait stack-delete-complete --stack-name "$DATA_STACK" 2>/dev/null; then
+        ok "$DATA_STACK deleted"
+    else
+        warn "$DATA_STACK did not finish deleting; the VPC delete in step 6 may fail on its security group"
+    fi
 else
     log "no $DATA_STACK"
 fi
@@ -196,13 +221,17 @@ fi
 # ---------------------------------------------------------------------------
 step "6/9  The cluster — the ~15 minute step"
 # ---------------------------------------------------------------------------
-if command -v eksctl >/dev/null 2>&1 && eksctl get cluster --name "$CLUSTER_NAME" >/dev/null 2>&1; then
-    # --disable-nodegroup-eviction: nodes are drained, and a PDB that cannot be
-    # satisfied (minAvailable 1 with one pod left) would otherwise stall the
-    # delete until it times out. The PDB has done its job by this point.
-    eksctl delete cluster --name "$CLUSTER_NAME" --wait --disable-nodegroup-eviction \
-        || warn "eksctl reported a problem — the sweep below will say what is left"
-    ok "cluster deleted"
+if ! command -v eksctl >/dev/null 2>&1; then
+    warn "eksctl is not installed, so the cluster cannot be deleted from here"
+elif eksctl get cluster --name "$CLUSTER_NAME" >/dev/null 2>&1; then
+    # --disable-nodegroup-eviction: the application namespace is already gone,
+    # and this stops whatever PDBs remain in kube-system from stalling the
+    # drain while every node is removed at once.
+    if eksctl delete cluster --name "$CLUSTER_NAME" --wait --disable-nodegroup-eviction; then
+        ok "cluster deleted"
+    else
+        warn "eksctl reported a problem — the sweep below will say what is left"
+    fi
 else
     log "no cluster"
 fi
@@ -210,20 +239,14 @@ fi
 # ---------------------------------------------------------------------------
 step "7/9  SAM's own managed bucket — SHARED, so opt-in only"
 # ---------------------------------------------------------------------------
-# `sam deploy --resolve-s3` creates a stack nobody remembers: aws-sam-cli-
-# managed-default, a versioned bucket holding build artefacts. It is cents per
-# month and nothing above deletes it, so it looks exactly like the classic
-# leftover this script exists to catch.
-#
-# It is not. THE NAME IS FIXED PER ACCOUNT AND REGION. Every SAM project
-# deployed with --resolve-s3 in this account shares that one bucket, and this
-# script has no way to tell which objects belong to this project. Deleting it
-# because we happened to deploy into it destroys another project's artefacts
-# and breaks the next `sam deploy` somebody else runs, to save about $0.05 a
-# month. That is the same class of mistake as taking the account's shared OIDC
-# provider with the foundation stack, and it gets the same answer: leave it,
-# say so, and offer a flag for the operator who knows the account is theirs
-# alone.
+# `sam deploy --resolve-s3` creates the aws-sam-cli-managed-default stack, a
+# versioned bucket of build artefacts. Nothing above deletes it, so it looks
+# like a leftover. Its name is fixed per account and region, though: every SAM
+# project deployed with --resolve-s3 here shares it, and this script cannot
+# tell which objects are this project's. Deleting it would break the next
+# `sam deploy` someone else runs. It gets the same answer as the shared OIDC
+# provider: leave it, say so, and offer a flag to the operator who knows the
+# account is theirs alone.
 SAM_MANAGED=aws-sam-cli-managed-default
 if ! stack_exists "$SAM_MANAGED"; then
     log "no $SAM_MANAGED stack"
@@ -234,10 +257,8 @@ elif [ "$DELETE_SAM_BUCKET" = 0 ]; then
 else
     bucket=$(stack_output "$SAM_MANAGED" SourceBucket)
     if [ -n "$bucket" ]; then
-        # Paginated, deliberately. list-object-versions returns at most 1000
-        # keys per call, so the single-shot version of this left everything
-        # past the first page in place -- and then the stack delete failed on a
-        # non-empty bucket while the script printed "deleted".
+        # Paginated: list-object-versions returns at most 1000 keys per
+        # call, and the stack delete fails on a bucket that is not empty.
         log "emptying s3://$bucket (all versions, paginated)..."
         emptied=0
         while :; do
@@ -267,25 +288,27 @@ step "8/9  Foundation and the leftover IAM"
 if [ "$KEEP_FOUNDATION" = 1 ]; then
     log "keeping $FOUNDATION_STACK (--keep-foundation)"
 elif stack_exists "$FOUNDATION_STACK"; then
-    # A repository with images in it cannot be deleted unless the template said
-    # EmptyOnDelete, which foundation.yaml does. This is the belt to that
-    # braces: an ECR repo created before that setting existed would block here.
+    # foundation.yaml sets EmptyOnDelete, so the stack delete can remove a
+    # repository with images in it. The forced delete covers a repository
+    # created without that setting, which would otherwise block the stack.
     ECR_NAME=flight-ops-service
     if aws ecr delete-repository \
             --repository-name "$ECR_NAME" --force >/dev/null 2>&1; then
         log "emptied and deleted the ECR repository"
     fi
     aws cloudformation delete-stack --stack-name "$FOUNDATION_STACK"
-    aws cloudformation wait stack-delete-complete --stack-name "$FOUNDATION_STACK" 2>/dev/null || true
-    ok "$FOUNDATION_STACK deleted"
+    if aws cloudformation wait stack-delete-complete --stack-name "$FOUNDATION_STACK" 2>/dev/null; then
+        ok "$FOUNDATION_STACK deleted"
+    else
+        warn "$FOUNDATION_STACK did not finish deleting; the sweep in step 9 will list it"
+    fi
 else
     log "no $FOUNDATION_STACK"
 fi
 
-# The LB controller policy is created by up.sh with the CLI, not by a stack, so
-# nothing deletes it. It costs nothing and is harmless; it is removed anyway,
-# because "nothing with this project's name is left" is easier to verify than
-# "nothing except these four known-harmless things".
+# up.sh creates the LB controller policy with the CLI, outside any stack, so
+# nothing else deletes it. It costs nothing, and it is removed anyway: "nothing
+# of this project's is left" is easier to verify than a list of exceptions.
 LBC_POLICY_ARN="arn:aws:iam::${ACCOUNT_ID}:policy/AWSLoadBalancerControllerIAMPolicy"
 if aws iam get-policy --policy-arn "$LBC_POLICY_ARN" >/dev/null 2>&1; then
     for v in $(aws iam list-policy-versions --policy-arn "$LBC_POLICY_ARN" \
@@ -302,9 +325,8 @@ fi
 # ---------------------------------------------------------------------------
 step "9/9  The sweep — this is the part that actually matters"
 # ---------------------------------------------------------------------------
-# Every delete above can quietly half-succeed. This looks for the things that
-# bill, by name, and exits non-zero if any of them is still there. A clean run
-# of this section is the only honest answer to "is it definitely gone?".
+# Any delete above can half-succeed. This looks for the things that bill, by
+# name and by tag, and exits non-zero if any of them is still there.
 FAILURES=0
 check() {  # check <label> <expected-empty-output>
     local label="$1" found="$2"
@@ -316,20 +338,11 @@ check() {  # check <label> <expected-empty-output>
     fi
 }
 
-# Every check below goes through this rather than calling `aws` directly, and
-# the reason is the worst bug this script could have.
-#
-# `check` treats empty output as PASS. A failed AWS call also produces empty
-# output on stdout. Write the checks as `$(aws ... 2>/dev/null)` and an expired
-# token, a throttle, a missing permission or a typo'd query makes every single
-# check print PASS, and the script exits 0 with "everything is gone. Billing for
-# this project stops accruing now." while a cluster, a NAT gateway and an RDS
-# instance carry on billing. A teardown verifier that reports success when it
-# cannot see the account is worse than no verifier: it is the one output here
-# anybody actually relies on.
-#
-# So a non-zero exit becomes LOUD OUTPUT instead of no output, which `check`
-# then reports as a FAIL, which exits the script non-zero. Fail closed.
+# Every check goes through q, never `aws` directly. `check` treats empty output
+# as PASS, and a failed AWS call also prints nothing on stdout. An expired
+# token, a throttle or a missing permission would then make every check pass
+# while a cluster and a database carry on billing. q turns a non-zero exit into
+# output, which `check` reports as a FAIL. Fail closed.
 q() {  # q <aws args...> -- prints the query output, or a failure sentinel
     local out status
     out=$(aws "$@" 2>&1); status=$?
@@ -353,16 +366,14 @@ check "NAT gateways" "$(q ec2 describe-nat-gateways \
     --filter "Name=tag:Project,Values=flight-ops" \
     --query "NatGateways[?State!='deleted'].NatGatewayId" --output text)"
 # Unattached EBS volumes and unassociated Elastic IPs are the two that survive a
-# botched cluster delete and bill in silence: $0.0912/GB/month and $0.005/hr.
+# failed cluster delete and keep billing.
 check "EBS volumes" "$(q ec2 describe-volumes \
     --filters "Name=status,Values=available,in-use" "Name=tag:Project,Values=flight-ops" \
     --query 'Volumes[].VolumeId' --output text)"
-# Tag-filtered, like everything else here. An unfiltered describe-addresses
-# returns every unassociated Elastic IP IN THE ACCOUNT, so a stray address
-# belonging to somebody else's stack would fail this teardown and send the
-# operator hunting for a resource this project never created. The NAT gateway's
-# address carries the cluster tags, because eksctl puts them on its stack and
-# CloudFormation propagates stack tags to the EIP.
+# Tag-filtered. An unfiltered describe-addresses returns every unassociated
+# Elastic IP in the account, and another stack's address would fail this
+# teardown. The NAT gateway's address carries the cluster tags, because eksctl
+# puts them on its stack and CloudFormation propagates stack tags to the EIP.
 check "unassociated Elastic IPs" "$(q ec2 describe-addresses \
     --filters "Name=tag:Project,Values=flight-ops" \
     --query 'Addresses[?AssociationId==null].PublicIp' --output text)"
@@ -370,9 +381,15 @@ check "RDS instances" "$(q rds describe-db-instances \
     --query "DBInstances[?contains(DBInstanceIdentifier, 'flight-ops')].DBInstanceIdentifier" --output text)"
 check "RDS snapshots" "$(q rds describe-db-snapshots --snapshot-type manual \
     --query "DBSnapshots[?contains(DBSnapshotIdentifier, 'flight-ops')].DBSnapshotIdentifier" --output text)"
+# --keep-foundation leaves the foundation stack and the resources it owns in
+# place on purpose, so neither this check nor the tag catch-all counts them.
+stack_query="StackSummaries[?contains(StackName, 'flight-ops')].StackName"
+if [ "$KEEP_FOUNDATION" = 1 ]; then
+    stack_query="StackSummaries[?contains(StackName, 'flight-ops') && StackName!='$FOUNDATION_STACK'].StackName"
+fi
 check "CloudFormation stacks" "$(q cloudformation list-stacks \
     --stack-status-filter CREATE_COMPLETE UPDATE_COMPLETE ROLLBACK_COMPLETE UPDATE_ROLLBACK_COMPLETE DELETE_FAILED \
-    --query "StackSummaries[?contains(StackName, 'flight-ops')].StackName" --output text)"
+    --query "$stack_query" --output text)"
 check "log groups" "$(q logs describe-log-groups \
     --query "logGroups[?contains(logGroupName, 'flight-ops') || contains(logGroupName, 'booking-event')].logGroupName" \
     --output text)"
@@ -382,22 +399,25 @@ if [ "$KEEP_FOUNDATION" = 0 ]; then
     check "ECR repositories" "$(q ecr describe-repositories \
         --query "repositories[?contains(repositoryName, 'flight-ops')].repositoryName" --output text)"
 fi
-# The catch-all. The specific checks above know what to look for; this one
-# finds anything tagged Project=flight-ops that nobody thought to check.
-#
-# Its blind spot is the mirror image of theirs: it only sees what carries the
-# tag. The ALB the load balancer controller provisions is tagged by the
-# controller, not by this project, which is why "load balancers (v2)" above
-# matches on the k8s-flightop name prefix instead. A resource that is neither
-# tagged nor named after this project is invisible to both, and the only
-# defence against that is the Cost Explorer check the next day.
-check "anything tagged Project=flight-ops" "$(q resourcegroupstaggingapi get-resources \
+# The catch-all: anything tagged Project=flight-ops that no check above names.
+# The controller tags the ALB too, from the annotation in
+# k8s/components/ingress/ingress.yaml, so a surviving ALB shows here as well as
+# under "load balancers (v2)". A resource that is neither tagged nor named after
+# this project is invisible to both. The Cost Explorer check the next day is
+# the defence against that.
+tagged=$(q resourcegroupstaggingapi get-resources \
     --tag-filters Key=Project,Values=flight-ops \
-    --query 'ResourceTagMappingList[].ResourceARN' --output text)"
+    --query 'ResourceTagMappingList[].ResourceARN' --output text)
+if [ "$KEEP_FOUNDATION" = 1 ]; then
+    foundation_arns=":stack/$FOUNDATION_STACK/|:repository/flight-ops-service\$|:role/github-actions-deploy\$"
+    foundation_arns="$foundation_arns|:policy/flight-ops-service-sqs-publish\$|:budget/flight-ops-(monthly|daily)\$"
+    foundation_arns="$foundation_arns|:oidc-provider/token\.actions\.githubusercontent\.com\$"
+    tagged=$(printf '%s' "$tagged" | tr '\t' '\n' | grep -Ev "$foundation_arns" | paste -sd' ' -)
+fi
+check "anything tagged Project=flight-ops" "$tagged"
 
-# Advisory, not a gate: unassociated addresses anywhere in the account. These
-# bill at $0.005/hour each whether or not this project made them, and a
-# teardown run is the moment somebody is actually looking.
+# Advisory only: unassociated addresses anywhere in the account bill
+# whoever made them, and a teardown is when someone is looking.
 stray_ips=$(aws ec2 describe-addresses \
     --query 'Addresses[?AssociationId==null].PublicIp' --output text 2>/dev/null || true)
 if [ -n "$stray_ips" ] && [ "$stray_ips" != "None" ]; then
@@ -411,7 +431,11 @@ if [ "$FAILURES" -eq 0 ]; then
         mv "$STATE_FILE" "$archive" 2>/dev/null || true
         log "state archived to $archive"
     fi
-    ok "everything is gone. Billing for this project stops accruing now."
+    if [ "$KEEP_FOUNDATION" = 1 ]; then
+        ok "everything but $FOUNDATION_STACK is gone. Billing for the rest stops accruing now."
+    else
+        ok "everything is gone. Billing for this project stops accruing now."
+    fi
     cat <<'DONE'
 
   Two things this script cannot prove:

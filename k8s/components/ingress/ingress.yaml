@@ -1,78 +1,64 @@
-# ==============================================================================
-#  THIS FILE COSTS MONEY. IT IS A KUSTOMIZE COMPONENT ON PURPOSE.
+# THIS FILE COSTS MONEY, which is why it is a kustomize component.
 #
-#  A component is opted into by an overlay listing it under `components:`; no
-#  overlay in this repository does. k8s/overlays/aws carries the line commented
-#  out, so making the service publicly reachable is one uncommented line and a
-#  decision, not a side effect of deploying.
+# No overlay here lists it under `components:`; k8s/overlays/aws has the line
+# commented out. up.sh step 11 applies it on its own with -f, so no deploy
+# creates a public endpoint by accident.
 #
-#  Applying this asks the AWS Load Balancer Controller to provision a real
-#  Application Load Balancer: $0.0239/hour plus LCU charges in ap-south-1,
-#  about $17 a month, billing from the moment it exists and after the pods are
-#  gone, because deleting a Deployment does not delete an ALB.
+# Applying it has the AWS Load Balancer Controller create an Application Load
+# Balancer, which bills from creation until it is deleted (DEPLOYMENT.md
+# section 5). Deleting a Deployment does not delete an ALB.
 #
-#  TEARDOWN ORDER IS NOT OPTIONAL, and deploy/aws/down.sh exists because of it.
-#  Step 1 of that script deletes this Ingress, waits for the ALB to disappear,
-#  and only then lets the run continue to the controller and the cluster. By
-#  hand it is:
-#      kubectl delete ingress flight-ops-ingress -n flight-ops   # FIRST
-#      aws elbv2 describe-load-balancers --region ap-south-1 \
-#        --query 'LoadBalancers[].LoadBalancerName'              # confirm gone
-#      eksctl delete cluster -f cluster.yaml                     # only then
+# Teardown order matters. down.sh step 1 deletes this Ingress and waits for the
+# ALB to go before it touches the controller or the cluster. By hand:
+#     kubectl delete ingress flight-ops-ingress -n flight-ops   # first
+#     aws elbv2 describe-load-balancers --region ap-south-1 \
+#       --query 'LoadBalancers[].LoadBalancerName'              # confirm gone
+#     eksctl delete cluster -f cluster.yaml                     # only then
 #
-#  Delete the cluster first and the controller that owns this ALB dies with it.
-#  Nothing is left to clean up the load balancer, so it becomes orphaned: still
-#  running, still billing, invisible in `kubectl`, and only findable in the EC2
-#  console. This is the single most common way a "deleted" lab keeps charging.
+# Delete the cluster first and the controller that owns the ALB goes with it.
+# The load balancer is orphaned: still billing, invisible to kubectl, and
+# findable only in the EC2 console.
 #
-#  Deploy without this file: the app is fully testable via port-forward, for $0.
-#      kubectl port-forward -n flight-ops svc/flight-ops 8080:80
-#      curl localhost:8080/actuator/health
-# ==============================================================================
+# Without this file the app is testable through a port-forward, for $0:
+#     kubectl port-forward -n flight-ops svc/flight-ops 8080:80
+#     curl localhost:8080/actuator/health
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: flight-ops-ingress
   annotations:
-    # An Ingress object on its own does nothing. A controller has to watch for it
-    # and provision the actual load balancer. On EKS that is the AWS Load
-    # Balancer Controller, which is NOT installed by default:
-    #   helm repo add eks https://aws.github.io/eks-charts
-    #   helm install aws-load-balancer-controller eks/aws-load-balancer-controller \
-    #     -n kube-system --set clusterName=flight-ops-cluster \
-    #     --set serviceAccount.create=false \
-    #     --set serviceAccount.name=aws-load-balancer-controller
-    # Without it this manifest applies cleanly, reports no error, and nothing
-    # happens — `kubectl get ingress` shows an empty ADDRESS forever.
+    # An Ingress does nothing without a controller, and EKS does not install
+    # one; up.sh step 8 installs the AWS Load Balancer Controller with Helm.
+    # Without it this applies cleanly and `kubectl get ingress` shows an empty
+    # ADDRESS for ever.
     alb.ingress.kubernetes.io/scheme: internet-facing
 
-    # target-type: ip registers pod IPs directly in the target group, so traffic
-    # goes ALB -> pod. The alternative, `instance`, targets the NodePort and adds
-    # a kube-proxy hop, which loses the client IP and breaks the ALB's own
-    # per-pod health checking. `ip` requires the VPC CNI, which EKS has.
+    # Pod IPs go straight into the target group, so traffic runs ALB -> pod.
+    # `instance` would target the NodePort, adding a kube-proxy hop that loses
+    # the client IP and the per-pod health check. Needs the VPC CNI, which EKS
+    # has.
     alb.ingress.kubernetes.io/target-type: ip
 
-    # The ALB does its own health checks, independently of the kubelet's probes.
-    # Point it at readiness, not liveness: the question the load balancer is
-    # asking is "should I send traffic here?", which is exactly readiness.
+    # The ALB checks health on its own, apart from the kubelet. Readiness
+    # answers its question: should traffic go here?
     alb.ingress.kubernetes.io/healthcheck-path: /actuator/health/readiness
     alb.ingress.kubernetes.io/healthcheck-interval-seconds: "15"
     alb.ingress.kubernetes.io/healthy-threshold-count: "2"
     alb.ingress.kubernetes.io/unhealthy-threshold-count: "3"
 
-    # Deregistration delay must be shorter than terminationGracePeriodSeconds
-    # (45s) or the ALB is still draining a target the kubelet has already
-    # SIGKILLed. Together with the 5s preStop hook this is what makes rolling
-    # updates actually zero-downtime through the load balancer.
+    # Under terminationGracePeriodSeconds (45s), or the ALB still drains a
+    # target the kubelet has killed. With the 5s preStop hook, this keeps a
+    # rolling update from dropping requests.
     alb.ingress.kubernetes.io/target-group-attributes: deregistration_delay.timeout_seconds=30
 
+    # Here, not in the component's kustomization.yaml, because up.sh applies
+    # this file with -f. down.sh's sweep finds the ALB by this tag.
     alb.ingress.kubernetes.io/tags: Project=flight-ops
 
-    # Production would add: certificate-arn (ACM), listen-ports for 443,
-    # ssl-redirect to force HTTPS, and WAF. Omitted here — an ACM certificate
-    # needs a domain, and this lab has no domain.
+    # Production would add an ACM certificate-arn, listen-ports for 443,
+    # ssl-redirect and WAF. A certificate needs a domain, and this lab has none.
 spec:
-  # ingressClassName, not the deprecated kubernetes.io/ingress.class annotation.
+  # ingressClassName replaces the deprecated kubernetes.io/ingress.class annotation.
   ingressClassName: alb
   rules:
     - http:
@@ -82,6 +68,6 @@ spec:
             backend:
               service:
                 name: flight-ops
-                # The SERVICE port (80), not the container port (8080).
+                # The Service port (80), not the container port (8080).
                 port:
                   number: 80

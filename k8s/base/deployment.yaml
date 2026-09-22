@@ -5,23 +5,11 @@ metadata:
   labels:
     app: flight-ops
 spec:
-  # No `replicas` field, deliberately, and this is the one field in the file
-  # whose absence is the decision.
-  #
-  # The HPA owns the replica count (minReplicas: 2, so the "never one pod"
-  # property still holds — one replica means every rolling update and every
-  # node drain is an outage, and it makes the PodDisruptionBudget meaningless).
-  # A Deployment that ALSO declares replicas fights it: every `kubectl apply`
-  # resets the count to 2, the HPA scales it back up, and a deploy during a
-  # traffic peak halves the fleet for however long that takes. Omitting the
-  # field leaves exactly one writer.
-  #
-  # This absence is also what makes CI's `kubectl apply` of the whole rendered
-  # overlay safe. Apply a Deployment that DOES declare replicas and every push
-  # resets the count the HPA owns; with the field gone, apply leaves the live
-  # count alone. See .github/workflows/build-and-deploy.yml.
+  # No `replicas`: the HPA owns the count (minReplicas: 2, so a rolling update
+  # or a node drain is never an outage). A declared count would be reset by
+  # every `kubectl apply`, and CI applies the whole overlay on every push.
 
-  # Keeps `kubectl get rs` readable instead of 10 dead ReplicaSets deep.
+  # Keeps `kubectl get rs` readable.
   revisionHistoryLimit: 3
 
   selector:
@@ -31,83 +19,40 @@ spec:
     type: RollingUpdate
     rollingUpdate:
       maxSurge: 1
-      # maxUnavailable: 0 is the important half. It means capacity never dips
-      # below `replicas` during a deploy: a new pod must pass its readiness probe
-      # before an old one is removed. With maxUnavailable: 1 you would run at
-      # half capacity mid-deploy, which is how a "safe" rollout causes a latency
-      # spike under load.
+      # A new pod must pass readiness before an old one goes, so capacity never
+      # dips during a deploy.
       maxUnavailable: 0
   template:
     metadata:
       labels:
         app: flight-ops
     spec:
-      # IRSA. This service account is annotated with an IAM role ARN by eksctl,
-      # and the pod gets short-lived, auto-rotated STS credentials via a
-      # projected OIDC token. No access keys anywhere — not in the image, not in
-      # a Secret, not in an env var. DefaultCredentialsProvider in AwsConfig
-      # picks them up with no code change, which is exactly why the code uses
-      # the default provider chain instead of anything explicit.
-      #
-      # THREE PIECES, AND NONE OF THEM IS THIS FILE. Getting one wrong leaves
-      # the pod Ready and every publish failing, so it is worth knowing which
-      # owns what:
-      #   1. the IAM policy - deploy/aws/foundation.yaml, as the managed policy
-      #      flight-ops-service-sqs-publish;
-      #   2. the IAM role and its OIDC trust policy - deploy/aws/up.sh step 7,
-      #      `eksctl create iamserviceaccount --role-only`, named
-      #      flight-ops-sqs-publisher;
-      #   3. the ServiceAccount object - k8s/base/serviceaccount.yaml, with the
-      #      eks.amazonaws.com/role-arn annotation added by the overlay in
-      #      k8s/overlays/aws/serviceaccount-irsa.yaml because the ARN names an
-      #      account id.
-      # `--role-only` on (2) is what keeps (2) and (3) from both claiming the
-      # ServiceAccount and fighting over every `kubectl apply`.
-      #
-      # A policy scoped to one queue ARN, not AmazonSQSFullAccess. The two
-      # managed policies that used to be here were the lazy version and they
-      # were wrong in a specific, checkable way:
-      #
-      #   - AmazonSQSFullAccess grants sqs:* on Resource "*", which includes
-      #     DeleteQueue and PurgeQueue on every queue in the account. A bug in
-      #     this service - or anything that achieves code execution in this pod
-      #     - could empty a queue belonging to a different team entirely.
-      #   - AmazonDynamoDBFullAccess was granted and never used. This service
-      #     does not talk to DynamoDB at all; the Lambda does, under its own
-      #     role in template.yaml. Handing a workload permissions it makes no
-      #     calls with is pure blast radius.
-      #
-      # Two actions and one ARN is the whole requirement: SendMessage to
-      # publish, GetQueueAttributes because the SDK reads them on first use.
-      # "The lab is torn down the same day" was the justification for the old
-      # version and it is not one - a least-privilege policy took eleven lines
-      # to write, and IAM is the part of a review nobody lets slide.
-      #
-      # If this name and serviceaccount.yaml ever disagree, the pods do not
-      # start at all: they stay Pending with `error looking up service account
-      # flight-ops/flight-ops-sa`.
+      # IRSA: the pod gets short-lived STS credentials from a projected OIDC
+      # token, and DefaultCredentialsProvider in AwsConfig finds them. No access
+      # key exists anywhere. Three pieces, none of them this file:
+      #   1. the policy: flight-ops-service-sqs-publish in deploy/aws/foundation.yaml,
+      #      one action (sqs:SendMessage) on one queue ARN;
+      #   2. the role and its trust: flight-ops-sqs-publisher, from up.sh step 7
+      #      (`eksctl create iamserviceaccount --role-only`, so eksctl does not
+      #      also claim the ServiceAccount);
+      #   3. the ServiceAccount: k8s/base/serviceaccount.yaml, with the role-arn
+      #      annotation from k8s/overlays/aws/serviceaccount-irsa.yaml.
+      # A name that disagrees with serviceaccount.yaml leaves the pods Pending
+      # with `error looking up service account flight-ops/flight-ops-sa`.
       serviceAccountName: flight-ops-sa
 
-      # Pod-level security context: applies to every container.
       securityContext:
-        # Enforced by the kubelet, which reads the UID out of the image config.
-        # This is why the Dockerfile uses `USER 1001:1001` and not `USER spring`:
-        # a non-numeric user cannot be verified as non-root and the pod fails
-        # with CreateContainerConfigError. Both halves have to agree.
+        # The kubelet checks the numeric UID from the image, which is why the
+        # Dockerfile says `USER 1001:1001`, not a user name.
         runAsNonRoot: true
         runAsUser: 1001
         runAsGroup: 1001
-        # Files created by the app are group-owned by 1001, which matters the
-        # moment a volume is mounted.
         fsGroup: 1001
         seccompProfile:
           type: RuntimeDefault
 
-      # A PDB protects against voluntary disruption (drains, upgrades). It does
-      # nothing about a node dying. If both replicas land on the same node, one
-      # node loss is a full outage. `preferred` rather than `required` so a
-      # single-node cluster can still schedule both pods instead of wedging one
-      # in Pending forever.
+      # A PDB does nothing about a node dying, so the replicas prefer separate
+      # nodes. `preferred`, so a single-node cluster still schedules both.
       affinity:
         podAntiAffinity:
           preferredDuringSchedulingIgnoredDuringExecution:
@@ -118,21 +63,14 @@ spec:
                   matchLabels:
                     app: flight-ops
 
-      # Must exceed the app's own shutdown budget, with room for the preStop hook:
-      #   5s preStop + 30s spring.lifecycle.timeout-per-shutdown-phase = 35s < 45s.
-      # If this were shorter than the app needs, the kubelet would SIGKILL
-      # mid-request and graceful shutdown would be decoration.
+      # 5s preStop + 30s spring.lifecycle.timeout-per-shutdown-phase = 35s < 45s,
+      # so the kubelet never SIGKILLs mid-request.
       terminationGracePeriodSeconds: 45
 
       containers:
         - name: flight-ops
-          # The tag is a version, never `:latest`. With `:latest` you cannot tell
-          # what is running, and `imagePullPolicy: Always` turns every restart
-          # into a coin flip about which build you get. CI tags by git SHA.
-          # Replaced by the kustomize `images` transformer in each overlay --
-          # k8s/overlays/aws points it at ECR with the commit SHA as the tag.
-          # This value is what `kubectl kustomize k8s/base` renders, so the
-          # base stays applicable against any registry-less cluster.
+          # A version, never `:latest`. The overlay's `images` transformer
+          # points it at ECR with the commit SHA as the tag.
           image: flight-ops-service:1.1.0
           imagePullPolicy: IfNotPresent
 
@@ -141,39 +79,25 @@ spec:
               containerPort: 8080
               protocol: TCP
 
-          # Whole ConfigMap and Secret as env vars. Spring's relaxed binding
-          # turns SPRING_PROFILES_ACTIVE into spring.profiles.active and
-          # DB_PASSWORD into the ${DB_PASSWORD} placeholder in the prod profile.
+          # Every ConfigMap and Secret key as an environment variable. Relaxed
+          # binding maps SPRING_PROFILES_ACTIVE to spring.profiles.active; the
+          # rest (DB_PASSWORD, SQS_QUEUE_URL, ...) are read by name through the
+          # ${...} placeholders in application.yml.
           envFrom:
             - configMapRef:
                 name: flight-ops-config
             - secretRef:
                 name: flight-ops-secret
 
-          # Container-level context, layered on the pod-level one above.
           securityContext:
             allowPrivilegeEscalation: false
-            # true, with an emptyDir mounted at /tmp below.
-            #
-            # This was false, on the grounds that the JVM writes to /tmp - which
-            # is true, and is not a reason to leave the whole filesystem
-            # writable. Embedded Tomcat unpacks its work directory there and the
-            # JVM writes hsperfdata for jcmd and jstack; both want /tmp and
-            # neither wants anything else. Mounting one small tmpfs at the one
-            # path that needs writing is a three-line change, and it means an
-            # attacker who reaches code execution in this container cannot drop
-            # a binary on disk, cannot overwrite the application jar, and cannot
-            # edit anything that survives a restart. It is also what turns
-            # "immutable infrastructure" from a slogan into something the kernel
-            # enforces.
-            #
-            # If a future dependency needs to write elsewhere the pod will
-            # CrashLoopBackOff with a clear EROFS in the logs, which is the
-            # correct way to find out.
+            # With an emptyDir at /tmp for Tomcat's work directory and the JVM's
+            # hsperfdata. Code execution in the container cannot drop a binary
+            # or overwrite the jar, and a dependency that writes elsewhere fails
+            # with EROFS in the logs.
             readOnlyRootFilesystem: true
             capabilities:
-              # This process binds a port above 1024 and does nothing else
-              # privileged. It needs no Linux capabilities at all.
+              # It binds a port above 1024 and does nothing else privileged.
               drop: ["ALL"]
 
           volumeMounts:
@@ -181,60 +105,29 @@ spec:
               mountPath: /tmp
 
           resources:
-            # requests = what the scheduler reserves. Too low and pods get packed
-            # onto a node and throttled; too high and the node looks full while
-            # sitting idle.
-            #
-            # limits = the hard ceiling, and the two resources behave completely
-            # differently when exceeded:
-            #   - over the CPU limit  -> THROTTLED (cgroup quota). Slow, alive.
-            #   - over the memory limit -> OOMKilled. Memory is incompressible;
-            #     the kernel cannot hand out a fraction of a page.
-            # Hence -XX:MaxRAMPercentage=75.0 in the Dockerfile: the heap is
-            # sized from the memory limit, leaving 25% for everything else.
-            # Setting -Xmx768m against a 768Mi limit is the standard way to get
-            # OOMKilled with a heap that looks perfectly healthy.
-            #
-            # Where the 768Mi actually goes, worst case:
-            #   576Mi  heap (75% of the limit)
-            #    64Mi  the /tmp tmpfs below, if it is ever filled. A
-            #          `medium: Memory` emptyDir is tmpfs, and tmpfs pages are
-            #          charged to THIS container's memory cgroup — it is not
-            #          free space, it is heap you have not spent yet.
-            #   128Mi  metaspace, thread stacks, code cache, direct buffers,
-            #          GC structures and the JVM itself.
-            # The last line is the one to watch, and it is not generous. Two
-            # changes eat it silently: raising the tmpfs sizeLimit, and adding
-            # a dependency that allocates direct buffers. Raise the memory limit
-            # together with either one, not after the first OOMKill. What the
-            # JVM is actually using is one command away:
+            # Over the CPU limit a container is throttled; over the memory limit
+            # it is OOMKilled. -XX:MaxRAMPercentage=75.0 in the Dockerfile sizes
+            # the heap from the limit. Worst case for the 768Mi:
+            #   576Mi  heap
+            #    64Mi  the /tmp tmpfs, charged to this container if filled
+            #   128Mi  metaspace, thread stacks, code cache, direct buffers, GC
+            # The last line is tight. Raise the limit with the tmpfs sizeLimit
+            # or with a dependency that allocates direct buffers. To check:
             #   kubectl exec -n flight-ops deploy/flight-ops -- \
             #     jcmd 1 VM.native_memory summary
             requests:
-              # Memory request == limit, on purpose. Values that differ put the
-              # pod in the Burstable QoS class, which is the class the kubelet
-              # evicts FIRST under node pressure — and a JVM whose heap has
-              # already grown into the gap is precisely the pod it picks.
-              # Equal values mean Guaranteed QoS: an OOM kill here is about
-              # this container, not about a neighbour that grew.
+              # Equal to the limit, for Guaranteed QoS. Burstable pods are
+              # evicted first under node pressure.
               memory: "768Mi"
               cpu: "500m"
             limits:
               memory: "768Mi"
-              # No CPU limit, deliberately. A CPU limit is enforced by CFS
-              # throttling, which on a JVM lands hardest during class loading
-              # and GC — the startup probe's window, where being throttled is
-              # how a healthy pod fails to start. The request already
-              # guarantees the share; cycles left idle on the node are free.
-              # A limit would also make the HPA's CPU metric measure the
-              # throttle rather than the load it is meant to scale on.
+              # No CPU limit. CFS throttling hits a JVM hardest during class
+              # loading and GC, inside the startup probe's window, and it would
+              # make the HPA measure the throttle instead of the load.
 
-          # ---- Three probes, three different jobs ----
-
-          # READINESS: "should traffic come here?" Fails -> removed from the
-          # Service endpoints, pod keeps running. This is the one that makes
-          # maxUnavailable: 0 mean anything, and the one Spring flips to
-          # OUT_OF_SERVICE the instant SIGTERM arrives.
+          # Readiness decides whether traffic comes here. Spring flips it to
+          # OUT_OF_SERVICE when SIGTERM arrives.
           readinessProbe:
             httpGet:
               path: /actuator/health/readiness
@@ -244,15 +137,9 @@ spec:
             timeoutSeconds: 3
             failureThreshold: 3
 
-          # LIVENESS: "is this process wedged?" Fails -> the container is KILLED
-          # and restarted. Deliberately slower and more forgiving than readiness,
-          # because a trigger-happy liveness probe under load turns a slow
-          # service into a restart loop and takes the whole deployment down.
-          #
-          # Note: it also must NOT depend on the database. Spring's liveness
-          # group excludes the db indicator by design — if it included it, a
-          # brief RDS failover would restart every pod in the fleet for no
-          # reason. Restarting a JVM does not fix a database.
+          # Liveness restarts a wedged process, so it is slower than readiness,
+          # and Spring's liveness group leaves out the database: an RDS failover
+          # must not restart every pod.
           livenessProbe:
             httpGet:
               path: /actuator/health/liveness
@@ -262,16 +149,9 @@ spec:
             timeoutSeconds: 3
             failureThreshold: 3
 
-          # STARTUP: covers slow boot (JVM + Spring context + Flyway) so the
-          # liveness probe cannot kill a pod that is merely still starting.
-          # 30 x 10s = up to 300s of grace, then liveness takes over at its
-          # normal aggressive cadence.
-          #
-          # While a startup probe is running, readiness and liveness are BOTH
-          # suspended — which makes the initialDelaySeconds above mostly
-          # belt-and-braces. Keeping the startup probe is the better pattern:
-          # a generous initialDelay slows down every future restart, whereas
-          # this exits as soon as the app is actually up.
+          # Up to 30 x 10s = 300s for JVM, Spring and Flyway to start, during
+          # which readiness and liveness are suspended. It ends as soon as the
+          # app is up, unlike a long initialDelaySeconds.
           startupProbe:
             httpGet:
               path: /actuator/health/liveness
@@ -281,26 +161,17 @@ spec:
             failureThreshold: 30
 
           lifecycle:
-            # Pod deletion is not ordered: the kubelet's SIGTERM and the
-            # endpoint removal that pulls this pod out of the ALB target group
-            # race each other. Lose that race and in-flight requests get routed
-            # to a JVM that has already started shutting down — an intermittent
-            # 502 on every deploy that is miserable to debug.
-            #
-            # preStop runs BEFORE SIGTERM, so sleeping here gives kube-proxy and
-            # the AWS load balancer controller time to deregister the target
-            # first. Doing nothing for 5 seconds is the fix.
+            # SIGTERM and the removal from the ALB target group race. preStop
+            # runs first, so 5s of sleep lets the target deregister before the
+            # JVM starts shutting down, instead of a 502 on every deploy.
             preStop:
               exec:
                 command: ["sleep", "5"]
 
       volumes:
-        # emptyDir, not hostPath: it lives and dies with the pod, so nothing
-        # written here survives a restart and nothing is shared with the node or
-        # with another pod. medium: Memory makes it a tmpfs, which keeps
-        # Tomcat's work directory off the node's disk entirely - and counts
-        # against the container's memory limit, which is why sizeLimit is set
-        # rather than left to default to half the node's RAM.
+        # emptyDir, so nothing written survives the pod or is shared with the
+        # node. medium: Memory is tmpfs, which counts against the memory limit;
+        # hence the sizeLimit.
         - name: tmp
           emptyDir:
             medium: Memory

@@ -1,27 +1,22 @@
 #!/usr/bin/env python3
 """Checks that every file path this repository's documentation names exists.
 
-Prose rots differently from links. A link at least looks broken when you click
-it; a sentence that says "see `src/main/java/com/smit/flightops/service/
-OutboxPoller.java`" goes on reading perfectly after the class is renamed, and
-the reader is the one who discovers it is gone. Documentation that cites code
-is only worth more than documentation that waves at it if the citations are
-enforced, so they are enforced here.
+A broken link looks broken when clicked. A sentence citing
+`src/main/java/com/smit/flightops/service/OutboxPoller.java` reads the same
+after the class is renamed, so these citations are checked here.
 
-What counts as a citation: an inline code span whose contents look like a path
-this repository could contain -- it has a directory separator or a known
-source extension, and nothing but path characters. `SELECT ... FOR UPDATE` and
-`kubectl set image` are not paths and are ignored; `k8s/hpa.yaml` and
-`src/main/java/com/smit/flightops/entity/Flight.java` are.
+A citation is an inline code span that looks like a path this repository could
+contain: only path characters, with a directory separator or a known source
+extension. `SELECT ... FOR UPDATE` and `kubectl set image` are ignored;
+`k8s/hpa.yaml` and `src/main/java/com/smit/flightops/entity/Flight.java` are
+checked.
 
-The `path#symbol` form is checked one level deeper: the symbol must actually
-appear in that file. That is what stops an ADR from citing a method that was
-renamed in the commit it is describing.
+In the `path#symbol` form the symbol must also appear in that file, so an ADR
+cannot cite a method the same commit renamed.
 
-Deliberately NOT a Java parser. `#symbol` is matched as a word in the file,
-which accepts a mention in a comment as proof the symbol exists. The
-alternative is a language-aware checker per file type -- and a docs gate that
-needs maintaining is a docs gate somebody turns off.
+Not a Java parser. `#symbol` is matched as a word anywhere in the file, so a
+mention in a comment counts. A language-aware checker per file type would need
+upkeep of its own.
 
 Usage: python3 scripts/refcheck.py [--quiet]
 Exit status is 1 if any citation does not resolve.
@@ -40,17 +35,14 @@ EXTENSIONS = ('.java', '.yml', '.yaml', '.json', '.sql', '.md', '.sh', '.py',
 # Named files that carry no extension, plus directories worth citing by name.
 BARE_FILES = ('Dockerfile', 'mvnw', 'LICENSE')
 
-# Paths the documentation names on purpose although they are not in the
-# repository, each with the reason it is not. The list is short and it is
-# meant to stay short: every entry is a place where prose describes a file
-# somebody creates or will create, and anything longer than this is the
-# checker being worked around rather than used.
+# Paths the documentation names although they are not in the repository, each
+# with its reason. Every entry is a file someone creates or will create; keep
+# the list short.
 DELIBERATELY_ABSENT = {
-    # Written by the reader from k8s/secret.example.yaml. Committing the real
-    # one would commit the passwords, which is the entire point of the split.
+    # Written by the reader from k8s/secret.example.yaml. The real one holds
+    # the passwords.
     'k8s/secret.yaml': 'created by the reader, never committed',
-    # The shape a breaking change would take. It does not exist because no
-    # breaking change has been made.
+    # The shape a breaking change would take; none has been made.
     'booking-created-v2.json': 'hypothetical, in the contract-change procedure',
     'contracts/booking-created-v2.json': 'hypothetical, in the contract-change procedure',
 }
@@ -64,8 +56,8 @@ def tracked_files():
 def looks_like_a_path(span):
     if not PATH_CHARS.match(span) or span.startswith('#'):
         return False
-    # A leading slash makes it a URL path -- `/v3/api-docs.yaml` is an endpoint
-    # this service serves, not a file it contains.
+    # A leading slash makes it a URL path: `/v3/api-docs.yaml` is an endpoint
+    # this service serves, not a file.
     if span.startswith('/'):
         return False
     path = span.split('#', 1)[0]
@@ -75,9 +67,9 @@ def looks_like_a_path(span):
         return True
     if not path.endswith(EXTENSIONS):
         return False
-    # A bare filename with no directory is only a claim about this repository
-    # if the repository actually has a file by that name somewhere; otherwise
-    # it is prose ("application.yml" in a sentence about Spring in general).
+    # A bare filename is a claim about this repository only if a file by that
+    # name exists here; main() decides. Otherwise it is prose, such as
+    # "application.yml" in a sentence about Spring in general.
     return True
 
 
@@ -129,10 +121,9 @@ def main():
                     if path in DELIBERATELY_ABSENT:
                         checked += 1
                         continue
-                    # Build outputs are cited (an SBOM, a coverage report) and
-                    # are never tracked. Their directory is the proof they are
-                    # generated; checking they exist would mean checking that
-                    # somebody had run a build, which is not this gate's job.
+                    # Build outputs (an SBOM, a coverage report) are cited but
+                    # never tracked, and whether someone ran a build is not
+                    # this gate's question.
                     if path.startswith('target/') or '/target/' in path:
                         checked += 1
                         continue
@@ -144,19 +135,16 @@ def main():
                         continue
                     elif '/' not in path and len(basenames.get(path, [])) == 1:
                         # A bare filename is accepted when it is unambiguous:
-                        # `cluster.yaml` means the one in the root, and making
-                        # every sentence write the full path would be worse
-                        # prose for no more safety.
+                        # `cluster.yaml` means the one in the root.
                         resolved = basenames[path][0]
                     elif '/' not in path and path in basenames:
                         checked += 1
                         continue
                     elif len(suffix_matches(path, tracked)) == 1:
-                        # A package-relative citation -- `config/SecurityConfig.java`
-                        # rather than the full src/main/java/com/smit/flightops/
-                        # prefix. Accepted only when exactly one tracked file
-                        # ends that way, so it cannot quietly point at the wrong
-                        # one of two files with the same name.
+                        # A package-relative citation, such as
+                        # `config/SecurityConfig.java`. Accepted only when one
+                        # tracked file ends that way, so it cannot resolve to
+                        # the wrong one of two files with the same name.
                         resolved = suffix_matches(path, tracked)[0]
                     else:
                         problems.append(f'{where}: no such tracked file: {span}')

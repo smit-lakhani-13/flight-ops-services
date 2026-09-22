@@ -2,17 +2,13 @@ AWSTemplateFormatVersion: '2010-09-09'
 Description: >-
   flight-ops data: one PostgreSQL instance inside the cluster's VPC.
 
-  This template is demo-shaped, not production-shaped, and says so rather than
-  implying otherwise: Single-AZ, no backups, no read replica, no Performance
-  Insights, deletion policy Delete. Every one of those is the wrong default for
-  a system with users, and the right default for a stack that exists for a week
-  and must leave nothing behind. The production shape is written out in
-  DEPLOYMENT.md next to the runbook, so the difference is a decision somebody
-  reads rather than a gap they discover.
+  Demo-shaped: Single-AZ, no backups, no read replica, no Performance
+  Insights, deletion policy Delete. Each is wrong for a system with users and
+  right for a stack that lives a week and must leave nothing behind.
+  DEPLOYMENT.md describes the production shape.
 
-  This stack is created AFTER the cluster and deleted BEFORE it: its security
-  group lives in the VPC eksctl owns, and eksctl cannot delete a VPC that still
-  contains one.
+  Created after the cluster and deleted before it: its security group lives in
+  the VPC eksctl owns, and eksctl cannot delete a VPC that still contains one.
 
 Parameters:
   VpcId:
@@ -22,24 +18,23 @@ Parameters:
   PrivateSubnetIds:
     Type: List<AWS::EC2::Subnet::Id>
     Description: >-
-      The cluster's PRIVATE subnets. Two or more, in different availability
-      zones -- RDS requires that even for a Single-AZ instance, because the
+      The cluster's private subnets, two or more in different availability
+      zones. RDS requires that even for a Single-AZ instance, because the
       subnet group defines where it may be placed after a failure.
 
   ClusterSecurityGroupId:
     Type: AWS::EC2::SecurityGroup::Id
     Description: >-
       The EKS cluster security group (stack output "ClusterSecurityGroupId").
-      This is the one attached to every managed-node-group pod ENI, so it is
-      what the application's traffic actually arrives from.
+      It is attached to every managed-node-group pod ENI, so the application's
+      traffic arrives from it.
 
   SharedNodeSecurityGroupId:
     Type: AWS::EC2::SecurityGroup::Id
     Description: >-
-      eksctl's shared node security group. Admitted as well as the cluster SG
+      eksctl's shared node security group. Admitted beside the cluster SG,
       because which of the two a packet carries depends on the CNI mode and on
-      whether the node group was created by eksctl or added later -- and
-      debugging that from a hung JDBC connection is an afternoon.
+      whether eksctl created the node group or it was added later.
 
   DBPassword:
     Type: String
@@ -50,11 +45,9 @@ Parameters:
       never written to a file in this repository. NoEcho keeps it out of the
       stack's Parameters view and its events.
 
-      ManageMasterUserPassword (Secrets Manager) was considered and rejected:
-      RDS rotates a managed password every 7 days, and the Kubernetes Secret
-      holding the copy does not rotate with it. The service would work for a
-      week and then fail authentication on a schedule, which is a spectacularly
-      confusing failure inside a demo window.
+      Not ManageMasterUserPassword (Secrets Manager): RDS rotates a managed
+      password every 7 days, and the Kubernetes Secret holding the copy does
+      not rotate with it. The service would fail authentication a week in.
 
   DBName:
     Type: String
@@ -104,28 +97,23 @@ Resources:
       cfn-lint:
         config:
           ignore_checks:
-            # W1011 wants a {{resolve:secretsmanager:...}} dynamic reference
-            # instead of a NoEcho parameter, and it is right in general. Here
-            # it would mean a Secrets Manager secret to create, pay for and
-            # remember to delete, holding a password that also has to be copied
-            # into a Kubernetes Secret by hand -- two sources of truth for one
-            # value, in a stack whose whole point is that `down.sh` leaves
-            # nothing behind. The password is generated per run by up.sh, never
-            # written to disk, and dies with the stack.
+            # W1011 wants a {{resolve:secretsmanager:...}} reference instead of
+            # a NoEcho parameter. Here that is a secret to create, pay for and
+            # delete, holding a password also copied into a Kubernetes Secret:
+            # two sources of truth for one value. up.sh generates the password
+            # per run, never writes it to disk, and it goes with the stack.
             - W1011
-    # Both policies are Delete, and both are deliberate. The DEFAULT for
-    # DeletionPolicy on an RDS instance is Snapshot -- so a teardown that looks
-    # complete leaves a final snapshot behind, billed at storage rates, in a
-    # console page nobody opens again. For a demo database seeded from Flyway
-    # migrations there is nothing in it worth keeping. For anything with users
-    # this would be exactly backwards.
+    # Both Delete. The RDS default is Snapshot, so a teardown that looks
+    # complete leaves a final snapshot billing at storage rates. A demo
+    # database built by Flyway migrations holds nothing worth keeping; for
+    # anything with users this would be backwards.
     DeletionPolicy: Delete
     UpdateReplacePolicy: Delete
     Properties:
       DBInstanceIdentifier: flight-ops-db
       Engine: postgres
-      # Pinned. "postgres" with no version gets whatever RDS defaults to today,
-      # which means the version can change between two runs of the same script.
+      # Pinned. With no version RDS picks its current default, which can change
+      # between two runs of the same script.
       EngineVersion: '17.11'
       DBInstanceClass: db.t4g.micro
       AllocatedStorage: '20'
@@ -137,19 +125,17 @@ Resources:
       DBSubnetGroupName: !Ref DBSubnetGroup
       VPCSecurityGroups:
         - !GetAtt DBSecurityGroup.GroupId
-      # The single most important line in this file. A publicly accessible
-      # database with a generated password is still a database that the entire
-      # internet can reach and attempt to log into.
+      # A public database with a generated password is still one the whole
+      # internet can reach and try to log into.
       PubliclyAccessible: false
       MultiAZ: false
-      # Zero backups. A demo stack that is deleted in a week does not need
-      # point-in-time recovery, and retention > 0 means automated snapshots
-      # that outlive the instance and keep billing.
+      # No backups. A stack deleted within a week needs no point-in-time
+      # recovery, and retention > 0 leaves automated snapshots that outlive the
+      # instance and keep billing.
       BackupRetentionPeriod: 0
       DeleteAutomatedBackups: true
-      # Skip the final snapshot for the same reason as DeletionPolicy: Delete.
-      # The schema is in src/main/resources/db/migration and the data is seed
-      # data.
+      # No final snapshot, as with DeletionPolicy: Delete. The schema is in
+      # src/main/resources/db/migration and the data is seed data.
       DeletionProtection: false
       AutoMinorVersionUpgrade: true
       CopyTagsToSnapshot: true
@@ -159,7 +145,7 @@ Resources:
 
 Outputs:
   DbEndpoint:
-    Description: Hostname. Private -- only reachable from inside the VPC.
+    Description: Hostname. Private, reachable only from inside the VPC.
     Value: !GetAtt Database.Endpoint.Address
 
   DbPort:
@@ -167,8 +153,8 @@ Outputs:
 
   JdbcUrl:
     Description: >-
-      Exactly the value the DB_URL repository variable and the aws overlay
-      expect. Copy it verbatim; there is no password in it.
+      The value the DB_URL repository variable and the aws overlay expect.
+      Copy it as it is; there is no password in it.
     Value: !Sub 'jdbc:postgresql://${Database.Endpoint.Address}:${Database.Endpoint.Port}/${DBName}'
 
   DbSecurityGroupId:

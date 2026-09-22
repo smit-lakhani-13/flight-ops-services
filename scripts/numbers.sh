@@ -1,14 +1,9 @@
 #!/usr/bin/env bash
-# Every number the README claims, recomputed from the tree.
+# Every number the README claims, recomputed from the tree, so the counts are
+# read off a command instead of remembered.
 #
-# A README that counts things is making assertions that decay on the next
-# commit, and a wrong count is worse than no count: it is the one part of a
-# document a reader can check in five seconds, so getting it wrong invites
-# them to distrust the parts they cannot check. This script exists so the
-# counts are read off a command rather than remembered.
-#
-# Test totals come from the surefire XML, so they are what actually ran, not
-# what somebody expected to run. They need a build first:
+# Test totals come from the surefire XML, so they count what ran. They need a
+# build first:
 #
 #   ./mvnw -B clean verify && ./mvnw -B -f lambda/pom.xml clean verify
 #   scripts/numbers.sh
@@ -31,9 +26,8 @@ printf 'exception/ classes     %s (one of them GlobalExceptionHandler)\n' \
 printf 'Flyway migrations      %s (%s)\n' \
   "$(git ls-files 'src/main/resources/db/migration/*.sql' | wc -l | tr -d ' ')" \
   "$(git ls-files 'src/main/resources/db/migration/*.sql' | sed 's#.*/\(V[0-9]*\)__.*#\1#' | paste -sd, -)"
-# *Test.java only: src/test/java also holds support classes, and counting a
-# @TestConfiguration as a test class is the kind of small lie that makes a
-# reader stop trusting the rest of the table.
+# *Test.java only: src/test/java also holds support classes, and a
+# @TestConfiguration is not a test class.
 printf 'test classes (app)     %s\n' \
   "$(git ls-files 'src/test/java/**/*Test.java' | wc -l | tr -d ' ')"
 printf 'test classes (lambda)  %s\n' \
@@ -86,9 +80,9 @@ else
 fi
 
 rule 'Versions'
-# The project's own <version>, which is the SECOND one in the file: the first
-# belongs to <parent>. awk rather than sed, because the BSD sed on macOS and
-# GNU sed disagree about `q` inside a block and this script runs on both.
+# The project's own <version> is the second in the file; the first belongs to
+# <parent>. awk, because BSD sed (macOS) and GNU sed disagree about `q` inside
+# a block.
 printf 'project                %s\n' \
   "$(awk '/<version>/ {n++; if (n==2) {gsub(/.*<version>|<\/version>.*/, ""); print; exit}}' pom.xml)"
 printf 'Spring Boot            %s\n' \

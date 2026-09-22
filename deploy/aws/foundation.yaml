@@ -27,8 +27,7 @@ Parameters:
     Description: >-
       Where budget alerts go. Passed on the command line and never committed.
       AWS sends a subscription confirmation that must be clicked, or the alerts
-      silently never arrive -- which is the failure mode this parameter exists
-      to avoid.
+      never arrive.
     AllowedPattern: '^[^@\s]+@[^@\s]+\.[^@\s]+$'
     ConstraintDescription: must be an email address.
 
@@ -37,10 +36,9 @@ Parameters:
     Default: ''
     Description: >-
       ARN of an existing token.actions.githubusercontent.com OIDC provider. An
-      AWS account may have exactly one per URL, so a second CreateOpenIDConnect
-      Provider fails with EntityAlreadyExists -- which is how this stack fails
-      in any account that already deploys something from GitHub. Leave empty to
-      create one.
+      AWS account holds at most one per URL, so a second CreateOpenIDConnect
+      Provider fails with EntityAlreadyExists in any account that already
+      deploys something from GitHub. Leave empty to create one.
 
   MonthlyBudgetUsd:
     Type: Number
@@ -53,9 +51,9 @@ Parameters:
     Default: 12
     MinValue: 1
     Description: >-
-      Daily ceiling. The monthly budget alone is useless for a demo that runs
-      for a week: by the time it fires at 80% the money is spent. The daily one
-      is the alarm that actually catches a cluster left running.
+      Daily ceiling. For a demo that runs a week, the monthly budget fires at
+      80% after the money is spent. The daily one catches a cluster left
+      running.
 
 Conditions:
   CreateOidcProvider: !Equals [!Ref ExistingOidcProviderArn, '']
@@ -69,10 +67,9 @@ Resources:
     Type: AWS::ECR::Repository
     Properties:
       RepositoryName: flight-ops-service
-      # IMMUTABLE is the property that makes `kubectl rollout undo` mean
-      # something: a tag cannot be repointed, so the previous revision's image
-      # is still the image it was. With MUTABLE tags a rollback can silently
-      # roll back to a different build.
+      # IMMUTABLE makes `kubectl rollout undo` trustworthy: a tag cannot be
+      # repointed, so the previous revision's image is still the image it was.
+      # With MUTABLE tags a rollback can land on a different build.
       ImageTagMutability: IMMUTABLE
       ImageScanningConfiguration:
         ScanOnPush: true
@@ -117,23 +114,17 @@ Resources:
   GitHubOidcProvider:
     Type: AWS::IAM::OIDCProvider
     Condition: CreateOidcProvider
-    # RETAINED ON DELETE, and this is the one resource in the file where that
-    # is not caution but a correctness requirement.
-    #
-    # An AWS account holds exactly ONE OIDC provider for
-    # token.actions.githubusercontent.com, shared by every repository and every
-    # role in the account that uses GitHub Actions OIDC. If this stack created
-    # it, the default delete behaviour would take it away with the stack --
-    # and every OTHER repository's deploy role in the account starts failing
-    # with "Not authorized to perform sts:AssumeRoleWithWebIdentity", at a
-    # moment nobody connects to a teardown of an unrelated demo. Deleting a
-    # shared resource because this stack happened to be the one that created it
-    # is not a teardown, it is an outage for someone else.
+    # Retained on delete. An account holds one OIDC provider for
+    # token.actions.githubusercontent.com, shared by every repository and role
+    # that uses GitHub Actions OIDC. Deleting it with this stack would make
+    # every other repository's deploy role fail with "Not authorized to
+    # perform sts:AssumeRoleWithWebIdentity", at a moment no one connects to
+    # the teardown of an unrelated demo.
     #
     # Retaining costs nothing: an OIDC provider is free, and up.sh detects an
     # existing one and passes it as ExistingOidcProviderArn on the next run, so
-    # a down/up cycle works unchanged. To remove it deliberately, once nothing
-    # else in the account uses GitHub Actions OIDC:
+    # a down/up cycle works unchanged. To remove it once nothing else in the
+    # account uses GitHub Actions OIDC:
     #   aws iam delete-open-id-connect-provider --open-id-connect-provider-arn <arn>
     DeletionPolicy: Retain
     UpdateReplacePolicy: Retain
@@ -152,7 +143,7 @@ Resources:
     Type: AWS::IAM::Role
     Properties:
       RoleName: github-actions-deploy
-      Description: Assumed by GitHub Actions on pushes to main. No access keys exist.
+      Description: Assumed by GitHub Actions on main, on a push or a manual run. No access keys exist.
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -165,12 +156,12 @@ Resources:
             Action: sts:AssumeRoleWithWebIdentity
             Condition:
               StringEquals:
-                # BOTH conditions are load-bearing. Without the `sub` pin, any
-                # GitHub repository in the world can assume this role: the
-                # provider trusts GitHub, not this repository. A `sub` of
-                # "repo:*" or a StringLike with a bare wildcard is a full
-                # account compromise waiting to happen, and it is the single
-                # most common mistake in published OIDC examples.
+                # Both conditions are required. Without the `sub` pin, any
+                # GitHub repository can assume this role: the provider trusts
+                # GitHub, not this repository. A `sub` of "repo:*", or a
+                # StringLike with a bare wildcard, lets any GitHub workflow act
+                # as this role. It is a common mistake in published OIDC
+                # examples.
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
                 token.actions.githubusercontent.com:sub: !Sub 'repo:${GitHubOwner}/${GitHubRepo}:ref:refs/heads/main'
       Policies:
@@ -178,9 +169,10 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-              # GetAuthorizationToken has no resource to scope to -- it returns
+              # GetAuthorizationToken has no resource to scope to: it returns
               # a registry-wide token. Every other ECR action is pinned to the
-              # one repository.
+              # one repository. DescribeImages is the workflow's "is this
+              # commit already in ECR?" check.
               - Effect: Allow
                 Action: ecr:GetAuthorizationToken
                 Resource: '*'
@@ -193,12 +185,12 @@ Resources:
                   - ecr:PutImage
                   - ecr:BatchGetImage
                   - ecr:GetDownloadUrlForLayer
+                  - ecr:DescribeImages
                 Resource: !GetAtt EcrRepository.Arn
-              # Enough to write a kubeconfig, and nothing more. What the role
-              # may then DO inside the cluster is decided by the EKS access
-              # entry up.sh creates, which is scoped to the flight-ops
-              # namespace -- so this role cannot touch kube-system even though
-              # it can describe the cluster.
+              # Enough to write a kubeconfig. What the role may do inside the
+              # cluster is decided by the EKS access entry up.sh creates, which
+              # is scoped to the flight-ops namespace, so it cannot touch
+              # kube-system.
               - Effect: Allow
                 Action: eks:DescribeCluster
                 Resource: !Sub 'arn:${AWS::Partition}:eks:${AWS::Region}:${AWS::AccountId}:cluster/flight-ops-cluster'
@@ -217,28 +209,26 @@ Resources:
       PolicyDocument:
         Version: '2012-10-17'
         Statement:
-          # Send only. The service publishes; it never reads the queue, never
-          # deletes a message and never changes queue attributes. The Lambda
-          # consumes, under its own role from template.yaml.
+          # One action on one queue. The service only calls SendMessage, with
+          # the queue URL from configuration, so it needs neither GetQueueUrl
+          # nor GetQueueAttributes. The Lambda consumes under its own role from
+          # template.yaml.
           - Effect: Allow
             Action:
               - sqs:SendMessage
-              - sqs:GetQueueUrl
-              - sqs:GetQueueAttributes
             Resource: !Sub 'arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:booking-events'
 
   # ---------------------------------------------------------------------
-  # Cost alarms. The cheapest insurance in this repository.
+  # Cost alarms
   # ---------------------------------------------------------------------
   # Not filtered by the Project tag. Cost allocation tags take up to 24 hours
   # to activate after the resources exist, so a tag-filtered budget is blind
-  # for exactly the first day -- the day a mistake is most likely.
+  # for the first day, when a mistake is most likely.
   #
-  # So these are account-wide on purpose, and the consequence is worth stating
-  # where somebody will meet it: if the account already spends money on
-  # something else, that spend counts against these thresholds and the first
-  # alert may arrive before this stack has cost anything at all. Raise the
-  # limits below rather than adding a tag filter, until the tags have activated.
+  # So these are account-wide. If the account already spends money on
+  # something else, that spend counts against these thresholds, and the first
+  # alert may arrive before this stack has cost anything. Raise the limits
+  # instead of adding a tag filter, until the tags have activated.
   MonthlyBudget:
     Type: AWS::Budgets::Budget
     Properties:
@@ -274,9 +264,8 @@ Resources:
           Subscribers:
             - SubscriptionType: EMAIL
               Address: !Ref AlertEmail
-        # FORECASTED, not ACTUAL: this is the one that fires on day two of a
-        # cluster somebody forgot, rather than on day twenty when the month's
-        # money is already gone.
+        # FORECASTED: this one fires on day two of a forgotten cluster, before
+        # the month's money is gone.
         - Notification:
             NotificationType: FORECASTED
             ComparisonOperator: GREATER_THAN

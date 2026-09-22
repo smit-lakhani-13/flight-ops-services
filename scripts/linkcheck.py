@@ -1,30 +1,22 @@
 #!/usr/bin/env python3
 """Checks every link inside the repository's own Markdown.
 
-A dead link in a README is a small thing that says a large one: that the
-document was written once and never read again. The two failure modes are
-different and both silent.
+Two kinds of link break without a warning:
 
-* A **relative file link** breaks when a file is renamed. Nothing warns you --
-  GitHub renders it as a link, and it 404s only for the person who clicks it,
-  which is never the author.
-* An **anchor** breaks when a heading is reworded, because GitHub derives the
-  anchor from the heading text. `## Still open` becomes `#still-open`; rename
-  it to `## Open` and every table of contents entry pointing at it silently
-  stops jumping anywhere.
+* A relative file link breaks when a file is renamed. GitHub still renders
+  it, and it 404s for whoever clicks it.
+* An anchor breaks when a heading is reworded, because GitHub derives the
+  anchor from the heading text. `## Still open` gives `#still-open`; rename it
+  to `## Open` and every contents entry pointing at it stops working.
 
-So both are checked here, against GitHub's actual slug algorithm rather than
-an approximation of it: lowercase, drop everything that is not a letter,
-digit, space, hyphen or underscore, then spaces to hyphens, and a `-1`, `-2`
-suffix for repeated headings in one file.
+Anchors follow GitHub's slug rules: lowercase, drop everything but letters,
+digits, spaces, hyphens and underscores, turn spaces into hyphens, and add
+`-1`, `-2` for repeated headings in one file.
 
-External `http(s)` links are deliberately NOT fetched. A checker that needs
-the network is a checker that fails in CI for reasons that have nothing to do
-with the commit, and the first red build nobody believes is the last one
-anybody reads.
+External `http(s)` links are not fetched, so CI never fails on the network.
 
 Usage: python3 scripts/linkcheck.py [--quiet]
-Exit status is 1 if anything is broken, which is what makes it a CI gate.
+Exit status is 1 if anything is broken.
 """
 
 import os
@@ -33,19 +25,17 @@ import subprocess
 import sys
 import unicodedata
 
-# [text](target) -- target stops at the first whitespace or closing paren, so a
-# title like [x](y "z") is handled. Image links written as ![alt](src) are
-# checked identically, which is correct: a missing image is a broken link too.
+# [text](target): the target stops at the first whitespace or closing paren,
+# so a title like [x](y "z") is handled. Image links, ![alt](src), are checked
+# the same way; a missing image is a broken link too.
 #
-# The label alternation allows ONE level of nested brackets, and it is not
-# decoration. A badge is a link whose label is an image link:
+# The label allows one level of nested brackets for a badge, a link whose
+# label is an image link:
 #
 #     [![licence: MIT](https://img.shields.io/badge/licence-MIT-blue)](LICENSE)
 #
-# With a label of `[^\]]*` the match ends at the image's closing bracket, the
-# checker reads the shields.io URL as the target, skips it as external, and
-# never looks at `LICENSE` at all. Every badge target in this repository was
-# therefore unchecked -- the exact silent-skip this file exists to prevent.
+# A label of `[^\]]*` would end at the image's closing bracket, take the
+# shields.io URL as the target, skip it as external, and never check LICENSE.
 LINK = re.compile(r'\[(?:[^\[\]]|\[[^\[\]]*\])*\]\(\s*([^)\s]+)(?:\s+"[^"]*")?\s*\)')
 HEADING = re.compile(r'^(#{1,6})\s+(.*?)\s*#*\s*$')
 FENCE = re.compile(r'^\s*(```|~~~)')
@@ -67,8 +57,8 @@ def slug(text):
     for ch in text.lower():
         if ch.isalnum() or ch in ' -_':
             kept.append(ch)
-        # Everything else -- punctuation, emoji, en dashes -- is dropped, not
-        # replaced with a hyphen. That difference is the one people get wrong.
+        # Everything else (punctuation, emoji, en dashes) is dropped, not
+        # replaced with a hyphen.
     return ''.join(kept).strip().replace(' ', '-')
 
 
