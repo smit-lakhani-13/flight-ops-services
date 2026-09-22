@@ -55,7 +55,7 @@
           thing controlling it. That makes it easy to forget and drift years
           behind, which is a supply-chain problem as much as a features one.
         -->
-        <aws.sdk.version>2.55.0</aws.sdk.version>
+        <aws.sdk.version>2.55.1</aws.sdk.version>
     </properties>
 
     <dependencyManagement>
