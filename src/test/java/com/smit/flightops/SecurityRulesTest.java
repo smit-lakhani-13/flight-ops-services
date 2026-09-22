@@ -14,7 +14,9 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.head;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -295,5 +297,51 @@ class SecurityRulesTest {
         mockMvc.perform(get("/api/v1/flights/UA123").with(httpBasic(API_USER, API_PASSWORD)))
                 .andExpect(status().isOk())
                 .andExpect(header().doesNotExist("Set-Cookie"));
+    }
+
+    /**
+     * HEAD, because Spring MVC serves it for every {@code @GetMapping} without
+     * being asked and {@code requestMatchers(HttpMethod.GET, ...)} does not
+     * cover it.
+     *
+     * <p>Without an explicit rule, HEAD matched nothing and fell through to
+     * {@code anyRequest().denyAll()}, so a caller holding {@code flights:read}
+     * got a 403 on a resource it could GET — a wrong answer rather than a hole,
+     * and one that lands on exactly the clients most likely to use HEAD: uptime
+     * monitors, caches revalidating, anything reading {@code Content-Length}
+     * before committing to a body. Each one also logged a WARN about a missing
+     * authority, pointing whoever is on call at the credential instead of at
+     * the rule set.
+     *
+     * <p>The ops case is asserted too, so the fix cannot be "let HEAD through"
+     * — read still has to mean read.
+     */
+    @Test
+    @DisplayName("HEAD follows the same rule as GET, in both directions")
+    void headIsTreatedAsARead() throws Exception {
+        mockMvc.perform(head("/api/v1/flights/UA123").with(httpBasic(API_USER, API_PASSWORD)))
+                .andExpect(status().isOk());
+
+        mockMvc.perform(head("/api/v1/flights/UA123").with(httpBasic(OPS_USER, OPS_PASSWORD)))
+                .andExpect(status().isForbidden());
+
+        mockMvc.perform(head("/api/v1/flights/UA123"))
+                .andExpect(status().isUnauthorized());
+    }
+
+    /**
+     * The methods that genuinely have no handler must stay denied.
+     *
+     * <p>This is the guard on the fix above: the temptation when HEAD comes
+     * back 403 is to relax {@code anyRequest()} to {@code authenticated()},
+     * which would make every unhandled verb reachable by any credential. PUT
+     * has no controller and must not become one rule change away from having
+     * one.
+     */
+    @Test
+    @DisplayName("a verb with no handler is still denied, even for a fully authorised caller")
+    void unhandledVerbsStayDenied() throws Exception {
+        mockMvc.perform(put("/api/v1/flights/UA123").with(httpBasic(API_USER, API_PASSWORD)))
+                .andExpect(status().isForbidden());
     }
 }

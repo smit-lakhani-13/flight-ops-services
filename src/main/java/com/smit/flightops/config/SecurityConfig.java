@@ -152,7 +152,20 @@ public class SecurityConfig {
                         // the wrong body - a confusing failure to debug precisely
                         // because the symptom is in the error handler.
                         .requestMatchers("/error").permitAll()
+                        // HEAD alongside GET, not folded into it. Spring MVC
+                        // serves HEAD for every @GetMapping automatically, so
+                        // HEAD /api/v1/flights/UA123 is a supported operation of
+                        // this API - but HttpMethod.GET matches only the literal
+                        // method, so without this line HEAD matched no rule and
+                        // fell through to the denyAll below. The result was a 403
+                        // for a caller holding flights:read on a resource it can
+                        // GET, which is a wrong answer rather than a hole: uptime
+                        // monitors, caches revalidating, and anything reading
+                        // Content-Length before a GET all use HEAD, and each one
+                        // also logged a WARN pointing ops at the credential
+                        // instead of at the rule set.
                         .requestMatchers(HttpMethod.GET, API_PATHS).hasAuthority(SCOPE_READ)
+                        .requestMatchers(HttpMethod.HEAD, API_PATHS).hasAuthority(SCOPE_READ)
                         .requestMatchers(HttpMethod.POST, API_PATHS).hasAuthority(SCOPE_WRITE)
                         .requestMatchers(HttpMethod.PATCH, API_PATHS).hasAuthority(SCOPE_WRITE)
                         .requestMatchers(HttpMethod.DELETE, API_PATHS).hasAuthority(SCOPE_WRITE)
@@ -170,7 +183,28 @@ public class SecurityConfig {
         // exists, so there is no path on which a null decoder reaches the DSL.
         jwtDecoder.ifAvailable(decoder -> {
             try {
-                http.oauth2ResourceServer(oauth2 -> oauth2.jwt(Customizer.withDefaults()));
+                // The two handlers are passed in again here, and leaving them
+                // out was a real defect rather than tidiness. oauth2ResourceServer
+                // does not read the entry point configured on exceptionHandling
+                // below: OAuth2ResourceServerConfigurer installs its own
+                // BearerTokenAuthenticationEntryPoint directly onto
+                // BearerTokenAuthenticationFilter, and that filter catches the
+                // AuthenticationException itself - so ExceptionTranslationFilter,
+                // the only place the exceptionHandling entry point is consulted,
+                // never runs for a bad token.
+                //
+                // The symptom was a split contract in the one deployment mode
+                // that matters: a wrong Basic password returned
+                // {"code":"UNAUTHENTICATED",...} and an expired bearer token
+                // returned 401 with a zero-length body. A client parsing the
+                // documented error shape on every non-2xx would throw a JSON
+                // parse error and report "your service is broken" instead of
+                // "refresh your token". Same for insufficient scope, via
+                // BearerTokenAccessDeniedHandler.
+                http.oauth2ResourceServer(oauth2 -> oauth2
+                        .jwt(Customizer.withDefaults())
+                        .authenticationEntryPoint(entryPoint)
+                        .accessDeniedHandler(accessDeniedHandler));
                 log.info("JWT resource server enabled — bearer tokens will be validated");
             } catch (Exception e) {
                 // HttpSecurity.oauth2ResourceServer declares Exception, and a
@@ -195,9 +229,21 @@ public class SecurityConfig {
      * {id}} prefix on each stored value and dispatches to the matching
      * algorithm, so bcrypt and argon2 hashes verify side by side and a rotation
      * is a data migration instead of a deployment where every credential stops
-     * working at once. It also refuses a value with no prefix, which is what
-     * turns "someone pasted a plaintext password into the environment" into a
-     * startup failure rather than a silently unverifiable account.
+     * working at once.
+     *
+     * <p>It also refuses a value with no {@code {id}} prefix — but be precise
+     * about <i>when</i>, because the obvious reading is wrong and this file
+     * used to state it wrongly. The refusal happens on the first
+     * authentication attempt, not at startup, and it arrives as an
+     * {@code IllegalArgumentException} thrown inside a servlet filter: not an
+     * {@code AuthenticationException}, so nothing in the chain catches it, and
+     * not visible to {@code GlobalExceptionHandler}, which runs downstream of
+     * {@code DispatcherServlet}. The caller gets a bodyless 500 on a pod that
+     * reports itself healthy.
+     *
+     * <p>Making that a genuine startup failure is the job of the {@code @Pattern}
+     * constraint on {@link ApiSecurityProperties}, which is where the reasoning
+     * is written out in full. The encoder is the second line, not the first.
      */
     @Bean
     PasswordEncoder passwordEncoder() {

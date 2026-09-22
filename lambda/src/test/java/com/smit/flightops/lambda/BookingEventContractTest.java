@@ -123,4 +123,61 @@ class BookingEventContractTest {
         assertThatThrownBy(() -> BookingEventHandler.sortKey(event))
                 .isInstanceOf(java.time.format.DateTimeParseException.class);
     }
+
+    /**
+     * The hole in the fixed-width guarantee that padding the fraction does not
+     * close.
+     *
+     * <p>Six fractional digits fix everything to the right of the seconds.
+     * Nothing fixes what is to the left: {@code Instant.parse} accepts expanded
+     * years, and the {@code uuuu} pattern then emits a leading sign.
+     * {@code +12026-09-15T10:00:00Z} formats to twenty-nine characters starting
+     * with {@code +} (0x2B), which is below every ASCII digit — so the row sorts
+     * ahead of every other item in its partition, while
+     * {@code begins_with(eventTime, "2026-")} never matches it. First in every
+     * query and invisible to the day filter at the same time.
+     *
+     * <p>It is reachable: redriving a hand-edited DLQ message, or any second
+     * producer on this contract, both get there. The handler rejects it so the
+     * message becomes a batch item failure, which is the same treatment a
+     * malformed timestamp gets and for the same reason.
+     */
+    @Test
+    @DisplayName("a year outside the fixed-width range is rejected, not written under a shorter-sorting key")
+    void anExpandedYearIsRejected() throws Exception {
+        for (String outOfRange : List.of("+12026-09-15T10:00:00Z", "-0044-03-15T10:00:00Z")) {
+            String odd = contractJson().replace("2026-09-15T10:00:00.000000Z", outOfRange);
+
+            BookingEventHandler.BookingEvent event =
+                    MAPPER.readValue(odd, BookingEventHandler.BookingEvent.class);
+
+            assertThatThrownBy(() -> BookingEventHandler.sortKey(event))
+                    .as("%s formats to a different width and breaks the ordering guarantee", outOfRange)
+                    .isInstanceOf(java.time.DateTimeException.class)
+                    .hasMessageContaining("fixed-width sort-key range");
+        }
+    }
+
+    /**
+     * The boundary, asserted in both directions so the range check cannot be
+     * quietly widened or narrowed without a test noticing.
+     */
+    @Test
+    @DisplayName("the first and last four-digit years are accepted, and produce equal-width keys")
+    void theFourDigitYearBoundariesAreAccepted() throws Exception {
+        String first = keyFor("1000-01-01T00:00:00Z");
+        String last = keyFor("9999-12-31T23:59:59.999999Z");
+
+        assertThat(first).doesNotStartWith("+").doesNotStartWith("-");
+        assertThat(first.indexOf('#'))
+                .as("the '#' must sit at the same offset, which is what makes the key sortable")
+                .isEqualTo(last.indexOf('#'));
+        assertThat(first).isLessThan(last);
+    }
+
+    private static String keyFor(String timestamp) throws IOException {
+        String json = contractJson().replace("2026-09-15T10:00:00.000000Z", timestamp);
+        return BookingEventHandler.sortKey(
+                MAPPER.readValue(json, BookingEventHandler.BookingEvent.class));
+    }
 }

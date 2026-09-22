@@ -13,10 +13,10 @@ import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.ConditionalCheckFailedException;
 import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
 
+import java.time.DateTimeException;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -260,8 +260,24 @@ public class BookingEventHandler implements RequestHandler<SQSEvent, SQSBatchRes
      * {@code Query(flightNumber = "UA123")} now genuinely does return events in
      * time order.
      *
-     * @throws DateTimeParseException if the producer sent a timestamp that is
-     *         not an instant. Left to propagate: the caller reports the message
+     * <p><b>The year is range-checked, and that is not paranoia.</b> Six
+     * fractional digits fix the width of everything to the right of the
+     * seconds, but nothing fixes the width to the <em>left</em> of it:
+     * {@code Instant.parse} accepts expanded years, and the {@code uuuu}
+     * pattern then emits a leading sign. A timestamp of
+     * {@code +12026-09-15T10:00:00Z} — reachable by redriving a hand-edited DLQ
+     * message, or from any second producer on this contract — formats to
+     * twenty-nine characters beginning with {@code +} (0x2B), which is below
+     * every ASCII digit. That row sorts <em>ahead of every other item in the
+     * partition</em>, and {@code begins_with(eventTime, "2026-")} never matches
+     * it, so it is simultaneously first in every query and invisible to the day
+     * filter. A negative year does the same at twenty-eight characters. The
+     * fixed-width guarantee holds for years 1000-9999 and this is where that is
+     * enforced rather than assumed.
+     *
+     * @throws DateTimeException if the producer sent a timestamp that is not an
+     *         instant, or one outside the range the key format can represent at
+     *         a fixed width. Left to propagate: the caller reports the message
      *         as a batch item failure and it ends up in the DLQ, which is the
      *         right home for an event that breaks the wire contract. Silently
      *         falling back to the raw string would put an unsortable key in the
@@ -269,8 +285,22 @@ public class BookingEventHandler implements RequestHandler<SQSEvent, SQSBatchRes
      */
     static String sortKey(BookingEvent booking) {
         Instant at = Instant.parse(booking.timestamp());
+        int year = at.atZone(ZoneOffset.UTC).getYear();
+        if (year < MIN_SORTABLE_YEAR || year > MAX_SORTABLE_YEAR) {
+            throw new DateTimeException(
+                    "timestamp year " + year + " is outside the fixed-width sort-key range "
+                    + MIN_SORTABLE_YEAR + "-" + MAX_SORTABLE_YEAR + ": " + booking.timestamp());
+        }
         return SORT_KEY_TIME.format(at) + "#" + booking.bookingId();
     }
+
+    /**
+     * The years for which {@code uuuu} emits exactly four digits and no sign.
+     * Outside this range the sort key changes width and the ordering guarantee
+     * the whole format exists for stops holding.
+     */
+    private static final int MIN_SORTABLE_YEAR = 1000;
+    private static final int MAX_SORTABLE_YEAR = 9999;
 
     /**
      * Mirror of {@code com.smit.flightops.dto.BookingCreatedEvent} in the main

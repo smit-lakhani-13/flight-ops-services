@@ -18,7 +18,7 @@ import java.util.Objects;
 @Table(name = "flights", indexes = {
     @Index(name = "idx_origin_dest", columnList = "origin,destination")
 })
-// The same four checks V2__invariants_and_fingerprint.sql adds to PostgreSQL,
+// The same four checks V2__seat_and_route_invariants.sql adds to PostgreSQL,
 // declared here so the H2 schema Hibernate generates for the default profile
 // and the @DataJpaTest slices has them too. Without this the constraints would
 // exist only in the profile nobody develops against, and a test could pass on

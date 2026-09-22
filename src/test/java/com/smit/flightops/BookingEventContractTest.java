@@ -91,6 +91,45 @@ class BookingEventContractTest {
                 .as("adding or removing a field here is a contract change; update "
                         + "contracts/booking-created-v1.json and read its README on ordering")
                 .isEqualTo(fieldNames(contract(objectMapper)));
+
+        // And the VALUES, not only the names. Every other assertion in this
+        // class checks a shape, and a shape check cannot see the failure that
+        // actually costs you: change WIRE_TIME's zone from UTC to
+        // systemDefault() and this service starts emitting a different instant
+        // under the same field name. The 'Z' in the pattern is a quoted
+        // literal, not the offset field, so the output is still 27 characters,
+        // still six fractional digits, still ends in Z and still sorts
+        // monotonically - every name, type, width and ordering assertion here
+        // stays green while every event on the queue shifts by the host's
+        // offset. Comparing the whole document against the fixture is the only
+        // thing that ties the bytes to the contract.
+        assertThat(produced)
+                .as("the serialised event must equal the contract document for the "
+                        + "contract's own inputs - a zone, source-field or value change "
+                        + "is invisible to every other assertion in this class")
+                .isEqualTo(contract(objectMapper));
+    }
+
+    /**
+     * The specific regression the assertion above exists for, pinned on its own
+     * so the failure message names the cause rather than printing two JSON
+     * documents and leaving you to spot the hour.
+     *
+     * <p>The formatter must render in UTC regardless of the host's zone. CI
+     * runs in UTC and this laptop does not, which is exactly the arrangement in
+     * which a zone bug reaches production green.
+     */
+    @Test
+    @DisplayName("the wire timestamp is UTC, not the host's zone")
+    void theWireTimestampIsUtcWhateverTheHostZone() {
+        Instant noon = Instant.parse("2026-09-15T12:00:00Z");
+
+        String rendered = BookingCreatedEvent.from(
+                new BookingDto(1L, "UA123", "X", 1, "k", noon, null)).timestamp();
+
+        assertThat(rendered)
+                .as("rendered in the host zone (%s) instead of UTC", java.time.ZoneId.systemDefault())
+                .isEqualTo("2026-09-15T12:00:00.000000Z");
     }
 
     /**

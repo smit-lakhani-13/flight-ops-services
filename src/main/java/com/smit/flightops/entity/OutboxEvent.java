@@ -5,8 +5,10 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
-import jakarta.persistence.Lob;
 import jakarta.persistence.Table;
+
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -41,12 +43,36 @@ public class OutboxEvent {
     private String eventType;
 
     /**
-     * {@code @Lob} on a {@code String} maps to PostgreSQL {@code TEXT} and H2
-     * {@code CLOB}, which is what lets the payload be an arbitrary JSON
-     * document rather than something with a column width somebody has to guess
-     * and then raise in a migration the day a field is added.
+     * An arbitrary-length JSON document, rather than something with a column
+     * width somebody has to guess and then raise in a migration the day a field
+     * is added.
+     *
+     * <p><b>Deliberately not {@code @Lob}, and the reason is the sharpest schema
+     * trap in this repository.</b> {@code @Lob} on a {@code String} resolves to
+     * {@code SqlTypes.CLOB}, and PostgreSQL's dialect maps {@code CLOB} to the
+     * column type {@code oid} - a pointer into {@code pg_largeobject}, not
+     * inline text. {@code V5__outbox.sql} creates this column as {@code TEXT},
+     * so {@code ddl-auto: validate} compares {@code text (Types#VARCHAR)}
+     * against {@code oid (Types#CLOB)}, refuses to match, and the application
+     * context fails to refresh. Every replica would have entered {@code
+     * CrashLoopBackOff} - not a broken outbox, a service that never starts.
+     *
+     * <p>It is invisible locally, which is what makes it worth a comment this
+     * long: H2 runs {@code ddl-auto: create-drop}, so Hibernate generates the
+     * column itself and the two can never disagree. The only test that runs
+     * Flyway and {@code validate} against real PostgreSQL is {@code
+     * BookingIntegrationTest}, and it skips without Docker.
+     *
+     * <p>{@code LONG32VARCHAR} is the explicit spelling of what was wanted all
+     * along: PostgreSQL renders it as {@code text} and binds it as a plain
+     * string, and H2 falls back to the same {@code clob} it already had. The
+     * second-order win is that nothing goes through {@code
+     * PreparedStatement.setClob} any more - that path creates a server-side
+     * large object per write, and because this entity has no {@code
+     * DynamicUpdate}, every {@code markPublished} would have rewritten the
+     * payload and orphaned one.
      */
-    @Lob
+    @JdbcTypeCode(SqlTypes.LONG32VARCHAR)
     @Column(nullable = false)
     private String payload;
 

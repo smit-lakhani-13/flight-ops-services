@@ -25,7 +25,7 @@ java -version          # must report 21
 
 In-memory H2, schema created by Hibernate, three demo flights seeded on boot (`UA123` EWR→LHR 180 seats, `UA456` ORD→SFO 150, `UA789` EWR→SFO 200). Boots in **under 4s** — 2.83s / 2.57s / 3.63s across three local runs, with the security filter chain and the outbox scheduler both starting.
 
-**Every `/api/**` call needs credentials.** The default profile ships two throwaway accounts so nothing needs setting up: `api` / `dev-secret` for the API, `ops` / `dev-ops` for the actuator endpoints that are not health. They are stored as `{noop}dev-secret` — the `{noop}` prefix says out loud that the value is not hashed and is therefore not a secret. The `prod` profile removes the defaults entirely, so a deployment that forgets to set `API_PASSWORD` fails at startup instead of booting with a password that is in this README. See [Security](#security).
+**Every `/api/**` call needs credentials.** The default profile ships two throwaway accounts so nothing needs setting up: `api` / `dev-secret` for the API, `ops` / `dev-ops` for the actuator endpoints that are not health. They are stored as `{noop}dev-secret` — the `{noop}` prefix says out loud that the value is not hashed and is therefore not a secret. The `prod` profile removes the defaults entirely **and** `ApiSecurityProperties` rejects a value without a `{id}` prefix, so a deployment that forgets to set `API_PASSWORD` fails at startup instead of booting with a password that is in this README. Removing the default is not sufficient on its own — `@ConfigurationProperties` binding ignores unresolvable placeholders, so the literal string `${API_PASSWORD}` binds happily and the pod goes Ready before failing every request; the constraint is what makes the sentence true. See [Security](#security).
 
 > **On macOS, a JDK-selection trap worth knowing.** `/usr/libexec/java_home -v 21` only resolves JDKs registered with macOS, and Homebrew's are not. On a machine that also has an Oracle JDK 17 installed it therefore exits 0 and hands back *17* — and the build dies several steps later on `release version 21 not supported`, a long way from the actual cause. Set `JAVA_HOME` explicitly: `export JAVA_HOME=/opt/homebrew/opt/openjdk@21` on Apple Silicon, `/usr/local/opt/openjdk@21` on Intel.
 
@@ -114,7 +114,7 @@ What has been executed, and what has not. This table is the contract for every c
 | | What |
 |---|---|
 | ✅ **Built, tested, and exercised over HTTP** | The whole app module. Every endpoint hit with `curl` against a running instance; every status code in the tables below observed, not inferred, including the 401 and 403 bodies. The Lambda handler's logic, via 16 unit tests. |
-| ✅ **Verified against real PostgreSQL in CI** | All 140 tests, including the 5 Testcontainers integration tests: the Flyway migrations applied to an empty database, `ddl-auto: validate` checked against the schema those migrations produced, `SELECT … FOR UPDATE` under 20 threads competing for 5 seats, and the same idempotency key replayed by 20 threads at once. The runners have Docker, so these execute there and skip on a laptop without one. |
+| ✅ **Verified against real PostgreSQL in CI** | All 156 tests, including the 5 Testcontainers integration tests: the Flyway migrations applied to an empty database, `ddl-auto: validate` checked against the schema those migrations produced, `SELECT … FOR UPDATE` under 20 threads competing for 5 seats, and the same idempotency key replayed by 20 threads at once. The runners have Docker, so these execute there and skip on a laptop without one. |
 | ⚠️ **Authored and reviewed, never executed** | The container image. `sam build`, `sam local invoke`, `sam deploy`. Every `kubectl` and `eksctl` step. The deploy half of the GitHub Actions workflow — gated off deliberately, see below. |
 | ❌ **Not implemented** | A Solace binding. Structured JSON logging with a correlation id. Distributed tracing. Rate limiting. |
 
@@ -206,7 +206,7 @@ Two further things this repository does not claim:
 ├── src/main/resources/
 │   ├── application.yml            profiles: default (H2), postgres, prod
 │   └── db/migration/              Flyway, V1–V5 — owns the PostgreSQL schema
-├── src/test/java/                 16 test classes, layered — see Tests (18 with the Lambda's)
+├── src/test/java/                 17 test classes, layered — see Tests (19 with the Lambda's)
 ├── contracts/                     the event schema both modules test against
 ├── lambda/                        separate parentless Maven module: SQS → DynamoDB consumer
 ├── k8s/                           6 manifests + secret.example.yaml
@@ -397,8 +397,8 @@ Four decisions in that query and the loop around it, each of which is a bug if t
 ## Tests
 
 ```bash
-./mvnw clean verify                       # 124 tests: 119 run, 5 skipped, 0 failures
-./mvnw -f lambda/pom.xml clean verify     # 16 tests, 0 failures
+./mvnw clean verify                       # 138 tests: 133 run, 5 skipped, 0 failures
+./mvnw -f lambda/pom.xml clean verify     # 18 tests, 0 failures
 ```
 
 | Layer | Tests | Tooling |
@@ -407,13 +407,14 @@ Four decisions in that query and the loop around it, each of which is a bug if t
 | Service | 21 | `@ExtendWith(MockitoExtension.class)`, `@Mock`, `@InjectMocks`, `@Captor` — split across `BookingServiceTest` (orchestration), `BookingWriterTest` (the write path), `FlightServiceTest` |
 | Web slice | 23 | `@WebMvcTest` + `@MockitoBean` — status codes, `Location` headers, error JSON |
 | Repository slice | 13 | `@DataJpaTest` + `TestEntityManager` — derived queries, JPQL, `JOIN FETCH`, constraints |
-| Full context (H2) | 46 | `@SpringBootTest` — the idempotency guarantee end to end (two 10-thread races on one key), the authorisation rules against the real filter chain, the outbox, the lock timeout, the error contract, and a lazy-loading regression with no mocking anywhere in the chain |
-| Event contract | 8 | one producer-side class and one consumer-side class, both asserting against `contracts/booking-created-v1.json` |
+| Full context (H2) | 48 | `@SpringBootTest` — the idempotency guarantee end to end (two 10-thread races on one key), the authorisation rules against the real filter chain, the outbox, the lock timeout, the error contract, and a lazy-loading regression with no mocking anywhere in the chain |
+| Event contract | 11 | one producer-side class and one consumer-side class, both asserting against `contracts/booking-created-v1.json` |
 | Lambda handler | 12 | separate module — batch parsing, partial batch failure, conditional write |
-| **Run** | **135** | **0 failures** (12 + 21 + 23 + 13 + 46 + 8 + 12) |
+| Configuration binding | 11 | plain JUnit driving a standalone Jakarta `Validator` — proves an unresolved `${...}` placeholder is rejected at startup rather than binding as a literal |
+| **Run** | **151** | **0 failures** (12 + 21 + 23 + 13 + 48 + 11 + 12 + 11) |
 | PostgreSQL integration | 5 | `@Testcontainers(disabledWithoutDocker = true)` — skipped without a container runtime |
 
-140 tests exist across the two modules; 135 run without Docker, 5 skip. CI runs all 140 and they pass — the runner has Docker, so it is the only place the real PostgreSQL path (Flyway + `ddl-auto=validate` + `SELECT FOR UPDATE` under 20-way contention, and a 20-thread idempotency-key race) gets exercised. The surefire summary there reads `Tests run: 124, Failures: 0, Errors: 0, Skipped: 0` for this module and `Tests run: 16 … Skipped: 0` for the Lambda. `Skipped: 0` rather than `Skipped: 5` is the part worth reading: it is the difference between the integration tests passing and the integration tests quietly opting out, and a green build alone does not distinguish the two.
+156 tests exist across the two modules; 151 run without Docker, 5 skip. CI runs all 156 and they pass — the runner has Docker, so it is the only place the real PostgreSQL path (Flyway + `ddl-auto=validate` + `SELECT FOR UPDATE` under 20-way contention, and a 20-thread idempotency-key race) gets exercised. The surefire summary there reads `Tests run: 138, Failures: 0, Errors: 0, Skipped: 0` for this module and `Tests run: 18 … Skipped: 0` for the Lambda. `Skipped: 0` rather than `Skipped: 5` is the part worth reading: it is the difference between the integration tests passing and the integration tests quietly opting out, and a green build alone does not distinguish the two.
 
 **The `@WebMvcTest` slices run with `addFilters = false`, and that is deliberate.** A slice does not load `SecurityConfig` — it is a `@Configuration` class, not a controller, so the slice filter excludes it — and what Boot substitutes is its *own* default chain. Leaving the filters on would therefore have every controller test authenticate against rules that are not this application's rules, and pass. That is worse than no coverage: it reads as though authorisation is tested. The real rules are tested once, properly, against the real `SecurityConfig` with real credentials and the real 401/403 bodies, in `SecurityRulesTest`.
 
@@ -495,7 +496,7 @@ Separate Maven module, separate lifecycle, deployed by SAM. Consumes `booking-ev
 - **The timestamp in that key is fixed-width, and it has to be.** DynamoDB sorts range keys as bytes, so lexicographic order is only chronological order if every value is the same length. `Instant.toString()` is not: it prints 0, 3, 6 or 9 fractional digits depending on the value, and `…:00Z` sorts *after* `…:00.000001Z` because `Z` is `0x5A` and `.` is `0x2E`. Both sides format with `uuuu-MM-dd'T'HH:mm:ss.SSSSSS'Z'` instead, and a test asserts the `#` lands at index 27 every time — which is the assertion that fails if anyone changes the pattern on one side only.
 - **`DynamoDbClient` behind an initialization-on-demand holder**, so the SDK client is created once per execution environment and reused across warm invocations rather than per request.
 - **No framework.** A plain `RequestHandler`, not Spring Cloud Function — the handler does one thing, and a container to start is a container to start on every cold invocation.
-- **16 tests, 4 of them the consumer half of the contract.** The producer and consumer never share a jar — that would make them deploy together, which is the coupling a queue exists to remove — so both read `contracts/booking-created-v1.json` and assert against it independently. See [Tests](#tests).
+- **18 tests, 6 of them the consumer half of the contract.** The producer and consumer never share a jar — that would make them deploy together, which is the coupling a queue exists to remove — so both read `contracts/booking-created-v1.json` and assert against it independently. See [Tests](#tests).
 
 ### The deployment package
 
@@ -598,10 +599,12 @@ Every row is a decision, not an oversight. Left column: what the code does. Righ
 
 ### Found in review, and closed
 
-The table above is design. This one was not: a review pass found nine defects a careful reader
-would also find, each verified against a running instance rather than reasoned about. They were
-listed here as known debt. They are now fixed, and the row survives so the fix is checkable
-rather than merely claimed.
+The table above is design. This one was not. Two review passes were run against this service,
+and every defect below was reproduced against a running instance before it was fixed — not
+reasoned about, not inferred from reading. Each fix has a test that fails without it. The rows
+survive so the claim is checkable rather than merely asserted.
+
+**First pass — twelve defects a careful reader would also find.**
 
 | What used to happen | What happens now |
 |---|---|
@@ -617,6 +620,20 @@ rather than merely claimed.
 | `hibernate.jdbc.batch_size: 50` sat beside `GenerationType.IDENTITY`, which **disables** insert batching — a setting that read as a tuning decision and did nothing | The property is gone, and the YAML says why. Real batching would mean `SEQUENCE` with a pooled optimiser, which is a different trade-off and not one this workload needs |
 | `Flight.releaseSeats` had no production caller and there was no cancel-booking endpoint | `DELETE /api/v1/bookings/{id}` (`V4__booking_cancellation.sql`). Cancelling twice is a 200 no-op |
 | Time came from `Instant.now()` inside the domain, so nothing could test a clock-dependent path | An injected `Clock` (`config/TimeConfig.java`) |
+
+**Second pass — seven more, run adversarially against the first.** These are the interesting
+ones. Three of them take the service down in production while every probe, every test and every
+local run stays green, which is precisely the class of defect a first pass does not find.
+
+| What used to happen | What happens now |
+|---|---|
+| **A missing `API_PASSWORD` started the service anyway.** `@ConfigurationProperties` binding resolves placeholders with `ignoreUnresolvablePlaceholders=true` — unlike `@Value`, which fails — so an unset variable bound as the literal 15-character string `${API_PASSWORD}`. The context started, both probes passed, the pod went Ready, and *every authenticated request* then returned a bodyless 500 forever: `DelegatingPasswordEncoder` finds `{` at index 1 instead of 0 and throws `IllegalArgumentException`, which is not an `AuthenticationException`, so no filter catches it and `@RestControllerAdvice` never sees it — it is thrown before `DispatcherServlet` | `@Validated` on the record plus a `@Pattern` requiring a `{id}` algorithm prefix (`config/ApiSecurityProperties.java`). The context now fails to start, with a message naming the variable. A healthy-looking pod that answers nothing is strictly worse than one that refuses to boot |
+| **`@Lob` on the outbox payload would have crash-looped every replica.** `@Lob` on a `String` resolves to `SqlTypes.CLOB`, and PostgreSQL's dialect maps CLOB to `oid` — a pointer into `pg_largeobject`, not inline text. `V5__outbox.sql` creates the column as `TEXT`, so `ddl-auto: validate` compared `text (Types#VARCHAR)` against `oid (Types#CLOB)`, refused, and the context failed to refresh. Invisible on a laptop, because H2 runs `create-drop` and generates the column itself | `@JdbcTypeCode(SqlTypes.LONG32VARCHAR)` (`entity/OutboxEvent.java`) — the explicit spelling of what was meant. PostgreSQL renders it as `text`, H2 keeps its `clob`, and nothing goes through `setClob`, which would have orphaned a server-side large object on every `markPublished` |
+| **`HEAD` was a 403 for a caller holding `flights:read`.** `requestMatchers(HttpMethod.GET, …)` matches the literal verb, but Spring MVC serves HEAD for every `@GetMapping`, so HEAD fell past the read rule into `anyRequest().denyAll()` | An explicit HEAD rule beside the GET one (`config/SecurityConfig.java`), and a test that asserts HEAD is a read for the reader and still forbidden for the ops principal |
+| **A bad bearer token returned a bodyless 401.** `OAuth2ResourceServerConfigurer` installs its *own* `BearerTokenAuthenticationEntryPoint` directly on `BearerTokenAuthenticationFilter`, which handles the exception itself — so `ExceptionTranslationFilter` never runs, and the entry point configured under `exceptionHandling` was dead code on that path | The entry point and the access-denied handler are wired into the configurer as well. The JSON error contract now holds for bearer tokens, not only for Basic |
+| **An expanded-year timestamp poisoned the DynamoDB sort key.** `Instant.parse` accepts `+12026-09-15T10:00:00Z`, and the `uuuu` pattern emits the sign — so the key became 29 characters starting with `+` (0x2B, below every ASCII digit), sorting ahead of the entire partition and invisible to `begins_with(eventTime, "2026-")` | The year is range-checked in `sortKey`, and a value outside it throws. The message is reported as a batch item failure, so it is retried and lands in the DLQ where it can be inspected — rather than written under a key no query will ever return |
+| **The contract test checked the shape, not the values.** Changing the formatter's zone from UTC to the host's keeps 27 characters, six fractional digits, a trailing `Z` (a quoted literal in the pattern, not the offset field) and monotonic ordering — so every assertion stayed green while every event on the queue shifted by the host offset | The serialised event is compared against `contracts/booking-created-v1.json` as a whole document, plus a test that names the zone in its failure message. CI runs in UTC and a laptop does not, which is exactly the arrangement in which a zone bug ships green |
+| **`k8s/secret.example.yaml` did not carry the two API passwords**, so anyone following the example deployed a pod with neither set — which is the first row of this table | Both keys are in the example, with the `htpasswd -bnBC 10 "" 'pw' \| tr -d ':\n'` recipe and a note that omitting them now fails startup |
 
 ### Still open
 
