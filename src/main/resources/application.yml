@@ -53,6 +53,11 @@ spring:
     # Migrations are PostgreSQL-specific; H2 uses Hibernate's generated schema.
     enabled: false
 
+  jackson:
+    deserialization:
+      # A fractional seat count is a client bug, not a request for fewer seats.
+      accept-float-as-int: false
+
   data:
     web:
       pageable:
