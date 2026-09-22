@@ -45,7 +45,7 @@ class BookingWriterTest {
 
     @Mock private FlightRepository flightRepository;
     @Mock private BookingRepository bookingRepository;
-    @Mock private EventPublisher eventPublisher;
+    @Mock private OutboxWriter outboxWriter;
 
     /**
      * A real fixed Clock, not a mock. The cancellation path stores whatever
@@ -68,7 +68,7 @@ class BookingWriterTest {
     }
 
     @Test
-    @DisplayName("locks the flight, debits seats, persists, then publishes")
+    @DisplayName("locks the flight, debits seats, persists, then records the event in the outbox")
     void happyPath() {
         Flight flight = flight();
         when(flightRepository.findByFlightNumberForUpdate("UA123")).thenReturn(Optional.of(flight));
@@ -80,7 +80,14 @@ class BookingWriterTest {
         assertThat(dto.flightNumber()).isEqualTo("UA123");
         assertThat(dto.seats()).isEqualTo(3);
         assertThat(dto.idempotencyKey()).isEqualTo("demo-1");
-        verify(eventPublisher).publishBookingCreated(dto);
+        // The outbox, not the transport. Before the outbox this line read
+        // verify(eventPublisher).publishBookingCreated(dto), and the change in
+        // that line is the change in the design: what happens inside this
+        // transaction is now a database insert, and the network call happens
+        // later, somewhere else, holding none of these locks. A test still
+        // verifying the publisher here would be pinning behaviour that was
+        // deliberately removed.
+        verify(outboxWriter).recordBookingCreated(dto);
     }
 
     @Test
@@ -107,7 +114,7 @@ class BookingWriterTest {
 
         assertThat(flight.getAvailableSeats()).isEqualTo(1);
         verify(bookingRepository, never()).save(any());
-        verifyNoInteractions(eventPublisher);
+        verifyNoInteractions(outboxWriter);
     }
 
     @Test
@@ -128,7 +135,7 @@ class BookingWriterTest {
 
         assertThat(flight.getAvailableSeats()).isEqualTo(180);
         verify(bookingRepository, never()).save(any());
-        verifyNoInteractions(eventPublisher);
+        verifyNoInteractions(outboxWriter);
     }
 
     @Test
@@ -140,7 +147,7 @@ class BookingWriterTest {
                 new BookingRequest("xx999", "Smit Lakhani", 1, "demo-4")))
                 .isInstanceOf(FlightNotFoundException.class);
 
-        verifyNoInteractions(eventPublisher);
+        verifyNoInteractions(outboxWriter);
     }
 
     @Test

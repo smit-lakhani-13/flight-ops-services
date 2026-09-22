@@ -1,11 +1,13 @@
 package com.smit.flightops;
 
+import com.smit.flightops.config.SecurityConfig;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
 
 import static org.hamcrest.Matchers.containsString;
@@ -41,6 +43,21 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
+/**
+ * Authenticated as a caller holding both scopes, because these tests are about
+ * the error contract rather than about who may call what. The filter chain is
+ * fully in place — this is the real {@code SecurityConfig} — so without this
+ * every assertion below would be made against a 401.
+ *
+ * <p>{@code @WithMockUser} puts an {@code Authentication} straight into the
+ * {@code SecurityContext} rather than sending an {@code Authorization} header,
+ * so it proves nothing about the credentials themselves; that is
+ * {@code SecurityRulesTest}'s job. The authority strings are taken from
+ * {@code SecurityConfig}'s constants rather than retyped, so renaming a scope
+ * breaks compilation here instead of turning every one of these into a silent
+ * 403.
+ */
+@WithMockUser(authorities = {SecurityConfig.SCOPE_READ, SecurityConfig.SCOPE_WRITE})
 class ErrorContractTest {
 
     @Autowired private MockMvc mockMvc;

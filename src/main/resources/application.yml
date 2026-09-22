@@ -118,9 +118,38 @@ management:
           include: readinessState,db
 
 app:
+  security:
+    # Encoded passwords, never plaintext -- each value carries its own
+    # algorithm prefix and is read by a DelegatingPasswordEncoder. See
+    # ApiSecurityProperties for the three reasons that is worth the
+    # inconvenience.
+    #
+    # {noop} here says out loud that the local value is not hashed and is
+    # therefore not a secret: it exists so `./mvnw spring-boot:run` and
+    # `./demo.sh` work with no setup, which is a property of this project worth
+    # keeping. A deployment overrides both with a {bcrypt}$2a$... hash, and the
+    # prod profile removes the defaults so a deployment that forgets fails at
+    # startup instead of accepting a password that was committed to git.
+    #
+    #   curl -u api:dev-secret  ...   # /api/v1/**
+    #   curl -u ops:dev-ops     ...   # /actuator/metrics, /actuator/prometheus
+    api-password: "${API_PASSWORD:{noop}dev-secret}"
+    ops-password: "${OPS_PASSWORD:{noop}dev-ops}"
   events:
     # log | sqs  -- which EventPublisher implementation gets wired in.
     publisher: log
+  outbox:
+    # The poller runs on every replica; SKIP LOCKED in claimUnpublished is what
+    # makes that safe without a leader. Set false only to hand draining to a
+    # dedicated pod.
+    enabled: ${OUTBOX_ENABLED:true}
+    # Milliseconds. The floor on event latency, and the trade is explicit:
+    # lower means fresher events and more empty queries. The consumer projects
+    # a read model, and a read model one second behind is still a read model.
+    poll-interval: ${OUTBOX_POLL_INTERVAL:1000}
+    # Rows per drain. Bounds how long one replica holds outbox row locks, and
+    # therefore how badly a slow queue can affect the other replicas.
+    batch-size: ${OUTBOX_BATCH_SIZE:100}
   seed:
     enabled: true
   aws:
@@ -132,6 +161,11 @@ logging:
   level:
     com.smit.flightops: INFO
     org.hibernate.SQL: ${SQL_LOG_LEVEL:WARN}
+    # Turn this to DEBUG to see which filter rejected a request and why. It is
+    # the difference between "403 and I have no idea" and one line naming the
+    # authority that was missing, and it is the first thing to reach for when a
+    # caller says the credentials are right.
+    org.springframework.security: ${SECURITY_LOG_LEVEL:INFO}
 
 ---
 # -----------------------------------------------------------------------------
@@ -226,6 +260,13 @@ spring:
     enabled: true
     locations: classpath:db/migration
 app:
+  security:
+    # No defaults, on purpose. Same reasoning as the datasource password in the
+    # postgres profile: a missing value fails at startup naming the property,
+    # which is a better outcome than booting with a credential anyone who has
+    # read the repository already knows.
+    api-password: ${API_PASSWORD}
+    ops-password: ${OPS_PASSWORD}
   events:
     publisher: ${APP_EVENTS_PUBLISHER:sqs}
   seed:
@@ -233,4 +274,9 @@ app:
 management:
   endpoint:
     health:
+      # never, not when-authorized: in production the health endpoint is
+      # reachable without credentials so the kubelet can probe it, and
+      # when-authorized would then show indicator details to anyone who
+      # presented any valid credential. Ops reads the detail from
+      # /actuator/metrics, which requires ROLE_OPS.
       show-details: never

@@ -1,21 +1,23 @@
 package com.smit.flightops.service;
 
-import tools.jackson.core.JacksonException;
-import tools.jackson.databind.ObjectMapper;
-import com.smit.flightops.dto.BookingCreatedEvent;
-import com.smit.flightops.dto.BookingDto;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 /**
- * Default publisher: serialises the event and logs it instead of sending it.
+ * The default transport: writes the event to the log instead of a queue.
  *
- * <p>Active whenever {@code app.events.publisher} is {@code log} or absent, so
- * {@code mvn spring-boot:run} needs no AWS credentials, no queue, and no
- * network. It still runs the real Jackson serialisation, so a broken wire
- * contract fails locally rather than in the cloud.
+ * <p>This is what makes {@code ./mvnw spring-boot:run} and the whole test suite
+ * work with no AWS account, no credentials and no network — the booking path,
+ * the outbox and the poller are all exercised exactly as they are in
+ * production, and only the last hop differs. A local profile that skipped the
+ * outbox entirely would leave the interesting code untested everywhere except
+ * production.
+ *
+ * <p>Selected by {@code app.events.publisher: log}, which is also the default,
+ * so forgetting to configure anything gets the safe transport rather than a
+ * failed startup or an accidental send.
  */
 @Component
 @ConditionalOnProperty(name = "app.events.publisher", havingValue = "log", matchIfMissing = true)
@@ -23,25 +25,8 @@ public class LoggingEventPublisher implements EventPublisher {
 
     private static final Logger log = LoggerFactory.getLogger(LoggingEventPublisher.class);
 
-    private final ObjectMapper objectMapper;
-
-    public LoggingEventPublisher(ObjectMapper objectMapper) {
-        this.objectMapper = objectMapper;
-    }
-
     @Override
-    public void publishBookingCreated(BookingDto booking) {
-        BookingCreatedEvent event = BookingCreatedEvent.from(booking);
-        try {
-            log.info("BookingCreated (not sent — publisher=log): {}",
-                     objectMapper.writeValueAsString(event));
-        } catch (JacksonException e) {
-            // Jackson 3 made its exceptions unchecked, so this catch is a choice
-            // rather than a compiler requirement. Keeping it: unreachable for a
-            // record of String/int, but silence here would hide exactly the
-            // contract break this publisher exists to catch, and the wrapped
-            // message names the event.
-            throw new IllegalStateException("Failed to serialise " + event, e);
-        }
+    public void publish(String eventType, String payload) {
+        log.info("[EVENT] {} -> {}", eventType, payload);
     }
 }

@@ -96,6 +96,22 @@
         </dependency>
 
         <!--
+          Two starters, because the service authenticates two different kinds of
+          caller. The base starter carries the filter chain and HTTP Basic, used
+          by the operations endpoints behind the gateway. The resource-server
+          starter carries the JWT verification used by machine callers, and it
+          only activates when an issuer is configured - see SecurityConfig.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security-oauth2-resource-server</artifactId>
+        </dependency>
+
+        <!--
           Registers /actuator/prometheus. The actuator starter alone does NOT:
           `management.endpoints.web.exposure.include` can name the endpoint and
           Spring will silently not create it if no registry is on the classpath,
@@ -162,6 +178,11 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-data-jpa-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-security-test</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>

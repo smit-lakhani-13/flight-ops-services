@@ -9,6 +9,7 @@ import com.smit.flightops.service.BookingService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.PageImpl;
@@ -28,7 +29,27 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
+/**
+ * {@code addFilters = false} — the security filter chain is deliberately out of
+ * the way here, and the reason is worth stating because switching filters off
+ * in a test usually is a smell.
+ *
+ * <p>A {@code @WebMvcTest} slice does not load {@code SecurityConfig}: it is a
+ * {@code @Configuration} class, not a controller, so the slice filter excludes
+ * it. What Boot puts there instead is its own default chain — every request
+ * authenticated, CSRF on, form login available. Leaving the filters in place
+ * would therefore have every test in this class authenticate against rules
+ * that <em>are not the application's rules</em>, and pass. That is worse than
+ * no coverage: it reads as though authorisation is tested and it tests a chain
+ * that will never run in production.
+ *
+ * <p>So the split is explicit. This class tests one controller's HTTP contract
+ * — status codes, headers, JSON bodies, error mapping. The real rules, against
+ * the real {@code SecurityConfig}, with real credentials and the real 401/403
+ * bodies, are {@code SecurityRulesTest}'s only job.
+ */
 @WebMvcTest(BookingController.class)
+@AutoConfigureMockMvc(addFilters = false)
 class BookingControllerTest {
 
     @Autowired private MockMvc mockMvc;

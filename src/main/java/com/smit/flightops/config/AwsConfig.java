@@ -31,34 +31,39 @@ public class AwsConfig {
      *
      * <p>The SDK's default {@code apiCallTimeout} is no timeout at all: a
      * client with no override waits as long as the socket does. That is
-     * survivable for a batch job and not for this caller. {@code
-     * SqsEventPublisher.publishBookingCreated} runs inside
-     * {@code BookingWriter.insertNewBooking}'s transaction, holding a {@code
-     * SELECT ... FOR UPDATE} on the flight row and one of ten Hikari
-     * connections. An SQS endpoint that accepts the TCP connection and then
-     * stops responding — a partition, a security group change, a VPC endpoint
-     * going away — therefore blocks every other booking for that flight and
-     * eats a connection from a pool of ten, for as long as the SDK is willing
-     * to wait. With enough concurrent bookings that is the whole pool, and the
-     * service stops serving reads it could perfectly well have served.
-     * The default was not "wait a while", it was "hold a row lock until the
-     * socket gives up".
+     * survivable for a batch job and not for this caller.
+     *
+     * <p>This send now happens in {@code OutboxPublisher.drainOutbox}, not on
+     * the request path — the outbox took the network call out of the booking
+     * transaction, so an unresponsive queue no longer holds a {@code SELECT
+     * ... FOR UPDATE} on a flight row while a passenger waits. The timeouts
+     * still matter, and it is worth being exact about what they protect now
+     * rather than leaving the old reason in place: the drain holds locks on the
+     * outbox rows it claimed and one of ten Hikari connections for the duration
+     * of the batch. An SQS endpoint that accepts the TCP connection and then
+     * stops answering — a partition, a security-group change, a VPC endpoint
+     * going away — would otherwise pin that connection until the socket gave
+     * up, once per replica, while {@code fixedDelay} politely waits for a drain
+     * that is never going to finish. Events would stop flowing and nothing
+     * would say why.
      *
      * <p>Two timeouts, because they mean different things:
      * {@code apiCallAttemptTimeout} bounds one HTTP attempt and lets the
      * retry policy try again, which is what you want for a dropped packet;
      * {@code apiCallTimeout} bounds the whole call including every retry, and
-     * is the one that actually protects the lock. Setting only the attempt
+     * is the one that actually bounds the drain. Setting only the attempt
      * timeout is a common and subtle mistake — three retries of a 2-second
      * attempt is a 6-second call, and the number you thought you had set was 2.
+     *
+     * <p>A send that times out is not a lost event. {@code OutboxPublisher}
+     * catches it, increments {@code attempts}, records the message on the row
+     * and leaves {@code published_at} null, so the next tick tries again. The
+     * timeout turns an unbounded stall into a retry, which is the entire
+     * reason to have one.
      *
      * <p>{@code STANDARD} retry mode rather than the older {@code LEGACY}
      * default: it uses a retry-token bucket, so a dependency that is failing
      * for everyone stops being retried instead of having the retries pile on.
-     *
-     * <p>Neither timeout is the real fix for the lock — that is the outbox,
-     * which takes the network call out of the transaction entirely. These are
-     * the bound that makes the current design survivable until then.
      */
     @Bean(destroyMethod = "close")
     public SqsClient sqsClient(AwsProperties awsProperties) {

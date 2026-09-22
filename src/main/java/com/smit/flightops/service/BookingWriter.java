@@ -40,22 +40,22 @@ public class BookingWriter {
 
     private final FlightRepository flightRepository;
     private final BookingRepository bookingRepository;
-    private final EventPublisher eventPublisher;
+    private final OutboxWriter outboxWriter;
     private final Clock clock;
 
     public BookingWriter(FlightRepository flightRepository,
                           BookingRepository bookingRepository,
-                          EventPublisher eventPublisher,
+                          OutboxWriter outboxWriter,
                           Clock clock) {
         this.flightRepository = flightRepository;
         this.bookingRepository = bookingRepository;
-        this.eventPublisher = eventPublisher;
+        this.outboxWriter = outboxWriter;
         this.clock = clock;
     }
 
     /**
      * The insert attempt, in its own transaction. Locks the flight row, debits
-     * seats, saves the booking, publishes the event — all four in a strict
+     * seats, saves the booking, records the event — all four in a strict
      * order, per {@link BookingService#book}'s numbered comment.
      *
      * <p>If this throws {@code DataIntegrityViolationException} (the
@@ -87,7 +87,16 @@ public class BookingWriter {
                  booking.getId(), flight.getAvailableSeats());
 
         BookingDto dto = BookingDto.from(booking);
-        eventPublisher.publishBookingCreated(dto);
+
+        // An INSERT into outbox_events, in this transaction. Not a network
+        // call: that is the entire change, and it is why the flight row lock is
+        // now held for the duration of two local writes instead of for however
+        // long SQS takes to answer. If this transaction rolls back - an
+        // oversell, a lost idempotency race - the event row rolls back with the
+        // booking, so there is no event describing a booking that does not
+        // exist. OutboxPublisher does the sending, afterwards, outside every
+        // lock this method holds.
+        outboxWriter.recordBookingCreated(dto);
         return dto;
     }
 

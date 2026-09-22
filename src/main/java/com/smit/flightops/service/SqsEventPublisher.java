@@ -1,31 +1,31 @@
 package com.smit.flightops.service;
 
-import tools.jackson.core.JacksonException;
-import tools.jackson.databind.ObjectMapper;
 import com.smit.flightops.config.AwsProperties;
-import com.smit.flightops.dto.BookingCreatedEvent;
-import com.smit.flightops.dto.BookingDto;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 import software.amazon.awssdk.services.sqs.SqsClient;
+import software.amazon.awssdk.services.sqs.model.MessageAttributeValue;
 import software.amazon.awssdk.services.sqs.model.SendMessageRequest;
 import software.amazon.awssdk.services.sqs.model.SendMessageResponse;
 
+import java.util.Map;
+
 /**
- * Sends the event to SQS, where the Lambda in {@code lambda/} picks it up.
+ * Sends the payload to SQS, where the Lambda in {@code lambda/} picks it up.
  *
  * <p>Selected by {@code app.events.publisher: sqs} — an explicit mode switch
  * rather than "is a queue URL configured?". A blank-but-present
  * {@code SQS_QUEUE_URL} would satisfy a bare {@code @ConditionalOnProperty},
  * silently activating this bean on a laptop and breaking the local run.
  *
- * <p>Known trade-off: this is called inside the booking transaction. A send
- * failure therefore rolls the booking back — no phantom bookings, but a healthy
- * booking can be rejected because the queue is unavailable. The production fix
- * is a transactional outbox: commit the event to a table in the same
- * transaction and let a separate poller drain it.
+ * <p>This no longer runs inside the booking transaction — {@link OutboxWriter}
+ * and {@link OutboxPublisher} are the two halves of that fix. What is left here
+ * is a transport and nothing else: it does not build the event, does not
+ * serialise it, and cannot change it. If the send throws, the poller records
+ * the failure against the row and tries again on the next tick, so a queue
+ * outage delays events instead of rejecting bookings.
  */
 @Component
 @ConditionalOnProperty(name = "app.events.publisher", havingValue = "sqs")
@@ -34,12 +34,10 @@ public class SqsEventPublisher implements EventPublisher {
     private static final Logger log = LoggerFactory.getLogger(SqsEventPublisher.class);
 
     private final SqsClient sqsClient;
-    private final ObjectMapper objectMapper;
     private final String queueUrl;
 
-    public SqsEventPublisher(SqsClient sqsClient, ObjectMapper objectMapper, AwsProperties awsProperties) {
+    public SqsEventPublisher(SqsClient sqsClient, AwsProperties awsProperties) {
         this.sqsClient = sqsClient;
-        this.objectMapper = objectMapper;
         this.queueUrl = awsProperties.sqsQueueUrl();
         if (queueUrl == null || queueUrl.isBlank()) {
             // Fail at startup, not on the first booking of the day.
@@ -49,24 +47,21 @@ public class SqsEventPublisher implements EventPublisher {
     }
 
     @Override
-    public void publishBookingCreated(BookingDto booking) {
-        BookingCreatedEvent event = BookingCreatedEvent.from(booking);
-        String body;
-        try {
-            body = objectMapper.writeValueAsString(event);
-        } catch (JacksonException e) {
-            // Unchecked in Jackson 3, so this is deliberate: a serialisation
-            // failure is a bug in the event contract, and it should surface with
-            // the event in the message rather than as a bare Jackson stack.
-            throw new IllegalStateException("Failed to serialise " + event, e);
-        }
-
+    public void publish(String eventType, String payload) {
+        // The type travels as a message attribute rather than as a field
+        // inside the body. A consumer, an SNS filter policy or an EventBridge
+        // rule can then route on it without deserialising - and, more to the
+        // point, without this service and that consumer having to agree on the
+        // body's schema just so one of them can work out what it is holding.
         SendMessageResponse response = sqsClient.sendMessage(SendMessageRequest.builder()
                 .queueUrl(queueUrl)
-                .messageBody(body)
+                .messageBody(payload)
+                .messageAttributes(Map.of("eventType", MessageAttributeValue.builder()
+                        .dataType("String")
+                        .stringValue(eventType)
+                        .build()))
                 .build());
 
-        log.info("Published BookingCreated for booking {} to SQS (messageId={})",
-                 booking.bookingId(), response.messageId());
+        log.info("Published {} to SQS (messageId={})", eventType, response.messageId());
     }
 }
