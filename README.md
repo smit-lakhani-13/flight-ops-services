@@ -189,7 +189,7 @@ Two further things this repository does not claim:
 ## Repository layout
 
 ```
-├── src/main/java/com/smit/flightops/       46 files, 3,197 lines
+├── src/main/java/com/smit/flightops/       46 files, 3,321 lines
 │   ├── controller/     HTTP only — bind, validate, map to DTO, choose status code
 │   ├── service/        orchestration, the transaction boundaries, the outbox drain,
 │   │                   EventPublisher + 2 impls
