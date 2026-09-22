@@ -10,7 +10,21 @@ The airline domain is deliberate. Seat inventory is a genuinely hard consistency
 
 **Scope.** This is a demonstration service, not a deployed system. It has never served production traffic. CI builds both modules and runs the full test suite — including the PostgreSQL integration tests — on every push. The infrastructure that needs a registry, a cluster or an AWS account (`Dockerfile`, `k8s/`, `template.yaml`, and the deploy half of the workflow) is authored and reviewed but has not been applied. [Project status](#project-status) records exactly which parts have been executed and which have not, and every claim below is bounded by that table.
 
-**Contents** — [Run it](#run-it-in-30-seconds) · [Project status](#project-status) · [Architecture](#architecture) · [Repository layout](#repository-layout) · [Security](#security) · [API](#api) · [OpenAPI](#openapi) · [Concurrency](#the-hard-problem-not-overselling-the-last-seat) · [The outbox](#the-outbox-why-the-event-is-a-database-row-first) · [Observability](#observability) · [Tests](#tests) · [Lambda](#lambda-module) · [Container and Kubernetes](#container-and-kubernetes) · [Cost safety](#cost-safety--read-this-before-touching-aws) · [Trade-offs](#trade-offs-and-known-limitations)
+**Contents** — [Documentation](#documentation) · [Run it](#run-it-in-30-seconds) · [Project status](#project-status) · [Architecture](#architecture) · [Repository layout](#repository-layout) · [Security](#security) · [API](#api) · [OpenAPI](#openapi) · [Concurrency](#the-hard-problem-not-overselling-the-last-seat) · [The outbox](#the-outbox-why-the-event-is-a-database-row-first) · [Observability](#observability) · [Tests](#tests) · [Lambda](#lambda-module) · [Container and Kubernetes](#container-and-kubernetes) · [Cost safety](#cost-safety--read-this-before-touching-aws) · [Trade-offs](#trade-offs-and-known-limitations)
+
+---
+
+## Documentation
+
+This README is the tour. These are the depth, and each one is checked on every
+CI run — `scripts/refcheck.py` resolves every file and symbol they cite,
+`scripts/linkcheck.py` every link and heading anchor.
+
+| Document | What it answers |
+|---|---|
+| [ARCHITECTURE.md](ARCHITECTURE.md) | How the pieces fit: the booking sequence naming every method it passes through, the idempotency decision table, the lock order, the outbox, the status state machine, the ER diagram, and the module boundaries the build enforces |
+| [adr/](adr/README.md) | Why each decision went the way it did, and what was rejected — outbox, pessimistic locking, ids, the request fingerprint, the security model, Boot 4, the Lambda, observability, OpenAPI, the outbox bounds, the quality gates |
+| [contracts/README.md](contracts/README.md) | The event contract between the two modules, how it is enforced from both sides, and how to change it without breaking a deployed consumer |
 
 ---
 
@@ -183,6 +197,8 @@ Two further things this repository does not claim:
                        └──────────────────────────────────────────────┘
 ```
 
+The same picture with the method names on it — plus the booking sequence, the idempotency decision table, the lock order, the outbox drain, the `FlightStatus` state machine and the ER diagram — is in [ARCHITECTURE.md](ARCHITECTURE.md), and the reasoning behind each choice is one file per decision in [adr/](adr/README.md).
+
 `app.events.publisher: log | sqs` picks the implementation via `@ConditionalOnProperty`, and `log` is the default so that nothing tries to reach AWS on a laptop. Note the mechanism: `@Primary` and `@Qualifier` decide which bean gets *injected* but still instantiate every candidate, which for an SQS client means building it on a machine with no credentials. `@ConditionalOnProperty` decides whether the bean is *defined at all*.
 
 **There is no Solace implementation.** Solace is named in a comment on `EventPublisher` as one of the transports that interface exists to accommodate, and that is the whole extent of it.
@@ -214,6 +230,9 @@ Two further things this repository does not claim:
 │   ├── application.yml            profiles: default (H2), postgres, prod
 │   └── db/migration/              Flyway, V1–V6 — owns the PostgreSQL schema
 ├── src/test/java/                 25 test classes, layered — see Tests (27 with the Lambda's)
+├── ARCHITECTURE.md                the diagrams and the method-by-method request path
+├── adr/                           12 decision records; 0009-0010 land with the deploy tooling
+├── scripts/                       refcheck / linkcheck / numbers — the docs gates
 ├── contracts/                     the event schema both modules test against
 ├── lambda/                        separate parentless Maven module: SQS → DynamoDB consumer
 ├── k8s/                           6 manifests + secret.example.yaml
