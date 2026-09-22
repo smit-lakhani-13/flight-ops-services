@@ -4,8 +4,19 @@ import com.smit.flightops.entity.Booking;
 
 import java.time.Instant;
 
+/**
+ * What a caller gets back for a booking.
+ *
+ * <p>{@code idempotencyKey} is deliberately not here, although the request
+ * carries one and the column stores it. It is the caller's own value: they
+ * chose it, they already have it, and echoing it back adds nothing they can
+ * use. What it does add is a way to read other people's keys — the list
+ * endpoint returns every booking on a flight, so a reader with
+ * {@code flights:read} could harvest the keys of bookings they did not make and
+ * replay against them. Not returning it costs a caller nothing and closes that.
+ */
 public record BookingDto(Long bookingId, String flightNumber, String passengerName,
-                         int seats, String idempotencyKey, Instant createdAt,
+                         int seats, Instant createdAt,
                          /**
                           * Null while the booking is active. Added rather than a
                           * boolean {@code cancelled} because the time is the part
@@ -21,7 +32,6 @@ public record BookingDto(Long bookingId, String flightNumber, String passengerNa
      */
     public static BookingDto from(Booking b) {
         return new BookingDto(b.getId(), b.getFlight().getFlightNumber(), b.getPassengerName(),
-                              b.getSeats(), b.getIdempotencyKey(), b.getCreatedAt(),
-                              b.getCancelledAt());
+                              b.getSeats(), b.getCreatedAt(), b.getCancelledAt());
     }
 }

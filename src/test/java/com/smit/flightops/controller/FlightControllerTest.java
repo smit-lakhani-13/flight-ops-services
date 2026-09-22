@@ -1,5 +1,6 @@
 package com.smit.flightops.controller;
 
+import com.smit.flightops.config.TimeConfig;
 import tools.jackson.databind.ObjectMapper;
 import com.smit.flightops.dto.CreateFlightRequest;
 import com.smit.flightops.dto.FlightDto;
@@ -9,6 +10,7 @@ import com.smit.flightops.service.FlightService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Import;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.http.MediaType;
@@ -51,6 +53,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * bodies, are {@code SecurityRulesTest}'s only job.
  */
 @WebMvcTest(FlightController.class)
+// GlobalExceptionHandler is a @RestControllerAdvice, so the slice picks it
+// up, and it takes a Clock. A @WebMvcTest loads no @Configuration class of
+// its own, so TimeConfig has to be named here. Importing the real one rather
+// than stubbing a fixed clock keeps the slice honest: the error bodies these
+// tests assert on are built by the same clock the application uses.
+@Import(TimeConfig.class)
 @AutoConfigureMockMvc(addFilters = false)
 class FlightControllerTest {
 

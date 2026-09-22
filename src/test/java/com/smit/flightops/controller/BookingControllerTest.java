@@ -1,5 +1,6 @@
 package com.smit.flightops.controller;
 
+import com.smit.flightops.config.TimeConfig;
 import com.smit.flightops.dto.BookingDto;
 import com.smit.flightops.entity.FlightStatus;
 import com.smit.flightops.exception.BookingNotFoundException;
@@ -8,7 +9,9 @@ import com.smit.flightops.exception.InsufficientSeatsException;
 import com.smit.flightops.service.BookingService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Import;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -21,7 +24,9 @@ import org.springframework.test.web.servlet.MockMvc;
 import java.time.Instant;
 import java.util.List;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -49,6 +54,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * bodies, are {@code SecurityRulesTest}'s only job.
  */
 @WebMvcTest(BookingController.class)
+// GlobalExceptionHandler is a @RestControllerAdvice, so the slice picks it
+// up, and it takes a Clock. A @WebMvcTest loads no @Configuration class of
+// its own, so TimeConfig has to be named here. Importing the real one rather
+// than stubbing a fixed clock keeps the slice honest: the error bodies these
+// tests assert on are built by the same clock the application uses.
+@Import(TimeConfig.class)
 @AutoConfigureMockMvc(addFilters = false)
 class BookingControllerTest {
 
@@ -61,7 +72,7 @@ class BookingControllerTest {
             """;
 
     private BookingDto dto() {
-        return new BookingDto(1L, "UA123", "Smit Lakhani", 3, "demo-1",
+        return new BookingDto(1L, "UA123", "Smit Lakhani", 3,
                               Instant.parse("2026-09-15T10:00:00Z"), null);
     }
 
@@ -172,7 +183,7 @@ class BookingControllerTest {
         mockMvc.perform(get(location))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.bookingId").value(1))
-                .andExpect(jsonPath("$.idempotencyKey").value("demo-1"));
+                .andExpect(jsonPath("$.passengerName").value("Smit Lakhani"));
     }
 
     @Test
@@ -209,14 +220,61 @@ class BookingControllerTest {
                 // PageImpl's own fields. Asserting the shape here is what would
                 // catch that setting being dropped.
                 .andExpect(jsonPath("$.content.length()").value(1))
-                .andExpect(jsonPath("$.content[0].idempotencyKey").value("demo-1"))
+                .andExpect(jsonPath("$.content[0].bookingId").value(1))
                 .andExpect(jsonPath("$.page.totalElements").value(1));
+    }
+
+    @Test
+    @DisplayName("no response body carries the caller's idempotency key")
+    void theIdempotencyKeyIsNeverReturned() throws Exception {
+        when(bookingService.book(any())).thenReturn(dto());
+        when(bookingService.findById(1L)).thenReturn(dto());
+        when(bookingService.findByFlightNumber(eq("UA123"), any()))
+                .thenReturn(new PageImpl<>(List.of(dto()), Pageable.ofSize(20), 1));
+
+        // All three read paths, because the list is the one that matters most:
+        // it returns bookings the caller did not make, so a key echoed there is
+        // somebody else's key, and replaying against it is the whole point of
+        // the field.
+        mockMvc.perform(post("/api/v1/bookings")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(VALID_BODY))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.idempotencyKey").doesNotExist());
+
+        mockMvc.perform(get("/api/v1/bookings/1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.idempotencyKey").doesNotExist());
+
+        mockMvc.perform(get("/api/v1/bookings").param("flightNumber", "UA123"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].idempotencyKey").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("a page size larger than the cap is clamped to 100, not honoured")
+    void pageSizeIsCappedAtOneHundred() throws Exception {
+        ArgumentCaptor<Pageable> pageable = ArgumentCaptor.forClass(Pageable.class);
+        when(bookingService.findByFlightNumber(eq("UA123"), any()))
+                .thenReturn(new PageImpl<>(List.of(dto()), Pageable.ofSize(20), 1));
+
+        mockMvc.perform(get("/api/v1/bookings")
+                        .param("flightNumber", "UA123")
+                        .param("size", "5000"))
+                .andExpect(status().isOk());
+
+        verify(bookingService).findByFlightNumber(eq("UA123"), pageable.capture());
+        // Clamped, not rejected: Spring Data's resolver caps the value and the
+        // request still succeeds. Without spring.data.web.pageable.max-page-size
+        // this would be 2000 - the framework default, not unlimited, but two
+        // thousand rows is still one curl away.
+        assertThat(pageable.getValue().getPageSize()).isEqualTo(100);
     }
 
     @Test
     @DisplayName("cancelling a booking is 200 with the cancelled record")
     void cancelReturnsTheCancelledBooking() throws Exception {
-        BookingDto cancelled = new BookingDto(1L, "UA123", "Smit Lakhani", 3, "demo-1",
+        BookingDto cancelled = new BookingDto(1L, "UA123", "Smit Lakhani", 3,
                                               Instant.parse("2026-09-15T10:00:00Z"),
                                               Instant.parse("2026-09-15T11:00:00Z"));
         when(bookingService.cancel(1L)).thenReturn(cancelled);

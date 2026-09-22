@@ -9,6 +9,7 @@ import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -43,14 +44,16 @@ public class DataSeeder implements ApplicationRunner {
     private static final Logger log = LoggerFactory.getLogger(DataSeeder.class);
 
     private final FlightRepository flightRepository;
+    private final Clock clock;
 
-    public DataSeeder(FlightRepository flightRepository) {
+    public DataSeeder(FlightRepository flightRepository, Clock clock) {
         this.flightRepository = flightRepository;
+        this.clock = clock;
     }
 
     @Override
     public void run(ApplicationArguments args) {
-        Instant base = Instant.now().truncatedTo(ChronoUnit.MICROS);
+        Instant base = clock.instant().truncatedTo(ChronoUnit.MICROS);
 
         List<Flight> wanted = List.of(
                 new Flight("UA123", "EWR", "LHR", 180, base.plus(Duration.ofHours(8))),

@@ -56,7 +56,7 @@ class BookingServiceTest {
     @DisplayName("no existing row -> delegates straight to the writer")
     void firstTimeBookingDelegatesToTheWriter() {
         when(bookingRepository.findByIdempotencyKey("demo-1")).thenReturn(Optional.empty());
-        BookingDto written = new BookingDto(1L, "UA123", "Smit Lakhani", 3, "demo-1", Instant.now(), null);
+        BookingDto written = new BookingDto(1L, "UA123", "Smit Lakhani", 3, Instant.now(), null);
         when(bookingWriter.insertNewBooking(any())).thenReturn(written);
 
         BookingDto dto = bookingService.book(request(3, "demo-1"));
@@ -85,7 +85,7 @@ class BookingServiceTest {
     void racingTheWriterRecoversTheWinner() {
         when(bookingRepository.findByIdempotencyKey("raced-key")).thenReturn(Optional.empty());
         when(bookingWriter.insertNewBooking(any())).thenThrow(new DataIntegrityViolationException("dup"));
-        BookingDto winner = new BookingDto(2L, "UA123", "Smit Lakhani", 3, "raced-key", Instant.now(), null);
+        BookingDto winner = new BookingDto(2L, "UA123", "Smit Lakhani", 3, Instant.now(), null);
         when(bookingWriter.recoverReplay(eq("raced-key"), any())).thenReturn(winner);
 
         BookingDto dto = bookingService.book(request(3, "raced-key"));
@@ -117,7 +117,7 @@ class BookingServiceTest {
 
         assertThat(dto.passengerName()).isEqualTo("Smit Lakhani");
         assertThat(dto.flightNumber()).isEqualTo("UA123");
-        assertThat(dto.idempotencyKey()).isEqualTo("demo-6");
+        assertThat(dto.seats()).isEqualTo(3);
     }
 
     @Test

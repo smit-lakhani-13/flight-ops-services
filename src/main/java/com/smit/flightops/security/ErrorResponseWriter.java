@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
 import tools.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
+import java.time.Clock;
 
 /**
  * Writes the application's own {@code {code, message, timestamp}} error body
@@ -35,15 +36,18 @@ import java.io.IOException;
  * is serialised by exactly the same configuration that serialises every other
  * error body. Building a private mapper here is the subtle version of the bug
  * this class exists to prevent: the shape would match and the date format
- * would not.
+ * would not. It shares the container's {@link Clock} for the same reason: two
+ * error bodies from one request should not be able to disagree about the time.
  */
 @Component
 public class ErrorResponseWriter {
 
     private final ObjectMapper objectMapper;
+    private final Clock clock;
 
-    public ErrorResponseWriter(ObjectMapper objectMapper) {
+    public ErrorResponseWriter(ObjectMapper objectMapper, Clock clock) {
         this.objectMapper = objectMapper;
+        this.clock = clock;
     }
 
     /**
@@ -65,6 +69,6 @@ public class ErrorResponseWriter {
         response.setStatus(status.value());
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
         response.setCharacterEncoding("UTF-8");
-        objectMapper.writeValue(response.getOutputStream(), ErrorResponse.of(code, message));
+        objectMapper.writeValue(response.getOutputStream(), ErrorResponse.of(code, message, clock.instant()));
     }
 }

@@ -81,7 +81,7 @@ class BookingEventContractTest {
     @Test
     @DisplayName("the serialised event has exactly the contract's fields — no more, no fewer")
     void theWireFormatMatchesTheContractExactly() throws Exception {
-        BookingDto booking = new BookingDto(1L, "UA123", "Smit Lakhani", 3, "demo-1",
+        BookingDto booking = new BookingDto(1L, "UA123", "Smit Lakhani", 3,
                 Instant.parse("2026-09-15T10:00:00Z"), null);
 
         JsonNode produced = objectMapper.readTree(
@@ -125,7 +125,7 @@ class BookingEventContractTest {
         Instant noon = Instant.parse("2026-09-15T12:00:00Z");
 
         String rendered = BookingCreatedEvent.from(
-                new BookingDto(1L, "UA123", "X", 1, "k", noon, null)).timestamp();
+                new BookingDto(1L, "UA123", "X", 1, noon, null)).timestamp();
 
         assertThat(rendered)
                 .as("rendered in the host zone (%s) instead of UTC", java.time.ZoneId.systemDefault())
@@ -143,7 +143,7 @@ class BookingEventContractTest {
     @Test
     @DisplayName("the JSON types match the contract too, not just the field names")
     void theWireTypesMatchTheContract() throws Exception {
-        BookingDto booking = new BookingDto(42L, "UA456", "Smit Lakhani", 2, "demo-2",
+        BookingDto booking = new BookingDto(42L, "UA456", "Smit Lakhani", 2,
                 Instant.parse("2026-09-15T10:00:00Z"), null);
 
         JsonNode produced = objectMapper.readTree(
@@ -174,7 +174,7 @@ class BookingEventContractTest {
 
         List<String> rendered = awkward.stream()
                 .map(at -> BookingCreatedEvent.from(
-                        new BookingDto(1L, "UA123", "X", 1, "k", at, null)).timestamp())
+                        new BookingDto(1L, "UA123", "X", 1, at, null)).timestamp())
                 .toList();
 
         assertThat(rendered).allMatch(t -> t.matches("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z"));

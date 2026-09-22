@@ -19,7 +19,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
-import java.time.Instant;
+import java.time.Clock;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -41,22 +41,33 @@ import java.util.stream.Collectors;
  *
  * <p>Spring picks the handler whose declared exception type is closest to the
  * thrown one, so the specific handlers below always win over the catch-all.
+ *
+ * <p>Every {@code timestamp} here comes from the injected {@link Clock} rather
+ * than {@code Instant.now()}, which is what lets a test assert on the value
+ * instead of merely on the field's presence, and keeps one source of time in
+ * the application.
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
+    private final Clock clock;
+
+    public GlobalExceptionHandler(Clock clock) {
+        this.clock = clock;
+    }
+
     @ExceptionHandler(FlightNotFoundException.class)
     public ResponseEntity<ErrorResponse> handleNotFound(FlightNotFoundException e) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                .body(ErrorResponse.of("FLIGHT_NOT_FOUND", e.getMessage()));
+                .body(ErrorResponse.of("FLIGHT_NOT_FOUND", e.getMessage(), clock.instant()));
     }
 
     @ExceptionHandler(BookingNotFoundException.class)
     public ResponseEntity<ErrorResponse> handleBookingNotFound(BookingNotFoundException e) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                .body(ErrorResponse.of("BOOKING_NOT_FOUND", e.getMessage()));
+                .body(ErrorResponse.of("BOOKING_NOT_FOUND", e.getMessage(), clock.instant()));
     }
 
     /**
@@ -67,7 +78,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(InsufficientSeatsException.class)
     public ResponseEntity<ErrorResponse> handleInsufficientSeats(InsufficientSeatsException e) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
-                .body(ErrorResponse.of("INSUFFICIENT_SEATS", e.getMessage()));
+                .body(ErrorResponse.of("INSUFFICIENT_SEATS", e.getMessage(), clock.instant()));
     }
 
     /**
@@ -79,13 +90,13 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(FlightNotBookableException.class)
     public ResponseEntity<ErrorResponse> handleNotBookable(FlightNotBookableException e) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
-                .body(ErrorResponse.of("FLIGHT_NOT_BOOKABLE", e.getMessage()));
+                .body(ErrorResponse.of("FLIGHT_NOT_BOOKABLE", e.getMessage(), clock.instant()));
     }
 
     @ExceptionHandler(DuplicateFlightException.class)
     public ResponseEntity<ErrorResponse> handleDuplicateFlight(DuplicateFlightException e) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
-                .body(ErrorResponse.of("DUPLICATE_FLIGHT", e.getMessage()));
+                .body(ErrorResponse.of("DUPLICATE_FLIGHT", e.getMessage(), clock.instant()));
     }
 
     /**
@@ -97,7 +108,8 @@ public class GlobalExceptionHandler {
         log.warn("Optimistic lock conflict: {}", e.getMessage());
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ErrorResponse.of("CONCURRENT_MODIFICATION",
-                                       "The record changed while you were editing it. Please retry."));
+                                       "The record changed while you were editing it. Please retry.",
+                                       clock.instant()));
     }
 
     /**
@@ -119,7 +131,8 @@ public class GlobalExceptionHandler {
         log.warn("Constraint violation: {}", e.getMostSpecificCause().getMessage());
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ErrorResponse.of("DUPLICATE_REQUEST",
-                                       "This request conflicts with an existing record. Please retry."));
+                                       "This request conflicts with an existing record. Please retry.",
+                                       clock.instant()));
     }
 
     /**
@@ -134,7 +147,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(IllegalFlightTransitionException.class)
     public ResponseEntity<ErrorResponse> handleIllegalTransition(IllegalFlightTransitionException e) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
-                .body(ErrorResponse.of("ILLEGAL_STATUS_TRANSITION", e.getMessage()));
+                .body(ErrorResponse.of("ILLEGAL_STATUS_TRANSITION", e.getMessage(), clock.instant()));
     }
 
     /**
@@ -150,7 +163,7 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(IdempotencyKeyConflictException.class)
     public ResponseEntity<ErrorResponse> handleIdempotencyConflict(IdempotencyKeyConflictException e) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
-                .body(ErrorResponse.of("IDEMPOTENCY_KEY_REUSED", e.getMessage()));
+                .body(ErrorResponse.of("IDEMPOTENCY_KEY_REUSED", e.getMessage(), clock.instant()));
     }
 
     /**
@@ -173,7 +186,8 @@ public class GlobalExceptionHandler {
         log.warn("Unknown sort property: {}", e.getPropertyName());
         return ResponseEntity.badRequest()
                 .body(ErrorResponse.of("UNKNOWN_SORT_PROPERTY",
-                                       "'%s' is not a sortable property.".formatted(e.getPropertyName())));
+                                       "'%s' is not a sortable property.".formatted(e.getPropertyName()),
+                                       clock.instant()));
     }
 
     /**
@@ -198,7 +212,8 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                 .header("Retry-After", "1")
                 .body(ErrorResponse.of("LOCK_TIMEOUT",
-                                       "That flight is busy right now. Please retry."));
+                                       "That flight is busy right now. Please retry.",
+                                       clock.instant()));
     }
 
     /**
@@ -228,7 +243,7 @@ public class GlobalExceptionHandler {
                         ge.getDefaultMessage() == null ? "is invalid" : ge.getDefaultMessage()));
 
         return ResponseEntity.badRequest()
-                .body(new ValidationErrorResponse("VALIDATION_FAILED", fieldErrors, Instant.now()));
+                .body(new ValidationErrorResponse("VALIDATION_FAILED", fieldErrors, clock.instant()));
     }
 
     /**
@@ -245,7 +260,8 @@ public class GlobalExceptionHandler {
         log.warn("Malformed request: {}", e.getMessage());
         return ResponseEntity.badRequest()
                 .body(ErrorResponse.of("MALFORMED_REQUEST",
-                                       "Request could not be read. Check the field names, types and enum values."));
+                                       "Request could not be read. Check the field names, types and enum values.",
+                                       clock.instant()));
     }
 
     /**
@@ -265,7 +281,7 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleIllegalArgument(IllegalArgumentException e) {
         log.warn("Rejected argument", e);
         return ResponseEntity.badRequest()
-                .body(ErrorResponse.of("MALFORMED_REQUEST", "The request contained an invalid value."));
+                .body(ErrorResponse.of("MALFORMED_REQUEST", "The request contained an invalid value.", clock.instant()));
     }
 
     /**
@@ -285,7 +301,8 @@ public class GlobalExceptionHandler {
             String detail = errorResponse.getBody().getDetail();
             return ResponseEntity.status(status)
                     .body(ErrorResponse.of(codeFor(status),
-                                           detail == null ? status.toString() : detail));
+                                           detail == null ? status.toString() : detail,
+                                           clock.instant()));
         }
         return handleUnexpected(e);
     }
@@ -298,7 +315,7 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleUnexpected(Exception e) {
         log.error("Unhandled exception", e);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(ErrorResponse.of("INTERNAL_ERROR", "An unexpected error occurred"));
+                .body(ErrorResponse.of("INTERNAL_ERROR", "An unexpected error occurred", clock.instant()));
     }
 
     private static String codeFor(HttpStatusCode status) {

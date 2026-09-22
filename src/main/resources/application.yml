@@ -64,6 +64,21 @@ spring:
         # it after clients have shipped is a breaking change.
         serialization-mode: via-dto
 
+        # A cap on what one request can ask for. Without this, Spring Data's
+        # default max is 2000 and `?size=2000` is a single unauthenticated-shaped
+        # request that makes the database read and the JVM serialise two
+        # thousand rows. That is not a theoretical denial of service, it is one
+        # curl and a for-loop, and the endpoint is paged precisely so that it
+        # cannot be asked for everything at once.
+        #
+        # 100 rather than a rounder 50 because the list endpoints are filtered by
+        # flight and a full flight here is 180 seats, so two pages covers the
+        # realistic case and nothing legitimate is made awkward. Spring Data
+        # clamps rather than rejecting, so an over-large `size` still returns
+        # 200 with 100 rows - which is the kinder behaviour for a client that
+        # guessed, and the reason it is documented rather than only enforced.
+        max-page-size: 100
+
   threads:
     virtual:
       enabled: true

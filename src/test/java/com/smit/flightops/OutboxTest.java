@@ -289,7 +289,7 @@ class OutboxTest {
     @Test
     @DisplayName("recording an event outside a transaction is refused, not silently committed")
     void recordingOutsideATransactionIsRefused() {
-        BookingDto orphan = new BookingDto(999L, "OB999", "Nobody", 1, "no-transaction",
+        BookingDto orphan = new BookingDto(999L, "OB999", "Nobody", 1,
                 Instant.now(), null);
         long before = outboxEventRepository.count();
 

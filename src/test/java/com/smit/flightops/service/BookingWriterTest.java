@@ -12,6 +12,7 @@ import com.smit.flightops.repository.FlightRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Spy;
@@ -79,7 +80,14 @@ class BookingWriterTest {
         assertThat(flight.getAvailableSeats()).isEqualTo(177);
         assertThat(dto.flightNumber()).isEqualTo("UA123");
         assertThat(dto.seats()).isEqualTo(3);
-        assertThat(dto.idempotencyKey()).isEqualTo("demo-1");
+        // The key is stored and not returned, and both halves of that matter:
+        // the column is what makes the next replay of this request idempotent,
+        // and the response is where echoing it would hand one caller's key to
+        // whoever can read the list endpoint. So the assertion is on the row
+        // that was saved, not on the DTO that went back.
+        ArgumentCaptor<Booking> saved = ArgumentCaptor.forClass(Booking.class);
+        verify(bookingRepository).save(saved.capture());
+        assertThat(saved.getValue().getIdempotencyKey()).isEqualTo("demo-1");
         // The outbox, not the transport. Before the outbox this line read
         // verify(eventPublisher).publishBookingCreated(dto), and the change in
         // that line is the change in the design: what happens inside this
@@ -159,8 +167,9 @@ class BookingWriterTest {
 
         BookingDto dto = bookingWriter.recoverReplay("raced-key", "any-fingerprint");
 
-        assertThat(dto.idempotencyKey()).isEqualTo("raced-key");
         assertThat(dto.passengerName()).isEqualTo("Smit Lakhani");
+        assertThat(dto.flightNumber()).isEqualTo("UA123");
+        assertThat(dto.seats()).isEqualTo(3);
     }
 
     @Test
