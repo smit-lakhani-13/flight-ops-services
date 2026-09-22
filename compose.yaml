@@ -1,0 +1,115 @@
+# The whole service on a laptop: PostgreSQL, the application, one command.
+#
+#   docker compose up --build          # http://localhost:8080
+#   ./demo.sh                          # the eight acts, against the container
+#   docker compose down -v             # -v also drops the database volume
+#
+# This is not how it is deployed. DEPLOYMENT.md covers that. This exists so
+# that "does the container actually work" has an answer that does not cost
+# $7.72/day, and so the PostgreSQL-only behaviour — Flyway migrations,
+# `SELECT ... FOR UPDATE`, `SET lock_timeout` — can be exercised without a
+# cluster. The H2 profile the tests use has none of it.
+#
+# The queue is not here. `APP_EVENTS_PUBLISHER=noop` means outbox rows are
+# written and marked published without being sent anywhere, which is the whole
+# of the service's behaviour except the SQS call itself. A local SQS would be
+# LocalStack, a second large image, to test one `SendMessage`.
+
+services:
+  db:
+    # 17-alpine, matching the RDS engine version in deploy/aws/data.yaml.
+    # Matching it is the point: Flyway migrations that pass against one major
+    # version and fail against another are a class of bug this removes for free,
+    # and the cost of removing it is keeping two numbers in step.
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: flightops
+      POSTGRES_USER: postgres
+      # Local only, on a port that is not published outside the compose network
+      # unless you uncomment the mapping below. Nothing here is a real secret.
+      POSTGRES_PASSWORD: pass
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # Uncomment to reach the database from the host with psql. Left off by
+    # default because 5432 is a commonly occupied port and the error when it is
+    # already taken ("port is already allocated") sends people looking at the
+    # application rather than at their other container.
+    # ports:
+    #   - "5432:5432"
+    healthcheck:
+      # `pg_isready -U postgres` and not a bare `pg_isready`: without the user,
+      # it reports ready as soon as the server accepts connections, which on
+      # first start happens *before* the init scripts have created the database.
+      # The application then starts, Flyway connects to a database that does not
+      # exist yet, and the whole stack fails on a race that does not reproduce
+      # on the second run.
+      test: ["CMD-SHELL", "pg_isready -U postgres -d flightops"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+  app:
+    build:
+      context: .
+      args:
+        # Stamped into org.opencontainers.image.revision. Empty here — this is
+        # a local build — where CI passes the real commit.
+        GIT_SHA: local
+    depends_on:
+      db:
+        # Not `depends_on: [db]`, which only waits for the container to be
+        # *created*. The application would start, fail to connect, and exit
+        # before PostgreSQL had finished initialising.
+        condition: service_healthy
+    environment:
+      # The single most important line in this file.
+      #
+      # With no profile, the application runs its default configuration, which
+      # is H2 in memory — so `docker compose up` would appear to work perfectly,
+      # serve every endpoint, pass the demo, and be storing nothing. Every
+      # restart would be a clean database and nobody would notice until the
+      # question was "where did my booking go".
+      #
+      # Fail-open defaults are the dangerous kind. This pins it.
+      SPRING_PROFILES_ACTIVE: postgres
+
+      # `db` is the compose service name, resolved by compose's own DNS.
+      DB_URL: jdbc:postgresql://db:5432/flightops
+      DB_USER: postgres
+      DB_PASSWORD: pass
+
+      # Outbox rows are written and drained locally; nothing is sent to AWS.
+      # Setting this to `sqs` without a queue URL is a startup failure, by
+      # design — see SqsEventPublisher.
+      APP_EVENTS_PUBLISHER: noop
+
+      # Bcrypt of "dev-secret" and "dev-ops", which is what demo.sh defaults to.
+      # Hashed rather than {noop} so that the local stack exercises the same
+      # PasswordEncoder path as the deployed one: a {noop} value that works
+      # locally and a bcrypt value that fails in the cluster is a difference
+      # worth not having.
+      API_PASSWORD: "{bcrypt}$$2y$$10$$AebmD7.ds0witGfY6P.qC.K42KNLCYfOlzD4QPQ5Qo4Kp2wUA.NIW"
+      OPS_PASSWORD: "{bcrypt}$$2y$$10$$ekIVCvlYn8UNZ2KYa2J/4.C4/StCIwfKJuVEJNcnAqQEzmYqUkjdq"
+
+      # Chattier than the deployed configuration, which is the point of running
+      # it here.
+      SQL_LOG_LEVEL: DEBUG
+    ports:
+      - "8080:8080"
+    healthcheck:
+      # The readiness group, not /actuator/health: the liveness half reports UP
+      # while Flyway is still migrating, so a plain health check goes green
+      # before the application can serve a request.
+      #
+      # wget rather than curl — the runtime image is Alpine, which ships
+      # BusyBox wget and no curl.
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health/readiness | grep -q UP"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 40s
+    restart: unless-stopped
+
+volumes:
+  pgdata:

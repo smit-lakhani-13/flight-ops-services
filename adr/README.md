@@ -25,8 +25,8 @@ true at the time is what explains the code somebody is reading today.
 | [0006](0006-stateless-sessions-no-csrf.md) | Stateless sessions, and CSRF deliberately off | accepted | `e83d846` |
 | [0007](0007-spring-boot-4.md) | Spring Boot 4.1 and Java 21 | accepted | `7b45b5b` |
 | [0008](0008-standalone-lambda-consumer.md) | A standalone, frameworkless Lambda consumer on arm64 | accepted | `4a9a5b9` |
-| 0009 | eksctl and SAM over Terraform — *written with the deployment tooling* | pending | — |
-| 0010 | Region `ap-south-1` — *written with the deployment tooling* | pending | — |
+| [0009](0009-eksctl-and-sam-over-terraform.md) | eksctl, SAM and kustomize rather than Terraform | accepted | 2026-09-22 |
+| [0010](0010-region-ap-south-1.md) | Everything in `ap-south-1` | accepted | 2026-09-22 |
 | [0011](0011-correlation-ids-and-metrics.md) | Correlation ids, three domain counters, and no exporter | accepted | `d18f58b` |
 | [0012](0012-openapi-public-read.md) | The OpenAPI document is public; the API it describes is not | accepted | `82ea9b4` |
 | [0013](0013-outbox-ceiling-and-retention.md) | The outbox is bounded: an attempt ceiling and a retention window | accepted | `a6efc1c` |

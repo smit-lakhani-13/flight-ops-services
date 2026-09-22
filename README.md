@@ -8,7 +8,7 @@ Flight inventory and booking microservice: a Spring Boot REST API over PostgreSQ
 
 The airline domain is deliberate. Seat inventory is a genuinely hard consistency problem: multiple clients compete for the same finite resource, retries are unavoidable, and getting it wrong means selling the same seat twice. That gives every concurrency and idempotency decision in this repository a concrete reason to exist rather than a theoretical one.
 
-**Scope.** This is a demonstration service, not a deployed system. It has never served production traffic. CI builds both modules and runs the full test suite — including the PostgreSQL integration tests — on every push. The infrastructure that needs a registry, a cluster or an AWS account (`Dockerfile`, `k8s/`, `template.yaml`, and the deploy half of the workflow) is authored and reviewed but has not been applied. [Project status](#project-status) records exactly which parts have been executed and which have not, and every claim below is bounded by that table.
+**Scope.** This is a demonstration service, not a deployed system. It has never served production traffic. CI builds both modules and runs the full test suite — including the PostgreSQL integration tests — on every push. The infrastructure that needs a registry, a cluster or an AWS account (`Dockerfile`, `k8s/`, `template.yaml`, `deploy/aws/`, and the deploy half of the workflow) is authored, linted and validated offline, but has not been applied — [DEPLOYMENT.md](DEPLOYMENT.md) records that, prices it, and gives the runbook. [Project status](#project-status) records exactly which parts have been executed and which have not, and every claim below is bounded by that table.
 
 **Contents** — [Documentation](#documentation) · [Run it](#run-it-in-30-seconds) · [Project status](#project-status) · [Architecture](#architecture) · [Repository layout](#repository-layout) · [Security](#security) · [API](#api) · [OpenAPI](#openapi) · [Concurrency](#the-hard-problem-not-overselling-the-last-seat) · [The outbox](#the-outbox-why-the-event-is-a-database-row-first) · [Observability](#observability) · [Tests](#tests) · [Lambda](#lambda-module) · [Container and Kubernetes](#container-and-kubernetes) · [Cost safety](#cost-safety--read-this-before-touching-aws) · [Trade-offs](#trade-offs-and-known-limitations)
 
@@ -23,8 +23,13 @@ CI run — `scripts/refcheck.py` resolves every file and symbol they cite,
 | Document | What it answers |
 |---|---|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | How the pieces fit: the booking sequence naming every method it passes through, the idempotency decision table, the lock order, the outbox, the status state machine, the ER diagram, and the module boundaries the build enforces |
-| [adr/](adr/README.md) | Why each decision went the way it did, and what was rejected — outbox, pessimistic locking, ids, the request fingerprint, the security model, Boot 4, the Lambda, observability, OpenAPI, the outbox bounds, the quality gates |
+| [adr/](adr/README.md) | Why each decision went the way it did, and what was rejected — 14 records covering the outbox, pessimistic locking, ids, the request fingerprint, the security model, Boot 4, the Lambda, the IaC choice, the region, observability, OpenAPI, the outbox bounds and the quality gates |
+| [DEPLOYMENT.md](DEPLOYMENT.md) | Three ways to run it, the runbook for each, what each costs for 7, 10 and 15 days, what breaks first under load, and how to tear it all down with proof |
+| [OPERATIONS.md](OPERATIONS.md) | Every environment variable, the metrics and what they mean, how to follow one booking across the queue, what to alert on, nine playbooks — and what is honestly not wired up |
+| [SECURITY.md](SECURITY.md) | The auth model, what is exposed and what is not, how secrets are handled, and six known limitations |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | The JDK trap, both build commands, what `Skipped: 5` means, and what CI enforces |
 | [contracts/README.md](contracts/README.md) | The event contract between the two modules, how it is enforced from both sides, and how to change it without breaking a deployed consumer |
+| [deploy/aws/README.md](deploy/aws/README.md) | What each script and template creates, who owns what between the scripts and CI, and the failure table |
 
 ---
 
@@ -208,7 +213,7 @@ The same picture with the method names on it — plus the booking sequence, the 
 ## Repository layout
 
 ```
-├── src/main/java/com/smit/flightops/       51 files, 4,415 lines
+├── src/main/java/com/smit/flightops/       51 files, 4,422 lines
 │   ├── controller/     HTTP only — bind, validate, map to DTO, choose status code
 │   ├── service/        orchestration, the transaction boundaries, the outbox drain
 │   │                   and its retention pruner, EventPublisher + 2 impls
@@ -231,15 +236,21 @@ The same picture with the method names on it — plus the booking sequence, the 
 │   └── db/migration/              Flyway, V1–V6 — owns the PostgreSQL schema
 ├── src/test/java/                 25 test classes, layered — see Tests (27 with the Lambda's)
 ├── ARCHITECTURE.md                the diagrams and the method-by-method request path
-├── adr/                           12 decision records; 0009-0010 land with the deploy tooling
+├── DEPLOYMENT.md                  three shapes, the runbook, the cost of each, the teardown
+├── adr/                           14 decision records, 0001–0014
 ├── scripts/                       refcheck / linkcheck / numbers — the docs gates
 ├── contracts/                     the event schema both modules test against
 ├── lambda/                        separate parentless Maven module: SQS → DynamoDB consumer
-├── k8s/                           6 manifests + secret.example.yaml
-│   └── optional/ingress.yaml      separated because applying it provisions a billed ALB
+├── k8s/                           kustomize: base + aws overlay + the Ingress component
+│   ├── base/                      6 manifests true in any environment
+│   ├── overlays/aws/              image, IRSA annotation, queue URL, database URL
+│   └── components/ingress/        separate because applying it provisions a billed ALB
+├── deploy/aws/                    up / down / cost-check / render, two CloudFormation
+│                                  templates, and the runbook that orders them
 ├── events/                        SQS fixtures for `sam local invoke`
-├── cluster.yaml                   eksctl cluster definition
+├── cluster.yaml                   eksctl cluster definition, version pinned
 ├── template.yaml                  SAM template for the Lambda
+├── compose.yaml                   PostgreSQL + the app, for the container path locally
 ├── Dockerfile                     multi-stage: JDK + Maven build → JRE runtime
 └── .github/workflows/             build → test → ECR → EKS rollout
 ```
@@ -671,11 +682,29 @@ Belt and braces: exactly one provider is on the classpath *and* the holder names
 > ⚠️ **Nothing in this section has been executed** — see [Project status](#project-status). The manifests and the Dockerfile are reviewed, not applied.
 
 ```bash
-docker build -t flight-ops-service:1.0.0 .
-kubectl apply -f k8s/          # note: -f, NOT -R
+docker compose up --build                       # the whole stack, locally
+kubectl kustomize k8s/overlays/aws               # what would be applied to EKS
 ```
 
-`k8s/` holds six manifests (`namespace`, `configmap`, `deployment`, `service`, `hpa`, `pdb`) plus `secret.example.yaml`, a placeholder template. `apply -f k8s/` **does** sweep that one up — it is in the directory like everything else — so copy it to `k8s/secret.yaml` (gitignored), put the real password there, and apply that file explicitly afterwards; the manifest's own header explains why the apply ordering makes the directory sweep harmless. **`k8s/optional/ingress.yaml` is in a subdirectory on purpose**: applying it provisions an AWS ALB that bills continuously, so it takes a deliberate second command rather than being swept up by `kubectl apply -f k8s/`.
+The manifests are a kustomize tree, not a directory of files to sweep up with `apply -f`:
+
+| | |
+|---|---|
+| `k8s/base/` | `configmap`, `serviceaccount`, `deployment`, `service`, `hpa`, `pdb` — everything that is true in any environment |
+| `k8s/overlays/aws/` | the four things that are not: the ECR image, the IRSA role annotation, the queue URL and the database URL |
+| `k8s/components/ingress/` | the Ingress, and therefore the ALB. Separate because applying it starts a continuous charge |
+| `k8s/namespace.yaml` | cluster-scoped, so CI's namespace-scoped role cannot apply it. `deploy/aws/up.sh` does |
+| `k8s/secret.example.yaml` | a template. The real Secret is generated by `up.sh` and never written to disk |
+
+One render path, used by CI and by hand alike:
+
+```bash
+AWS_ACCOUNT_ID=… IMAGE_TAG=… SQS_QUEUE_URL=… DB_URL=… ./deploy/aws/render-aws.sh
+```
+
+It exits non-zero if any `${…}` survives substitution, so a missing variable is a failed command rather than a manifest containing the literal string `${DB_URL}`.
+
+Full runbook, cost model and teardown: **[DEPLOYMENT.md](DEPLOYMENT.md)**.
 
 What the manifests get right:
 
@@ -697,17 +726,26 @@ A Kubernetes Secret is **base64, not encryption**. `secret.example.yaml` says so
 
 ## Cost safety — read this before touching AWS
 
-The EKS control plane bills **~$0.10/hour (~$73/month) with zero worker nodes running**. It does not stop costing money because you stopped using it.
+The EKS control plane bills **~$0.10/hour (~$73/month) with zero worker nodes running**. It does not stop costing money because you stopped using it, and there is no stop button — the only way to stop paying is to delete it.
 
-1. **Set a billing alarm before creating anything.**
-2. **One region.** Resources in a region you forget about are resources you keep paying for.
-3. **Delete the Ingress before the cluster.** Deleting the cluster first orphans the ALB the Ingress created, and an orphaned ALB bills indefinitely with nothing in the console obviously pointing at it.
-4. **Tag everything `Project=flight-ops`** so it can be found later:
+The whole stack, in `ap-south-1`, on-demand:
+
+| | per day | 7 days | 15 days | 30 days |
+|---|---|---|---|---|
+| EKS + 2 nodes + NAT + ALB + RDS + EBS | **$7.72** | $54 | $116 | $232 |
+| with 18% GST, as AWS India invoices it | | **$64** | **$137** | **$273** |
+
+[DEPLOYMENT.md](DEPLOYMENT.md) breaks that down line by line, prices three cheaper shapes (including a single EC2 instance at $0.80/day), and gives the runbook. What matters here is the five things that turn a $64 demo into a $273 one:
+
+1. **`deploy/aws/up.sh` creates two budgets** — $60/month at 50/80/100%, $12/day at 80% — and they send e-mail. E-mail is not a brake. Set a calendar reminder for the teardown date before creating anything.
+2. **One region.** Pinned to `ap-south-1` in `deploy/aws/lib.sh` and exported, so no script depends on the caller's profile. A teardown run against the wrong default region reports a clean sweep because it is looking somewhere empty.
+3. **Delete the Ingress before the cluster.** Deleting the cluster first orphans the ALB the Ingress created, and an orphaned ALB bills at $19/month with nothing in the console obviously pointing at it. `deploy/aws/down.sh` does this in the right order.
+4. **Everything is tagged `Project=flight-ops`**, which is what makes the teardown checkable:
 
    ```bash
    aws resourcegroupstaggingapi get-resources --tag-filters Key=Project,Values=flight-ops
    ```
-5. **Check the Kubernetes version before `eksctl create cluster`.** A version in *extended* support bills **$0.60/cluster-hour** instead of $0.10 — 6× — and extended support is **enabled by default**, so an aged-out version does not fail, it just costs. Verified 15 Sep 2026: **standard = 1.36 / 1.35 / 1.34**, **extended = 1.33 / 1.32 / 1.31**. `cluster.yaml` deliberately pins no version rather than hardcoding one that ages out. Re-check with:
+5. **The Kubernetes version is a cost control.** A version in *extended* support bills **$0.60/cluster-hour** instead of $0.10 — 6× — and extended support is **enabled by default**, so an aged-out version does not fail, it just costs. `cluster.yaml` pins `1.36`, and `up.sh` sets the upgrade policy to `STANDARD` immediately after creation so the cluster refuses to enter extended support rather than quietly billing for it. Verified 22 Sep 2026: standard = 1.36 / 1.35 / 1.34, extended = 1.33 and older. Re-check with:
 
    ```bash
    aws eks describe-cluster-versions \
@@ -716,13 +754,13 @@ The EKS control plane bills **~$0.10/hour (~$73/month) with zero worker nodes ru
    ```
 
    The filter field is `status`, **not** `clusterVersionStatus` — the latter returns an empty list, which reads like "no supported versions" rather than "your query is wrong".
-6. **Verify the teardown in the console, not in the CLI output.** "I ran `eksctl delete cluster`" is not verification — `eksctl` can report success while a load balancer, an EBS volume or a NAT gateway survives. Check, in this order: EC2 → Load Balancers is empty, EC2 → Volumes has no `available` volumes, VPC → NAT Gateways is empty, ECR → the repository is deleted or empty, and CloudWatch → Log groups has no `/aws/eks/...` group still retaining. Filtering the console by the `Project=flight-ops` tag finds anything created here.
+6. **Verify the teardown with a command that exits non-zero.** "I ran `eksctl delete cluster`" is not verification — eksctl can report success while a load balancer, an EBS volume or a NAT gateway survives. `deploy/aws/down.sh` finishes with thirteen checks across ELBv2, ELB, EKS, EC2, NAT gateways, volumes, Elastic IPs, RDS, snapshots, CloudFormation, log groups, Secrets Manager and ECR, plus a catch-all tag query, and **fails the script if any of them finds something**.
 
 **No AWS account ID is hardcoded anywhere in this repository.** `events/*.json` use the placeholder `123456789012`; the GitHub Actions workflow reads `${{ secrets.AWS_ACCOUNT_ID }}`.
 
 **Credentials.** There are none in the repo and none needed for the default profile. In AWS, `DefaultCredentialsProvider` is the whole story: the same code picks up `~/.aws` locally and a projected service-account token under IRSA in-cluster, so there is no environment-specific credential branch to get wrong. The CI pipeline uses GitHub's OIDC provider and short-lived STS credentials rather than a stored access key — the workflow documents the trust-policy condition that has to pin the `sub` claim, because a wildcard there is an account compromise waiting to happen.
 
-**Region.** Everything targets `ap-south-1` and agrees on it: `cluster.yaml`, `k8s/configmap.yaml`, `template.yaml`, the workflow, and `application.yml`. Cross-region drift surfaces as an IRSA authentication error or an ECR image-pull failure rather than as an obvious region mismatch, so set the CLI default to match instead of relying on whatever it happens to be:
+**Region.** Everything targets `ap-south-1` and agrees on it: `cluster.yaml`, `deploy/aws/lib.sh`, `k8s/overlays/aws/configmap-aws.yaml`, `template.yaml`, the workflow, and `application.yml`. Cross-region drift surfaces as an IRSA authentication error or an ECR image-pull failure rather than as an obvious region mismatch, so set the CLI default to match instead of relying on whatever it happens to be:
 
 ```bash
 aws configure set region ap-south-1

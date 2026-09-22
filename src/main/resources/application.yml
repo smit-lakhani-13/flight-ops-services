@@ -213,7 +213,6 @@ app:
   aws:
     region: ${AWS_REGION:ap-south-1}
     sqs-queue-url: ${SQS_QUEUE_URL:}
-    dynamodb-table: ${DDB_TABLE:flight-status-events}
 
 springdoc:
   # Every endpoint here speaks JSON and nothing else. Stated so the document

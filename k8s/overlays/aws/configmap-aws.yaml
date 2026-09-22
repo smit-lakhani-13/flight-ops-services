@@ -1,0 +1,14 @@
+# The two values that only exist once AWS does.
+#
+# SQS_QUEUE_URL is an output of the SAM stack; DB_URL is an output of the data
+# stack. Neither can be written down in the base, and neither should be a
+# secret: the queue URL is not a credential (publishing to it needs the IRSA
+# role) and the JDBC URL carries no password — that arrives from the Secret,
+# as DB_PASSWORD.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: flight-ops-config
+data:
+  SQS_QUEUE_URL: "${SQS_QUEUE_URL}"
+  DB_URL: "${DB_URL}"

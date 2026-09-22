@@ -17,7 +17,6 @@ apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
   name: flight-ops-pdb
-  namespace: flight-ops
 spec:
   # maxUnavailable, NOT minAvailable, specifically because an HPA owns the
   # replica count here (2..10).

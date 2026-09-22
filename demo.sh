@@ -23,6 +23,22 @@ BASE="${BASE:-http://localhost:8080}"
 API="$BASE/api/v1"
 AUTH="${AUTH:--u api:dev-secret}"
 OPS_AUTH="${OPS_AUTH:--u ops:dev-ops}"
+
+# Both hold curl FLAGS -- "-u user:pass" -- which is two arguments, not one, so
+# the value has to word-split. Most calls below go through run(), which evals a
+# command string, and splitting there is the shell's normal behaviour. The
+# handful of direct calls are the problem: unquoting $AUTH at each of them
+# leaves a reader (and shellcheck) unable to tell deliberate splitting from a
+# forgotten quote. Splitting once, here, into an array says it explicitly.
+#
+# The ${arr[@]+...} wrapper is not decoration. Under `set -u`, bash 3.2 -- what
+# macOS ships, and what this script runs under -- treats "${arr[@]}" on an
+# EMPTY array as an unbound variable and aborts. This form expands to nothing
+# when the array is empty and to the elements otherwise.
+read -ra auth_args <<< "$AUTH"
+read -ra ops_args  <<< "$OPS_AUTH"
+AUTH_ARGS=(${auth_args[@]+"${auth_args[@]}"})
+OPS_ARGS=(${ops_args[@]+"${ops_args[@]}"})
 FAST=0
 [[ "${1:-}" == "--fast" ]] && FAST=1
 
@@ -47,7 +63,7 @@ echo "${grn}App is up at $BASE${off}"
 # Deliberately unauthenticated, and it is the first thing the script proves:
 # /actuator/health has to answer a caller that has no credentials, because the
 # kubelet is exactly such a caller and cannot be given any.
-if ! curl -fsS -o /dev/null $AUTH "$API/flights/UA123" 2>/dev/null; then
+if ! curl -fsS -o /dev/null "${AUTH_ARGS[@]}" "$API/flights/UA123" 2>/dev/null; then
   echo "${red}Health is up but the API rejected the demo credentials.${off}"
   echo "The default profile expects api/dev-secret. Override with:"
   echo "    AUTH='-u someone:something' ./demo.sh"
@@ -131,7 +147,7 @@ run "curl -s $AUTH -o /dev/null -X POST '$API/flights' -H 'Content-Type: applica
 
 echo "${ylw}\$ seq 1 10 | xargs -P 10 ... POST /bookings  (all with idempotencyKey=race-demo-1)${off}"
 TMP=$(mktemp -d)
-seq 1 10 | xargs -P 10 -I{} curl -s $AUTH -o "$TMP/{}.json" -w "%{http_code}\n" \
+seq 1 10 | xargs -P 10 -I{} curl -s "${AUTH_ARGS[@]}" -o "$TMP/{}.json" -w "%{http_code}\n" \
   -X POST "$API/bookings" -H 'Content-Type: application/json' \
   -d '{"flightNumber":"RACE1","passengerName":"Smit Lakhani","seats":1,"idempotencyKey":"race-demo-1"}' \
   | sort | uniq -c | sed 's/^/   /'
@@ -149,14 +165,14 @@ rm -rf "$TMP"
 
 echo
 echo "   seats debited (50 total, expect 49 — one seat, not ten):"
-curl -s $AUTH "$API/flights/RACE1" | python3 -c "import sys,json;print('     availableSeats =',json.load(sys.stdin)['availableSeats'])"
+curl -s "${AUTH_ARGS[@]}" "$API/flights/RACE1" | python3 -c "import sys,json;print('     availableSeats =',json.load(sys.stdin)['availableSeats'])"
 echo "   booking rows on RACE1 (expect exactly 1):"
 # $.content, not the top level. The list endpoint returns a PagedModel
 # envelope - {"content":[...],"page":{...}} - so len() on the parsed document
 # would print 2 and look like two bookings. A demo that miscounts the headline
 # number is worse than one that does not print it.
-curl -s $AUTH "$API/flights/RACE1" >/dev/null
-curl -s $AUTH "$API/bookings?flightNumber=RACE1" | python3 -c "
+curl -s "${AUTH_ARGS[@]}" "$API/flights/RACE1" >/dev/null
+curl -s "${AUTH_ARGS[@]}" "$API/bookings?flightNumber=RACE1" | python3 -c "
 import sys,json
 page=json.load(sys.stdin)
 print('     rows =',len(page['content']),' (page.totalElements =',page['page']['totalElements'],')')"
@@ -180,14 +196,14 @@ run "curl -s $AUTH -o /dev/null -X POST '$API/flights' -H 'Content-Type: applica
   -d '{\"flightNumber\":\"RACE2\",\"origin\":\"EWR\",\"destination\":\"SEA\",\"totalSeats\":50,\"departureTime\":\"2026-12-01T10:00:00Z\"}'"
 
 echo "${ylw}\$ seq 1 10 | xargs -P 10 ... POST /bookings  (one key, ten different passengers)${off}"
-seq 1 10 | xargs -P 10 -I{} curl -s $AUTH -o /dev/null -w "%{http_code}\n" \
+seq 1 10 | xargs -P 10 -I{} curl -s "${AUTH_ARGS[@]}" -o /dev/null -w "%{http_code}\n" \
   -X POST "$API/bookings" -H 'Content-Type: application/json' \
   -d '{"flightNumber":"RACE2","passengerName":"Passenger {}","seats":1,"idempotencyKey":"race-demo-2"}' \
   | sort | uniq -c | sed 's/^/   /'
 
 echo
 echo "   seats debited (50 total, expect 49 — the nine losers leave no trace):"
-curl -s $AUTH "$API/flights/RACE2" | python3 -c "import sys,json;print('     availableSeats =',json.load(sys.stdin)['availableSeats'])"
+curl -s "${AUTH_ARGS[@]}" "$API/flights/RACE2" | python3 -c "import sys,json;print('     availableSeats =',json.load(sys.stdin)['availableSeats'])"
 say "The 409 code is IDEMPOTENCY_KEY_REUSED. The service compares a SHA-256"
 say "fingerprint of the normalised request against the one stored with the key,"
 say "so 'the same request' means the same request and not just the same key."
@@ -231,7 +247,7 @@ for p in health health/liveness health/readiness; do
   printf "   /actuator/%-18s -> %s\n" "$p" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/actuator/$p")"
 done
 printf "   /actuator/prometheus       -> %s (no credentials)\n" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/actuator/prometheus")"
-printf "   /actuator/prometheus       -> %s lines of metrics (as ops)\n" "$(curl -s $OPS_AUTH "$BASE/actuator/prometheus" | wc -l | tr -d ' ')"
+printf "   /actuator/prometheus       -> %s lines of metrics (as ops)\n" "$(curl -s "${OPS_ARGS[@]}" "$BASE/actuator/prometheus" | wc -l | tr -d ' ')"
 say "Liveness and readiness are split because Kubernetes asks two different questions:"
 say "'is this process wedged, restart it?' and 'can it take traffic right now?'"
 say "The db indicator sits in readiness only — a database outage should take the"

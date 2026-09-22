@@ -1,0 +1,52 @@
+# The cluster-agnostic half of the deployment.
+#
+# Everything here applies to any Kubernetes cluster: no registry, no account
+# id, no queue URL, no database hostname. Those are overlay concerns, because
+# they are the values that differ between "somebody's laptop cluster" and "the
+# EKS cluster in ap-south-1" — and a base that hard-codes them is a base that
+# can only be applied in one place.
+#
+# Render it with:
+#   kubectl kustomize k8s/base
+#
+# Two things are deliberately NOT here:
+#
+#   namespace.yaml   — a Namespace is cluster-scoped, and the EKS access entry
+#                      the CI role gets is namespace-scoped (see
+#                      deploy/aws/up.sh). CI therefore cannot create it and
+#                      must not try; `up.sh` does, once. Including it here
+#                      would make every CI deploy fail on a forbidden create.
+#
+#   secret.yaml      — passwords. k8s/secret.example.yaml is the template;
+#                      the real Secret is created by up.sh from generated
+#                      values and never exists in this repository.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: flight-ops
+
+# Applied to every resource below, and to the pod template's labels via the
+# Deployment's own selector. `app: flight-ops` is already on each manifest
+# because the Service and the PDB select on it; these are the labels that say
+# who owns the thing and how it got here.
+labels:
+  - includeSelectors: false
+    pairs:
+      app.kubernetes.io/name: flight-ops-service
+      app.kubernetes.io/part-of: flight-ops
+      app.kubernetes.io/managed-by: kustomize
+
+resources:
+  - configmap.yaml
+  - serviceaccount.yaml
+  - deployment.yaml
+  - service.yaml
+  - hpa.yaml
+  - pdb.yaml
+
+# The overlay replaces the tag (and the registry) through this transformer
+# rather than by patching the container spec, so the image lands correctly
+# even if the Deployment grows a second container or an initContainer.
+images:
+  - name: flight-ops-service
+    newTag: "1.0.0"

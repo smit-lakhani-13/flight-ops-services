@@ -2,27 +2,35 @@ AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 
 Description: >
-  Async side of flight-ops-service. The Spring Boot service (deployed separately
-  to EKS) publishes a BookingCreated event to SQS; this Lambda consumes the queue
-  and projects each event into a DynamoDB table of flight events.
+  Async side of flight-ops-service. The Spring Boot service (deployed
+  separately to EKS) publishes a BookingCreated event to SQS; this Lambda
+  consumes the queue and projects each event into a DynamoDB table of flight
+  events. Deployed by deploy/aws/up.sh, and deletable on its own.
 
-  Deploy:
-    sam build
-    sam deploy --guided --region ap-south-1
-    sam local invoke BookingEventFunction -e events/sqs.json
-    sam logs -n BookingEventFunction --stack-name <stack> --tail
-
-  Tear down (do this — see the cost notes below):
-    sam delete --stack-name <stack> --region ap-south-1
-
-  COST. Everything here is pay-per-use and idles at effectively $0:
-  two SQS queues (1M requests/month free, forever), a PAY_PER_REQUEST DynamoDB
-  table (you pay per write, not per hour), and a Lambda that costs nothing when
-  it is not invoked. That is the opposite of the EKS cluster in cluster.yaml,
-  which bills $0.10/hour for the control plane whether or not anything runs.
-  The one line item that is NOT free-tier friendly is X-Ray (Tracing: Active
-  below) — still cents at this volume, but it is a real charge.
-  Set a billing alarm before deploying anything, and delete the stack after.
+# Deploy, by hand:
+#   sam build
+#   sam deploy --stack-name flight-ops-lambda --resolve-s3 --capabilities CAPABILITY_IAM
+#   sam local invoke BookingEventFunction -e events/sqs.json
+#   sam logs -n booking-event-handler --stack-name flight-ops-lambda --tail
+#
+# Tear down:
+#   sam delete --stack-name flight-ops-lambda --region ap-south-1
+# or ./deploy/aws/down.sh, which also removes the bucket `--resolve-s3` creates
+# behind your back and then proves nothing is left.
+#
+# COST. Everything here is pay-per-use and idles at effectively $0: two SQS
+# queues (1M requests/month free, forever), a PAY_PER_REQUEST DynamoDB table
+# (charged per write, not per hour), and a Lambda that costs nothing when it is
+# not invoked. That is the opposite of the EKS cluster in cluster.yaml, which
+# bills $0.10/hour for the control plane whether or not anything runs — which
+# is why this half is worth deploying on its own and that half is not.
+#
+# The one line item that is not free-tier friendly is X-Ray (Tracing: Active
+# below) — still cents at this volume, but a real charge.
+#
+# CloudFormation caps Description at 1024 characters and rejects the stack at
+# create time, not at build time. Hence the split: the summary is the
+# Description, the reasoning is comments, and comments are not uploaded.
 
 Globals:
   Function:
@@ -92,6 +100,14 @@ Resources:
     Properties:
       QueueName: booking-events
 
+      # Encryption at rest, with the SQS-owned key rather than a customer KMS
+      # key. Free, and it costs nothing in latency; a customer key would add
+      # $1/month plus a KMS request per message batch. What the SQS-owned key
+      # does not give you is a key policy of your own — so for data with a
+      # compliance requirement naming KMS, this line is not the answer. For
+      # booking ids and flight numbers, it is.
+      SqsManagedSseEnabled: true
+
       # THE RULE: VisibilityTimeout must be at least the function Timeout, and
       # the AWS guidance is at least 6x it. This is 6 x 30s exactly.
       #
@@ -121,6 +137,15 @@ Resources:
     Type: AWS::SQS::Queue
     Properties:
       QueueName: booking-events-dlq
+
+      # Encryption at rest, with the SQS-owned key rather than a customer KMS
+      # key. Free, and it costs nothing in latency; a customer key would add
+      # $1/month plus a KMS request per message batch. What the SQS-owned key
+      # does not give you is a key policy of your own — so for data with a
+      # compliance requirement naming KMS, this line is not the answer. For
+      # booking ids and flight numbers, it is.
+      SqsManagedSseEnabled: true
+
       # 14 days, the SQS maximum. A DLQ that expires its messages is worse than
       # no DLQ: it looks like a safety net and quietly deletes the evidence.
       # 14 days means a Friday-night failure is still there on Monday week.
@@ -201,8 +226,32 @@ Resources:
   # Function
   # ---------------------------------------------------------------------------
 
+  # Lambda creates its own log group on first invocation, with retention set to
+  # "Never expire". Nothing deletes it — not `sam delete`, not deleting the
+  # function — because CloudFormation never owned it. It bills $0.03/GB/month
+  # forever, which is small enough that nobody notices and permanent enough
+  # that it accumulates across every stack anyone has ever deployed.
+  #
+  # Declaring it here means the stack owns it, so it is deleted with the stack,
+  # and it carries a retention period from the first log line rather than from
+  # whenever somebody remembers.
+  BookingEventFunctionLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /aws/lambda/booking-event-handler
+      # 7 days. Long enough to debug last week's failure, short enough that the
+      # DLQ is the durable record rather than the logs.
+      RetentionInDays: 7
+      Tags:
+        - Key: Project
+          Value: flight-ops
+
   BookingEventFunction:
     Type: AWS::Serverless::Function
+    # Without this, the function can be created before its log group and will
+    # create its own — with no retention — and the stack then fails because the
+    # log group it is trying to create already exists.
+    DependsOn: BookingEventFunctionLogGroup
     Properties:
       # SAM sees a pom.xml here and builds it with its own Maven workflow.
       #
@@ -223,6 +272,14 @@ Resources:
       Handler: com.smit.flightops.lambda.BookingEventHandler::handleRequest
 
       Description: Projects BookingCreated events from SQS into DynamoDB
+
+      # Named explicitly, which CloudFormation would otherwise do for us with a
+      # stack-and-hash suffix. The cost of a fixed name is that two copies of
+      # this stack cannot coexist in one region, and that a change requiring
+      # replacement needs the old function deleted first. The benefit is the
+      # one below: a log group can only be declared for a function whose name
+      # is known before deployment.
+      FunctionName: booking-event-handler
 
       # Blast-radius and cost cap. Without it, a 10,000-message backlog scales
       # this out to the account's full concurrency and hammers DynamoDB.

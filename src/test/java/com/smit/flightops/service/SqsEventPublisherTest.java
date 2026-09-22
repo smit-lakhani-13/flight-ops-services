@@ -47,7 +47,7 @@ class SqsEventPublisherTest {
         when(sqsClient.sendMessage(any(SendMessageRequest.class)))
                 .thenReturn(SendMessageResponse.builder().messageId("msg-1").build());
 
-        new SqsEventPublisher(sqsClient, new AwsProperties("ap-south-1", QUEUE_URL, "bookings"))
+        new SqsEventPublisher(sqsClient, new AwsProperties("ap-south-1", QUEUE_URL))
                 .publish("BookingCreated", "{\"bookingId\":\"1\"}", headers);
 
         ArgumentCaptor<SendMessageRequest> request = ArgumentCaptor.forClass(SendMessageRequest.class);
@@ -99,7 +99,7 @@ class SqsEventPublisherTest {
     @DisplayName("a blank queue URL fails at startup, not at the first send")
     void aBlankQueueUrlIsRefusedAtStartup() {
         assertThatThrownBy(() -> new SqsEventPublisher(sqsClient,
-                new AwsProperties("ap-south-1", "  ", "bookings")))
+                new AwsProperties("ap-south-1", "  ")))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("SQS_QUEUE_URL");
     }

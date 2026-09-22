@@ -1,0 +1,44 @@
+# The EKS overlay: everything the base deliberately does not know.
+#
+# Four values here are placeholders of the form ${NAME}, and they are NOT
+# kustomize syntax — kustomize has no variable substitution and will pass them
+# through verbatim. They are substituted by envsubst in
+# deploy/aws/render-aws.sh, which is the one render path this repository has:
+#
+#   AWS_ACCOUNT_ID  the ECR registry the image is pulled from, and the account
+#                   the IRSA role lives in
+#   IMAGE_TAG       the commit SHA CI built, never `latest` — an immutable tag
+#                   is what makes `kubectl rollout undo` mean anything
+#   SQS_QUEUE_URL   the queue the outbox publishes to
+#   DB_URL          the RDS endpoint, which is created by the data stack and
+#                   therefore unknown until it exists
+#
+# render-aws.sh fails if any of them is unset, so a missing value is a build
+# error rather than a pod that starts with SQS_QUEUE_URL="" and fails every
+# publish at runtime. That exact ConfigMap shipped an empty queue URL beside
+# APP_EVENTS_PUBLISHER=sqs before this overlay existed.
+#
+# Render it with:
+#   AWS_ACCOUNT_ID=... IMAGE_TAG=... SQS_QUEUE_URL=... DB_URL=... \
+#     deploy/aws/render-aws.sh
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: flight-ops
+
+resources:
+  - ../../base
+
+# The Ingress is opt-in because it provisions a billed ALB. Uncomment to add
+# it, or apply it separately once the AWS Load Balancer Controller is running:
+# components:
+#   - ../../components/ingress
+
+images:
+  - name: flight-ops-service
+    newName: ${AWS_ACCOUNT_ID}.dkr.ecr.ap-south-1.amazonaws.com/flight-ops-service
+    newTag: ${IMAGE_TAG}
+
+patches:
+  - path: serviceaccount-irsa.yaml
+  - path: configmap-aws.yaml

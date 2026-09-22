@@ -38,8 +38,24 @@ printf 'test classes (app)     %s\n' \
   "$(git ls-files 'src/test/java/**/*Test.java' | wc -l | tr -d ' ')"
 printf 'test classes (lambda)  %s\n' \
   "$(git ls-files 'lambda/src/test/java/**/*Test.java' | wc -l | tr -d ' ')"
-printf 'k8s manifests          %s + secret.example.yaml + optional/ingress.yaml\n' \
-  "$(git ls-files 'k8s/*.yaml' | grep -v 'secret.example.yaml' | grep -vc 'optional/')"
+# Manifests only: kustomization.yaml files are assembly instructions, not
+# resources, and secret.example.yaml is a template that is never applied.
+k8s_manifests() {
+  git ls-files 'k8s/**/*.yaml' 'k8s/*.yaml' \
+    | grep -v 'kustomization.yaml' \
+    | grep -v 'secret.example.yaml' \
+    | grep -c "$1"
+}
+printf 'k8s base manifests     %s\n'   "$(k8s_manifests '^k8s/base/')"
+printf 'k8s overlay patches    %s\n'   "$(k8s_manifests '^k8s/overlays/')"
+printf 'k8s ingress component  %s\n'   "$(k8s_manifests '^k8s/components/')"
+printf 'k8s cluster-scoped     %s (namespace.yaml)\n' "$(k8s_manifests '^k8s/[^/]*\.yaml$')"
+printf 'kustomizations         %s\n'   "$(git ls-files 'k8s/**/kustomization.yaml' | wc -l | tr -d ' ')"
+printf 'CloudFormation/deploy  %s templates, %s scripts\n' \
+  "$(git ls-files 'deploy/aws/*.yaml' | wc -l | tr -d ' ')" \
+  "$(git ls-files 'deploy/aws/*.sh' | wc -l | tr -d ' ')"
+printf 'ADRs                   %s\n' \
+  "$(git ls-files 'adr/[0-9]*.md' | wc -l | tr -d ' ')"
 printf 'SQS fixtures           %s\n' "$(git ls-files 'events/*.json' | wc -l | tr -d ' ')"
 
 rule 'Tests that ran'

@@ -1,0 +1,18 @@
+# An optional component, not part of any overlay by default.
+#
+# Applying this Ingress asks the AWS Load Balancer Controller to provision a
+# real Application Load Balancer, which bills from the moment it exists —
+# roughly $0.0239 per hour plus LCU charges in ap-south-1, about $17 a month,
+# and it keeps billing after the pods are gone because deleting a Deployment
+# does not delete an ALB. That is why it is a component you opt into rather
+# than a resource in the base, and why deploy/aws/down.sh checks for orphaned
+# load balancers before it reports success.
+#
+# Add it to an overlay with:
+#   components:
+#     - ../../components/ingress
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+resources:
+  - ingress.yaml

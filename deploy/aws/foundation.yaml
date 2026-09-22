@@ -1,0 +1,306 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  flight-ops foundation: the things that must exist before anything can be
+  deployed, and that are cheap enough to leave standing between deployments --
+  an ECR repository, the GitHub OIDC trust, the IAM role CI assumes, the
+  managed policy the pods get through IRSA, and two budgets with alerts.
+
+  Everything in here costs approximately nothing at rest: ECR storage for a
+  few image layers, and budgets are free. The expensive stack is data.yaml
+  (RDS) and the cluster itself, which is why they are separate templates with
+  separate lifetimes -- tearing the demo down should not mean re-creating the
+  OIDC trust.
+
+Parameters:
+  GitHubOwner:
+    Type: String
+    Default: smit-lakhani-13
+    Description: GitHub account that owns the repository allowed to deploy.
+
+  GitHubRepo:
+    Type: String
+    Default: flight-ops-services
+    Description: Repository name. The trust policy pins owner/repo AND the branch.
+
+  AlertEmail:
+    Type: String
+    Description: >-
+      Where budget alerts go. Passed on the command line and never committed.
+      AWS sends a subscription confirmation that must be clicked, or the alerts
+      silently never arrive -- which is the failure mode this parameter exists
+      to avoid.
+    AllowedPattern: '^[^@\s]+@[^@\s]+\.[^@\s]+$'
+    ConstraintDescription: must be an email address.
+
+  ExistingOidcProviderArn:
+    Type: String
+    Default: ''
+    Description: >-
+      ARN of an existing token.actions.githubusercontent.com OIDC provider. An
+      AWS account may have exactly one per URL, so a second CreateOpenIDConnect
+      Provider fails with EntityAlreadyExists -- which is how this stack fails
+      in any account that already deploys something from GitHub. Leave empty to
+      create one.
+
+  MonthlyBudgetUsd:
+    Type: Number
+    Default: 60
+    MinValue: 1
+    Description: Monthly cost ceiling for alerting. Roughly 8 days of the full EKS shape.
+
+  DailyBudgetUsd:
+    Type: Number
+    Default: 12
+    MinValue: 1
+    Description: >-
+      Daily ceiling. The monthly budget alone is useless for a demo that runs
+      for a week: by the time it fires at 80% the money is spent. The daily one
+      is the alarm that actually catches a cluster left running.
+
+Conditions:
+  CreateOidcProvider: !Equals [!Ref ExistingOidcProviderArn, '']
+
+Resources:
+
+  # ---------------------------------------------------------------------
+  # Image registry
+  # ---------------------------------------------------------------------
+  EcrRepository:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: flight-ops-service
+      # IMMUTABLE is the property that makes `kubectl rollout undo` mean
+      # something: a tag cannot be repointed, so the previous revision's image
+      # is still the image it was. With MUTABLE tags a rollback can silently
+      # roll back to a different build.
+      ImageTagMutability: IMMUTABLE
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      # Without this, deleting the stack fails on a non-empty repository and
+      # leaves the whole teardown half-done.
+      EmptyOnDelete: true
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep the last 5 tagged images",
+                "selection": {
+                  "tagStatus": "tagged",
+                  "tagPatternList": ["*"],
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 5
+                },
+                "action": { "type": "expire" }
+              },
+              {
+                "rulePriority": 2,
+                "description": "Untagged layers are build debris",
+                "selection": {
+                  "tagStatus": "untagged",
+                  "countType": "sinceImagePushed",
+                  "countUnit": "days",
+                  "countNumber": 1
+                },
+                "action": { "type": "expire" }
+              }
+            ]
+          }
+      Tags:
+        - Key: Project
+          Value: flight-ops
+
+  # ---------------------------------------------------------------------
+  # GitHub OIDC: no long-lived AWS keys anywhere
+  # ---------------------------------------------------------------------
+  GitHubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: CreateOidcProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+      # No ThumbprintList. IAM stopped verifying thumbprints for this provider
+      # in 2023 and now trusts the root CA; pinning one means rotating it by
+      # hand the day GitHub's certificate changes.
+      Tags:
+        - Key: Project
+          Value: flight-ops
+
+  GitHubActionsDeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: github-actions-deploy
+      Description: Assumed by GitHub Actions on pushes to main. No access keys exist.
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !If
+                - CreateOidcProvider
+                - !Ref GitHubOidcProvider
+                - !Ref ExistingOidcProviderArn
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                # BOTH conditions are load-bearing. Without the `sub` pin, any
+                # GitHub repository in the world can assume this role: the
+                # provider trusts GitHub, not this repository. A `sub` of
+                # "repo:*" or a StringLike with a bare wildcard is a full
+                # account compromise waiting to happen, and it is the single
+                # most common mistake in published OIDC examples.
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub: !Sub 'repo:${GitHubOwner}/${GitHubRepo}:ref:refs/heads/main'
+      Policies:
+        - PolicyName: push-image-and-read-cluster
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              # GetAuthorizationToken has no resource to scope to -- it returns
+              # a registry-wide token. Every other ECR action is pinned to the
+              # one repository.
+              - Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: '*'
+              - Effect: Allow
+                Action:
+                  - ecr:BatchCheckLayerAvailability
+                  - ecr:InitiateLayerUpload
+                  - ecr:UploadLayerPart
+                  - ecr:CompleteLayerUpload
+                  - ecr:PutImage
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                Resource: !GetAtt EcrRepository.Arn
+              # Enough to write a kubeconfig, and nothing more. What the role
+              # may then DO inside the cluster is decided by the EKS access
+              # entry up.sh creates, which is scoped to the flight-ops
+              # namespace -- so this role cannot touch kube-system even though
+              # it can describe the cluster.
+              - Effect: Allow
+                Action: eks:DescribeCluster
+                Resource: !Sub 'arn:${AWS::Partition}:eks:${AWS::Region}:${AWS::AccountId}:cluster/flight-ops-cluster'
+      Tags:
+        - Key: Project
+          Value: flight-ops
+
+  # ---------------------------------------------------------------------
+  # What the pods may do, granted through IRSA
+  # ---------------------------------------------------------------------
+  SqsPublishPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: flight-ops-service-sqs-publish
+      Description: Publish to booking-events. Attached to the IRSA role up.sh creates.
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          # Send only. The service publishes; it never reads the queue, never
+          # deletes a message and never changes queue attributes. The Lambda
+          # consumes, under its own role from template.yaml.
+          - Effect: Allow
+            Action:
+              - sqs:SendMessage
+              - sqs:GetQueueUrl
+              - sqs:GetQueueAttributes
+            Resource: !Sub 'arn:${AWS::Partition}:sqs:${AWS::Region}:${AWS::AccountId}:booking-events'
+
+  # ---------------------------------------------------------------------
+  # Cost alarms. The cheapest insurance in this repository.
+  # ---------------------------------------------------------------------
+  # Not filtered by the Project tag. Cost allocation tags take up to 24 hours
+  # to activate after the resources exist, so a tag-filtered budget is blind
+  # for exactly the first day -- the day a mistake is most likely. These are
+  # account-wide on purpose, and the README says so.
+  MonthlyBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: flight-ops-monthly
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit:
+          Amount: !Ref MonthlyBudgetUsd
+          Unit: USD
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 50
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref AlertEmail
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 80
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref AlertEmail
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref AlertEmail
+        # FORECASTED, not ACTUAL: this is the one that fires on day two of a
+        # cluster somebody forgot, rather than on day twenty when the month's
+        # money is already gone.
+        - Notification:
+            NotificationType: FORECASTED
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref AlertEmail
+
+  DailyBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: flight-ops-daily
+        BudgetType: COST
+        TimeUnit: DAILY
+        BudgetLimit:
+          Amount: !Ref DailyBudgetUsd
+          Unit: USD
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 80
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref AlertEmail
+
+Outputs:
+  EcrRepositoryUri:
+    Description: Push the image here.
+    Value: !GetAtt EcrRepository.RepositoryUri
+    Export:
+      Name: flight-ops-ecr-uri
+
+  DeployRoleArn:
+    Description: Set this account id as the AWS_ACCOUNT_ID GitHub secret.
+    Value: !GetAtt GitHubActionsDeployRole.Arn
+
+  SqsPublishPolicyArn:
+    Description: Attached to the IRSA role by up.sh.
+    Value: !Ref SqsPublishPolicy
+    Export:
+      Name: flight-ops-sqs-publish-policy
+
+  OidcProviderArn:
+    Description: The provider this stack trusts, whether it created it or was given it.
+    Value: !If
+      - CreateOidcProvider
+      - !Ref GitHubOidcProvider
+      - !Ref ExistingOidcProviderArn

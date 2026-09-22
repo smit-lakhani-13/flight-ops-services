@@ -2,18 +2,22 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: flight-ops
-  namespace: flight-ops
   labels:
     app: flight-ops
 spec:
-  # 2, not 1. One replica means every rolling update and every node drain is an
-  # outage. It is also the minimum that makes the PodDisruptionBudget meaningful.
+  # No `replicas` field, deliberately, and this is the one field in the file
+  # whose absence is the decision.
   #
-  # Note: once the HPA is applied it owns this field. Leaving `replicas` here is
-  # still correct for the first apply — but editing it later is pointless, the
-  # HPA will just scale back. (The clean fix is to omit replicas entirely and let
-  # the HPA set it; kept explicit here so the intent is readable.)
-  replicas: 2
+  # The HPA owns the replica count (minReplicas: 2, so the "never one pod"
+  # property still holds — one replica means every rolling update and every
+  # node drain is an outage, and it makes the PodDisruptionBudget meaningless).
+  # A Deployment that ALSO declares replicas fights it: every `kubectl apply`
+  # resets the count to 2, the HPA scales it back up, and a deploy during a
+  # traffic peak halves the fleet for however long that takes. Omitting the
+  # field leaves exactly one writer.
+  #
+  # This is also why CI deploys with `kubectl set image` rather than a full
+  # apply — see .github/workflows/build-and-deploy.yml.
 
   # Keeps `kubectl get rs` readable instead of 10 dead ReplicaSets deep.
   revisionHistoryLimit: 3
@@ -133,7 +137,11 @@ spec:
           # The tag is a version, never `:latest`. With `:latest` you cannot tell
           # what is running, and `imagePullPolicy: Always` turns every restart
           # into a coin flip about which build you get. CI tags by git SHA.
-          image: <ACCOUNT_ID>.dkr.ecr.ap-south-1.amazonaws.com/flight-ops-service:1.0.0
+          # Replaced by the kustomize `images` transformer in each overlay --
+          # k8s/overlays/aws points it at ECR with the commit SHA as the tag.
+          # This value is what `kubectl kustomize k8s/base` renders, so the
+          # base stays applicable against any registry-less cluster.
+          image: flight-ops-service:1.0.0
           imagePullPolicy: IfNotPresent
 
           ports:
@@ -184,22 +192,35 @@ spec:
             # requests = what the scheduler reserves. Too low and pods get packed
             # onto a node and throttled; too high and the node looks full while
             # sitting idle.
-            requests:
-              memory: "512Mi"
-              cpu: "250m"
-            # limits = the hard ceiling. The two behave completely differently
-            # when exceeded, and the difference is the whole reason for the JVM
-            # flag below:
+            #
+            # limits = the hard ceiling, and the two resources behave completely
+            # differently when exceeded:
             #   - over the CPU limit  -> THROTTLED (cgroup quota). Slow, alive.
             #   - over the memory limit -> OOMKilled. Memory is incompressible;
             #     the kernel cannot hand out a fraction of a page.
             # Hence -XX:MaxRAMPercentage=75.0 in the Dockerfile: the heap is
-            # sized from this limit, leaving 25% for metaspace, thread stacks,
-            # code cache and direct buffers. Setting -Xmx1g against a 1Gi limit
-            # is the standard way to get OOMKilled with a heap that looks fine.
+            # sized from the memory limit, leaving 25% for metaspace, thread
+            # stacks, code cache and direct buffers. Setting -Xmx768m against a
+            # 768Mi limit is the standard way to get OOMKilled with a heap that
+            # looks perfectly healthy.
+            requests:
+              # Memory request == limit, on purpose. Values that differ put the
+              # pod in the Burstable QoS class, which is the class the kubelet
+              # evicts FIRST under node pressure — and a JVM whose heap has
+              # already grown into the gap is precisely the pod it picks.
+              # Equal values mean Guaranteed QoS: an OOM kill here is about
+              # this container, not about a neighbour that grew.
+              memory: "768Mi"
+              cpu: "500m"
             limits:
-              memory: "1Gi"
-              cpu: "1000m"
+              memory: "768Mi"
+              # No CPU limit, deliberately. A CPU limit is enforced by CFS
+              # throttling, which on a JVM lands hardest during class loading
+              # and GC — the startup probe's window, where being throttled is
+              # how a healthy pod fails to start. The request already
+              # guarantees the share; cycles left idle on the node are free.
+              # A limit would also make the HPA's CPU metric measure the
+              # throttle rather than the load it is meant to scale on.
 
           # ---- Three probes, three different jobs ----
 

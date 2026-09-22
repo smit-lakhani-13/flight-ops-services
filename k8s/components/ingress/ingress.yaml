@@ -28,7 +28,6 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: flight-ops-ingress
-  namespace: flight-ops
   annotations:
     # An Ingress object on its own does nothing. A controller has to watch for it
     # and provision the actual load balancer. On EKS that is the AWS Load

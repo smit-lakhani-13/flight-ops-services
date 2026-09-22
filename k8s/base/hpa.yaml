@@ -1,8 +1,9 @@
 # Horizontal Pod Autoscaler: add pods, not bigger pods.
 #
 # REQUIRES metrics-server. On a fresh EKS cluster it is NOT installed, and
-# without it the HPA reports `<unknown>/70%` and never scales:
-#   kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+# without it the HPA reports `<unknown>/70%` and never scales. deploy/aws/up.sh
+# installs it as an EKS managed addon, so there is no pinned upstream URL here
+# to go stale.
 #
 # It also requires resource *requests* on the container — the target is a
 # percentage OF THE REQUEST, not of the node. 70% here means 175m of the 250m
@@ -11,16 +12,26 @@ apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
   name: flight-ops-hpa
-  namespace: flight-ops
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
     name: flight-ops
   minReplicas: 2
-  # Cost guard. Pods are cheap, but pods on nodes the Cluster Autoscaler has to
-  # add are not. 10 is a ceiling, not a target.
-  maxReplicas: 10
+  # 4, and the limit is the database, not the cluster.
+  #
+  # Each pod opens a Hikari pool of up to 10 connections. db.t4g.micro derives
+  # max_connections from DBInstanceClassMemory/9531392, which on its 1 GiB comes
+  # to about 112, of which a few are reserved for superuser sessions. Four pods
+  # is 40 connections at full stretch — room for a migration, a psql session and
+  # a second deployment's pods running alongside during a rolling update.
+  #
+  # Ten pods would be 100. That fits, arithmetically, and leaves nothing: the
+  # next `kubectl exec ... psql` fails with "remaining connection slots are
+  # reserved", which reads like a database fault and is a replica-count fault.
+  # Raising this means raising the instance class or lowering the pool, in that
+  # order.
+  maxReplicas: 4
   metrics:
     - type: Resource
       resource:

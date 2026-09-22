@@ -107,3 +107,9 @@ logs/
 hs_err_pid*
 replay_pid*
 *.hprof
+
+# Deployment state. Written by deploy/aws/up.sh, read by down.sh: account id,
+# queue URL, database endpoint, load balancer hostname. No passwords — those go
+# straight into the Kubernetes Secret and are printed once — but an account id
+# and a private RDS endpoint are not things to publish either.
+deploy/aws/.state/
