@@ -83,6 +83,17 @@ import org.springframework.security.web.SecurityFilterChain;
  *       radii: a leaked read credential exposes data, a leaked write
  *       credential lets someone cancel other people's bookings. A single
  *       {@code flights} scope would make those the same incident.</li>
+ *   <li><b>The OpenAPI document and the Swagger UI are public, and only for
+ *       {@code GET}.</b> A description of an endpoint is not a credential for
+ *       it: every operation the document lists still answers 401 without one,
+ *       and the shapes it publishes are the same ones a 400 response already
+ *       hands to an anonymous caller. What it buys is that a demo URL is
+ *       explorable without a shared password, which is most of the reason to
+ *       publish an API document at all. The permit is on {@code GET} and
+ *       {@code HEAD} only, so a {@code POST} to a docs path falls to the
+ *       {@code denyAll} below rather than reaching a handler that does not
+ *       exist. {@code SWAGGER_UI_ENABLED=false} removes the UI for a
+ *       deployment that disagrees; the document itself stays.</li>
  *   <li><b>Everything else is denied.</b> {@code anyRequest().denyAll()} means
  *       a controller added tomorrow is unreachable until someone writes a rule
  *       for it. The alternative, {@code authenticated()}, fails open: the new
@@ -132,6 +143,22 @@ public class SecurityConfig {
 
     private static final String API_PATHS = "/api/**";
 
+    /**
+     * The springdoc surface, spelled out rather than shortened to
+     * {@code "/v3/**"}. A wildcard that wide is a standing invitation for the
+     * next {@code /v3/something} to be public by accident, and this is the one
+     * list in the file where a mistake is not caught by a test failing — it is
+     * caught by somebody reading data they should not have.
+     *
+     * <p>{@code /v3/api-docs} and {@code /v3/api-docs/**} are separate entries
+     * because the first is a literal path and Spring's pattern matcher does not
+     * treat {@code /**} as covering zero segments in the way people assume.
+     */
+    private static final String[] DOC_PATHS = {
+            "/v3/api-docs", "/v3/api-docs/**", "/v3/api-docs.yaml",
+            "/swagger-ui.html", "/swagger-ui/**"
+    };
+
     @Bean
     SecurityFilterChain apiSecurityFilterChain(HttpSecurity http,
                                                JsonAuthenticationEntryPoint entryPoint,
@@ -164,6 +191,12 @@ public class SecurityConfig {
                         // Content-Length before a GET all use HEAD, and each one
                         // also logged a WARN pointing ops at the credential
                         // instead of at the rule set.
+                        // Before the /api/** rules, and it has to be: these
+                        // paths are outside /api, so they would otherwise meet
+                        // anyRequest().denyAll() and the UI would render an
+                        // empty page with a 403 in the console.
+                        .requestMatchers(HttpMethod.GET, DOC_PATHS).permitAll()
+                        .requestMatchers(HttpMethod.HEAD, DOC_PATHS).permitAll()
                         .requestMatchers(HttpMethod.GET, API_PATHS).hasAuthority(SCOPE_READ)
                         .requestMatchers(HttpMethod.HEAD, API_PATHS).hasAuthority(SCOPE_READ)
                         .requestMatchers(HttpMethod.POST, API_PATHS).hasAuthority(SCOPE_WRITE)

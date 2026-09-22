@@ -215,6 +215,36 @@ app:
     sqs-queue-url: ${SQS_QUEUE_URL:}
     dynamodb-table: ${DDB_TABLE:flight-status-events}
 
+springdoc:
+  # Every endpoint here speaks JSON and nothing else. Stated so the document
+  # says application/json rather than */*, which is what springdoc infers when
+  # a controller declares no `produces` -- accurate about the code and useless
+  # to a reader deciding what to send.
+  default-produces-media-type: application/json
+  default-consumes-media-type: application/json
+  api-docs:
+    # The generated OpenAPI 3.1 document. Public, and deliberately so: it
+    # describes the endpoints, it does not open them. Anonymous callers of the
+    # endpoints themselves still get 401.
+    enabled: true
+    path: /v3/api-docs
+  swagger-ui:
+    # The browser UI is a separate switch from the document, because the two
+    # have different risk profiles. The document is JSON that a client
+    # generator reads; the UI is a page that sends live requests, and a
+    # deployment may reasonably want the machine-readable half without a
+    # console pointed at production. Off with SWAGGER_UI_ENABLED=false.
+    enabled: ${SWAGGER_UI_ENABLED:true}
+    path: /swagger-ui.html
+    # Alphabetical rather than declaration order, so the rendered page does not
+    # reshuffle itself when a controller method moves.
+    operations-sorter: alpha
+    tags-sorter: alpha
+    # The "Try it out" button sends the request from the browser. Left on: on a
+    # demo URL it is the difference between reading about an API and using it,
+    # and the credentials it asks for are the same ones curl would need.
+    try-it-out-enabled: true
+
 logging:
   # Every log line carries [service,traceId,spanId,requestId]. The first three
   # come from Micrometer Tracing and are Boot's own default for this property;

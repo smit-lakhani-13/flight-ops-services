@@ -2,7 +2,15 @@ package com.smit.flightops.controller;
 
 import com.smit.flightops.dto.BookingDto;
 import com.smit.flightops.dto.BookingRequest;
+import com.smit.flightops.dto.ErrorResponse;
+import com.smit.flightops.dto.ValidationErrorResponse;
 import com.smit.flightops.service.BookingService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -15,6 +23,9 @@ import java.net.URI;
 
 @RestController
 @RequestMapping("/api/v1/bookings")
+@Tag(name = "Bookings",
+     description = "Seat reservations. Creating one is idempotent on `idempotencyKey`; "
+                   + "cancelling one is idempotent on the booking\u0027s own state.")
 public class BookingController {
 
     private final BookingService bookingService;
@@ -38,6 +49,47 @@ public class BookingController {
      * for the bug this fixed: the loser used to get 409, which broke the
      * "cannot tell the difference" claim this comment is now making truthfully.
      */
+    @Operation(
+            summary = "Create a booking",
+            description = """
+                    Reserves seats on a flight, or replays the booking a previous call \
+                    with this `idempotencyKey` created.
+
+                    **A replay answers 201, not 200.** The body is byte-for-byte the \
+                    original booking, so a client that retried after a timeout cannot \
+                    tell whether it or its earlier attempt did the work — which is the \
+                    property idempotency exists to provide. Re-using a key with a \
+                    *different* body is a client bug rather than a retry, and is refused \
+                    with `IDEMPOTENCY_KEY_REUSED`.
+
+                    Seats are taken under `SELECT … FOR UPDATE` on the flight row, so \
+                    two requests for the last seat serialise instead of overselling. A \
+                    holder that outlasts the three-second `lock_timeout` surfaces as 503 \
+                    with `Retry-After`, not as a 500.""")
+    @ApiResponses({
+            @ApiResponse(responseCode = "201", description =
+                    "Booked, or an earlier booking replayed. `Location` points at the booking."),
+            @ApiResponse(responseCode = "400", description =
+                    "`VALIDATION_FAILED` — a field is missing or out of range; the response names each one.",
+                    content = @Content(schema = @Schema(implementation = ValidationErrorResponse.class))),
+            @ApiResponse(responseCode = "401", description = "`UNAUTHENTICATED`",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(responseCode = "403", description =
+                    "`FORBIDDEN` — authenticated, but without `flights:write`.",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(responseCode = "404", description = "`FLIGHT_NOT_FOUND`",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(responseCode = "409", description = """
+                    `INSUFFICIENT_SEATS` — fewer seats remain than requested, and a \
+                    smaller request can succeed. `FLIGHT_NOT_BOOKABLE` — the flight is \
+                    cancelled, departed or arrived, and no retry will ever succeed. \
+                    `IDEMPOTENCY_KEY_REUSED` — the key is known and was used for a \
+                    different request.""",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(responseCode = "503", description =
+                    "`LOCK_TIMEOUT` — the flight row was held past `lock_timeout`. Carries `Retry-After`.",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    })
     @PostMapping
     public ResponseEntity<BookingDto> book(@Valid @RequestBody BookingRequest request) {
         BookingDto booking = bookingService.book(request);
@@ -83,6 +135,28 @@ public class BookingController {
      * releases nothing and returns the same record. See
      * {@code BookingWriter.cancelBooking}.
      */
+    @Operation(
+            summary = "Cancel a booking",
+            description = """
+                    Releases the seats and returns the cancelled booking.
+
+                    Cancelling an already-cancelled booking is a 200 no-op rather than an \
+                    error: the caller asked for a state the system is already in, and the \
+                    seats are released exactly once. Nothing is deleted — the row keeps \
+                    its `cancelledAt`, so the history survives.""")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description =
+                    "Cancelled, or already cancelled. The body is the booking either way."),
+            @ApiResponse(responseCode = "401", description = "`UNAUTHENTICATED`",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(responseCode = "403", description = "`FORBIDDEN` — `flights:write` is required.",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(responseCode = "404", description =
+                    "`BOOKING_NOT_FOUND` — its own code, so a 404 here never claims the flight is missing.",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(responseCode = "503", description = "`LOCK_TIMEOUT`, with `Retry-After`.",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    })
     @DeleteMapping("/{bookingId}")
     public BookingDto cancel(@PathVariable Long bookingId) {
         return bookingService.cancel(bookingId);

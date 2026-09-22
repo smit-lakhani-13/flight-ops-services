@@ -58,6 +58,32 @@
         <aws.sdk.version>2.55.2</aws.sdk.version>
 
         <!--
+          springdoc is not in Boot's BOM either, and its major line tracks Boot's:
+          3.x targets Boot 4.x. 3.1.1 is the first release built against 4.1;
+          3.1.0 was compiled against 4.1.0 and predates the 4.1.1 web changes.
+          The version is pinned here for the same reason as the AWS SDK - nothing
+          else is managing it.
+        -->
+        <springdoc.version>3.1.1</springdoc.version>
+
+        <!--
+          Boot 4 runs on Jackson 3 (tools.jackson) and still manages the Jackson 2
+          coordinates at 2.21.5 for libraries that have not moved. swagger-core,
+          which springdoc uses to build the OpenAPI document, is one of those and
+          needs 2.22.1. Left alone, Maven's nearest-wins would hand swagger-core
+          the older Jackson 2 it was not compiled against - the enforcer's
+          requireUpperBoundDeps rule refused the build over exactly that, which is
+          the rule earning its place rather than being noise.
+
+          Overriding Boot's own property rather than importing a second BOM, so
+          the whole Jackson 2 line moves together and nothing ends up half
+          upgraded. It touches Jackson 2 only; Jackson 3 stays on Boot's version
+          and remains what this application actually serialises with. Delete this
+          the day springdoc's swagger-core lands on Boot's Jackson 2 version.
+        -->
+        <jackson-2-bom.version>2.22.1</jackson-2-bom.version>
+
+        <!--
           Build-gate plugin versions. These are pinned here rather than inherited
           because Boot's parent manages the plugins it ships with and says nothing
           about these three; an unpinned plugin version resolves to whatever is
@@ -168,6 +194,23 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-opentelemetry</artifactId>
+        </dependency>
+
+        <!--
+          OpenAPI 3.1 from the controllers, plus the Swagger UI that renders it.
+          The -ui starter rather than -api because a JSON document nobody can
+          click through is documentation only for people who already have a
+          client generator; the UI is what makes the API explorable in a browser
+          on a demo URL, which is the point of publishing it at all.
+
+          Both paths are permitted anonymously in SecurityConfig, deliberately
+          and narrowly: the description of an endpoint is not a credential for
+          it. Every operation the document lists still answers 401 without one.
+        -->
+        <dependency>
+            <groupId>org.springdoc</groupId>
+            <artifactId>springdoc-openapi-starter-webmvc-ui</artifactId>
+            <version>${springdoc.version}</version>
         </dependency>
 
         <!--

@@ -1,9 +1,16 @@
 package com.smit.flightops.controller;
 
 import com.smit.flightops.dto.CreateFlightRequest;
+import com.smit.flightops.dto.ErrorResponse;
 import com.smit.flightops.dto.FlightDto;
 import com.smit.flightops.dto.StatusUpdate;
 import com.smit.flightops.service.FlightService;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
@@ -21,6 +28,9 @@ import java.net.URI;
  */
 @RestController
 @RequestMapping("/api/v1/flights")
+@Tag(name = "Flights",
+     description = "Schedule and seat inventory. Status moves through a state machine; "
+                   + "cancelling a flight is a soft delete that its bookings outlive.")
 public class FlightController {
 
     private final FlightService flightService;
@@ -60,6 +70,35 @@ public class FlightController {
     }
 
     /** PATCH, not PUT: this replaces one field, not the resource. */
+    @Operation(
+            summary = "Move a flight to another status",
+            description = """
+                    `SCHEDULED → BOARDING → DEPARTED → ARRIVED`, with `CANCELLED` \
+                    reachable from anything not yet departed. `ARRIVED` and `CANCELLED` \
+                    are terminal, and the transition table is exhaustive rather than a \
+                    list of what is forbidden — the first version of this endpoint \
+                    accepted `CANCELLED → SCHEDULED`, after which a cancelled flight \
+                    sold seats again.
+
+                    A transition to the status the flight already has is allowed, so a \
+                    retried PATCH is safe.""")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "The flight, at its new status."),
+            @ApiResponse(responseCode = "400", description =
+                    "`MALFORMED_REQUEST` — the body names a status that does not exist.",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(responseCode = "401", description = "`UNAUTHENTICATED`",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(responseCode = "403", description = "`FORBIDDEN` — `flights:write` is required.",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(responseCode = "404", description = "`FLIGHT_NOT_FOUND`",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(responseCode = "409", description = """
+                    `ILLEGAL_STATUS_TRANSITION` — the flight cannot reach that status \
+                    from the one it is in. `CONCURRENT_MODIFICATION` — another write \
+                    landed first and `@Version` rejected this one.""",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    })
     @PatchMapping("/{flightNumber}/status")
     public FlightDto updateStatus(@PathVariable String flightNumber,
                                   @Valid @RequestBody StatusUpdate update) {

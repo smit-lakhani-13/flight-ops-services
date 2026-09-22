@@ -10,7 +10,7 @@ The airline domain is deliberate. Seat inventory is a genuinely hard consistency
 
 **Scope.** This is a demonstration service, not a deployed system. It has never served production traffic. CI builds both modules and runs the full test suite — including the PostgreSQL integration tests — on every push. The infrastructure that needs a registry, a cluster or an AWS account (`Dockerfile`, `k8s/`, `template.yaml`, and the deploy half of the workflow) is authored and reviewed but has not been applied. [Project status](#project-status) records exactly which parts have been executed and which have not, and every claim below is bounded by that table.
 
-**Contents** — [Run it](#run-it-in-30-seconds) · [Project status](#project-status) · [Architecture](#architecture) · [Repository layout](#repository-layout) · [Security](#security) · [API](#api) · [Concurrency](#the-hard-problem-not-overselling-the-last-seat) · [The outbox](#the-outbox-why-the-event-is-a-database-row-first) · [Observability](#observability) · [Tests](#tests) · [Lambda](#lambda-module) · [Container and Kubernetes](#container-and-kubernetes) · [Cost safety](#cost-safety--read-this-before-touching-aws) · [Trade-offs](#trade-offs-and-known-limitations)
+**Contents** — [Run it](#run-it-in-30-seconds) · [Project status](#project-status) · [Architecture](#architecture) · [Repository layout](#repository-layout) · [Security](#security) · [API](#api) · [OpenAPI](#openapi) · [Concurrency](#the-hard-problem-not-overselling-the-last-seat) · [The outbox](#the-outbox-why-the-event-is-a-database-row-first) · [Observability](#observability) · [Tests](#tests) · [Lambda](#lambda-module) · [Container and Kubernetes](#container-and-kubernetes) · [Cost safety](#cost-safety--read-this-before-touching-aws) · [Trade-offs](#trade-offs-and-known-limitations)
 
 ---
 
@@ -35,6 +35,9 @@ curl -u api:dev-secret localhost:8080/api/v1/flights/UA123
 curl -u api:dev-secret "localhost:8080/api/v1/flights?origin=EWR&page=0&size=5"
 curl -u ops:dev-ops localhost:8080/actuator/metrics       # ops, not api
 ```
+
+Or open **<http://localhost:8080/swagger-ui.html>** and click through it: the document is public,
+every operation it lists is not. See [OpenAPI](#openapi).
 
 Drop the `-u` and you get `401 {"code":"UNAUTHENTICATED"}`. Use `api` where `ops` is wanted and you get `403 {"code":"FORBIDDEN"}` — a different answer to a different question, and the distinction is the point.
 
@@ -114,7 +117,7 @@ What has been executed, and what has not. This table is the contract for every c
 | | What |
 |---|---|
 | ✅ **Built, tested, and exercised over HTTP** | The whole app module. Every endpoint hit with `curl` against a running instance; every status code in the tables below observed, not inferred, including the 401 and 403 bodies. The Lambda handler's logic, via 18 unit tests. |
-| ✅ **Verified against real PostgreSQL in CI** | All 193 tests, including the 5 Testcontainers integration tests: the Flyway migrations applied to an empty database, `ddl-auto: validate` checked against the schema those migrations produced, `SELECT … FOR UPDATE` under 20 threads competing for 5 seats, and the same idempotency key replayed by 20 threads at once. The runners have Docker, so these execute there and skip on a laptop without one. |
+| ✅ **Verified against real PostgreSQL in CI** | All 197 tests, including the 5 Testcontainers integration tests: the Flyway migrations applied to an empty database, `ddl-auto: validate` checked against the schema those migrations produced, `SELECT … FOR UPDATE` under 20 threads competing for 5 seats, and the same idempotency key replayed by 20 threads at once. The runners have Docker, so these execute there and skip on a laptop without one. |
 | ⚠️ **Authored and reviewed, never executed** | The container image. `sam build`, `sam local invoke`, `sam deploy`. Every `kubectl` and `eksctl` step. The deploy half of the GitHub Actions workflow — gated off deliberately, see below. |
 | ❌ **Not implemented** | A Solace binding. Trace **export** — ids are generated and logged, but there is no collector to send spans to. Rate limiting. |
 
@@ -189,7 +192,7 @@ Two further things this repository does not claim:
 ## Repository layout
 
 ```
-├── src/main/java/com/smit/flightops/       50 files, 4,169 lines
+├── src/main/java/com/smit/flightops/       51 files, 4,415 lines
 │   ├── controller/     HTTP only — bind, validate, map to DTO, choose status code
 │   ├── service/        orchestration, the transaction boundaries, the outbox drain
 │   │                   and its retention pruner, EventPublisher + 2 impls
@@ -204,12 +207,13 @@ Two further things this repository does not claim:
 │   │                   Spring Security), BookingMetrics (the three counters HTTP
 │   │                   metrics cannot express) and OutboxMetrics (backlog and dead rows)
 │   ├── validation/     @DistinctEndpoints — a custom class-level Bean Validation constraint
-│   └── config/         SecurityConfig, AwsConfig, three @ConfigurationProperties records,
-│                       TimeConfig (an injected Clock), DataSeeder
+│   └── config/         SecurityConfig, OpenApiConfig, AwsConfig, three
+│                       @ConfigurationProperties records, TimeConfig (an injected
+│                       Clock), DataSeeder
 ├── src/main/resources/
 │   ├── application.yml            profiles: default (H2), postgres, prod
 │   └── db/migration/              Flyway, V1–V6 — owns the PostgreSQL schema
-├── src/test/java/                 24 test classes, layered — see Tests (26 with the Lambda's)
+├── src/test/java/                 25 test classes, layered — see Tests (27 with the Lambda's)
 ├── contracts/                     the event schema both modules test against
 ├── lambda/                        separate parentless Maven module: SQS → DynamoDB consumer
 ├── k8s/                           6 manifests + secret.example.yaml
@@ -239,6 +243,7 @@ The two meet on purpose. Spring's default `JwtGrantedAuthoritiesConverter` maps 
 | every other `/actuator/**` | `ROLE_OPS` |
 | `GET /api/**` | `SCOPE_flights:read` |
 | `POST`, `PATCH`, `DELETE /api/**` | `SCOPE_flights:write` |
+| `GET`/`HEAD` on `/v3/api-docs**` and `/swagger-ui/**` | everyone — see [OpenAPI](#openapi) |
 | anything else | `denyAll()` |
 
 `anyRequest().denyAll()` rather than `permitAll()` or `authenticated()` is the one line worth arguing about. It means a controller added later is *unreachable* until somebody writes a rule for it. That is annoying exactly once, and the alternative is a new endpoint that is silently public on the day it ships.
@@ -276,6 +281,43 @@ Every row above also answers **401** without credentials and **403** with the wr
 Every error has one JSON shape — `{code, message, timestamp}`, or `{code, fieldErrors, timestamp}` for validation — produced by a single `@RestControllerAdvice`. No controller contains a `try`/`catch`.
 
 **Both `Location` headers are built from the returned DTO, not from the request**, because `FlightService` normalises flight numbers (`trim` + upper-case). `POST /api/v1/flights` with `{"flightNumber":" ua999 "}` answers `Location: /api/v1/flights/UA999` — the only form that resolves. Verified by following both headers with `curl`: 200 each. [Why that verification exists](#the-second-bug-a-passing-suite-did-not-catch).
+
+### OpenAPI
+
+The document is generated from the controllers and served at
+**[`/v3/api-docs`](http://localhost:8080/v3/api-docs)**, with the Swagger UI at
+**[`/swagger-ui.html`](http://localhost:8080/swagger-ui.html)**. Both are reachable without
+credentials; every endpoint they describe still answers 401 without them. A description of an
+endpoint is not a credential for it, and the alternative — a documented API that needs a shared
+password to read about — is how an API ends up documented in a wiki instead.
+
+```bash
+curl -s localhost:8080/v3/api-docs | jq '.paths | keys'      # no credentials needed
+curl -s -o /dev/null -w '%{http_code}\n' localhost:8080/api/v1/flights   # 401
+```
+
+Three decisions in it:
+
+- **The permit is on `GET` and `HEAD` only.** A `POST` to a docs path is not a documented
+  operation, so it falls to `denyAll()` rather than reaching a handler that does not exist.
+- **The paths are listed, not wildcarded.** `/v3/**` would have made the next `/v3/anything`
+  public by accident, and this is the one list in `SecurityConfig` where a mistake is not caught
+  by a failing test.
+- **The security requirement is declared once, on the document.** Per-operation annotations are
+  the same annotation on every method, and the one somebody forgets is the endpoint that gets
+  documented as public. `bearerAuth` is deliberately absent: that half of `SecurityConfig` only
+  activates when an issuer is configured, and advertising an authentication method the running
+  instance will reject is worse than advertising none.
+
+`SWAGGER_UI_ENABLED=false` removes the browser console and leaves the machine-readable document,
+because the two carry different risk: one is JSON a client generator reads, the other is a page
+that sends live requests.
+
+**`OpenApiTest` compares the document against a real response.** Generated documentation does not
+fail by disappearing; it fails by drifting while still rendering perfectly. So the test that
+matters asserts that the documented page schema — `{content, page}` — has the same top-level keys
+as an actual `GET /api/v1/flights`, rather than the same keys as an expectation written by the
+same hand that wrote the schema.
 
 ### The 20 error codes
 
@@ -481,7 +523,7 @@ The `prod` profile sets `logging.structured.format.console: ecs` — one JSON ob
 ## Tests
 
 ```bash
-./mvnw clean verify                       # 175 tests: 170 run, 5 skipped, 0 failures
+./mvnw clean verify                       # 179 tests: 174 run, 5 skipped, 0 failures
 ./mvnw -f lambda/pom.xml clean verify     # 18 tests, 0 failures
 ```
 
@@ -491,16 +533,16 @@ The `prod` profile sets `logging.structured.format.console: ecs` — one JSON ob
 | Service | 24 | `@ExtendWith(MockitoExtension.class)`, `@Mock`, `@InjectMocks`, `@Captor` — split across `BookingServiceTest` (orchestration), `BookingWriterTest` (the write path), `FlightServiceTest`, and `SqsEventPublisherTest` for what actually goes on the wire |
 | Web slice | 25 | `@WebMvcTest` + `@MockitoBean` — status codes, `Location` headers, error JSON |
 | Repository slice | 13 | `@DataJpaTest` + `TestEntityManager` — derived queries, JPQL, `JOIN FETCH`, constraints |
-| Full context (H2) | 59 | `@SpringBootTest` — the idempotency guarantee end to end (two 10-thread races on one key), the authorisation rules against the real filter chain, the outbox including its trace capture, the attempt ceiling and the retention pruner against a real database, the lock timeout, the error contract, and a lazy-loading regression with no mocking anywhere in the chain |
+| Full context (H2) | 63 | `@SpringBootTest` — the idempotency guarantee end to end (two 10-thread races on one key), the authorisation rules against the real filter chain, the outbox including its trace capture, the attempt ceiling and the retention pruner against a real database, the published OpenAPI document compared against a real response, the lock timeout, the error contract, and a lazy-loading regression with no mocking anywhere in the chain |
 | Event contract | 11 | one producer-side class and one consumer-side class, both asserting against `contracts/booking-created-v1.json` |
 | Lambda handler | 12 | separate module — batch parsing, partial batch failure, conditional write |
 | Configuration binding | 15 | plain JUnit driving a standalone Jakarta `Validator` and Boot's `Binder` — proves an unresolved `${...}` placeholder is rejected at startup rather than binding as a literal, and that every outbox bound is enforced and every default is actually wired |
 | Architecture | 9 | ArchUnit over `target/classes` — the layering, no field injection, no `@Transactional` outside `service/`, no wall-clock reads outside `entity/`. Each rule was checked against a deliberate violation before being committed |
 | Observability | 8 | the request-id filter against a hostile inbound header, and the meters scraped through a real `PrometheusMeterRegistry` rather than a `SimpleMeterRegistry` that would accept any name |
-| **Run** | **188** | **0 failures** (12 + 24 + 25 + 13 + 59 + 11 + 12 + 15 + 9 + 8) |
+| **Run** | **192** | **0 failures** (12 + 24 + 25 + 13 + 63 + 11 + 12 + 15 + 9 + 8) |
 | PostgreSQL integration | 5 | `@Testcontainers(disabledWithoutDocker = true)` — skipped without a container runtime |
 
-193 tests exist across the two modules; 188 run without Docker, 5 skip. CI runs all 193 and they pass — the runner has Docker, so it is the only place the real PostgreSQL path (Flyway + `ddl-auto=validate` + `SELECT FOR UPDATE` under 20-way contention, and a 20-thread idempotency-key race) gets exercised. The surefire summary there reads `Tests run: 175, Failures: 0, Errors: 0, Skipped: 0` for this module and `Tests run: 18 … Skipped: 0` for the Lambda. `Skipped: 0` rather than `Skipped: 5` is the part worth reading: it is the difference between the integration tests passing and the integration tests quietly opting out, and a green build alone does not distinguish the two.
+197 tests exist across the two modules; 192 run without Docker, 5 skip. CI runs all 197 and they pass — the runner has Docker, so it is the only place the real PostgreSQL path (Flyway + `ddl-auto=validate` + `SELECT FOR UPDATE` under 20-way contention, and a 20-thread idempotency-key race) gets exercised. The surefire summary there reads `Tests run: 179, Failures: 0, Errors: 0, Skipped: 0` for this module and `Tests run: 18 … Skipped: 0` for the Lambda. `Skipped: 0` rather than `Skipped: 5` is the part worth reading: it is the difference between the integration tests passing and the integration tests quietly opting out, and a green build alone does not distinguish the two.
 
 **The `@WebMvcTest` slices run with `addFilters = false`, and that is deliberate.** A slice does not load `SecurityConfig` — it is a `@Configuration` class, not a controller, so the slice filter excludes it — and what Boot substitutes is its *own* default chain. Leaving the filters on would therefore have every controller test authenticate against rules that are not this application's rules, and pass. That is worse than no coverage: it reads as though authorisation is tested. The real rules are tested once, properly, against the real `SecurityConfig` with real credentials and the real 401/403 bodies, in `SecurityRulesTest`.
 
@@ -741,7 +783,9 @@ forever. Each one now has a test that fails without the fix, like every row abov
 
 ## Versions
 
-Java **21.0.12.1** · Spring Boot **4.1.1** · Spring Framework **7.0.9** · Spring Security **7.1.1** · Hibernate **7.4.5** · Jackson **3.1.5** · Tomcat **11.0.24** · Flyway **12.4.0** · JUnit **6.0.3** · Jakarta EE 11 · Maven **3.9.16** · AWS SDK for Java **2.55.2**.
+Java **21.0.12.1** · Spring Boot **4.1.1** · Spring Framework **7.0.9** · Spring Security **7.1.1** · Hibernate **7.4.5** · Jackson **3.1.5** · Tomcat **11.0.24** · Flyway **12.4.0** · JUnit **6.0.3** · springdoc-openapi **3.1.1** · Jakarta EE 11 · Maven **3.9.16** · AWS SDK for Java **2.55.2**.
+
+One version in `pom.xml` is not Boot's: `jackson-2-bom.version` is overridden to **2.22.1**. Boot 4 runs on Jackson 3 and still manages the Jackson 2 coordinates at 2.21.5 for libraries that have not moved; swagger-core, which builds the OpenAPI document, is one of those and needs 2.22.1. Maven's nearest-wins would have handed it the older Jackson 2 silently — the enforcer's `requireUpperBoundDeps` rule refused the build instead, which is the clearest case yet of that rule paying for itself.
 Built and tested on macOS arm64 with `JAVA_HOME=/opt/homebrew/opt/openjdk@21`.
 
 `./mvnw` pins Maven 3.9.16 **and its SHA-256**, so a clone builds with the same Maven this was built with, CI needs no Maven install step, and a substituted archive fails the build instead of running. The wrapper is `distributionType=only-script`, so there is no `maven-wrapper.jar` committed — two shell scripts and a properties file.
