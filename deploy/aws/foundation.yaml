@@ -117,6 +117,26 @@ Resources:
   GitHubOidcProvider:
     Type: AWS::IAM::OIDCProvider
     Condition: CreateOidcProvider
+    # RETAINED ON DELETE, and this is the one resource in the file where that
+    # is not caution but a correctness requirement.
+    #
+    # An AWS account holds exactly ONE OIDC provider for
+    # token.actions.githubusercontent.com, shared by every repository and every
+    # role in the account that uses GitHub Actions OIDC. If this stack created
+    # it, the default delete behaviour would take it away with the stack --
+    # and every OTHER repository's deploy role in the account starts failing
+    # with "Not authorized to perform sts:AssumeRoleWithWebIdentity", at a
+    # moment nobody connects to a teardown of an unrelated demo. Deleting a
+    # shared resource because this stack happened to be the one that created it
+    # is not a teardown, it is an outage for someone else.
+    #
+    # Retaining costs nothing: an OIDC provider is free, and up.sh detects an
+    # existing one and passes it as ExistingOidcProviderArn on the next run, so
+    # a down/up cycle works unchanged. To remove it deliberately, once nothing
+    # else in the account uses GitHub Actions OIDC:
+    #   aws iam delete-open-id-connect-provider --open-id-connect-provider-arn <arn>
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       Url: https://token.actions.githubusercontent.com
       ClientIdList:
@@ -212,8 +232,13 @@ Resources:
   # ---------------------------------------------------------------------
   # Not filtered by the Project tag. Cost allocation tags take up to 24 hours
   # to activate after the resources exist, so a tag-filtered budget is blind
-  # for exactly the first day -- the day a mistake is most likely. These are
-  # account-wide on purpose, and the README says so.
+  # for exactly the first day -- the day a mistake is most likely.
+  #
+  # So these are account-wide on purpose, and the consequence is worth stating
+  # where somebody will meet it: if the account already spends money on
+  # something else, that spend counts against these thresholds and the first
+  # alert may arrive before this stack has cost anything at all. Raise the
+  # limits below rather than adding a tag filter, until the tags have activated.
   MonthlyBudget:
     Type: AWS::Budgets::Budget
     Properties:

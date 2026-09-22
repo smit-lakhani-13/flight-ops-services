@@ -16,8 +16,10 @@ spec:
   # traffic peak halves the fleet for however long that takes. Omitting the
   # field leaves exactly one writer.
   #
-  # This is also why CI deploys with `kubectl set image` rather than a full
-  # apply — see .github/workflows/build-and-deploy.yml.
+  # This absence is also what makes CI's `kubectl apply` of the whole rendered
+  # overlay safe. Apply a Deployment that DOES declare replicas and every push
+  # resets the count the HPA owns; with the field gone, apply leaves the live
+  # count alone. See .github/workflows/build-and-deploy.yml.
 
   # Keeps `kubectl get rs` readable instead of 10 dead ReplicaSets deep.
   revisionHistoryLimit: 3
@@ -47,32 +49,24 @@ spec:
       # picks them up with no code change, which is exactly why the code uses
       # the default provider chain instead of anything explicit.
       #
-      # CREATE THIS BEFORE APPLYING THIS FILE, or pods stay Pending with
-      # `error looking up service account flight-ops/flight-ops-sa`:
-      #   cat > /tmp/flight-ops-policy.json <<'JSON'
-      #   {
-      #     "Version": "2012-10-17",
-      #     "Statement": [
-      #       {
-      #         "Sid": "PublishBookingEvents",
-      #         "Effect": "Allow",
-      #         "Action": ["sqs:SendMessage", "sqs:GetQueueAttributes"],
-      #         "Resource": "arn:aws:sqs:ap-south-1:<ACCOUNT_ID>:booking-events"
-      #       }
-      #     ]
-      #   }
-      #   JSON
-      #   aws iam create-policy --policy-name flight-ops-service \
-      #     --policy-document file:///tmp/flight-ops-policy.json
-      #   eksctl create iamserviceaccount \
-      #     --name flight-ops-sa --namespace flight-ops \
-      #     --cluster flight-ops-cluster \
-      #     --attach-policy-arn arn:aws:iam::<ACCOUNT_ID>:policy/flight-ops-service \
-      #     --approve
+      # THREE PIECES, AND NONE OF THEM IS THIS FILE. Getting one wrong leaves
+      # the pod Ready and every publish failing, so it is worth knowing which
+      # owns what:
+      #   1. the IAM policy - deploy/aws/foundation.yaml, as the managed policy
+      #      flight-ops-service-sqs-publish;
+      #   2. the IAM role and its OIDC trust policy - deploy/aws/up.sh step 7,
+      #      `eksctl create iamserviceaccount --role-only`, named
+      #      flight-ops-sqs-publisher;
+      #   3. the ServiceAccount object - k8s/base/serviceaccount.yaml, with the
+      #      eks.amazonaws.com/role-arn annotation added by the overlay in
+      #      k8s/overlays/aws/serviceaccount-irsa.yaml because the ARN names an
+      #      account id.
+      # `--role-only` on (2) is what keeps (2) and (3) from both claiming the
+      # ServiceAccount and fighting over every `kubectl apply`.
       #
-      # An inline policy scoped to one queue ARN, not AmazonSQSFullAccess. The
-      # two managed policies that used to be here were the lazy version and
-      # they were wrong in a specific, checkable way:
+      # A policy scoped to one queue ARN, not AmazonSQSFullAccess. The two
+      # managed policies that used to be here were the lazy version and they
+      # were wrong in a specific, checkable way:
       #
       #   - AmazonSQSFullAccess grants sqs:* on Resource "*", which includes
       #     DeleteQueue and PurgeQueue on every queue in the account. A bug in
@@ -88,6 +82,10 @@ spec:
       # "The lab is torn down the same day" was the justification for the old
       # version and it is not one - a least-privilege policy took eleven lines
       # to write, and IAM is the part of a review nobody lets slide.
+      #
+      # If this name and serviceaccount.yaml ever disagree, the pods do not
+      # start at all: they stay Pending with `error looking up service account
+      # flight-ops/flight-ops-sa`.
       serviceAccountName: flight-ops-sa
 
       # Pod-level security context: applies to every container.
@@ -128,12 +126,6 @@ spec:
 
       containers:
         - name: flight-ops
-          # <ACCOUNT_ID> is a deliberate placeholder — a real account number does
-          # not belong in a committed manifest. Substitute at deploy time:
-          #   sed "s/<ACCOUNT_ID>/$(aws sts get-caller-identity --query Account --output text)/" \
-          #     k8s/deployment.yaml | kubectl apply -f -
-          # CI does not need this: it sets the image with `kubectl set image`.
-          #
           # The tag is a version, never `:latest`. With `:latest` you cannot tell
           # what is running, and `imagePullPolicy: Always` turns every restart
           # into a coin flip about which build you get. CI tags by git SHA.
@@ -141,7 +133,7 @@ spec:
           # k8s/overlays/aws points it at ECR with the commit SHA as the tag.
           # This value is what `kubectl kustomize k8s/base` renders, so the
           # base stays applicable against any registry-less cluster.
-          image: flight-ops-service:1.0.0
+          image: flight-ops-service:1.1.0
           imagePullPolicy: IfNotPresent
 
           ports:
@@ -199,10 +191,25 @@ spec:
             #   - over the memory limit -> OOMKilled. Memory is incompressible;
             #     the kernel cannot hand out a fraction of a page.
             # Hence -XX:MaxRAMPercentage=75.0 in the Dockerfile: the heap is
-            # sized from the memory limit, leaving 25% for metaspace, thread
-            # stacks, code cache and direct buffers. Setting -Xmx768m against a
-            # 768Mi limit is the standard way to get OOMKilled with a heap that
-            # looks perfectly healthy.
+            # sized from the memory limit, leaving 25% for everything else.
+            # Setting -Xmx768m against a 768Mi limit is the standard way to get
+            # OOMKilled with a heap that looks perfectly healthy.
+            #
+            # Where the 768Mi actually goes, worst case:
+            #   576Mi  heap (75% of the limit)
+            #    64Mi  the /tmp tmpfs below, if it is ever filled. A
+            #          `medium: Memory` emptyDir is tmpfs, and tmpfs pages are
+            #          charged to THIS container's memory cgroup — it is not
+            #          free space, it is heap you have not spent yet.
+            #   128Mi  metaspace, thread stacks, code cache, direct buffers,
+            #          GC structures and the JVM itself.
+            # The last line is the one to watch, and it is not generous. Two
+            # changes eat it silently: raising the tmpfs sizeLimit, and adding
+            # a dependency that allocates direct buffers. Raise the memory limit
+            # together with either one, not after the first OOMKill. What the
+            # JVM is actually using is one command away:
+            #   kubectl exec -n flight-ops deploy/flight-ops -- \
+            #     jcmd 1 VM.native_memory summary
             requests:
               # Memory request == limit, on purpose. Values that differ put the
               # pod in the Burstable QoS class, which is the class the kubelet

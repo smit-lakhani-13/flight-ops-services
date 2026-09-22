@@ -26,10 +26,24 @@ metadata:
   # debug — the error surfaces as an authentication or image-pull problem, not as
   # a region mismatch. Reasoning in adr/0010-region-ap-south-1.md.
   #
-  # This value is the source of truth. Three other places must agree with it:
-  # AWS_REGION in k8s/overlays/aws/configmap-aws.yaml, AWS_REGION in
-  # .github/workflows/build-and-deploy.yml, and AWS_REGION in deploy/aws/lib.sh
-  # (which exports it, so the scripts do not depend on your CLI default).
+  # This value is the source of truth. Four other places must agree with it,
+  # and they were checked by reading them rather than from memory:
+  #
+  #   k8s/base/configmap.yaml         AWS_REGION, which the SDK reads
+  #   k8s/overlays/aws/kustomization.yaml   the ECR registry HOST in
+  #                                   images[].newName -- the one that breaks
+  #                                   image pulls rather than behaviour, with
+  #                                   an ImagePullBackOff naming a registry
+  #                                   that does exist, just not in this region
+  #   .github/workflows/build-and-deploy.yml   AWS_REGION at the workflow level
+  #   deploy/aws/lib.sh               exports AWS_REGION and AWS_DEFAULT_REGION,
+  #                                   so the scripts do not inherit your CLI
+  #                                   default
+  #
+  # k8s/overlays/aws/configmap-aws.yaml holds only the two values AWS itself
+  # produces (SQS_QUEUE_URL, DB_URL); the region is not in it.
+  #
+  #   git grep -n 'ap-south-1' -- cluster.yaml k8s .github deploy
   region: ap-south-1
 
   # Pinned, and the pin is a cost control rather than a reproducibility one.

@@ -45,7 +45,27 @@ step "Daily cost by service, $START to $TODAY (account $ACCOUNT_ID)"
 # of Python is the smaller thing to read.
 read -r -d '' FORMAT_DAYS <<'PYEOF' || true
 import json, sys
-data = json.load(sys.stdin)
+
+# Read and check before parsing. `json.load` on an empty stream raises
+# JSONDecodeError, and the stream is empty in every case this block exists to
+# explain: Cost Explorer not enabled on the account, no ce:GetCostAndUsage on
+# the caller, an expired token. Reporting those as a Python traceback in a
+# script whose whole job is reassurance about money is the worst possible
+# output.
+raw = sys.stdin.read().strip()
+if not raw:
+    print("  Cost Explorer returned nothing. One of:")
+    print("    - it has never been enabled on this account (Billing console ->")
+    print("      Cost Explorer -> Launch; the first data appears ~24h later)")
+    print("    - the caller lacks ce:GetCostAndUsage")
+    print("    - the credentials have expired (aws sts get-caller-identity)")
+    sys.exit()
+try:
+    data = json.loads(raw)
+except ValueError:
+    print("  Cost Explorer returned something that is not JSON:")
+    print("    " + raw.splitlines()[0][:160])
+    sys.exit()
 if not data:
     print("  no data yet - Cost Explorer lags 8-24 hours behind the first resource")
     sys.exit()
@@ -70,6 +90,11 @@ aws ce get-cost-and-usage \
     --group-by Type=DIMENSION,Key=SERVICE \
     --query 'ResultsByTime[].{Date: TimePeriod.Start, Items: Groups[?Metrics.UnblendedCost.Amount!=`0`].{Service: Keys[0], Cost: Metrics.UnblendedCost.Amount}}' \
     --output json 2>/dev/null | python3 -c "$FORMAT_DAYS"
+# The 2>/dev/null above keeps the raw botocore error out of a report a human is
+# reading; the formatter says what to check instead. If it reports nothing at
+# all, this is the command that prints the real reason:
+#   aws ce get-cost-and-usage --time-period Start=$START,End=$TODAY \
+#     --granularity DAILY --metrics UnblendedCost
 
 step "This project only (tag Project=flight-ops)"
 # Untagged spend is real spend. The cluster control plane, for instance, is not

@@ -10,10 +10,10 @@
 # `SELECT ... FOR UPDATE`, `SET lock_timeout` — can be exercised without a
 # cluster. The H2 profile the tests use has none of it.
 #
-# The queue is not here. `APP_EVENTS_PUBLISHER=noop` means outbox rows are
-# written and marked published without being sent anywhere, which is the whole
-# of the service's behaviour except the SQS call itself. A local SQS would be
-# LocalStack, a second large image, to test one `SendMessage`.
+# The queue is not here. `APP_EVENTS_PUBLISHER=log` means outbox rows are
+# written, claimed, logged and marked published — the whole of the service's
+# behaviour except the `SendMessage` itself. A local SQS would be LocalStack, a
+# second large image, to test one API call.
 
 services:
   db:
@@ -53,8 +53,14 @@ services:
     build:
       context: .
       args:
-        # Stamped into org.opencontainers.image.revision. Empty here — this is
-        # a local build — where CI passes the real commit.
+        # Stamped into org.opencontainers.image.revision, where CI passes the
+        # real commit. The literal `local` is the sentinel for "built from a
+        # working tree", and it is a word rather than an empty string on
+        # purpose: `docker inspect` on an unset label and on a label set to ""
+        # print the same thing, so an empty value cannot be told apart from a
+        # Dockerfile that forgot to set it. The Dockerfile's own ARG default is
+        # `unknown`, for an image built with no --build-arg at all; three
+        # states, three readable answers.
         GIT_SHA: local
     depends_on:
       db:
@@ -79,10 +85,16 @@ services:
       DB_USER: postgres
       DB_PASSWORD: pass
 
+      # log or sqs, and nothing else: EventProperties rejects a third value at
+      # startup naming the property. This file used to say `noop`, which is not
+      # a mode — neither publisher's @ConditionalOnProperty matched it, so no
+      # EventPublisher bean was defined and the container died on an
+      # unsatisfied dependency instead.
+      #
       # Outbox rows are written and drained locally; nothing is sent to AWS.
       # Setting this to `sqs` without a queue URL is a startup failure, by
       # design — see SqsEventPublisher.
-      APP_EVENTS_PUBLISHER: noop
+      APP_EVENTS_PUBLISHER: log
 
       # Bcrypt of "dev-secret" and "dev-ops", which is what demo.sh defaults to.
       # Hashed rather than {noop} so that the local stack exercises the same

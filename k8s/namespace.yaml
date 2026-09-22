@@ -4,14 +4,28 @@
 #
 # It is also the boundary for ResourceQuota, LimitRange, NetworkPolicy and RBAC.
 #
-# APPLY THIS FIRST, ON ITS OWN:
-#   kubectl apply -f k8s/namespace.yaml
-#   kubectl apply -f k8s/
+# APPLY THIS FIRST, ON ITS OWN, AND NEVER APPLY THE DIRECTORY:
 #
-# Why two commands? `kubectl apply -f <dir>` sends the files in alphabetical
-# order and does not retry. "configmap.yaml" and "deployment.yaml" both sort
-# before "namespace.yaml", so a single bulk apply fails with
-# `namespaces "flight-ops" not found` for everything before the namespace exists.
+#   kubectl apply -f k8s/namespace.yaml                    # this file
+#   deploy/aws/render-aws.sh | kubectl apply -f -          # the application
+#
+# `kubectl apply -f k8s/` used to be the second line here and it is now actively
+# dangerous. It is not recursive, so since the move to kustomize it reaches
+# neither k8s/base nor k8s/overlays -- none of the application. What it DOES
+# reach is k8s/secret.example.yaml, which carries the same metadata.name as the
+# live Secret and REPLACE_ME for every value. Running it against a working
+# cluster overwrites the real database and API passwords with placeholders, and
+# nothing fails until the next pod restart, whereupon it crash-loops on a
+# password that is not bcrypt.
+#
+# This file is applied on its own because a namespace has to exist before
+# anything in it: `kubectl apply -f <dir>` sends files in alphabetical order and
+# does not retry, so anything sorting before "namespace.yaml" fails with
+# `namespaces "flight-ops" not found`. The rendered overlay has the same
+# ordering property and the same answer.
+#
+# deploy/aws/up.sh does both of these for you, in this order, and then creates
+# the Secret. This header is for the case where you are doing it by hand.
 apiVersion: v1
 kind: Namespace
 metadata:

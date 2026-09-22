@@ -1,6 +1,7 @@
 # ClusterIP: reachable only inside the cluster. No load balancer, no public IP,
-# nothing billable. The Ingress (k8s/optional/ingress.yaml) is what exposes this
-# to the internet, and it is deliberately kept out of this directory.
+# nothing billable. The Ingress in k8s/components/ingress is what exposes this
+# to the internet, and it is a kustomize component no overlay enables by
+# default, so nothing here provisions a load balancer by accident.
 #
 # A Service is a stable name plus a load-balanced virtual IP in front of a set of
 # pods. Pods are mortal and their IPs change on every restart; `flight-ops` does

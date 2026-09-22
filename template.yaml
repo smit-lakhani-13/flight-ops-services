@@ -203,9 +203,17 @@ Resources:
         # across SQS redeliveries — which is the property that makes the
         # conditional write a real idempotency check.
         #
-        # Range queries still work: ISO-8601 sorts lexicographically and is
-        # still the prefix, so Query(flightNumber=..) returns time-ordered
-        # events and begins_with(eventTime, "2026-09-15") still filters by day.
+        # Range queries still work: the timestamp is still the prefix, so
+        # Query(flightNumber=..) returns time-ordered events and
+        # begins_with(eventTime, "2026-09-15") still filters by day.
+        #
+        # "Time-ordered" holds because the handler writes the timestamp at a
+        # FIXED WIDTH -- always six fractional digits -- not because ISO-8601
+        # sorts lexicographically on its own. It does not: Instant.toString()
+        # prints the shortest round-tripping form, so a whole second and the
+        # microsecond after it compare in the wrong order. See
+        # BookingEventHandler#sortKey, which is where the reasoning lives and
+        # the only place it should be restated.
         #
         # See events/sqs-same-instant.json — feed it to `sam local invoke` and
         # the bare-timestamp design loses an event; this one writes both.

@@ -1,10 +1,22 @@
 #!/usr/bin/env bash
 # Renders the EKS manifests, fully substituted, to stdout.
 #
-# This is the ONE render path. CI uses it, up.sh uses it, and a human checking
-# what is about to be applied uses it — because three ways of producing the
-# manifests is three ways for them to differ, and the difference only shows up
-# in the cluster.
+# This is the ONE render path for the six resources the aws overlay owns —
+# Deployment, Service, ConfigMap, ServiceAccount, HPA, PDB. CI uses it,
+# infra-lint validates its output, up.sh uses it, and a human checking what is
+# about to be applied uses it, because three ways of producing the manifests is
+# three ways for them to differ and the difference only shows up in the cluster.
+#
+# Two manifests are deliberately NOT rendered here, and both are applied by
+# up.sh with `kubectl apply -f`:
+#
+#   k8s/namespace.yaml                     cluster-scoped, and CI's access entry
+#                                          is namespace-scoped, so CI may not
+#                                          apply it even once
+#   k8s/components/ingress/ingress.yaml    opt-in, and it bills an ALB from the
+#                                          moment it exists
+#
+# Neither is in the overlay, so neither can arrive by accident on a push.
 #
 #   AWS_ACCOUNT_ID=123456789012 \
 #   IMAGE_TAG=$(git rev-parse HEAD) \

@@ -19,12 +19,14 @@ metadata:
   name: flight-ops-pdb
 spec:
   # maxUnavailable, NOT minAvailable, specifically because an HPA owns the
-  # replica count here (2..10).
+  # replica count here — 2 to 4, and the ceiling could be raised later.
   #
   # `minAvailable: 1` looks equivalent at replicas: 2 and is not. It is a floor,
-  # not a rate limit: at 10 replicas it permits the eviction API to take 9 pods
-  # at once and still be satisfied. `maxUnavailable: 1` is a rate limit, so the
-  # budget means "one pod at a time" at every replica count the HPA can choose.
+  # not a rate limit: at 4 replicas it permits the eviction API to take 3 pods
+  # at once and still be satisfied, and the wider the HPA range grows the worse
+  # that gets. `maxUnavailable: 1` is a rate limit, so the budget means "one pod
+  # at a time" at every replica count the HPA can choose, today and after
+  # somebody raises maxReplicas without reading this file.
   #
   # The opposite trap is `minAvailable` equal to replicas (2 of 2): a permanently
   # unsatisfiable budget where every eviction is denied forever, so `kubectl

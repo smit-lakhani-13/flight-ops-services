@@ -81,17 +81,30 @@ state_set() {
     if grep -q "^${key}=" "$STATE_FILE" 2>/dev/null; then
         # A temporary file, not sed -i: BSD sed (macOS) and GNU sed disagree
         # about -i's argument, and these scripts run on both.
-        grep -v "^${key}=" "$STATE_FILE" > "$STATE_FILE.tmp"
+        #
+        # `|| true` because grep exits 1 when it selects NO lines, and it
+        # selects no lines precisely when the file holds this key and nothing
+        # else. up.sh runs under `set -e`, so without this the script dies
+        # inside a bookkeeping helper -- and it dies on the re-run after a
+        # first run that failed early enough to have written exactly one key,
+        # which is the single most likely way anybody gets here.
+        grep -v "^${key}=" "$STATE_FILE" > "$STATE_FILE.tmp" || true
         mv "$STATE_FILE.tmp" "$STATE_FILE"
     fi
     printf '%s=%s\n' "$key" "$value" >> "$STATE_FILE"
 }
 
+# Prints the value for a key, or exits 1 if the file or the key is absent.
+#
+# The exit status is the point, and an earlier version did not have it: with
+# `grep ... | tail -1`, the pipeline's status is tail's, and tail succeeds on
+# empty input. A missing key returned an empty string and status 0, so a caller
+# that checked the status could not tell "not set" from "set to nothing".
 state_get() {
-    local key=$1
+    local key=$1 line
     [ -f "$STATE_FILE" ] || return 1
-    local line
-    line=$(grep "^${key}=" "$STATE_FILE" | tail -1) || return 1
+    line=$(grep "^${key}=" "$STATE_FILE" | tail -1)
+    [ -n "$line" ] || return 1
     printf '%s' "${line#*=}"
 }
 

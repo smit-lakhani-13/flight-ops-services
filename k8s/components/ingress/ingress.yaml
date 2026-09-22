@@ -1,19 +1,24 @@
 # ==============================================================================
-#  ⚠  THIS FILE COSTS MONEY. IT IS IN optional/ ON PURPOSE.
+#  THIS FILE COSTS MONEY. IT IS A KUSTOMIZE COMPONENT ON PURPOSE.
 #
-#  `kubectl apply -f k8s/` is NOT recursive, so it cannot reach this file. That
-#  is the entire reason for the subdirectory: applying the app should never
-#  create a billable load balancer by accident.
+#  A component is opted into by an overlay listing it under `components:`; no
+#  overlay in this repository does. k8s/overlays/aws carries the line commented
+#  out, so making the service publicly reachable is one uncommented line and a
+#  decision, not a side effect of deploying.
 #
-#  Applying this provisions a real AWS Application Load Balancer (~$16–22/month
-#  plus LCU charges) that keeps billing until it is deleted.
+#  Applying this asks the AWS Load Balancer Controller to provision a real
+#  Application Load Balancer: $0.0239/hour plus LCU charges in ap-south-1,
+#  about $17 a month, billing from the moment it exists and after the pods are
+#  gone, because deleting a Deployment does not delete an ALB.
 #
-#  TEARDOWN ORDER IS NOT OPTIONAL:
-#      kubectl delete -f k8s/optional/ingress.yaml   # FIRST — wait for it
-#      # confirm the ALB is gone before continuing:
+#  TEARDOWN ORDER IS NOT OPTIONAL, and deploy/aws/down.sh exists because of it.
+#  Step 1 of that script deletes this Ingress, waits for the ALB to disappear,
+#  and only then lets the run continue to the controller and the cluster. By
+#  hand it is:
+#      kubectl delete ingress flight-ops-ingress -n flight-ops   # FIRST
 #      aws elbv2 describe-load-balancers --region ap-south-1 \
-#        --query 'LoadBalancers[].LoadBalancerName'
-#      eksctl delete cluster -f cluster.yaml         # only then
+#        --query 'LoadBalancers[].LoadBalancerName'              # confirm gone
+#      eksctl delete cluster -f cluster.yaml                     # only then
 #
 #  Delete the cluster first and the controller that owns this ALB dies with it.
 #  Nothing is left to clean up the load balancer, so it becomes orphaned: still

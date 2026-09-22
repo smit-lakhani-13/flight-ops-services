@@ -49,4 +49,4 @@ resources:
 # even if the Deployment grows a second container or an initContainer.
 images:
   - name: flight-ops-service
-    newTag: "1.0.0"
+    newTag: "1.1.0"

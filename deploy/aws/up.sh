@@ -140,12 +140,36 @@ fi
 # the control plane itself — and it applies silently the moment the version
 # leaves standard support. STANDARD means the cluster refuses to enter extended
 # support instead of quietly billing for it.
-if aws eks update-cluster-config --name "$CLUSTER_NAME" \
-        --upgrade-policy supportType=STANDARD >/dev/null 2>&1; then
-    ok "upgrade policy pinned to STANDARD support"
-else
-    log "upgrade policy already STANDARD"
-fi
+#
+# The update call is best-effort -- it fails with a ResourceInUseException if
+# the cluster is still settling, and with nothing useful if the CLI is too old
+# to know the flag. What is NOT best-effort is the result: this reads the
+# policy back and says what it actually is, because "the call returned
+# non-zero" and "the policy is already STANDARD" are different facts and
+# guessing the second from the first is how a cluster quietly bills six times
+# the expected rate for the rest of the demo.
+aws eks update-cluster-config --name "$CLUSTER_NAME" \
+    --upgrade-policy supportType=STANDARD >/dev/null 2>&1 || true
+
+support_type=$(aws eks describe-cluster --name "$CLUSTER_NAME" \
+    --query 'cluster.upgradePolicy.supportType' --output text 2>/dev/null || true)
+case "$support_type" in
+    STANDARD)
+        ok "upgrade policy is STANDARD — the cluster cannot enter extended support"
+        ;;
+    EXTENDED)
+        warn "upgrade policy is EXTENDED. The control plane bills \$0.60/hour"
+        warn "instead of \$0.10 the moment this version leaves standard support."
+        warn "Fix it before leaving this running:"
+        warn "  aws eks update-cluster-config --name $CLUSTER_NAME \\"
+        warn "    --upgrade-policy supportType=STANDARD"
+        ;;
+    *)
+        warn "could not read the upgrade policy (got '${support_type:-nothing}')."
+        warn "Check it by hand: aws eks describe-cluster --name $CLUSTER_NAME \\"
+        warn "  --query cluster.upgradePolicy.supportType"
+        ;;
+esac
 
 aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$AWS_REGION"
 
@@ -306,7 +330,31 @@ else
         --from-literal=API_PASSWORD="$api_hash" \
         --from-literal=OPS_PASSWORD="$ops_hash" \
         --dry-run=client -o yaml | kubectl apply -f -
-    ok "secret created (the passwords are printed once, at the end)"
+    ok "secret created"
+
+    # PRINTED HERE, NOT AT THE END, and the ordering is the whole point.
+    #
+    # Only the bcrypt hash reaches the cluster, so these two strings exist
+    # nowhere else in the universe once this shell exits. Every step after this
+    # one can fail -- the rollout can time out, the ALB can never go healthy,
+    # the demo can hit an endpoint that is not there -- and under `set -e` a
+    # failure anywhere below means a closing summary never runs. Putting the
+    # only copy of a password behind three things that can fail is how an
+    # operator ends up deleting and recreating a Secret and restarting every
+    # pod to get back into their own deployment.
+    cat <<CREDS
+
+  ${C_BOLD}Credentials — written down now, before anything else can fail.${C_RESET}
+  ${C_BOLD}These are not stored anywhere outside this terminal.${C_RESET}
+
+    api user     api / $API_PASSWORD_PLAIN      (flights:read, flights:write)
+    ops user     ops / $OPS_PASSWORD_PLAIN      (ROLE_OPS, the actuator)
+
+  The cluster holds the bcrypt hashes, not these. Reading the Secret back gives
+  you \$2b\$10\$... and no way to reverse it. Save them somewhere now.
+
+CREDS
+    confirm "Copy those two passwords somewhere safe." "saved"
 fi
 
 # ---------------------------------------------------------------------------
@@ -342,8 +390,19 @@ ok "pods are serving"
 # ---------------------------------------------------------------------------
 step "11/12  Ingress and the public URL"
 # ---------------------------------------------------------------------------
-kubectl apply -k "$repo/k8s/components/ingress" -n "$NAMESPACE" 2>/dev/null \
-    || kubectl apply -f "$repo/k8s/components/ingress/ingress.yaml" -n "$NAMESPACE"
+# -f, not -k, and not `-k ... || -f ...` either. kustomize cannot build a
+# Component as a build root -- a root has to be a Kustomization -- so `-k` here
+# always failed, the 2>/dev/null always hid it, and the `-f` fallback always
+# did the work. That is fine while the Component holds one resource and no
+# transformers, and stops being fine the moment somebody adds a label or a
+# patch to it: the transformed manifest would never be applied and nothing
+# would say so.
+#
+# The Ingress is deliberately outside render-aws.sh. That script renders the
+# six resources CI owns and applies on every push; this one object is opt-in,
+# bills from the moment it exists, and is created once by the operator who
+# accepted that cost. See the header of k8s/components/ingress/kustomization.yaml.
+kubectl apply -f "$repo/k8s/components/ingress/ingress.yaml" -n "$NAMESPACE"
 
 log "waiting for the ALB to be provisioned (2-4 minutes)..."
 ALB_HOST=""
@@ -358,8 +417,28 @@ done
 state_set ALB_HOST "$ALB_HOST"
 ok "http://$ALB_HOST"
 
-log "waiting for the ALB target group to report healthy..."
-until curl -fsS -o /dev/null "http://$ALB_HOST/actuator/health"; do sleep 5; done
+# Bounded. An unbounded `until curl ...; do sleep 5; done` is the wrong shape
+# for the one step most likely to never succeed: a security group that does not
+# admit the ALB, or a target group health check pointed at the wrong port, both
+# look exactly like "not ready yet" and neither ever resolves. The script would
+# sit there overnight with the whole stack billing, which is the failure this
+# repository spends the most effort avoiding.
+log "waiting for the ALB target group to report healthy (up to 5 minutes)..."
+alb_healthy=0
+for _ in $(seq 1 60); do
+    if curl -fsS -o /dev/null --max-time 5 "http://$ALB_HOST/actuator/health"; then
+        alb_healthy=1
+        break
+    fi
+    sleep 5
+done
+[ "$alb_healthy" = 1 ] || die "the ALB never reported healthy. The pods passed
+step 10, so this is between the load balancer and them -- usually a security
+group or a target group health check on the wrong port:
+    kubectl describe ingress flight-ops-ingress -n $NAMESPACE
+    kubectl logs -n kube-system deploy/aws-load-balancer-controller --tail=50
+    aws elbv2 describe-target-groups --output table
+Nothing is torn down. Fix it and re-run, or run $here/down.sh."
 ok "health check passes through the load balancer"
 
 # ---------------------------------------------------------------------------
@@ -368,10 +447,18 @@ step "12/12  Proving it works, over the internet"
 if [ "$API_PASSWORD_PLAIN" = '(unchanged — see your earlier run)' ]; then
     warn "skipping demo.sh — the API password is from an earlier run and is not known here"
 else
+    # `|| warn`, not a bare call. The demo is the nice-to-have at the end of a
+    # 50-minute run that has already succeeded; a failing act must not take the
+    # exit code of the whole deployment down with it, and must not stop the
+    # summary below from printing. (A command followed by `||` is exempt from
+    # `set -e`, so no set +e is needed here.)
     BASE="http://$ALB_HOST" \
     AUTH="-u api:$API_PASSWORD_PLAIN" \
     OPS_AUTH="-u ops:$OPS_PASSWORD_PLAIN" \
-        "$repo/demo.sh" --fast
+        "$repo/demo.sh" --fast \
+        || warn "demo.sh did not finish cleanly. The infrastructure is up and the
+    credentials were printed in step 9; investigate with:
+        curl -i -u api:<password> http://$ALB_HOST/api/v1/flights"
 fi
 
 cat <<SUMMARY
@@ -383,10 +470,9 @@ cat <<SUMMARY
     api user     api / $API_PASSWORD_PLAIN
     ops user     ops / $OPS_PASSWORD_PLAIN
 
-  These passwords are printed once and are not stored anywhere outside the
-  cluster. They are in the Kubernetes Secret; read them back with:
+  Repeated from step 9 for convenience, not as the only copy. The cluster
+  stores bcrypt hashes; this reads back \$2b\$10\$... and nothing reversible:
     kubectl get secret flight-ops-secret -n $NAMESPACE -o jsonpath='{.data.API_PASSWORD}' | base64 -d
-  (that returns the bcrypt hash, not the password — hence "once".)
 
   Running cost: about \$7.72/day. Check it tomorrow with:
     $here/cost-check.sh
