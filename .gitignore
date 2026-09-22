@@ -113,3 +113,7 @@ replay_pid*
 # straight into the Kubernetes Secret and are printed once — but an account id
 # and a private RDS endpoint are not things to publish either.
 deploy/aws/.state/
+
+# Python bytecode, from running the doc checkers
+__pycache__/
+*.pyc

@@ -1,0 +1,89 @@
+name: codeql
+
+# Static analysis for the Java in both modules, reported into the repository's
+# Security tab.
+#
+# ADVANCED setup, not GitHub's default setup, and the two are mutually
+# exclusive: with default setup enabled, an uploaded analysis from a workflow is
+# rejected with "CodeQL analyses from advanced configurations cannot be
+# processed when the default setup is enabled", and every run of this file goes
+# red. Before merging this, default setup was confirmed off — the check is that
+# Settings → Code security → Code scanning shows no default setup, or
+# equivalently that the Actions workflow list contains no dynamic "CodeQL"
+# entry. If somebody turns it on later, delete this file rather than fighting
+# it; default setup does the same job with less to maintain.
+#
+# A separate file rather than a job in build-and-deploy.yml, for two reasons.
+# The schedule below wants to run on its own cadence without dragging a full
+# Maven build and a deploy gate along with it, and the README badge for
+# build-and-deploy should mean "it builds and the tests pass" rather than also
+# meaning "and no new CodeQL alert appeared overnight".
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly, Monday 04:17 UTC. The schedule is the point rather than a nicety:
+    # CodeQL ships new queries, so code that was clean when it merged can be
+    # found to be vulnerable months later without a line of it changing. A push
+    # trigger alone would never look again.
+    #
+    # 04:17 rather than 04:00 — GitHub queues everything scheduled on the hour
+    # and the run can be delayed by a long way.
+    - cron: '17 4 * * 1'
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: analyze (java-kotlin)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      contents: read
+      # To write the analysis into the Security tab. Without it the run
+      # completes and the results go nowhere.
+      security-events: write
+      # CodeQL reads workflow run metadata to attribute results to a run.
+      actions: read
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Initialise CodeQL
+        uses: github/codeql-action/init@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+        with:
+          # One language identifier covers both — CodeQL analyses Java and
+          # Kotlin with the same extractor. Both Maven modules are in scope:
+          # lambda/ is a parentless build the reactor never reaches, and it
+          # would be invisible to anything that worked from the root POM.
+          languages: java-kotlin
+
+          # Buildless. The alternative is `autobuild`, which runs Maven again —
+          # a second full `mvn package` for no analytical gain, since the
+          # extractor reads the source either way. It also removes a whole class
+          # of failure where CodeQL goes red because a build step broke rather
+          # than because it found anything.
+          #
+          # The cost, stated because it is real: without a build, CodeQL
+          # resolves fewer third-party types, so a data-flow path that runs
+          # through a library method may not be traced. For a codebase whose
+          # risky paths are its own controllers, repositories and the outbox,
+          # that is a trade worth taking.
+          build-mode: none
+
+          # More security queries than the default suite, without the
+          # `security-and-quality` style rules — which fire on formatting and
+          # naming and would bury a genuine finding under a hundred opinions.
+          queries: security-extended
+
+      - name: Analyse
+        uses: github/codeql-action/analyze@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
+        with:
+          # Namespaces these results so they sit alongside the Trivy SARIF that
+          # build-and-deploy.yml uploads under `trivy-fs`, rather than one
+          # replacing the other.
+          category: /language:java-kotlin

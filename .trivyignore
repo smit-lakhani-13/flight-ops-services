@@ -1,0 +1,25 @@
+# Vulnerabilities this repository has decided not to act on, one per line.
+#
+# THE RULES FOR ADDING A LINE. An entry here silences a finding for everybody,
+# forever, in a file nobody re-reads. So every entry must carry three things,
+# and an entry without them should be deleted rather than researched:
+#
+#   1. the CVE id                 what is being silenced
+#   2. why                        a sentence a reviewer can disagree with, not
+#                                 "false positive" -- name the reason the code
+#                                 is not reachable, or the risk is accepted
+#   3. an expiry date             when somebody must look again
+#
+# Format:
+#
+#   # CVE-2025-00000  expires 2026-12-31
+#   # Reached only by <thing this project does not do>. Re-check when <event>.
+#   CVE-2025-00000
+#
+# WHAT DOES NOT BELONG HERE. The workflow already passes --ignore-unfixed, so a
+# vulnerability with no released fix never reaches this file; adding one is
+# silencing a finding that was never going to fail the build. And a CVE that is
+# merely inconvenient to fix belongs in a dependency bump, not here.
+#
+# The file is currently EMPTY, and that is the intended steady state. If it
+# stops being empty for long, the answer is usually an upgrade.

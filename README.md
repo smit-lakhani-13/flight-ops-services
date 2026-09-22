@@ -1,6 +1,8 @@
 # flight-ops-service
 
 [![build & tests](https://img.shields.io/github/actions/workflow/status/smit-lakhani-13/flight-ops-services/build-and-deploy.yml?branch=main&label=build%20%26%20tests)](https://github.com/smit-lakhani-13/flight-ops-services/actions/workflows/build-and-deploy.yml)
+[![codeql](https://img.shields.io/github/actions/workflow/status/smit-lakhani-13/flight-ops-services/codeql.yml?branch=main&label=codeql)](https://github.com/smit-lakhani-13/flight-ops-services/actions/workflows/codeql.yml)
+[![licence: MIT](https://img.shields.io/badge/licence-MIT-blue)](LICENSE)
 
 Flight inventory and booking microservice: a Spring Boot REST API over PostgreSQL that publishes booking events to SQS, where an AWS Lambda consumer projects them into DynamoDB.
 
@@ -252,7 +254,7 @@ The same picture with the method names on it — plus the booking sequence, the 
 ├── template.yaml                  SAM template for the Lambda
 ├── compose.yaml                   PostgreSQL + the app, for the container path locally
 ├── Dockerfile                     multi-stage: JDK + Maven build → JRE runtime
-└── .github/workflows/             build → test → ECR → EKS rollout
+└── .github/workflows/             six gates in `build-and-deploy.yml`, plus CodeQL
 ```
 
 The package boundaries are the point of the layout: a DTO never reaches the repository, an entity never reaches a controller, and the only code that knows about HTTP lives in `controller/` and `exception/GlobalExceptionHandler`.

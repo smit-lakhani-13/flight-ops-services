@@ -34,10 +34,19 @@ import sys
 import unicodedata
 
 # [text](target) -- target stops at the first whitespace or closing paren, so a
-# title like [x](y "z") is handled. Skips image links written as ![alt](src)
-# only in the sense that they are checked identically, which is correct: a
-# missing image is a broken link too.
-LINK = re.compile(r'\[(?:[^\]]*)\]\(\s*([^)\s]+)(?:\s+"[^"]*")?\s*\)')
+# title like [x](y "z") is handled. Image links written as ![alt](src) are
+# checked identically, which is correct: a missing image is a broken link too.
+#
+# The label alternation allows ONE level of nested brackets, and it is not
+# decoration. A badge is a link whose label is an image link:
+#
+#     [![licence: MIT](https://img.shields.io/badge/licence-MIT-blue)](LICENSE)
+#
+# With a label of `[^\]]*` the match ends at the image's closing bracket, the
+# checker reads the shields.io URL as the target, skips it as external, and
+# never looks at `LICENSE` at all. Every badge target in this repository was
+# therefore unchecked -- the exact silent-skip this file exists to prevent.
+LINK = re.compile(r'\[(?:[^\[\]]|\[[^\[\]]*\])*\]\(\s*([^)\s]+)(?:\s+"[^"]*")?\s*\)')
 HEADING = re.compile(r'^(#{1,6})\s+(.*?)\s*#*\s*$')
 FENCE = re.compile(r'^\s*(```|~~~)')
 

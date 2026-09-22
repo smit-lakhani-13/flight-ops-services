@@ -154,11 +154,14 @@ missing is a domain, not the work.
 
 | | |
 |---|---|
-| Dependency updates | Dependabot, weekly, on both Maven modules and the Actions workflows |
+| Dependency updates | Dependabot, monthly, on both Maven modules, the Actions workflows and the Dockerfile base images |
 | SBOM | CycloneDX, `target/bom.json`, on every build |
 | Upper-bound dependency check | `maven-enforcer` `requireUpperBoundDeps` — a transitive downgrade fails the build |
 | Coverage floor | JaCoCo, build fails under 80% line / 50% branch |
 | Architecture rules | ArchUnit, 9 rules, failing the build not a report |
+| Vulnerability and secret scanning | Trivy filesystem scan on every run, and the image before it is pushed; findings filed in the Security tab |
+| Static analysis | CodeQL `security-extended`, on every push and pull request and weekly |
+| Pinned actions | every `uses:` is a full commit SHA, not a tag — a tag is a mutable pointer in somebody else's repository |
 
 ## Known limitations
 

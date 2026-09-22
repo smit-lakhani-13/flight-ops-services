@@ -63,17 +63,28 @@ the resulting failure blames the property.
 
 ## What CI enforces
 
-A change that passes locally and fails CI is almost always one of these:
+Five jobs run on every push and every pull request, in parallel, so a red
+square names what broke before you open the log. The sixth, `deploy`, is gated
+off and reports as skipped.
 
-| Gate | Fails when |
-|---|---|
-| `maven-enforcer` | wrong JDK, wrong Maven, duplicate dependency versions, or a transitive downgrade (`requireUpperBoundDeps`) |
-| JaCoCo | bundle coverage below 80% line or 50% branch |
-| ArchUnit | a layering rule broken — 9 rules in `ArchitectureTest` |
-| `scripts/refcheck.py` | a backticked `path` or `path#symbol` in any Markdown file does not resolve |
-| `scripts/linkcheck.py` | a relative link or heading anchor is broken |
-| Trivy | a CRITICAL/HIGH vulnerability with a fix available |
-| `scripts/sweeps.sh` | a co-author trailer, a generated-with signature, or a reference to the private sibling directory, in a file **or a commit message** |
+| Job | Gate | Fails when |
+|---|---|---|
+| `build` | `maven-enforcer` | wrong JDK, wrong Maven, duplicate dependency versions, or a transitive downgrade (`requireUpperBoundDeps`) |
+| `build` | JaCoCo | bundle coverage below 80% line or 50% branch |
+| `build` | ArchUnit | a layering rule broken — 9 rules in `ArchitectureTest` |
+| `infra-lint` | kubeconform | the rendered `k8s/overlays/aws` is not valid against the Kubernetes 1.36 schemas |
+| `infra-lint` | `cfn-lint`, `sam validate` | a CloudFormation or SAM template is malformed |
+| `infra-lint` | `shellcheck`, `bash -n` | any tracked `*.sh` has a lint finding or a syntax error |
+| `trivy-fs` | Trivy | a CRITICAL/HIGH vulnerability **with a fix available**, or a committed secret |
+| `dependency-review` | dependency-review | the pull request *adds* a dependency with a high-severity advisory |
+| `docs-check` | `scripts/refcheck.py` | a backticked `path` or `path#symbol` in any Markdown file does not resolve |
+| `docs-check` | `scripts/linkcheck.py` | a relative link or heading anchor is broken |
+| `docs-check` | `scripts/sweeps.sh` | a co-author trailer, a generated-with signature, or a reference to the private sibling directory, in a file **or a commit message** |
+
+A separate `codeql` workflow analyses both modules on push, on pull requests and
+weekly. It is scheduled as well as triggered because CodeQL ships new queries —
+code that was clean when it merged can be found vulnerable months later without
+a line of it changing.
 
 Run the doc gates before pushing; they are fast and they catch real mistakes:
 
@@ -124,7 +135,8 @@ Documentation is part of the change, not a follow-up:
 
 ## Dependabot
 
-Weekly, on both Maven modules and the Actions workflows.
+Monthly, on both Maven modules, the Actions workflows and the Dockerfile base
+images — `.github/dependabot.yml` sets the interval and the grouping.
 
 - Patch and minor updates: merge once CI is green.
 - The AWS SDK BOM appears twice — root and `/lambda`. **Merge both together**,
