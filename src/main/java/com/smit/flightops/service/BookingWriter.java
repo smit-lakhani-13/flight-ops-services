@@ -7,6 +7,7 @@ import com.smit.flightops.entity.Flight;
 import com.smit.flightops.exception.BookingNotFoundException;
 import com.smit.flightops.exception.FlightNotFoundException;
 import com.smit.flightops.exception.IdempotencyKeyConflictException;
+import com.smit.flightops.observability.BookingMetrics;
 import com.smit.flightops.repository.BookingRepository;
 import com.smit.flightops.repository.FlightRepository;
 import org.slf4j.Logger;
@@ -41,15 +42,18 @@ public class BookingWriter {
     private final FlightRepository flightRepository;
     private final BookingRepository bookingRepository;
     private final OutboxWriter outboxWriter;
+    private final BookingMetrics metrics;
     private final Clock clock;
 
     public BookingWriter(FlightRepository flightRepository,
                           BookingRepository bookingRepository,
                           OutboxWriter outboxWriter,
+                          BookingMetrics metrics,
                           Clock clock) {
         this.flightRepository = flightRepository;
         this.bookingRepository = bookingRepository;
         this.outboxWriter = outboxWriter;
+        this.metrics = metrics;
         this.clock = clock;
     }
 
@@ -191,9 +195,11 @@ public class BookingWriter {
 
         if (booking.cancel(clock.instant())) {
             flight.releaseSeats(booking.getSeats());
+            metrics.bookingCancelled();
             log.info("Cancelled booking {} on {} ({} seat(s) released, {} now available)",
                      bookingId, flightNumber, booking.getSeats(), flight.getAvailableSeats());
         } else {
+            metrics.cancellationWasANoOp();
             log.info("Booking {} was already cancelled at {} — no seats released",
                      bookingId, booking.getCancelledAt());
         }

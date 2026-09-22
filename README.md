@@ -10,7 +10,7 @@ The airline domain is deliberate. Seat inventory is a genuinely hard consistency
 
 **Scope.** This is a demonstration service, not a deployed system. It has never served production traffic. CI builds both modules and runs the full test suite — including the PostgreSQL integration tests — on every push. The infrastructure that needs a registry, a cluster or an AWS account (`Dockerfile`, `k8s/`, `template.yaml`, and the deploy half of the workflow) is authored and reviewed but has not been applied. [Project status](#project-status) records exactly which parts have been executed and which have not, and every claim below is bounded by that table.
 
-**Contents** — [Run it](#run-it-in-30-seconds) · [Project status](#project-status) · [Architecture](#architecture) · [Repository layout](#repository-layout) · [Security](#security) · [API](#api) · [Concurrency](#the-hard-problem-not-overselling-the-last-seat) · [The outbox](#the-outbox-why-the-event-is-a-database-row-first) · [Tests](#tests) · [Lambda](#lambda-module) · [Container and Kubernetes](#container-and-kubernetes) · [Cost safety](#cost-safety--read-this-before-touching-aws) · [Trade-offs](#trade-offs-and-known-limitations)
+**Contents** — [Run it](#run-it-in-30-seconds) · [Project status](#project-status) · [Architecture](#architecture) · [Repository layout](#repository-layout) · [Security](#security) · [API](#api) · [Concurrency](#the-hard-problem-not-overselling-the-last-seat) · [The outbox](#the-outbox-why-the-event-is-a-database-row-first) · [Observability](#observability) · [Tests](#tests) · [Lambda](#lambda-module) · [Container and Kubernetes](#container-and-kubernetes) · [Cost safety](#cost-safety--read-this-before-touching-aws) · [Trade-offs](#trade-offs-and-known-limitations)
 
 ---
 
@@ -114,7 +114,7 @@ What has been executed, and what has not. This table is the contract for every c
 | | What |
 |---|---|
 | ✅ **Built, tested, and exercised over HTTP** | The whole app module. Every endpoint hit with `curl` against a running instance; every status code in the tables below observed, not inferred, including the 401 and 403 bodies. The Lambda handler's logic, via 16 unit tests. |
-| ✅ **Verified against real PostgreSQL in CI** | All 156 tests, including the 5 Testcontainers integration tests: the Flyway migrations applied to an empty database, `ddl-auto: validate` checked against the schema those migrations produced, `SELECT … FOR UPDATE` under 20 threads competing for 5 seats, and the same idempotency key replayed by 20 threads at once. The runners have Docker, so these execute there and skip on a laptop without one. |
+| ✅ **Verified against real PostgreSQL in CI** | All 176 tests, including the 5 Testcontainers integration tests: the Flyway migrations applied to an empty database, `ddl-auto: validate` checked against the schema those migrations produced, `SELECT … FOR UPDATE` under 20 threads competing for 5 seats, and the same idempotency key replayed by 20 threads at once. The runners have Docker, so these execute there and skip on a laptop without one. |
 | ⚠️ **Authored and reviewed, never executed** | The container image. `sam build`, `sam local invoke`, `sam deploy`. Every `kubectl` and `eksctl` step. The deploy half of the GitHub Actions workflow — gated off deliberately, see below. |
 | ❌ **Not implemented** | A Solace binding. Structured JSON logging with a correlation id. Distributed tracing. Rate limiting. |
 
@@ -189,7 +189,7 @@ Two further things this repository does not claim:
 ## Repository layout
 
 ```
-├── src/main/java/com/smit/flightops/       46 files, 3,321 lines
+├── src/main/java/com/smit/flightops/       48 files, 3,617 lines
 │   ├── controller/     HTTP only — bind, validate, map to DTO, choose status code
 │   ├── service/        orchestration, the transaction boundaries, the outbox drain,
 │   │                   EventPublisher + 2 impls
@@ -200,13 +200,16 @@ Two further things this repository does not claim:
 │   ├── exception/      7 domain exceptions + the single @RestControllerAdvice
 │   ├── security/       the 401 and 403 writers — Spring Security rejects before the
 │   │                   DispatcherServlet, so @RestControllerAdvice never sees those two
+│   ├── observability/  RequestIdFilter (X-Request-Id on every response, MDC, ahead of
+│   │                   Spring Security) and BookingMetrics (the three counters HTTP
+│   │                   metrics cannot express)
 │   ├── validation/     @DistinctEndpoints — a custom class-level Bean Validation constraint
 │   └── config/         SecurityConfig, AwsConfig, three @ConfigurationProperties records,
 │                       TimeConfig (an injected Clock), DataSeeder
 ├── src/main/resources/
 │   ├── application.yml            profiles: default (H2), postgres, prod
 │   └── db/migration/              Flyway, V1–V5 — owns the PostgreSQL schema
-├── src/test/java/                 17 test classes, layered — see Tests (19 with the Lambda's)
+├── src/test/java/                 20 test classes, layered — see Tests (22 with the Lambda's)
 ├── contracts/                     the event schema both modules test against
 ├── lambda/                        separate parentless Maven module: SQS → DynamoDB consumer
 ├── k8s/                           6 manifests + secret.example.yaml
@@ -394,10 +397,73 @@ Four decisions in that query and the loop around it, each of which is a bug if t
 
 ---
 
+## Observability
+
+Every log line carries four ids:
+
+```
+[flight-ops-service,71abb349fd0501cea2de8343a56c41aa,880c5a6a004ad1ab,smoke-test-1]
+ service             traceId                          spanId           requestId
+```
+
+`traceId` and `spanId` come from OpenTelemetry via `spring-boot-starter-opentelemetry`. `requestId` comes from [`observability/RequestIdFilter`](src/main/java/com/smit/flightops/observability/RequestIdFilter.java), and it is the one that matters to a caller: it is returned on **every** response as `X-Request-Id`, so a support conversation can start with an id the user read off their own screen instead of "it failed around three o'clock".
+
+```bash
+curl -si -u api:dev-secret -H 'X-Request-Id: ticket-4471' \
+  -X POST localhost:8080/api/v1/bookings \
+  -H 'Content-Type: application/json' \
+  -d '{"flightNumber":"UA123","passengerName":"Smit","seats":2,"idempotencyKey":"k1"}' \
+  | grep -i x-request-id
+# X-Request-Id: ticket-4471
+```
+
+Three details in that filter are worth a sentence each.
+
+- **It runs at `HIGHEST_PRECEDENCE`, ahead of Spring Security.** A 401 is produced by `ExceptionTranslationFilter` before `DispatcherServlet` is ever reached. A filter ordered after the security chain would leave exactly the responses people ring up about — "my credentials stopped working" — with no id on them. `SecurityRulesTest.everyResponseCarriesARequestId` asserts the header on a 401, on a 403 and on an echoed inbound value.
+- **An inbound id is validated, not trusted.** It lands in a log line *and* in a response header, so an unchecked value is two injection sinks: a `\r\n` forges a second log entry or a second header, and a megabyte of text makes every line for that request a megabyte long. `^[A-Za-z0-9._:-]{1,128}$` passes UUIDs, ULIDs, W3C trace ids and `service-1234`; anything else is silently replaced, because a malformed diagnostic header is not a reason to fail somebody's booking.
+- **It is not in the error body.** `ErrorResponse` is a published contract and the id is already in a header on the same response.
+
+### Metrics
+
+`/actuator/prometheus` (requires `ops` credentials) carries the Micrometer defaults plus three meters that the HTTP metrics cannot express, in [`observability/BookingMetrics`](src/main/java/com/smit/flightops/observability/BookingMetrics.java):
+
+| Series | Why it is not redundant with `http_server_requests` |
+|---|---|
+| `bookings_booked_total{outcome="created"\|"replayed"}` | A replay and a real booking are both **201 on the same URI**. This is the only thing that answers "are we selling seats, or is a client stuck in a retry loop?" |
+| `bookings_cancelled_total{outcome="cancelled"\|"already_cancelled"}` | A repeated `DELETE` returns 200 and releases nothing, by design. `already_cancelled` climbing alone means a client thinks its cancellations are not sticking. |
+| `bookings_lock_timeout_total` | 503s are in the HTTP metrics, mixed with every other cause. This one names the specific failure — somebody held the flight row past `lock_timeout` — and it is the leading indicator for the whole write path stalling. |
+
+Two things here were wrong when first written, and both are the sort that ship green:
+
+- The meter was called `bookings.created`. It exported as **`bookings_total`** — `_created` is a reserved suffix in OpenMetrics, so the Prometheus client strips it before appending `_total`. No warning, no error, a meter under a name no dashboard would query. `BookingMetricsTest.exportedNamesSurviveTheTripThroughPrometheus` scrapes a real `PrometheusMeterRegistry`, because a `SimpleMeterRegistry` stores the name verbatim and would have passed for any name at all.
+- Every counter is registered in the constructor rather than on first increment. A series that does not exist yet returns *no data* rather than zero, and most alerting rules treat no-data as neither firing nor resolved — so the alert written to catch the first lock timeout would have been silent for exactly the first lock timeout.
+
+### Tracing, and what is deliberately off
+
+`spring-boot-starter-opentelemetry` has two halves with **opposite defaults**, which is worth knowing before deploying it.
+
+- **Traces** are opt-in: the exporter starts only when `management.opentelemetry.tracing.export.otlp.endpoint` is set. Unset, the ids are still generated and still reach the logs, which is the whole benefit on a single-cluster deployment with no collector.
+- **Metrics** are opt-out. The starter brings `micrometer-registry-otlp`, a *push* registry that defaults to `http://localhost:4318/v1/metrics` and begins publishing every 60 seconds with nothing listening. The first run after adding the starter logged exactly that. `application.yml` sets `management.otlp.metrics.export.enabled: ${OTLP_METRICS_ENABLED:false}`; this service is scraped, not pushed.
+
+### Structured logs
+
+The `prod` profile sets `logging.structured.format.console: ecs` — one JSON object per line in Elastic Common Schema, with every MDC entry as a real field:
+
+```json
+{"@timestamp":"2026-09-22T14:57:03.694709Z","log":{"level":"INFO","logger":"com.smit.flightops.service.BookingWriter"},
+ "message":"Booked 2 seat(s) on UA123 (booking 1, 178 seats left)",
+ "traceId":"b5395946255efbf8007a30ba380219d9","spanId":"216f49a1ee247a74","requestId":"ecs-check-1","ecs":{"version":"8.11"}}
+```
+
+`requestId` is a term query rather than a substring search. It is off by default because the default profile is somebody reading the output with their eyes; `LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs ./mvnw spring-boot:run` turns it on anywhere.
+
+
+---
+
 ## Tests
 
 ```bash
-./mvnw clean verify                       # 138 tests: 133 run, 5 skipped, 0 failures
+./mvnw clean verify                       # 158 tests: 153 run, 5 skipped, 0 failures
 ./mvnw -f lambda/pom.xml clean verify     # 18 tests, 0 failures
 ```
 
@@ -405,16 +471,18 @@ Four decisions in that query and the loop around it, each of which is a bug if t
 |---|---|---|
 | Domain entity | 12 | plain JUnit — no Spring, no database. A domain rule should be provable without either. |
 | Service | 21 | `@ExtendWith(MockitoExtension.class)`, `@Mock`, `@InjectMocks`, `@Captor` — split across `BookingServiceTest` (orchestration), `BookingWriterTest` (the write path), `FlightServiceTest` |
-| Web slice | 23 | `@WebMvcTest` + `@MockitoBean` — status codes, `Location` headers, error JSON |
+| Web slice | 25 | `@WebMvcTest` + `@MockitoBean` — status codes, `Location` headers, error JSON |
 | Repository slice | 13 | `@DataJpaTest` + `TestEntityManager` — derived queries, JPQL, `JOIN FETCH`, constraints |
-| Full context (H2) | 48 | `@SpringBootTest` — the idempotency guarantee end to end (two 10-thread races on one key), the authorisation rules against the real filter chain, the outbox, the lock timeout, the error contract, and a lazy-loading regression with no mocking anywhere in the chain |
+| Full context (H2) | 49 | `@SpringBootTest` — the idempotency guarantee end to end (two 10-thread races on one key), the authorisation rules against the real filter chain, the outbox, the lock timeout, the error contract, and a lazy-loading regression with no mocking anywhere in the chain |
 | Event contract | 11 | one producer-side class and one consumer-side class, both asserting against `contracts/booking-created-v1.json` |
 | Lambda handler | 12 | separate module — batch parsing, partial batch failure, conditional write |
 | Configuration binding | 11 | plain JUnit driving a standalone Jakarta `Validator` — proves an unresolved `${...}` placeholder is rejected at startup rather than binding as a literal |
-| **Run** | **151** | **0 failures** (12 + 21 + 23 + 13 + 48 + 11 + 12 + 11) |
+| Architecture | 9 | ArchUnit over `target/classes` — the layering, no field injection, no `@Transactional` outside `service/`, no wall-clock reads outside `entity/`. Each rule was checked against a deliberate violation before being committed |
+| Observability | 8 | the request-id filter against a hostile inbound header, and the meters scraped through a real `PrometheusMeterRegistry` rather than a `SimpleMeterRegistry` that would accept any name |
+| **Run** | **171** | **0 failures** (12 + 21 + 25 + 13 + 49 + 11 + 12 + 11 + 9 + 8) |
 | PostgreSQL integration | 5 | `@Testcontainers(disabledWithoutDocker = true)` — skipped without a container runtime |
 
-156 tests exist across the two modules; 151 run without Docker, 5 skip. CI runs all 156 and they pass — the runner has Docker, so it is the only place the real PostgreSQL path (Flyway + `ddl-auto=validate` + `SELECT FOR UPDATE` under 20-way contention, and a 20-thread idempotency-key race) gets exercised. The surefire summary there reads `Tests run: 138, Failures: 0, Errors: 0, Skipped: 0` for this module and `Tests run: 18 … Skipped: 0` for the Lambda. `Skipped: 0` rather than `Skipped: 5` is the part worth reading: it is the difference between the integration tests passing and the integration tests quietly opting out, and a green build alone does not distinguish the two.
+176 tests exist across the two modules; 171 run without Docker, 5 skip. CI runs all 176 and they pass — the runner has Docker, so it is the only place the real PostgreSQL path (Flyway + `ddl-auto=validate` + `SELECT FOR UPDATE` under 20-way contention, and a 20-thread idempotency-key race) gets exercised. The surefire summary there reads `Tests run: 158, Failures: 0, Errors: 0, Skipped: 0` for this module and `Tests run: 18 … Skipped: 0` for the Lambda. `Skipped: 0` rather than `Skipped: 5` is the part worth reading: it is the difference between the integration tests passing and the integration tests quietly opting out, and a green build alone does not distinguish the two.
 
 **The `@WebMvcTest` slices run with `addFilters = false`, and that is deliberate.** A slice does not load `SecurityConfig` — it is a `@Configuration` class, not a controller, so the slice filter excludes it — and what Boot substitutes is its *own* default chain. Leaving the filters on would therefore have every controller test authenticate against rules that are not this application's rules, and pass. That is worse than no coverage: it reads as though authorisation is tested. The real rules are tested once, properly, against the real `SecurityConfig` with real credentials and the real 401/403 bodies, in `SecurityRulesTest`.
 
@@ -593,7 +661,7 @@ Every row is a decision, not an oversight. Left column: what the code does. Righ
 | Outbox rows are never pruned | a partial-index-friendly delete of published rows older than N days | The table grows forever. It is one scheduled `DELETE` and it is not written, because nothing here runs long enough to notice — which is exactly the reasoning that produces a 400 GB table in a real system, so it is written down rather than forgotten. |
 | No circuit breaker | Resilience4j | One outbound dependency, and the outbox already absorbs the failure mode a breaker would protect against: a down SQS leaves rows unpublished and the next drain retries them. |
 | Contract tests are a **shared JSON file**, not Pact | a broker, with versioned pacts and a `can-i-deploy` gate in CI | The file catches the change that breaks the consumer, which is the whole job at two modules in one repository. A broker earns its keep when the consumers are other people's services on other people's release trains. |
-| No distributed tracing, no correlation id | OpenTelemetry, with the trace id propagated through the SQS message attributes | Logs are plain text and a booking cannot be followed from the HTTP request through the outbox row to the DynamoDB write. This is the largest remaining operability gap and it is named as such. |
+| Traces are generated but **not exported** | an OTLP collector, and the trace id carried through the SQS message attributes into the Lambda | The ids are on every log line and in every response header, which is what makes one booking followable inside this service. Crossing the process boundary into the Lambda needs a collector to send to, and there is no collector in this deployment. See [Observability](#observability). |
 | H2 uses `create-drop` | already done for PostgreSQL: Flyway + `validate` | Migrations on a throwaway in-memory database buy nothing. |
 | `events/*.json` `md5OfBody` values are placeholders | real captured messages | Nothing reads the field, but it is not real traffic. |
 
@@ -639,7 +707,6 @@ local run stays green, which is precisely the class of defect a first pass does 
 
 | What happens | What should happen | The fix |
 |---|---|---|
-| Logs are plain text with no correlation id, so one booking cannot be followed from the HTTP request through the outbox row to the DynamoDB write. | Structured JSON with a trace id propagated into the SQS message attributes and out into the Lambda's logs. | `logstash-logback-encoder`, a filter putting a request id in the MDC, and OpenTelemetry if the tracing is wanted properly. Half a day, and the largest remaining operability gap. |
 | `outbox_events` rows are kept forever. Published rows are dead weight that the partial index does not cover but the table scan eventually does. | Published rows older than a retention window are deleted on a schedule. | One `@Scheduled` `DELETE … WHERE published_at < :cutoff`, about fifteen lines with a test. |
 | An outbox event that fails deterministically — a payload the transport rejects — is retried forever at the poll interval, and `ORDER BY id` means it is retried *first* every time. | After N attempts the row moves to a dead-letter state and stops being claimed, with an alert. | `attempts` is already persisted; the claim query gains `AND attempts < :maxAttempts` and the drain gains a counter. Roughly twenty lines. |
 | There is no rate limiting. A single caller with valid credentials can saturate the pool. | A token bucket per principal at the gateway, or Bucket4j in front of the write endpoints. | Out of scope for the service itself — this belongs at the ingress, and saying so is the answer rather than adding a half-measure here. |
@@ -648,7 +715,7 @@ local run stays green, which is precisely the class of defect a first pass does 
 
 ## Versions
 
-Java **21.0.12.1** · Spring Boot **4.1.1** · Spring Framework **7.0.9** · Spring Security **7.1.1** · Hibernate **7.4.5** · Jackson **3.1.5** · Tomcat **11.0.24** · Flyway **12.4.0** · JUnit **6.0.3** · Jakarta EE 11 · Maven **3.9.16** · AWS SDK for Java **2.55.0**.
+Java **21.0.12.1** · Spring Boot **4.1.1** · Spring Framework **7.0.9** · Spring Security **7.1.1** · Hibernate **7.4.5** · Jackson **3.1.5** · Tomcat **11.0.24** · Flyway **12.4.0** · JUnit **6.0.3** · Jakarta EE 11 · Maven **3.9.16** · AWS SDK for Java **2.55.2**.
 Built and tested on macOS arm64 with `JAVA_HOME=/opt/homebrew/opt/openjdk@21`.
 
 `./mvnw` pins Maven 3.9.16 **and its SHA-256**, so a clone builds with the same Maven this was built with, CI needs no Maven install step, and a substituted archive fails the build instead of running. The wrapper is `distributionType=only-script`, so there is no `maven-wrapper.jar` committed — two shell scripts and a properties file.

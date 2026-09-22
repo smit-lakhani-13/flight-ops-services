@@ -5,6 +5,7 @@ import com.smit.flightops.dto.BookingRequest;
 import com.smit.flightops.entity.Booking;
 import com.smit.flightops.exception.BookingNotFoundException;
 import com.smit.flightops.exception.IdempotencyKeyConflictException;
+import com.smit.flightops.observability.BookingMetrics;
 import com.smit.flightops.repository.BookingRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -45,10 +46,13 @@ public class BookingService {
 
     private final BookingRepository bookingRepository;
     private final BookingWriter bookingWriter;
+    private final BookingMetrics metrics;
 
-    public BookingService(BookingRepository bookingRepository, BookingWriter bookingWriter) {
+    public BookingService(BookingRepository bookingRepository, BookingWriter bookingWriter,
+                          BookingMetrics metrics) {
         this.bookingRepository = bookingRepository;
         this.bookingWriter = bookingWriter;
+        this.metrics = metrics;
     }
 
     public BookingDto book(BookingRequest request) {
@@ -78,6 +82,7 @@ public class BookingService {
             }
             log.info("Idempotent replay of key {} -> booking {}",
                      request.idempotencyKey(), booking.getId());
+            metrics.bookingReplayed();
             return BookingDto.from(booking);
         }
 
@@ -87,7 +92,13 @@ public class BookingService {
         //    race for real. insertNewBooking's own transaction, not this
         //    method, decides who wins.
         try {
-            return bookingWriter.insertNewBooking(request);
+            BookingDto dto = bookingWriter.insertNewBooking(request);
+            // After the call, not before: insertNewBooking can still throw
+            // (oversell, unknown flight), and a counter incremented on the
+            // attempt rather than the outcome is a counter that reports seats
+            // sold which were never sold.
+            metrics.bookingCreated();
+            return dto;
         } catch (DataIntegrityViolationException e) {
             // 3. Lost the race: uk_bookings_idempotency_key fired. The winner
             //    is guaranteed committed by now (Postgres blocks the loser's
@@ -98,7 +109,9 @@ public class BookingService {
             //    a request that, from the client's point of view, succeeded.
             log.info("Lost an idempotency-key race on {} — recovering the winner's booking",
                      request.idempotencyKey());
-            return bookingWriter.recoverReplay(request.idempotencyKey(), fingerprint);
+            BookingDto winner = bookingWriter.recoverReplay(request.idempotencyKey(), fingerprint);
+            metrics.bookingReplayed();
+            return winner;
         }
     }
 

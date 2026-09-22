@@ -285,6 +285,35 @@ class SecurityRulesTest {
     }
 
     /**
+     * {@code RequestIdFilter} runs at {@code HIGHEST_PRECEDENCE}, ahead of the
+     * security chain, and this is the test that proves it rather than the
+     * annotation claiming it.
+     *
+     * <p>A 401 is produced by {@code ExceptionTranslationFilter} before
+     * {@code DispatcherServlet} is ever reached, so a filter ordered after
+     * Spring Security would leave exactly these responses — the ones somebody
+     * is most likely to ring up about — with no id to quote. Both directions
+     * are checked: an id we issue, and an id the caller supplied.
+     */
+    @Test
+    @DisplayName("an unauthenticated 401 still carries X-Request-Id, and echoes the caller's")
+    void everyResponseCarriesARequestId() throws Exception {
+        mockMvc.perform(get("/api/v1/flights/UA123"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().exists("X-Request-Id"));
+
+        mockMvc.perform(get("/api/v1/flights/UA123").header("X-Request-Id", "support-ticket-4471"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().string("X-Request-Id", "support-ticket-4471"));
+
+        // And on the 403 path, which is a different filter again: authenticated
+        // perfectly, authorised for nothing on this URI.
+        mockMvc.perform(get("/api/v1/flights/UA123").with(httpBasic(OPS_USER, OPS_PASSWORD)))
+                .andExpect(status().isForbidden())
+                .andExpect(header().exists("X-Request-Id"));
+    }
+
+    /**
      * STATELESS, proved by its observable consequence rather than by reading
      * the configuration back. No {@code Set-Cookie} means no {@code
      * JSESSIONID}, which means a second replica behind the Service can serve

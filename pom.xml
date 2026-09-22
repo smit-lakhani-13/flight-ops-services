@@ -145,6 +145,32 @@
         </dependency>
 
         <!--
+          Tracing. This starter is what puts a traceId and spanId on every log
+          line, which is the whole reason it is here: a booking touches the
+          controller, the writer, the outbox and then a Lambda in a different
+          process, and without a shared id those are four unrelated log streams.
+          It brings Micrometer Tracing bridged onto the OpenTelemetry SDK plus
+          the OTLP exporter.
+
+          No SPANS are exported by default: Boot starts the trace exporter only
+          once management.opentelemetry.tracing.export.otlp.endpoint has a
+          value, so on a laptop with no collector this is pure log correlation.
+
+          METRICS are a different story and the starter is not innocent here.
+          It drags in micrometer-registry-otlp, which is a push registry that
+          defaults to http://localhost:4318/v1/metrics and starts publishing
+          every 60 seconds whether or not anything is listening. The first run
+          after adding this starter logged exactly that, which is why
+          application.yml turns management.otlp.metrics.export.enabled off.
+          Prometheus scrapes this service; a second metrics pipeline pushing
+          into the void is noise at best.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-opentelemetry</artifactId>
+        </dependency>
+
+        <!--
           Schema is owned by Flyway on PostgreSQL; Hibernate only validates it.
           Boot 4 made every technology's auto-configuration a separate module, so
           this is the starter rather than bare flyway-core - the starter is what

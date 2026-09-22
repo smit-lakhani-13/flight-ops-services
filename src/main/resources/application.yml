@@ -96,6 +96,27 @@ server:
   shutdown: graceful
 
 management:
+  # Off, and this is not a preference. spring-boot-starter-opentelemetry brings
+  # micrometer-registry-otlp with it, which is a PUSH registry: it defaults to
+  # http://localhost:4318/v1/metrics and starts publishing every 60 seconds
+  # with no collector configured and nothing listening. The first run after
+  # adding the starter logged "Publishing metrics for OtlpMeterRegistry every
+  # 1m to http://localhost:4318/v1/metrics" and would then have retried into a
+  # closed port for the life of the process.
+  #
+  # This service is scraped, not pushed: /actuator/prometheus is the contract,
+  # and a second metrics pipeline delivering to nowhere is a background thread,
+  # a socket and a log line per minute in exchange for nothing. Flip the env var
+  # if a collector genuinely exists.
+  #
+  # Tracing is left alone: its exporter is opt-in already, activating only when
+  # management.opentelemetry.tracing.export.otlp.endpoint is set. The two halves
+  # of the same starter have opposite defaults, which is worth knowing before
+  # deploying it.
+  otlp:
+    metrics:
+      export:
+        enabled: ${OTLP_METRICS_ENABLED:false}
   endpoints:
     web:
       exposure:
@@ -173,6 +194,21 @@ app:
     dynamodb-table: ${DDB_TABLE:flight-status-events}
 
 logging:
+  # Every log line carries [service,traceId,spanId,requestId]. The first three
+  # come from Micrometer Tracing and are Boot's own default for this property;
+  # requestId is appended here and is the one a caller can actually quote,
+  # because RequestIdFilter puts it in the X-Request-Id response header.
+  #
+  # The `:-` defaults matter more than they look. Without them a line logged
+  # outside a request -- startup, the outbox poller, shutdown -- renders as the
+  # literal text `%X{traceId}` rather than an empty field, which is how a log
+  # parser ends up with a trace id of "%X{traceId}" on a thousand rows.
+  #
+  # This pattern is ignored entirely when structured logging is on (see the prod
+  # profile): the ECS encoder emits every MDC key as its own JSON field, which
+  # is strictly better and is why the two are not configured together.
+  pattern:
+    correlation: "[${spring.application.name:},%X{traceId:-},%X{spanId:-},%X{requestId:-}] "
   level:
     com.smit.flightops: INFO
     org.hibernate.SQL: ${SQL_LOG_LEVEL:WARN}
@@ -286,6 +322,24 @@ app:
     publisher: ${APP_EVENTS_PUBLISHER:sqs}
   seed:
     enabled: false
+logging:
+  # One JSON object per line, in Elastic Common Schema, and only here.
+  #
+  # In a container stdout IS the log transport: whatever is printed gets picked
+  # up by the node agent and shipped. A human-readable line has to be re-parsed
+  # with a regex at the other end, and the regex breaks the first time a stack
+  # trace or a message containing a bracket goes through it. ECS moves that
+  # problem to the producer, which is the only place that actually knows the
+  # structure -- and MDC entries become real fields, so `requestId: "abc"` is a
+  # term query rather than a substring search.
+  #
+  # Not enabled by default because the default profile is somebody running
+  # `./mvnw spring-boot:run` on a laptop and reading the output with their eyes.
+  # ecs | logstash | gelf are all built into Boot; ecs is here because the
+  # obvious place to ship these is OpenSearch.
+  structured:
+    format:
+      console: ecs
 management:
   endpoint:
     health:

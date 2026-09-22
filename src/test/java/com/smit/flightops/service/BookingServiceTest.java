@@ -6,6 +6,7 @@ import com.smit.flightops.entity.Booking;
 import com.smit.flightops.entity.Flight;
 import com.smit.flightops.exception.BookingNotFoundException;
 import com.smit.flightops.exception.FlightNotFoundException;
+import com.smit.flightops.observability.BookingMetrics;
 import com.smit.flightops.repository.BookingRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -39,6 +40,7 @@ class BookingServiceTest {
 
     @Mock private BookingRepository bookingRepository;
     @Mock private BookingWriter bookingWriter;
+    @Mock private BookingMetrics metrics;
 
     @InjectMocks private BookingService bookingService;
 

@@ -7,6 +7,7 @@ import com.smit.flightops.entity.Flight;
 import com.smit.flightops.exception.FlightNotBookableException;
 import com.smit.flightops.exception.FlightNotFoundException;
 import com.smit.flightops.exception.InsufficientSeatsException;
+import com.smit.flightops.observability.BookingMetrics;
 import com.smit.flightops.repository.BookingRepository;
 import com.smit.flightops.repository.FlightRepository;
 import org.junit.jupiter.api.DisplayName;
@@ -47,6 +48,7 @@ class BookingWriterTest {
     @Mock private FlightRepository flightRepository;
     @Mock private BookingRepository bookingRepository;
     @Mock private OutboxWriter outboxWriter;
+    @Mock private BookingMetrics metrics;
 
     /**
      * A real fixed Clock, not a mock. The cancellation path stores whatever

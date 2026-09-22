@@ -1,6 +1,7 @@
 package com.smit.flightops.controller;
 
 import com.smit.flightops.config.TimeConfig;
+import com.smit.flightops.support.MetricsTestConfig;
 import com.smit.flightops.dto.BookingDto;
 import com.smit.flightops.entity.FlightStatus;
 import com.smit.flightops.exception.BookingNotFoundException;
@@ -59,7 +60,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 // its own, so TimeConfig has to be named here. Importing the real one rather
 // than stubbing a fixed clock keeps the slice honest: the error bodies these
 // tests assert on are built by the same clock the application uses.
-@Import(TimeConfig.class)
+@Import({TimeConfig.class, MetricsTestConfig.class})
 @AutoConfigureMockMvc(addFilters = false)
 class BookingControllerTest {
 

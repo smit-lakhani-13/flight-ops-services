@@ -1,6 +1,7 @@
 package com.smit.flightops.exception;
 
 import com.smit.flightops.dto.ErrorResponse;
+import com.smit.flightops.observability.BookingMetrics;
 import com.smit.flightops.dto.ValidationErrorResponse;
 import jakarta.servlet.ServletException;
 import org.slf4j.Logger;
@@ -53,9 +54,11 @@ public class GlobalExceptionHandler {
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
 
     private final Clock clock;
+    private final BookingMetrics metrics;
 
-    public GlobalExceptionHandler(Clock clock) {
+    public GlobalExceptionHandler(Clock clock, BookingMetrics metrics) {
         this.clock = clock;
+        this.metrics = metrics;
     }
 
     @ExceptionHandler(FlightNotFoundException.class)
@@ -208,6 +211,11 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(PessimisticLockingFailureException.class)
     public ResponseEntity<ErrorResponse> handleLockTimeout(PessimisticLockingFailureException e) {
+        // Counted here rather than in BookingWriter because the timeout is
+        // thrown by the JDBC driver somewhere inside the transaction and
+        // translated on the way out; this handler is the first place in the
+        // codebase that knows for certain that is what happened.
+        metrics.lockTimedOut();
         log.warn("Lock acquisition failed: {}", e.getMostSpecificCause().getMessage());
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                 .header("Retry-After", "1")
