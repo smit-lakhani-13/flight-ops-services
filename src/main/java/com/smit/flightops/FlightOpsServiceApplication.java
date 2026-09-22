@@ -6,10 +6,9 @@ import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
 import org.springframework.scheduling.annotation.EnableScheduling;
 
 /**
- * {@code @EnableScheduling} is here for exactly one task: {@code
- * OutboxPublisher.drainOutbox}. Without it the annotation on that method is
- * inert - no error, no warning, and the outbox simply fills up while every
- * test that calls it directly still passes.
+ * {@code @EnableScheduling} runs {@code OutboxPublisher.drainOutbox} and
+ * {@code OutboxPruner}. Without it both {@code @Scheduled} methods are inert, with no
+ * error, while tests that call them directly still pass.
  */
 @SpringBootApplication
 @ConfigurationPropertiesScan

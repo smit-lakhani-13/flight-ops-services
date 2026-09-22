@@ -11,9 +11,8 @@ import java.util.UUID;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * The filter in isolation. The one thing a unit test can pin that a running
- * app cannot easily is what is in the MDC <em>during</em> the request, so the
- * chain here is a lambda that reads it.
+ * The filter in isolation, with a chain that reads the MDC, because what the MDC holds
+ * during the request is the one thing a running app cannot easily show.
  */
 class RequestIdFilterTest {
 
@@ -56,11 +55,8 @@ class RequestIdFilterTest {
     }
 
     /**
-     * The security case. A CRLF in a header value forges a log line and, worse,
-     * a response header; a 400-character value makes every log line for that
-     * request 400 characters longer. Both are replaced rather than rejected —
-     * a bad diagnostic header is not a reason to fail the request it is
-     * attached to.
+     * A CRLF would forge a log line or a response header, and an over-long value bloats
+     * every line for the request. Both are replaced, and the request still proceeds.
      */
     @Test
     @DisplayName("newlines, spaces and over-long values are replaced rather than echoed")
@@ -93,7 +89,7 @@ class RequestIdFilterTest {
             filter.doFilter(new MockHttpServletRequest("GET", "/boom"), response,
                             (req, res) -> { throw new IllegalStateException("downstream blew up"); });
         } catch (IllegalStateException expected) {
-            // The point of the test is what happens next, not the exception.
+            // What matters is the MDC afterwards.
         }
         assertThat(MDC.get(RequestIdFilter.MDC_KEY))
                 .as("a leaked key would label unrelated log lines with a dead request's id")

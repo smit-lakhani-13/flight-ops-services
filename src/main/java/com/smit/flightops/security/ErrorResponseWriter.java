@@ -11,33 +11,14 @@ import java.io.IOException;
 import java.time.Clock;
 
 /**
- * Writes the application's own {@code {code, message, timestamp}} error body
- * straight to the servlet response.
+ * Writes the {@code {code, message, timestamp}} error body straight to the servlet
+ * response, for the 401s and 403s Spring Security produces. Those are decided in a
+ * servlet filter before {@code DispatcherServlet} runs, so {@code GlobalExceptionHandler}
+ * never sees them. It uses the container's {@link ObjectMapper} and {@link Clock}, so
+ * the timestamp is formatted and taken the same way as in every other error body.
  *
- * <p><b>Why this exists at all, and it is the most useful thing in this
- * package to understand:</b> {@code GlobalExceptionHandler} cannot handle 401
- * or 403. Spring Security runs as a servlet filter, which means it rejects a
- * request <em>before</em> {@code DispatcherServlet} ever sees it. There is no
- * handler method, no {@code HandlerExceptionResolver} and therefore no
- * {@code @RestControllerAdvice} in the picture — the {@code
- * AuthenticationException} is caught by {@code ExceptionTranslationFilter}
- * further up the chain and never reaches Spring MVC. Adding an
- * {@code @ExceptionHandler(AccessDeniedException.class)} to the advice looks
- * like the fix and silently does nothing for the anonymous case.
- *
- * <p>Left alone, Spring Security answers with a bare status line and an empty
- * body, so a caller would get {@code {"code":"FLIGHT_NOT_FOUND",...}} for one
- * failure and nothing at all for another. A client written against this API
- * would have to special-case two paths through its own error handling for no
- * reason. This class is the cost of keeping one shape for every error the
- * service can return.
- *
- * <p>It shares the container's {@link ObjectMapper}, so the {@code timestamp}
- * is serialised by exactly the same configuration that serialises every other
- * error body. Building a private mapper here is the subtle version of the bug
- * this class exists to prevent: the shape would match and the date format
- * would not. It shares the container's {@link Clock} for the same reason: two
- * error bodies from one request should not be able to disagree about the time.
+ * @see JsonAuthenticationEntryPoint
+ * @see JsonAccessDeniedHandler
  */
 @Component
 public class ErrorResponseWriter {
@@ -51,18 +32,13 @@ public class ErrorResponseWriter {
     }
 
     /**
-     * @param code a stable machine-readable code, from the same vocabulary as
-     *             {@code GlobalExceptionHandler}'s
-     * @throws IOException if the client has already disconnected, which the
-     *                     container logs and which nothing here can recover
-     *                     from
+     * @param code a stable machine-readable code, from {@code GlobalExceptionHandler}'s vocabulary
+     * @throws IOException if the client has already disconnected
      */
     public void write(HttpServletResponse response, HttpStatus status, String code, String message)
             throws IOException {
-        // Guard, not decoration: the entry point can be invoked during an
-        // error dispatch that has already started writing. Committing a second
-        // status would throw IllegalStateException on some containers and be
-        // silently ignored on others.
+        // The entry point can run during an error dispatch that has already written;
+        // a second status would throw on some containers and be ignored on others.
         if (response.isCommitted()) {
             return;
         }

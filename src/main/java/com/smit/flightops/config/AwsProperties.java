@@ -3,19 +3,12 @@ package com.smit.flightops.config;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
- * Typed, immutable config bound from the {@code app.aws.*} block.
+ * The {@code app.aws.*} block, bound once at startup. There is no DynamoDB table name:
+ * the table belongs to the Lambda consumer, and this service never reads or writes it.
+ * A bound but unread property would still be copied into every ConfigMap, where
+ * changing it would do nothing.
  *
- * <p>A record beats {@code @Value} on fields here: the values are bound and
- * validated once at startup instead of being resolved per-injection-point, and
- * nothing can mutate them afterwards. Registered by
- * {@code @ConfigurationPropertiesScan} on the application class.
- *
- * <p>There is no {@code dynamodbTable} component, and its absence is
- * deliberate. DynamoDB belongs to the Lambda consumer, which is a separate
- * deployable with its own environment; this service never reads or writes that
- * table. A bound-but-unread property is worse than no property: it appears in
- * the ConfigMap, gets copied into every new environment, and the first person
- * to change it spends an afternoon working out why nothing happened.
+ * @see AwsConfig
  */
 @ConfigurationProperties(prefix = "app.aws")
 public record AwsProperties(String region, String sqsQueueUrl) {

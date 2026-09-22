@@ -16,26 +16,11 @@ import java.time.temporal.ChronoUnit;
 import java.util.List;
 
 /**
- * Seeds the three demo flights the README curl walkthrough depends on.
- *
- * <p>Off in {@code prod} ({@code app.seed.enabled: false}) — a container that
- * writes rows on boot is a nasty surprise in a real environment.
- *
- * <p>Re-runnable against a persistent database: it skips any flight number that
- * already exists, so restarting the app does not duplicate rows or fail.
- * {@code saveAll} runs in its own transaction inside Spring Data, so no
- * {@code @Transactional} is needed on this class — which also sidesteps the
- * usual trap of annotating a runner method that the proxy may not intercept.
- *
- * <p>What this is NOT is concurrency-safe, and that is why it is disabled rather
- * than hardened for {@code prod}. The check-then-insert is two statements: two
- * pods booting together both see the flight missing, both insert, and
- * {@code uk_flights_flight_number} rejects the loser — which surfaces as a
- * {@code DataIntegrityViolationException} out of an {@link ApplicationRunner},
- * meaning the context fails to start and that pod crash-loops. Making it safe
- * would need an upsert ({@code ON CONFLICT DO NOTHING}) or a lock; the right
- * answer for a real environment is that reference data arrives by migration, not
- * by application startup.
+ * Seeds the three demo flights the README walkthrough uses, skipping any that exist, so
+ * a restart against a persistent database neither duplicates nor fails. It is off in
+ * {@code prod} because the check-then-insert is not safe for two pods booting at once:
+ * the loser hits {@code uk_flights_flight_number} and fails startup. Reference data in a
+ * real environment belongs in a migration.
  */
 @Component
 @ConditionalOnProperty(name = "app.seed.enabled", havingValue = "true")

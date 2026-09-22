@@ -1,68 +1,68 @@
 package com.smit.flightops;
 
 import com.smit.flightops.config.ApiSecurityProperties;
-import jakarta.validation.Validation;
-import jakarta.validation.Validator;
-import jakarta.validation.ValidatorFactory;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.boot.context.properties.bind.Bindable;
+import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.boot.context.properties.source.MapConfigurationPropertySource;
+
+import java.util.HashMap;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * The regression test for the worst defect this repository has had.
- *
- * <p>The {@code prod} profile supplies no default for {@code API_PASSWORD}, and
- * for a long time that was believed to be enough — the comment in
- * {@code application.yml}, the Javadoc on {@link ApiSecurityProperties}, the
- * README and {@code SecurityConfig} all said a missing value would fail at
- * startup. None of them were true.
- *
- * <p>{@code @ConfigurationProperties} binding resolves placeholders with
- * {@code ignoreUnresolvablePlaceholders} set to true, unlike {@code @Value}. So
- * with the environment variable unset, the record bound to the literal string
- * {@code ${API_PASSWORD}}, the context started, both probes passed and
- * Kubernetes marked the pod Ready. The failure arrived one request later:
- * {@code DelegatingPasswordEncoder} looks for its {@code {id}} prefix at index
- * zero, found the brace at index one, and threw {@code
- * IllegalArgumentException} — not an {@code AuthenticationException}, so no
- * filter caught it, and thrown before {@code DispatcherServlet}, so
- * {@code GlobalExceptionHandler} never saw it either. Every authenticated
- * request returned a bodyless 500, forever, on a pod reporting itself healthy.
- *
- * <p>This test pins the constraint that closes it. Note which assertion is
- * load-bearing: {@code @NotBlank} passes for {@code ${API_PASSWORD}}, because a
- * literal placeholder is not blank. The {@code @Pattern} is the one that
- * matters, and the unresolved-placeholder case below is the reason it exists.
+ * The {id}-prefix check on the two passwords, run through Boot's binder. Binding leaves an
+ * unresolved placeholder as the literal {@code ${API_PASSWORD}}, so without this check an
+ * unset variable in {@code prod} would start a pod that answers every authenticated
+ * request with a 500. The check must also never repeat the value, which may be plaintext.
  */
 class ApiSecurityPropertiesValidationTest {
 
-    private static final ValidatorFactory FACTORY = Validation.buildDefaultValidatorFactory();
-    private static final Validator VALIDATOR = FACTORY.getValidator();
+    private static final String OPS_DEFAULT = "{noop}dev-ops";
 
-    private static int violations(String apiPassword, String opsPassword) {
-        return VALIDATOR.validate(new ApiSecurityProperties(apiPassword, opsPassword)).size();
+    /** {@code bindOrCreate}, as Boot does for the bean: the record is built even with nothing set. */
+    private static ApiSecurityProperties bind(String apiPassword, String opsPassword) {
+        Map<String, String> properties = new HashMap<>();
+        if (apiPassword != null) {
+            properties.put("app.security.api-password", apiPassword);
+        }
+        if (opsPassword != null) {
+            properties.put("app.security.ops-password", opsPassword);
+        }
+        return new Binder(new MapConfigurationPropertySource(properties))
+                .bindOrCreate("app.security", Bindable.of(ApiSecurityProperties.class));
     }
 
+    /** The case the check exists for: the message names the property and says the variable is unset. */
     @Test
-    @DisplayName("an unresolved placeholder is rejected — the case the whole constraint exists for")
+    @DisplayName("an unresolved placeholder fails binding and names the unset variable")
     void anUnresolvedPlaceholderIsRejected() {
-        assertThat(violations("${API_PASSWORD}", "${OPS_PASSWORD}"))
-                .as("binding must fail rather than accept the literal placeholder")
-                .isEqualTo(2);
+        assertThatThrownBy(() -> bind("${API_PASSWORD}", "${OPS_PASSWORD}"))
+                .rootCause()
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("app.security.api-password")
+                .hasMessageContaining("API_PASSWORD is not set");
     }
 
+    /** Each field is checked on its own, so a good api password cannot mask a bad ops one. */
     @Test
-    @DisplayName("@NotBlank alone would not have caught it — the placeholder is not blank")
-    void notBlankAloneWouldNotHaveCaughtIt() {
-        // Stated as a test rather than a comment so that anyone tempted to
-        // "simplify" the record down to @NotBlank sees why that is a revert.
-        assertThat("${API_PASSWORD}".isBlank()).isFalse();
-        assertThat(violations("${API_PASSWORD}", "{noop}dev-ops")).isEqualTo(1);
+    @DisplayName("the ops password is checked on its own and named in the failure")
+    void theOpsPasswordIsCheckedOnItsOwn() {
+        assertThatThrownBy(() -> bind("{noop}dev-secret", "${OPS_PASSWORD}"))
+                .rootCause()
+                .hasMessageContaining("app.security.ops-password")
+                .hasMessageContaining("OPS_PASSWORD is not set");
     }
 
+    /**
+     * Shapes the encoder would throw on per request. The message must not contain the
+     * value: a plaintext password set without its prefix would otherwise reach the log.
+     */
     @ParameterizedTest
     @ValueSource(strings = {
             "dev-secret",          // plaintext pasted into the environment
@@ -71,30 +71,38 @@ class ApiSecurityPropertiesValidationTest {
             " {noop}dev-secret",   // leading space, so the brace is not at index 0
             "bcrypt}$2a$10$abc"    // opening brace lost in a copy-paste
     })
-    @DisplayName("a value the password encoder would choke on is rejected at binding time")
+    @DisplayName("a malformed value fails binding without the value appearing in the message")
     void malformedEncodedPasswordsAreRejected(String bad) {
-        assertThat(violations(bad, "{noop}dev-ops"))
-                .as("'%s' would reach DelegatingPasswordEncoder and throw per-request", bad)
-                .isEqualTo(1);
+        assertThatThrownBy(() -> bind(bad, OPS_DEFAULT))
+                .rootCause()
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("app.security.api-password")
+                .hasMessageContaining("the value is not shown")
+                .hasMessageNotContaining(bad);
     }
 
+    /** Includes an id with {@code @} and {@code _} in it, which the encoder registers. */
     @ParameterizedTest
     @ValueSource(strings = {
             "{noop}dev-secret",
             "{bcrypt}$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy",
-            "{argon2}$argon2id$v=19$m=16384,t=2,p=1$abc$def"
+            "{pbkdf2@SpringSecurity_v5_8}121d6e31e4311b8f86148a1f52ad230ba826a490b92480b5"
+                    + "97f5143ed5b3065f16244b86fea0666610927ed85357315d"
     })
-    @DisplayName("a properly encoded value passes, whichever algorithm it names")
+    @DisplayName("a value with a well-formed {id} prefix binds unchanged")
     void correctlyEncodedPasswordsPass(String good) {
-        assertThat(violations(good, good)).isZero();
+        ApiSecurityProperties bound = bind(good, good);
+        assertThat(bound.apiPassword()).isEqualTo(good);
+        assertThat(bound.opsPassword()).isEqualTo(good);
     }
 
+    /** With nothing under app.security, Boot still builds the record, from nulls. */
     @Test
-    @DisplayName("null is rejected too — an absent property is not a valid credential")
+    @DisplayName("an absent property fails binding too")
     void nullIsRejected() {
-        // Two violations per field: @NotBlank and @Pattern both fire on null?
-        // No — @Pattern passes on null by specification, so this is exactly one
-        // each, and that asymmetry is why both annotations are present.
-        assertThat(violations(null, null)).isEqualTo(2);
+        assertThatThrownBy(() -> bind(null, null))
+                .rootCause()
+                .hasMessageContaining("app.security.api-password")
+                .hasMessageContaining("API_PASSWORD is not set");
     }
 }

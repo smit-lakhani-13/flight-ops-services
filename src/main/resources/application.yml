@@ -2,10 +2,8 @@ spring:
   application:
     name: flight-ops-service
 
-  # ---------------------------------------------------------------------------
-  # Default profile = zero setup. In-memory H2, Hibernate owns the schema,
-  # demo data seeded on boot. `mvn spring-boot:run` and it works.
-  # ---------------------------------------------------------------------------
+  # Default profile: in-memory H2, Hibernate owns the schema and demo data is seeded
+  # on boot, so `./mvnw spring-boot:run` works with no setup.
   datasource:
     url: jdbc:h2:mem:flightops;DB_CLOSE_DELAY=-1
     username: sa
@@ -14,39 +12,20 @@ spring:
       maximum-pool-size: 10
       minimum-idle: 2
       connection-timeout: 30000
-      # H2's spelling of the postgres profile's lock_timeout, in milliseconds.
-      # Same reasoning, same number; see that profile for why the bound exists
-      # at all. Set explicitly rather than left to H2's default so the local
-      # run and the test slices behave the way production does instead of
-      # however this version of H2 happens to be configured.
+      # H2's spelling of the postgres profile's 3s lock_timeout, so local runs and
+      # tests bound a lock wait the way production does.
       connection-init-sql: SET LOCK_TIMEOUT 3000
 
   jpa:
     hibernate:
       ddl-auto: create-drop
-    # Never leave the Hibernate session open for view rendering: it hides N+1
-    # queries in the serialisation phase, outside any @Transactional boundary.
+    # Off, so a lazy load during JSON serialisation fails instead of hiding an N+1
+    # outside any @Transactional boundary.
     open-in-view: false
     properties:
       hibernate:
-        # No jdbc.batch_size here, and its absence is deliberate. It used to be
-        # 50, sitting next to two entities that both use
-        # GenerationType.IDENTITY - and IDENTITY disables JDBC insert batching
-        # outright, because Hibernate has to execute each INSERT on its own to
-        # read the generated key back before it can return a managed entity.
-        # So the setting did nothing at all, while reading as though inserts
-        # were batched. A configuration line that is quietly inert is worse
-        # than a missing one: it answers the question "did anyone think about
-        # this?" with a yes that is not true.
-        #
-        # Getting batching would mean GenerationType.SEQUENCE with a pooled
-        # optimiser, which is the right call for a write-heavy table on
-        # PostgreSQL. It is not the right call here: this service inserts one
-        # booking per request, so there is nothing to batch, and the only
-        # multi-row insert in the codebase is the three flights DataSeeder
-        # writes at startup. Sequences would also mean a schema change and a
-        # migration for a benefit of zero.
-        order_inserts: true
+        # No jdbc.batch_size: every entity uses GenerationType.IDENTITY, which
+        # disables JDBC insert batching, and a request inserts one booking.
         format_sql: true
 
   flyway:
@@ -61,38 +40,19 @@ spring:
   data:
     web:
       pageable:
-        # Serialise pages as PagedModel: {content: [...], page: {size, number,
-        # totalElements, totalPages}}. The default (`direct`) dumps PageImpl's
-        # own fields, which Spring Data explicitly warns is not a stable JSON
-        # contract — it can change between versions and it leaks the internal
-        # `pageable` object to clients. Opting in here is a one-line fix; doing
-        # it after clients have shipped is a breaking change.
+        # Pages serialise as PagedModel, {content, page}. The default dumps PageImpl,
+        # which Spring Data warns is not a stable JSON contract.
         serialization-mode: via-dto
-
-        # A cap on what one request can ask for. Without this, Spring Data's
-        # default max is 2000 and `?size=2000` is a single unauthenticated-shaped
-        # request that makes the database read and the JVM serialise two
-        # thousand rows. That is not a theoretical denial of service, it is one
-        # curl and a for-loop, and the endpoint is paged precisely so that it
-        # cannot be asked for everything at once.
-        #
-        # 100 rather than a rounder 50 because the list endpoints are filtered by
-        # flight and a full flight here is 180 seats, so two pages covers the
-        # realistic case and nothing legitimate is made awkward. Spring Data
-        # clamps rather than rejecting, so an over-large `size` still returns
-        # 200 with 100 rows - which is the kinder behaviour for a client that
-        # guessed, and the reason it is documented rather than only enforced.
+        # Spring Data's own cap is 2000. It clamps rather than rejecting, so ?size=500
+        # returns 200 with 100 rows; two pages cover a full 180-seat flight.
         max-page-size: 100
 
   threads:
     virtual:
       enabled: true
 
-  # Pinned explicitly even though 30s is Spring Boot's default, because
-  # k8s/deployment.yaml does arithmetic on this number:
+  # Boot's default, pinned because k8s/base/deployment.yaml depends on it:
   #   5s preStop + 30s drain = 35s < terminationGracePeriodSeconds: 45.
-  # A framework default that another file's comment depends on is a default
-  # waiting to change underneath you.
   lifecycle:
     timeout-per-shutdown-phase: 30s
 
@@ -101,23 +61,10 @@ server:
   shutdown: graceful
 
 management:
-  # Off, and this is not a preference. spring-boot-starter-opentelemetry brings
-  # micrometer-registry-otlp with it, which is a PUSH registry: it defaults to
-  # http://localhost:4318/v1/metrics and starts publishing every 60 seconds
-  # with no collector configured and nothing listening. The first run after
-  # adding the starter logged "Publishing metrics for OtlpMeterRegistry every
-  # 1m to http://localhost:4318/v1/metrics" and would then have retried into a
-  # closed port for the life of the process.
-  #
-  # This service is scraped, not pushed: /actuator/prometheus is the contract,
-  # and a second metrics pipeline delivering to nowhere is a background thread,
-  # a socket and a log line per minute in exchange for nothing. Flip the env var
-  # if a collector genuinely exists.
-  #
-  # Tracing is left alone: its exporter is opt-in already, activating only when
-  # management.opentelemetry.tracing.export.otlp.endpoint is set. The two halves
-  # of the same starter have opposite defaults, which is worth knowing before
-  # deploying it.
+  # The OpenTelemetry starter brings a push registry that publishes to
+  # localhost:4318 every minute, collector or not. Metrics are scraped from
+  # /actuator/prometheus instead. Trace export is opt-in already, through
+  # management.opentelemetry.tracing.export.otlp.endpoint.
   otlp:
     metrics:
       export:
@@ -131,28 +78,14 @@ management:
       # Splits /actuator/health into /liveness and /readiness for Kubernetes.
       probes:
         enabled: true
+      # Anyone sees the status; only a caller in role OPS sees the components.
+      # Without `roles`, any valid credential, the api user's included, would.
       show-details: when-authorized
+      roles: OPS
       group:
-        # The db indicator goes in readiness and NOT in liveness, and that
-        # split is the whole point of having two probes.
-        #
-        # Liveness answers "should Kubernetes kill this pod?". A database
-        # outage is not a reason to: restarting the pod does not fix the
-        # database, and it throws away a warm JVM, a JIT-compiled code cache
-        # and a connection pool. Worse, every replica fails the probe at the
-        # same moment, so the whole deployment restarts in a loop while the
-        # database is down and then stampedes it with cold pools the instant
-        # it comes back. Liveness therefore stays on livenessState alone: the
-        # application context is running, or it is not.
-        #
-        # Readiness answers "should this pod receive traffic?". With no
-        # database it cannot serve a booking, so no - take it out of the
-        # Service endpoints, leave it running, and put it back when the
-        # database returns. That is a load-balancer decision, not a restart.
-        #
-        # Before this, db was in neither group. /actuator/health showed it, so
-        # it looked configured, but both probes ignored it: a pod with a dead
-        # database reported ready and kept taking bookings it could not write.
+        # db is in readiness and not in liveness. A database outage should take pods
+        # out of the Service, not restart them: a restart cannot fix the database,
+        # and every replica would fail liveness at once and restart in a loop.
         liveness:
           include: livenessState
         readiness:
@@ -160,115 +93,52 @@ management:
 
 app:
   security:
-    # Encoded passwords, never plaintext -- each value carries its own
-    # algorithm prefix and is read by a DelegatingPasswordEncoder. See
-    # ApiSecurityProperties for the three reasons that is worth the
-    # inconvenience.
-    #
-    # {noop} here says out loud that the local value is not hashed and is
-    # therefore not a secret: it exists so `./mvnw spring-boot:run` and
-    # `./demo.sh` work with no setup, which is a property of this project worth
-    # keeping. A deployment overrides both with a {bcrypt}$2a$... hash, and the
-    # prod profile removes the defaults so a deployment that forgets fails at
-    # startup instead of accepting a password that was committed to git.
+    # Encoded passwords with a {id} prefix, read by a DelegatingPasswordEncoder; see
+    # ApiSecurityProperties. {noop} marks these local values as unhashed and not
+    # secret. A deployment sets {bcrypt} hashes, and prod has no defaults.
     #
     #   curl -u api:dev-secret  ...   # /api/v1/**
     #   curl -u ops:dev-ops     ...   # /actuator/metrics, /actuator/prometheus
     api-password: "${API_PASSWORD:{noop}dev-secret}"
     ops-password: "${OPS_PASSWORD:{noop}dev-ops}"
 
-# ---------------------------------------------------------------------------
-# Bearer tokens: off, and the two properties that turn them on.
-# ---------------------------------------------------------------------------
-# SecurityConfig wires an OAuth2 resource server only when a JwtDecoder bean
-# exists, and one exists only when an issuer is configured. Nothing here sets
-# one, so this service authenticates with HTTP Basic and logs "No JwtDecoder
-# configured" at startup. That is the default on purpose: the callers are two
-# machine identities, and an authorisation server is a dependency they do not
-# need.
-#
-# To accept bearer tokens, set BOTH of these. Not one:
-#
-#   spring:
-#     security:
-#       oauth2:
-#         resourceserver:
-#           jwt:
-#             issuer-uri: https://your-idp.example.com/
-#             audiences: [flight-ops-service]
-#
-# issuer-uri alone validates the signature, the issuer, the expiry and the
-# not-before, and that is NOT enough. An issuer typically mints tokens for
-# every application registered with it, so a token issued to a completely
-# different client of the same tenant carries a valid signature from the right
-# issuer -- and without an audience check this service accepts it and grants
-# whatever the scope claim asks for. The audience claim is the only thing in a
-# JWT that says which API the token was meant for.
-#
-# `audiences` is a Boot property rather than code here (Boot 3.4 and later add
-# a JwtClaimValidator for it), so the check cannot be lost in a refactor of
-# SecurityConfig. See SECURITY.md.
+  # Bearer tokens are off: SecurityConfig adds a resource server only when Boot
+  # creates a JwtDecoder, and nothing here configures one. To accept them, set both:
+  #
+  #   spring.security.oauth2.resourceserver.jwt.issuer-uri: https://your-idp.example.com/
+  #   spring.security.oauth2.resourceserver.jwt.audiences: [flight-ops-service]
+  #
+  # issuer-uri alone checks the signature, issuer and lifetime, so it accepts a
+  # token the same issuer minted for another client in the tenant. `audiences` has
+  # been a Boot property since 2.7; it installs a JwtClaimValidator for the aud
+  # claim inside the decoder. See SECURITY.md.
   events:
-    # log | sqs -- which EventPublisher implementation gets wired in.
-    #
-    # This used to be a bare `log`, with no placeholder, and that made the
-    # SAM-only recipe in DEPLOYMENT.md impossible to follow: it tells you to
-    # run `APP_EVENTS_PUBLISHER=sqs ./mvnw spring-boot:run` and watch the
-    # messages arrive, and the variable was silently ignored because the
-    # default profile hard-coded the value. The service published nothing, to
-    # nowhere, and said so nowhere.
-    #
-    # Turning it into a placeholder does not weaken the guard that the bare
-    # value was providing. Choosing `sqs` without a queue URL still fails at
-    # startup -- SqsEventPublisher requires app.aws.sqs-queue-url -- so a
-    # laptop cannot drift into publishing by accident; it can only do it on
-    # purpose, with a queue URL in hand, which is exactly the documented case.
+    # log | sqs: which EventPublisher is wired in. sqs also needs SQS_QUEUE_URL,
+    # or SqsEventPublisher stops startup.
     publisher: ${APP_EVENTS_PUBLISHER:log}
   outbox:
-    # The poller runs on every replica; SKIP LOCKED in claimUnpublished is what
-    # makes that safe without a leader. Set false only to hand draining to a
-    # dedicated pod.
+    # Runs on every replica; SKIP LOCKED in the claim makes that safe without a leader.
     enabled: ${OUTBOX_ENABLED:true}
-    # Milliseconds. The floor on event latency, and the trade is explicit:
-    # lower means fresher events and more empty queries. The consumer projects
-    # a read model, and a read model one second behind is still a read model.
+    # Milliseconds between drains, and so the floor on event latency.
     poll-interval: ${OUTBOX_POLL_INTERVAL:1000}
-    # Rows per drain. Bounds how long one replica holds outbox row locks, and
-    # therefore how badly a slow queue can affect the other replicas.
+    # Rows claimed per drain; bounds how long one replica holds the row locks.
     batch-size: ${OUTBOX_BATCH_SIZE:100}
-    # After this many failures a row stops being claimed. The claim is
-    # ORDER BY id, so a payload the transport structurally rejects is retried
-    # FIRST on every tick and spends the whole batch failing while live events
-    # queue behind it -- one bad row becomes a total publishing outage that
-    # waiting never fixes. Ten covers every transient cause (a throttle, a DNS
-    # blip, a redeploy) and stops short of the ones that are not transient.
-    # The row then shows up in the outbox.dead gauge, and bringing it back is
-    # deliberate: UPDATE outbox_events SET attempts = 0, next_attempt_at = NULL WHERE id = ?
+    # Failures before a row stops being claimed. The claim is ORDER BY id, so a row
+    # that always fails would otherwise head every batch. It then counts in the
+    # outbox.dead gauge, and this brings it back:
+    #   UPDATE outbox_events SET attempts = 0, next_attempt_at = NULL WHERE id = ?
     max-attempts: ${OUTBOX_MAX_ATTEMPTS:10}
-    # An attempt has to cost time, not just a tick, or max-attempts is a fuse
-    # on the whole table: the poller runs every second, so ten attempts used to
-    # take ten seconds and a brief SQS outage dead-lettered every pending event
-    # -- none of them defective -- while outbox.pending fell to ZERO, because a
-    # dead row is not a pending row. The alert cleared as the damage completed.
-    #
-    # Two seconds doubling to a five-minute ceiling spans about thirteen and a
-    # half minutes (810s of waits) over ten attempts. An outage now has to outlast a deployment before
-    # anything is given up on; a genuinely poison row still drops out after the
-    # same ten attempts. Zero disables the wait, and only a test wants that.
+    # The first retry delay, doubling up to the ceiling. Ten attempts then span about
+    # 13.5 minutes (810s), so a short SQS outage does not dead-letter healthy rows.
+    # Zero disables the wait; only a test wants that.
     retry-backoff: ${OUTBOX_RETRY_BACKOFF:2s}
     max-retry-backoff: ${OUTBOX_MAX_RETRY_BACKOFF:5m}
-    # How long a PUBLISHED row is kept before OutboxPruner may delete it.
-    # Seven days is the window in which somebody still asks "did that booking
-    # publish?" and can be answered from this table. Unpublished rows are never
-    # touched by the pruner at any age.
+    # How long a published row is kept before OutboxPruner deletes it. Unpublished
+    # rows are never pruned.
     retention: ${OUTBOX_RETENTION:7d}
-    # The pruner is maintenance, not a hot path. Hourly.
     prune-interval: ${OUTBOX_PRUNE_INTERVAL:1h}
-    # Rows per DELETE statement. A single unbounded delete of a real backlog
-    # takes row locks across the whole range, writes a WAL burst large enough
-    # to stall replication and shuts the poller out of the table until it
-    # commits. Batching makes every statement the same small size however far
-    # behind the pruner has fallen.
+    # Rows per DELETE, so a backlog is pruned in small statements that neither lock
+    # the poller out nor write a WAL burst.
     prune-batch-size: ${OUTBOX_PRUNE_BATCH_SIZE:1000}
   seed:
     enabled: true
@@ -277,67 +147,43 @@ app:
     sqs-queue-url: ${SQS_QUEUE_URL:}
 
 springdoc:
-  # Every endpoint here speaks JSON and nothing else. Stated so the document
-  # says application/json rather than */*, which is what springdoc infers when
-  # a controller declares no `produces` -- accurate about the code and useless
-  # to a reader deciding what to send.
+  # Every endpoint speaks JSON, so the document says application/json, not */*.
   default-produces-media-type: application/json
   default-consumes-media-type: application/json
   api-docs:
-    # The generated OpenAPI 3.1 document. Public, and deliberately so: it
-    # describes the endpoints, it does not open them. Anonymous callers of the
-    # endpoints themselves still get 401.
+    # Public: it describes the endpoints, which still answer 401 without credentials.
     enabled: true
     path: /v3/api-docs
   swagger-ui:
-    # The browser UI is a separate switch from the document, because the two
-    # have different risk profiles. The document is JSON that a client
-    # generator reads; the UI is a page that sends live requests, and a
-    # deployment may reasonably want the machine-readable half without a
-    # console pointed at production. Off with SWAGGER_UI_ENABLED=false.
+    # Separate from the document, for a deployment that wants the JSON without a page
+    # that sends live requests.
     enabled: ${SWAGGER_UI_ENABLED:true}
     path: /swagger-ui.html
-    # Alphabetical rather than declaration order, so the rendered page does not
-    # reshuffle itself when a controller method moves.
+    # Alphabetical, so the page does not reshuffle when a controller method moves.
     operations-sorter: alpha
     tags-sorter: alpha
-    # The "Try it out" button sends the request from the browser. Left on: on a
-    # demo URL it is the difference between reading about an API and using it,
-    # and the credentials it asks for are the same ones curl would need.
     try-it-out-enabled: true
 
 logging:
-  # Every log line carries [service,traceId,spanId,requestId]. The first three
-  # come from Micrometer Tracing and are Boot's own default for this property;
-  # requestId is appended here and is the one a caller can actually quote,
-  # because RequestIdFilter puts it in the X-Request-Id response header.
-  #
-  # The `:-` defaults matter more than they look. Without them a line logged
-  # outside a request -- startup, the outbox poller, shutdown -- renders as the
-  # literal text `%X{traceId}` rather than an empty field, which is how a log
-  # parser ends up with a trace id of "%X{traceId}" on a thousand rows.
-  #
-  # This pattern is ignored entirely when structured logging is on (see the prod
-  # profile): the ECS encoder emits every MDC key as its own JSON field, which
-  # is strictly better and is why the two are not configured together.
+  # Every line carries [service,traceId,spanId,requestId]. Boot's own correlation
+  # default is traceId and spanId only; the service name moves into this bracket and
+  # include-application-name is off, so the name is printed once. requestId is the id
+  # RequestIdFilter returns in X-Request-Id. Structured logging (prod) ignores the
+  # pattern and writes each MDC key as its own field.
+  include-application-name: false
   pattern:
     correlation: "[${spring.application.name:},%X{traceId:-},%X{spanId:-},%X{requestId:-}] "
   level:
     com.smit.flightops: INFO
     org.hibernate.SQL: ${SQL_LOG_LEVEL:WARN}
-    # Turn this to DEBUG to see which filter rejected a request and why. It is
-    # the difference between "403 and I have no idea" and one line naming the
-    # authority that was missing, and it is the first thing to reach for when a
-    # caller says the credentials are right.
+    # DEBUG names the filter and the missing authority behind a 401 or a 403.
     org.springframework.security: ${SECURITY_LOG_LEVEL:INFO}
 
 ---
-# -----------------------------------------------------------------------------
-# postgres -- real database on localhost, Flyway owns the schema.
+# postgres: real PostgreSQL on localhost, Flyway owns the schema.
 #   docker run --name pg -e POSTGRES_PASSWORD=pass -e POSTGRES_DB=flightops \
 #     -p 5432:5432 -d postgres:17-alpine
 #   DB_PASSWORD=pass ./mvnw spring-boot:run -Dspring-boot.run.profiles=postgres
-# -----------------------------------------------------------------------------
 spring:
   config:
     activate:
@@ -345,83 +191,38 @@ spring:
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/flightops}
     username: ${DB_USER:postgres}
-    # No default for the password, which is why the command above sets it.
-    # This line used to read ${DB_PASSWORD:pass}. It was only ever a localhost
-    # convenience, but a literal password in a committed file is the thing every
-    # secret scanner flags and every reviewer stops reading at, and the
-    # convenience it bought was one environment variable on one command.
-    #
-    # What an unset DB_PASSWORD actually does, because it is not what a reader
-    # would assume: relaxed binding leaves the placeholder unresolved rather
-    # than failing, so Hikari is handed the eleven-character string
-    # "${DB_PASSWORD}" and presents it to PostgreSQL. Startup fails during
-    # Flyway's first connection with
-    #
-    #   FATAL: password authentication failed for user "postgres"
-    #
-    # -- loud, immediate, and naming the wrong cause. An unset DB_URL is worse
-    # still: it fails with 'url' must start with "jdbc", which reads like a
-    # typo in this file. Both are startup failures rather than a service that
-    # runs against the wrong database, which is the property that matters; the
-    # message is the price. app.security's passwords do name themselves, because
-    # ApiSecurityProperties is @Validated and the unresolved literal fails its
-    # @Pattern -- see that class for the trick, which needs a bound record and
-    # is not available to a Hikari property.
+    # No default, so no password is committed. Binding does not fail on an unset
+    # DB_PASSWORD: Hikari gets the literal 14-character string "${DB_PASSWORD}", and
+    # startup fails at Flyway's first connection with "password authentication
+    # failed", which names the wrong cause. app.security names its property because
+    # ApiSecurityProperties checks the {id} prefix in its constructor.
     password: ${DB_PASSWORD}
     hikari:
-      # Bounds how long a statement will wait for a row lock before giving up.
-      #
-      # Without it the wait is unlimited. BookingWriter.insertNewBooking takes
-      # SELECT ... FOR UPDATE on the flight row, so concurrent bookings for the
-      # same flight queue behind each other by design - that queueing IS the
-      # oversell guarantee. The failure mode is the queue never draining: one
-      # transaction stalls while holding the lock and every request for that
-      # flight blocks forever, each holding a virtual thread and one of ten
-      # Hikari connections. With virtual threads enabled there is no thread
-      # pool to run out of first, so the pool is the only bound, and ten stuck
-      # bookings take down every read as well. An unlimited lock wait plus a
-      # bounded connection pool is how a single slow row becomes a total outage.
-      #
-      # 3s rather than NOWAIT: legitimate contention for the last seats on a
-      # busy flight is normal and resolves in milliseconds, so failing
-      # immediately would reject requests that were about to succeed. Three
-      # seconds is far longer than a healthy lock is ever held and far shorter
-      # than a client's patience.
-      #
-      # connection-init-sql, not a JPA query hint: a hint bounds only the queries
-      # that carry it, so a native FOR UPDATE or a method added later without
-      # the annotation would wait forever. A session-level lock_timeout set as
-      # connection init SQL applies once per pooled connection and covers every
-      # lock the service takes. (PostgreSQL has no FOR UPDATE WAIT n; Hibernate
-      # 7.4 turns a positive hint into SET LOCAL lock_timeout - see ADR 0002.)
-      #
-      # PostgreSQL raises SQLSTATE 55P03, which Hibernate's PostgreSQLDialect
-      # converts to a LockTimeoutException and Spring translates to
-      # PessimisticLockingFailureException - handled as 503 with Retry-After in
-      # GlobalExceptionHandler, because a busy row is a "try again", not a bug.
+      # Bounds every row-lock wait. BookingWriter takes SELECT ... FOR UPDATE on the
+      # flight row, so bookings for one flight queue by design. Unbounded, one
+      # stalled holder blocks the queue, each waiter keeps one of ten pooled
+      # connections, and reads fail too. 3s rather than NOWAIT, because contention
+      # for the last seats is normal and clears in milliseconds.
+      # connection-init-sql rather than a query hint, so it covers every lock the
+      # service takes. PostgreSQL raises 55P03, which GlobalExceptionHandler answers
+      # with 503 and Retry-After. See ADR 0002.
       connection-init-sql: SET lock_timeout = '3s'
   jpa:
     hibernate:
-      # Flyway creates the schema; Hibernate verifies the entities still match
-      # it and fails fast on drift.
+      # Flyway creates the schema; Hibernate fails fast if the entities drift from it.
       ddl-auto: validate
   flyway:
     enabled: true
     locations: classpath:db/migration
 logging:
   level:
-    # DEBUG by default here -- the point of running against real PostgreSQL
-    # locally is usually to read the SQL. Still a placeholder, because a literal
-    # silently wins over the ${SQL_LOG_LEVEL:WARN} in the unconditional document
-    # above (a profile document that is activated and later in the file takes
-    # the key outright), and the knob OPERATIONS.md documents was therefore
-    # inert on the one profile anybody would use it on.
+    # A placeholder, not a literal: a literal here would override the base
+    # document's ${SQL_LOG_LEVEL:WARN} and make the SQL_LOG_LEVEL knob inert.
     org.hibernate.SQL: ${SQL_LOG_LEVEL:DEBUG}
 
 ---
-# -----------------------------------------------------------------------------
-# prod -- everything from the environment. Set by k8s/configmap.yaml.
-# -----------------------------------------------------------------------------
+# prod: everything from the environment, through k8s/base/configmap.yaml, the
+# overlays under k8s/overlays/ and the Secret.
 spring:
   config:
     activate:
@@ -431,19 +232,9 @@ spring:
     username: ${DB_USER}
     password: ${DB_PASSWORD}
     hikari:
-      # Same bound as the postgres profile, which is where the reasoning is
-      # written out. Repeated because it has to be, and not for the reason this
-      # comment used to give.
-      #
-      # Profile documents do not inherit from each other -- postgres and prod
-      # are siblings, and activating prod contributes nothing from postgres.
-      # They DO inherit from the unconditional document at the top of this file,
-      # which is contributed on every profile. So without this line prod would
-      # not have "no lock timeout": it would have the H2 spelling from line 22,
-      # SET LOCK_TIMEOUT 3000, executed against PostgreSQL on every new
-      # connection. That is a syntax error, Hikari fails pool initialisation,
-      # and the pod never passes its readiness probe. Loud rather than silent,
-      # but still an outage, and the fix is the same line either way.
+      # Repeated from postgres because profile documents do not inherit from each
+      # other. Without it prod inherits the base document's H2 line,
+      # SET LOCK_TIMEOUT 3000, which PostgreSQL rejects, and the pool never starts.
       connection-init-sql: SET lock_timeout = '3s'
   jpa:
     hibernate:
@@ -453,12 +244,8 @@ spring:
     locations: classpath:db/migration
 app:
   security:
-    # No defaults, on purpose: booting with a credential anyone who has read the
-    # repository already knows is worse than not booting. Unlike the datasource
-    # password above, a missing value here really does name itself --
-    # ApiSecurityProperties is @Validated, the unresolved ${API_PASSWORD}
-    # literal fails its {bcrypt} @Pattern, and the bind error carries the
-    # property name.
+    # No defaults. A missing value stops startup naming the property, because the
+    # literal ${API_PASSWORD} fails the {id} prefix check in ApiSecurityProperties.
     api-password: ${API_PASSWORD}
     ops-password: ${OPS_PASSWORD}
   events:
@@ -466,29 +253,8 @@ app:
   seed:
     enabled: false
 logging:
-  # One JSON object per line, in Elastic Common Schema, and only here.
-  #
-  # In a container stdout IS the log transport: whatever is printed gets picked
-  # up by the node agent and shipped. A human-readable line has to be re-parsed
-  # with a regex at the other end, and the regex breaks the first time a stack
-  # trace or a message containing a bracket goes through it. ECS moves that
-  # problem to the producer, which is the only place that actually knows the
-  # structure -- and MDC entries become real fields, so `requestId: "abc"` is a
-  # term query rather than a substring search.
-  #
-  # Not enabled by default because the default profile is somebody running
-  # `./mvnw spring-boot:run` on a laptop and reading the output with their eyes.
-  # ecs | logstash | gelf are all built into Boot; ecs is here because the
-  # obvious place to ship these is OpenSearch.
+  # One ECS JSON object per line: in a container stdout is the log transport, and
+  # MDC keys become fields, so requestId is a term query. ECS suits OpenSearch.
   structured:
     format:
       console: ecs
-management:
-  endpoint:
-    health:
-      # never, not when-authorized: in production the health endpoint is
-      # reachable without credentials so the kubelet can probe it, and
-      # when-authorized would then show indicator details to anyone who
-      # presented any valid credential. Ops reads the detail from
-      # /actuator/metrics, which requires ROLE_OPS.
-      show-details: never
