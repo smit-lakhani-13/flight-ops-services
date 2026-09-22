@@ -14,10 +14,13 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.ZoneOffset;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -38,9 +41,19 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class BookingWriterTest {
 
+    private static final Instant CANCELLED_AT = Instant.parse("2026-09-20T12:00:00Z");
+
     @Mock private FlightRepository flightRepository;
     @Mock private BookingRepository bookingRepository;
     @Mock private EventPublisher eventPublisher;
+
+    /**
+     * A real fixed Clock, not a mock. The cancellation path stores whatever
+     * this returns, so the assertions can be equalities against a known
+     * instant; a mock would need stubbing in every test that touches it and
+     * would fail Mockito's strict-stubs check in the ones that do not.
+     */
+    @Spy private Clock clock = Clock.fixed(CANCELLED_AT, ZoneOffset.UTC);
 
     @InjectMocks private BookingWriter bookingWriter;
 
@@ -134,10 +147,10 @@ class BookingWriterTest {
     @DisplayName("recoverReplay returns the winner's booking when one exists")
     void recoverReplayFindsTheWinner() {
         Flight flight = flight();
-        Booking winner = new Booking(flight, "Smit Lakhani", 3, "raced-key");
+        Booking winner = new Booking(flight, "Smit Lakhani", 3, "raced-key", null);
         when(bookingRepository.findByIdempotencyKey("raced-key")).thenReturn(Optional.of(winner));
 
-        BookingDto dto = bookingWriter.recoverReplay("raced-key");
+        BookingDto dto = bookingWriter.recoverReplay("raced-key", "any-fingerprint");
 
         assertThat(dto.idempotencyKey()).isEqualTo("raced-key");
         assertThat(dto.passengerName()).isEqualTo("Smit Lakhani");
@@ -151,7 +164,7 @@ class BookingWriterTest {
         // fabricating a response here would be far worse than a loud 500.
         when(bookingRepository.findByIdempotencyKey("ghost-key")).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> bookingWriter.recoverReplay("ghost-key"))
+        assertThatThrownBy(() -> bookingWriter.recoverReplay("ghost-key", "any-fingerprint"))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("ghost-key");
     }

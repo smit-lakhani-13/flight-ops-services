@@ -126,6 +126,13 @@ class FlightTest {
     void flownFlightIsNotBookable() {
         for (FlightStatus status : new FlightStatus[]{FlightStatus.DEPARTED, FlightStatus.ARRIVED}) {
             Flight flight = flight();
+            // Reached through DEPARTED rather than set directly, because
+            // SCHEDULED -> ARRIVED is no longer a transition the entity allows:
+            // a flight cannot arrive somewhere it never left. This loop used to
+            // jump straight to ARRIVED, which the transition graph caught the
+            // moment it was added - a test setting up a state the domain says
+            // is impossible. Two steps say the same thing truthfully.
+            flight.updateStatus(FlightStatus.DEPARTED);
             flight.updateStatus(status);
 
             assertThatThrownBy(() -> flight.reserveSeats(1))

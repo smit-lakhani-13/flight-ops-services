@@ -11,6 +11,8 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -20,6 +22,8 @@ import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -36,7 +40,8 @@ class BookingControllerTest {
             """;
 
     private BookingDto dto() {
-        return new BookingDto(1L, "UA123", "Smit Lakhani", 3, "demo-1", Instant.parse("2026-09-15T10:00:00Z"));
+        return new BookingDto(1L, "UA123", "Smit Lakhani", 3, "demo-1",
+                              Instant.parse("2026-09-15T10:00:00Z"), null);
     }
 
     @Test
@@ -171,13 +176,43 @@ class BookingControllerTest {
     }
 
     @Test
-    void listByFlightReturnsTheBookings() throws Exception {
-        when(bookingService.findByFlightNumber("UA123")).thenReturn(List.of(dto()));
+    @DisplayName("the list is a page, not a bare array — content plus page metadata")
+    void listByFlightReturnsAPageOfBookings() throws Exception {
+        when(bookingService.findByFlightNumber(eq("UA123"), any()))
+                .thenReturn(new PageImpl<>(List.of(dto()), Pageable.ofSize(20), 1));
 
         mockMvc.perform(get("/api/v1/bookings").param("flightNumber", "UA123"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(1))
-                .andExpect(jsonPath("$[0].idempotencyKey").value("demo-1"));
+                // PagedModel, because spring.data.web.pageable.serialization-mode
+                // is via-dto: a stable {content, page} envelope rather than
+                // PageImpl's own fields. Asserting the shape here is what would
+                // catch that setting being dropped.
+                .andExpect(jsonPath("$.content.length()").value(1))
+                .andExpect(jsonPath("$.content[0].idempotencyKey").value("demo-1"))
+                .andExpect(jsonPath("$.page.totalElements").value(1));
+    }
+
+    @Test
+    @DisplayName("cancelling a booking is 200 with the cancelled record")
+    void cancelReturnsTheCancelledBooking() throws Exception {
+        BookingDto cancelled = new BookingDto(1L, "UA123", "Smit Lakhani", 3, "demo-1",
+                                              Instant.parse("2026-09-15T10:00:00Z"),
+                                              Instant.parse("2026-09-15T11:00:00Z"));
+        when(bookingService.cancel(1L)).thenReturn(cancelled);
+
+        mockMvc.perform(delete("/api/v1/bookings/1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.cancelledAt").value("2026-09-15T11:00:00Z"));
+    }
+
+    @Test
+    @DisplayName("cancelling an unknown booking is 404")
+    void cancelUnknownBookingReturns404() throws Exception {
+        when(bookingService.cancel(999L)).thenThrow(new BookingNotFoundException(999L));
+
+        mockMvc.perform(delete("/api/v1/bookings/999"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("BOOKING_NOT_FOUND"));
     }
 
     @Test

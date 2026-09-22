@@ -13,6 +13,10 @@ import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
 import software.amazon.awssdk.services.dynamodb.model.ConditionalCheckFailedException;
 import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
 
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -203,7 +207,14 @@ public class BookingEventHandler implements RequestHandler<SQSEvent, SQSBatchRes
     }
 
     /**
-     * Composite sort key: {@code <timestamp>#<bookingId>}.
+     * Fixed-width UTC instant: always exactly six fractional digits, always
+     * {@code Z}. See {@link #sortKey} for why the width is the point.
+     */
+    private static final DateTimeFormatter SORT_KEY_TIME =
+            DateTimeFormatter.ofPattern("uuuu-MM-dd'T'HH:mm:ss.SSSSSS'Z'").withZone(ZoneOffset.UTC);
+
+    /**
+     * Composite sort key: {@code <fixed-width timestamp>#<bookingId>}.
      *
      * <p>THIS IS A CORRECTNESS FIX, NOT A STYLE CHOICE. Using the bare timestamp
      * as the sort key makes the primary key {@code (flightNumber, timestamp)}, and
@@ -221,13 +232,42 @@ public class BookingEventHandler implements RequestHandler<SQSEvent, SQSBatchRes
      * from anything generated at consume time would differ on every retry and the
      * conditional write would never detect a duplicate at all.
      *
-     * <p>Sorting is unaffected — the timestamp is ISO-8601, which sorts
-     * lexicographically, and it is still the prefix. So
-     * {@code Query(flightNumber = "UA123")} still returns events in time order and
-     * a {@code begins_with(eventTime, "2026-09-15")} range condition still works.
+     * <p><b>The timestamp is re-formatted rather than used as sent, and this
+     * fixes a second bug that the previous version of this comment actively
+     * denied.</b> It claimed sorting was unaffected because "the timestamp is
+     * ISO-8601, which sorts lexicographically". ISO-8601 sorts lexicographically
+     * only at a fixed width, and {@code Instant.toString()} — which is what the
+     * producer sends — is not fixed width: it prints the shortest form that
+     * round-trips, so a whole second comes out as
+     * {@code 2026-09-22T10:00:00Z} with no fractional part at all, while the
+     * next microsecond comes out as {@code 2026-09-22T10:00:00.000001Z}. Compare
+     * those as strings and the nineteenth character is {@code Z} (0x5A) against
+     * {@code .} (0x2E), so the <em>later</em> instant sorts <em>first</em>. A
+     * {@code Query} on one flight therefore returned events out of order,
+     * exactly and only around whole seconds, which is the kind of bug that
+     * survives every test anyone thinks to write. Padding to six digits — the
+     * precision PostgreSQL stores and {@code Booking.createdAt} truncates to —
+     * makes every key the same length and the claim true.
+     *
+     * <p>Re-formatting here rather than trusting the producer is deliberate:
+     * this consumer owns its own key format. It stays stable across
+     * redeliveries because parsing and formatting are deterministic, so the
+     * same message always yields the same key.
+     *
+     * <p>{@code begins_with(eventTime, "2026-09-15")} still works, and
+     * {@code Query(flightNumber = "UA123")} now genuinely does return events in
+     * time order.
+     *
+     * @throws DateTimeParseException if the producer sent a timestamp that is
+     *         not an instant. Left to propagate: the caller reports the message
+     *         as a batch item failure and it ends up in the DLQ, which is the
+     *         right home for an event that breaks the wire contract. Silently
+     *         falling back to the raw string would put an unsortable key in the
+     *         table and call it a success.
      */
     private static String sortKey(BookingEvent booking) {
-        return booking.timestamp() + "#" + booking.bookingId();
+        Instant at = Instant.parse(booking.timestamp());
+        return SORT_KEY_TIME.format(at) + "#" + booking.bookingId();
     }
 
     /**

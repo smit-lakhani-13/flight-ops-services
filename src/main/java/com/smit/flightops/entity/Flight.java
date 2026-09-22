@@ -1,8 +1,11 @@
 package com.smit.flightops.entity;
 
 import com.smit.flightops.exception.FlightNotBookableException;
+import com.smit.flightops.exception.IllegalFlightTransitionException;
 import com.smit.flightops.exception.InsufficientSeatsException;
 import jakarta.persistence.*;
+import org.hibernate.annotations.Check;
+import org.hibernate.annotations.Checks;
 
 import java.time.Instant;
 import java.util.Objects;
@@ -14,6 +17,18 @@ import java.util.Objects;
 // cost paid twice for no read benefit. Same reasoning as Booking.java.
 @Table(name = "flights", indexes = {
     @Index(name = "idx_origin_dest", columnList = "origin,destination")
+})
+// The same four checks V2__invariants_and_fingerprint.sql adds to PostgreSQL,
+// declared here so the H2 schema Hibernate generates for the default profile
+// and the @DataJpaTest slices has them too. Without this the constraints would
+// exist only in the profile nobody develops against, and a test could pass on
+// H2 while violating the production schema. ddl-auto: validate does not compare
+// check constraints, so there is no drift risk in the other direction.
+@Checks({
+    @Check(name = "ck_flights_seat_floor", constraints = "available_seats >= 0"),
+    @Check(name = "ck_flights_seat_ceiling", constraints = "available_seats <= total_seats"),
+    @Check(name = "ck_flights_capacity", constraints = "total_seats > 0"),
+    @Check(name = "ck_flights_distinct_endpoints", constraints = "origin <> destination")
 })
 public class Flight {
 
@@ -87,20 +102,41 @@ public class Flight {
     }
 
     /**
-     * Any status to any status. KNOWN LIMITATION, and a conscious one: a real
-     * system would enforce a transition graph here (ARRIVED is terminal;
-     * DEPARTED cannot go back to SCHEDULED). That is a state machine, and the
-     * useful half of it — "can this flight be booked?" — is already covered by
-     * {@link FlightStatus#isBookable()}, which is checked on the one path where
-     * getting it wrong loses money.
+     * Applies a status change, if the lifecycle allows it.
+     *
+     * <p>This method used to accept any status from any status, and its Javadoc
+     * called the missing transition graph a conscious limitation on the grounds
+     * that {@link FlightStatus#isBookable()} already covered the case where
+     * getting it wrong loses money. That was wrong, and the hole was one PATCH
+     * wide: {@code CANCELLED -> SCHEDULED} made {@code isBookable()} start
+     * answering true again, putting the seats of a cancelled flight back on
+     * sale. The guard against overselling a cancelled flight was being enforced
+     * by a field that any caller could set to anything.
+     *
+     * <p>Enforced on the entity rather than in {@code FlightService} for the
+     * reason the class comment gives: a second caller would forget.
+     *
+     * @throws IllegalFlightTransitionException if the flight cannot reach
+     *         {@code newStatus} from where it is now
      */
     public void updateStatus(FlightStatus newStatus) {
-        this.status = Objects.requireNonNull(newStatus, "status must not be null");
+        Objects.requireNonNull(newStatus, "status must not be null");
+        if (!status.canTransitionTo(newStatus)) {
+            throw new IllegalFlightTransitionException(flightNumber, status, newStatus);
+        }
+        this.status = newStatus;
     }
 
-    /** Soft cancel: bookings still reference this row, so it is never deleted. */
+    /**
+     * Soft cancel: bookings still reference this row, so it is never deleted.
+     *
+     * <p>Goes through {@link #updateStatus} rather than assigning the field, so
+     * cancelling an already-arrived flight is refused here too. Cancelling an
+     * already-cancelled flight is allowed and does nothing, which keeps {@code
+     * DELETE /api/v1/flights/{n}} safe to retry.
+     */
     public void cancel() {
-        this.status = FlightStatus.CANCELLED;
+        updateStatus(FlightStatus.CANCELLED);
     }
 
     public Long getId() { return id; }

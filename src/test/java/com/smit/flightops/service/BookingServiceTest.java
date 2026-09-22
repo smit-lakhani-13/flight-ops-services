@@ -22,6 +22,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -55,13 +56,13 @@ class BookingServiceTest {
     @DisplayName("no existing row -> delegates straight to the writer")
     void firstTimeBookingDelegatesToTheWriter() {
         when(bookingRepository.findByIdempotencyKey("demo-1")).thenReturn(Optional.empty());
-        BookingDto written = new BookingDto(1L, "UA123", "Smit Lakhani", 3, "demo-1", Instant.now());
+        BookingDto written = new BookingDto(1L, "UA123", "Smit Lakhani", 3, "demo-1", Instant.now(), null);
         when(bookingWriter.insertNewBooking(any())).thenReturn(written);
 
         BookingDto dto = bookingService.book(request(3, "demo-1"));
 
         assertThat(dto).isEqualTo(written);
-        verify(bookingWriter, never()).recoverReplay(any());
+        verify(bookingWriter, never()).recoverReplay(any(), any());
     }
 
     @Test
@@ -69,7 +70,8 @@ class BookingServiceTest {
     void replayIsServedFromTheExistingBooking() {
         Flight flight = flight();
         flight.reserveSeats(3);
-        Booking original = new Booking(flight, "Smit Lakhani", 3, "demo-1");
+        Booking original = new Booking(flight, "Smit Lakhani", 3, "demo-1",
+                                       request(3, "demo-1").fingerprint());
         when(bookingRepository.findByIdempotencyKey("demo-1")).thenReturn(Optional.of(original));
 
         BookingDto dto = bookingService.book(request(3, "demo-1"));
@@ -83,13 +85,13 @@ class BookingServiceTest {
     void racingTheWriterRecoversTheWinner() {
         when(bookingRepository.findByIdempotencyKey("raced-key")).thenReturn(Optional.empty());
         when(bookingWriter.insertNewBooking(any())).thenThrow(new DataIntegrityViolationException("dup"));
-        BookingDto winner = new BookingDto(2L, "UA123", "Smit Lakhani", 3, "raced-key", Instant.now());
-        when(bookingWriter.recoverReplay("raced-key")).thenReturn(winner);
+        BookingDto winner = new BookingDto(2L, "UA123", "Smit Lakhani", 3, "raced-key", Instant.now(), null);
+        when(bookingWriter.recoverReplay(eq("raced-key"), any())).thenReturn(winner);
 
         BookingDto dto = bookingService.book(request(3, "raced-key"));
 
         assertThat(dto).isEqualTo(winner);
-        verify(bookingWriter).recoverReplay("raced-key");
+        verify(bookingWriter).recoverReplay(eq("raced-key"), any());
     }
 
     @Test
@@ -102,13 +104,13 @@ class BookingServiceTest {
                 new BookingRequest("xx999", "Smit Lakhani", 1, "demo-4")))
                 .isInstanceOf(FlightNotFoundException.class);
 
-        verify(bookingWriter, never()).recoverReplay(any());
+        verify(bookingWriter, never()).recoverReplay(any(), any());
     }
 
     @Test
     @DisplayName("findById maps the entity to a DTO")
     void findByIdReturnsTheBooking() {
-        Booking booking = new Booking(flight(), "Smit Lakhani", 3, "demo-6");
+        Booking booking = new Booking(flight(), "Smit Lakhani", 3, "demo-6", null);
         when(bookingRepository.findById(1L)).thenReturn(Optional.of(booking));
 
         BookingDto dto = bookingService.findById(1L);

@@ -2,15 +2,18 @@ package com.smit.flightops.service;
 
 import com.smit.flightops.dto.BookingDto;
 import com.smit.flightops.dto.BookingRequest;
+import com.smit.flightops.entity.Booking;
 import com.smit.flightops.exception.BookingNotFoundException;
+import com.smit.flightops.exception.IdempotencyKeyConflictException;
 import com.smit.flightops.repository.BookingRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.List;
 import java.util.Locale;
 
 /**
@@ -49,14 +52,33 @@ public class BookingService {
     }
 
     public BookingDto book(BookingRequest request) {
-        // 1. Replay after the original committed? Return it. Same key, same
-        //    answer, seats debited exactly once — this is what makes POST
-        //    safe to retry once the first attempt is done and visible.
+        String fingerprint = request.fingerprint();
+
+        // 1. Replay after the original committed? Return it — but only if it is
+        //    genuinely the same request. Same key, same answer, seats debited
+        //    exactly once is what makes POST safe to retry once the first
+        //    attempt is done and visible.
+        //
+        //    The fingerprint comparison is the part that used to be missing,
+        //    and its absence was the worst bug in this class. A client that
+        //    reused one key for a different passenger, flight or seat count got
+        //    201 and the FIRST booking's details back: no seats debited for the
+        //    booking it thought it had just made, no error to tell it so, and a
+        //    confirmation naming somebody else. The unique constraint cannot
+        //    catch this — it is doing exactly its job, one booking per key. The
+        //    key was never the whole of the request, and now it is not treated
+        //    as though it were.
         var existing = bookingRepository.findByIdempotencyKey(request.idempotencyKey());
         if (existing.isPresent()) {
+            Booking booking = existing.get();
+            if (!booking.matchesRequest(fingerprint)) {
+                log.warn("Idempotency key {} reused for a different booking (existing booking {})",
+                         request.idempotencyKey(), booking.getId());
+                throw new IdempotencyKeyConflictException(request.idempotencyKey());
+            }
             log.info("Idempotent replay of key {} -> booking {}",
-                     request.idempotencyKey(), existing.get().getId());
-            return BookingDto.from(existing.get());
+                     request.idempotencyKey(), booking.getId());
+            return BookingDto.from(booking);
         }
 
         // 2. Not visible yet — attempt the insert. If a concurrent request
@@ -76,8 +98,26 @@ public class BookingService {
             //    a request that, from the client's point of view, succeeded.
             log.info("Lost an idempotency-key race on {} — recovering the winner's booking",
                      request.idempotencyKey());
-            return bookingWriter.recoverReplay(request.idempotencyKey());
+            return bookingWriter.recoverReplay(request.idempotencyKey(), fingerprint);
         }
+    }
+
+    /**
+     * Cancels a booking and returns the cancelled record.
+     *
+     * <p>A thin delegate on purpose. The transaction, the lock order and the
+     * idempotency of the seat credit all live in
+     * {@link BookingWriter#cancelBooking}, next to the insert that takes the
+     * same locks — see that method's Javadoc. Putting the {@code @Transactional}
+     * here instead would separate the two paths that have to agree about lock
+     * ordering, which is how they come to disagree.
+     *
+     * <p>Returns the booking rather than void so the caller can see
+     * {@code cancelledAt} — and so a retried cancellation has something
+     * truthful to return instead of a second 204 that implies it did something.
+     */
+    public BookingDto cancel(Long bookingId) {
+        return bookingWriter.cancelBooking(bookingId);
     }
 
     /**
@@ -101,10 +141,21 @@ public class BookingService {
                 .orElseThrow(() -> new BookingNotFoundException(bookingId));
     }
 
-    public List<BookingDto> findByFlightNumber(String flightNumber) {
-        return bookingRepository.findByFlightNumber(flightNumber.trim().toUpperCase(Locale.ROOT))
-                .stream()
-                .map(BookingDto::from)
-                .toList();
+    /**
+     * Bookings on one flight, paged.
+     *
+     * <p>This used to return {@code List<BookingDto>} with no limit. The
+     * defence was that a flight has at most 850 seats and seats cap at 9 per
+     * booking, so the list is bounded — which was true of the *active*
+     * bookings and stopped being true the moment cancellation arrived in V4.
+     * Cancelled bookings keep their rows, so a popular route rebooked over and
+     * over has no ceiling at all. An unbounded list endpoint whose bound was an
+     * argument rather than a {@code LIMIT} is a slow leak: correct on the day
+     * it ships, and nobody re-checks the argument when the schema changes.
+     */
+    public Page<BookingDto> findByFlightNumber(String flightNumber, Pageable pageable) {
+        return bookingRepository
+                .findByFlightNumber(flightNumber.trim().toUpperCase(Locale.ROOT), pageable)
+                .map(BookingDto::from);
     }
 }

@@ -6,6 +6,7 @@ import org.hibernate.Hibernate;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Pageable;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jpa.test.autoconfigure.TestEntityManager;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -39,7 +40,7 @@ class BookingRepositoryTest {
     @Test
     void findByIdempotencyKeyReturnsTheBooking() {
         Flight flight = flight("UA123");
-        bookingRepository.saveAndFlush(new Booking(flight, "Smit Lakhani", 3, "demo-1"));
+        bookingRepository.saveAndFlush(new Booking(flight, "Smit Lakhani", 3, "demo-1", null));
 
         assertThat(bookingRepository.findByIdempotencyKey("demo-1"))
                 .get()
@@ -52,7 +53,7 @@ class BookingRepositoryTest {
     @DisplayName("REGRESSION: JOIN FETCH on findByIdempotencyKey too — the caller reads it after BookingService.book's transaction already closed")
     void findByIdempotencyKeyAlsoJoinFetchesTheFlight() {
         Flight flight = flight("UA123");
-        bookingRepository.saveAndFlush(new Booking(flight, "Smit Lakhani", 3, "demo-1"));
+        bookingRepository.saveAndFlush(new Booking(flight, "Smit Lakhani", 3, "demo-1", null));
         entityManager.clear();
 
         Booking found = bookingRepository.findByIdempotencyKey("demo-1").orElseThrow();
@@ -68,10 +69,10 @@ class BookingRepositoryTest {
     @DisplayName("the unique index — not the service check — is what makes a replay impossible")
     void duplicateIdempotencyKeyIsRejectedByTheDatabase() {
         Flight flight = flight("UA123");
-        bookingRepository.saveAndFlush(new Booking(flight, "Smit Lakhani", 3, "demo-1"));
+        bookingRepository.saveAndFlush(new Booking(flight, "Smit Lakhani", 3, "demo-1", null));
 
         assertThatThrownBy(() ->
-                bookingRepository.saveAndFlush(new Booking(flight, "Someone Else", 1, "demo-1")))
+                bookingRepository.saveAndFlush(new Booking(flight, "Someone Else", 1, "demo-1", null)))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 
@@ -79,12 +80,13 @@ class BookingRepositoryTest {
     @DisplayName("JOIN FETCH loads the flight eagerly — no N+1 when listing bookings")
     void joinFetchInitialisesTheFlight() {
         Flight flight = flight("UA123");
-        bookingRepository.saveAndFlush(new Booking(flight, "Smit Lakhani", 3, "demo-1"));
-        bookingRepository.saveAndFlush(new Booking(flight, "Someone Else", 1, "demo-2"));
+        bookingRepository.saveAndFlush(new Booking(flight, "Smit Lakhani", 3, "demo-1", null));
+        bookingRepository.saveAndFlush(new Booking(flight, "Someone Else", 1, "demo-2", null));
         // Detach everything, so the flight can only be present if the query fetched it.
         entityManager.clear();
 
-        List<Booking> bookings = bookingRepository.findByFlightNumber("UA123");
+        List<Booking> bookings = bookingRepository.findByFlightNumber("UA123", Pageable.unpaged())
+                .getContent();
 
         assertThat(bookings).hasSize(2);
         assertThat(bookings)
@@ -98,10 +100,10 @@ class BookingRepositoryTest {
 
     @Test
     void findByFlightNumberIgnoresOtherFlights() {
-        bookingRepository.saveAndFlush(new Booking(flight("UA123"), "Smit Lakhani", 3, "demo-1"));
-        bookingRepository.saveAndFlush(new Booking(flight("UA456"), "Someone Else", 1, "demo-2"));
+        bookingRepository.saveAndFlush(new Booking(flight("UA123"), "Smit Lakhani", 3, "demo-1", null));
+        bookingRepository.saveAndFlush(new Booking(flight("UA456"), "Someone Else", 1, "demo-2", null));
 
-        assertThat(bookingRepository.findByFlightNumber("UA123")).hasSize(1);
-        assertThat(bookingRepository.findByFlightNumber("XX999")).isEmpty();
+        assertThat(bookingRepository.findByFlightNumber("UA123", Pageable.unpaged())).hasSize(1);
+        assertThat(bookingRepository.findByFlightNumber("XX999", Pageable.unpaged())).isEmpty();
     }
 }

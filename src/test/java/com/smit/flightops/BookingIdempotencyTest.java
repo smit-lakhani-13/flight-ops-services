@@ -4,6 +4,7 @@ import com.smit.flightops.dto.BookingDto;
 import com.smit.flightops.dto.BookingRequest;
 import com.smit.flightops.dto.CreateFlightRequest;
 import com.smit.flightops.entity.Flight;
+import com.smit.flightops.exception.IdempotencyKeyConflictException;
 import com.smit.flightops.exception.InsufficientSeatsException;
 import com.smit.flightops.repository.BookingRepository;
 import com.smit.flightops.repository.FlightRepository;
@@ -18,11 +19,13 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestMethodOrder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.data.domain.Pageable;
 
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -98,7 +101,7 @@ class BookingIdempotencyTest {
         }
 
         assertThat(availableSeats("UA123")).as("no seats lost to retries").isEqualTo(177);
-        assertThat(bookingRepository.findByFlightNumber("UA123")).hasSize(1);
+        assertThat(bookingRepository.findByFlightNumber("UA123", Pageable.unpaged())).hasSize(1);
     }
 
     @Test
@@ -111,7 +114,7 @@ class BookingIdempotencyTest {
         bookingService.book(new BookingRequest("UA456", "Passenger B", 2, "key-b"));
 
         assertThat(availableSeats("UA456")).isEqualTo(before - 4);
-        assertThat(bookingRepository.findByFlightNumber("UA456")).hasSize(2);
+        assertThat(bookingRepository.findByFlightNumber("UA456", Pageable.unpaged())).hasSize(2);
     }
 
     @Test
@@ -128,7 +131,7 @@ class BookingIdempotencyTest {
 
         assertThat(availableSeats("UA001")).isEqualTo(2);
         assertThat(bookingRepository.findByIdempotencyKey("oversell-1")).isEmpty();
-        assertThat(bookingRepository.findByFlightNumber("UA001")).isEmpty();
+        assertThat(bookingRepository.findByFlightNumber("UA001", Pageable.unpaged())).isEmpty();
     }
 
     @Test
@@ -145,17 +148,33 @@ class BookingIdempotencyTest {
 
     /**
      * REGRESSION for the idempotency-race fix. Ten threads hit {@code book()}
-     * with the SAME idempotency key at the same time — a genuine race, not a
-     * sequential replay, so {@code findByIdempotencyKey} cannot short-circuit
-     * any of them. Before the fix, the nine losers got 409 {@code
-     * DUPLICATE_REQUEST} from {@code GlobalExceptionHandler}; this pins that
-     * every caller now gets the SAME booking back instead, with seats debited
-     * exactly once, which is the contract {@code BookingController.book}'s
-     * Javadoc actually claims.
+     * with the same idempotency key <em>and the same request</em> at the same
+     * time — a genuine race, not a sequential replay, so {@code
+     * findByIdempotencyKey} cannot short-circuit any of them. Before the fix,
+     * the nine losers got 409 {@code DUPLICATE_REQUEST} from {@code
+     * GlobalExceptionHandler}; this pins that every caller now gets the SAME
+     * booking back instead, with seats debited exactly once, which is the
+     * contract {@code BookingController.book}'s Javadoc actually claims.
+     *
+     * <p><b>"And the same request" is new, and it is the whole reason this test
+     * changed.</b> It used to send {@code "Racer " + i} as the passenger name —
+     * ten different bookings sharing one key — and assert that all ten callers
+     * got the same booking. That assertion was the bug written down as the
+     * contract: nine of those callers asked to book a seat for a different
+     * person, were told 201, and got somebody else's reservation. The test
+     * passed, and what it proved was that the service did the wrong thing
+     * consistently. Adding the request fingerprint turned it red immediately,
+     * which is the most useful thing a test can do on the day the behaviour it
+     * pinned turns out to be wrong.
+     *
+     * <p>A retry is the same request arriving twice, so this test now sends the
+     * same request twice — ten times, concurrently. The other half of the old
+     * test's scenario is a real case too, and it is
+     * {@link #racingCallersWithDifferentPayloadsOnOneKeyGetConflicts} below.
      */
     @Test
     @Order(7)
-    @DisplayName("REGRESSION: 10 concurrent callers, same key -> one booking, ALL ten get it back, zero errors")
+    @DisplayName("REGRESSION: 10 concurrent callers, same key, same request -> one booking, ALL ten get it back, zero errors")
     void racingTenCallersOnTheSameKeyAllGetTheSameBooking() throws Exception {
         flightService.create(new CreateFlightRequest("ua003", "ewr", "ord", 50,
                 Instant.now().plus(Duration.ofHours(6))));
@@ -165,7 +184,7 @@ class BookingIdempotencyTest {
         try {
             List<Callable<BookingDto>> attempts = IntStream.range(0, callers)
                     .<Callable<BookingDto>>mapToObj(i -> () ->
-                            bookingService.book(new BookingRequest("ua003", "Racer " + i, 1, "race-1")))
+                            bookingService.book(new BookingRequest("ua003", "Smit Lakhani", 1, "race-1")))
                     .toList();
 
             List<Future<BookingDto>> futures = pool.invokeAll(attempts);
@@ -184,7 +203,71 @@ class BookingIdempotencyTest {
             assertThat(availableSeats("UA003"))
                     .as("one seat debited, not ten")
                     .isEqualTo(49);
-            assertThat(bookingRepository.findByFlightNumber("UA003")).hasSize(1);
+            assertThat(bookingRepository.findByFlightNumber("UA003", Pageable.unpaged())).hasSize(1);
+        } finally {
+            pool.shutdown();
+            pool.awaitTermination(10, TimeUnit.SECONDS);
+        }
+    }
+
+    /**
+     * The other half of the race, and the one the fingerprint exists for: ten
+     * callers share an idempotency key but ask for ten different bookings.
+     *
+     * <p>Exactly one of them should win and get 201. The other nine are
+     * reusing a key for a different request, so each gets {@code
+     * IdempotencyKeyConflictException} — 409 {@code IDEMPOTENCY_KEY_REUSED}
+     * over HTTP. Crucially, only one seat is debited: the losers must leave no
+     * trace, exactly as the oversell losers do.
+     *
+     * <p>This covers the fingerprint check inside {@code
+     * BookingWriter.recoverReplay} rather than the one in {@code
+     * BookingService.book}. The distinction matters and is easy to get wrong:
+     * the check in {@code book} only sees committed rows, so under a true race
+     * none of the ten sees any of the others there and all ten proceed to the
+     * insert. Nine lose on the unique constraint and land in {@code
+     * recoverReplay}. Had the fingerprint been compared only in {@code book},
+     * this test would still return 201 nine times with the winner's booking —
+     * the bug fixed for sequential callers and left in place for concurrent
+     * ones, which is the version of the fix that looks complete and is not.
+     */
+    @Test
+    @Order(8)
+    @DisplayName("10 concurrent callers, same key, DIFFERENT requests -> one 201 and nine conflicts, one seat debited")
+    void racingCallersWithDifferentPayloadsOnOneKeyGetConflicts() throws Exception {
+        flightService.create(new CreateFlightRequest("ua004", "ewr", "sea", 50,
+                Instant.now().plus(Duration.ofHours(6))));
+
+        int callers = 10;
+        ExecutorService pool = Executors.newFixedThreadPool(callers);
+        try {
+            List<Callable<BookingDto>> attempts = IntStream.range(0, callers)
+                    .<Callable<BookingDto>>mapToObj(i -> () ->
+                            bookingService.book(new BookingRequest("ua004", "Racer " + i, 1, "race-2")))
+                    .toList();
+
+            List<Future<BookingDto>> futures = pool.invokeAll(attempts);
+
+            int booked = 0;
+            int conflicts = 0;
+            for (Future<BookingDto> future : futures) {
+                try {
+                    future.get();
+                    booked++;
+                } catch (ExecutionException e) {
+                    assertThat(e.getCause())
+                            .as("the only acceptable failure here is a key-reuse conflict")
+                            .isInstanceOf(IdempotencyKeyConflictException.class);
+                    conflicts++;
+                }
+            }
+
+            assertThat(booked).as("exactly one caller books").isEqualTo(1);
+            assertThat(conflicts).as("the other nine are told the key is taken").isEqualTo(callers - 1);
+            assertThat(availableSeats("UA004"))
+                    .as("one seat debited, not ten - the losers leave no trace")
+                    .isEqualTo(49);
+            assertThat(bookingRepository.findByFlightNumber("UA004", Pageable.unpaged())).hasSize(1);
         } finally {
             pool.shutdown();
             pool.awaitTermination(10, TimeUnit.SECONDS);

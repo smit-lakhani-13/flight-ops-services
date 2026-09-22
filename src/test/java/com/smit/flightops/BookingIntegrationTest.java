@@ -11,6 +11,7 @@ import com.smit.flightops.service.FlightService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.Pageable;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -150,7 +151,8 @@ class BookingIntegrationTest {
 
         assertThat(booked).as("the row lock lets exactly the seat count through").isEqualTo(SEATS_ON_SALE);
         assertThat(availableSeats(flightNumber)).isZero();
-        assertThat(bookingRepository.findByFlightNumber(flightNumber)).hasSize(SEATS_ON_SALE);
+        assertThat(bookingRepository.findByFlightNumber(flightNumber, Pageable.unpaged()))
+                .hasSize(SEATS_ON_SALE);
     }
 
     @Test
@@ -176,7 +178,7 @@ class BookingIntegrationTest {
 
         assertThat(booked).as("no caller should see an exception on a raced replay")
                 .isEqualTo(CONTENDERS);
-        assertThat(bookingRepository.findByFlightNumber(flightNumber)).hasSize(1);
+        assertThat(bookingRepository.findByFlightNumber(flightNumber, Pageable.unpaged())).hasSize(1);
         assertThat(availableSeats(flightNumber)).isEqualTo(48);
     }
 

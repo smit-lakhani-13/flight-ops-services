@@ -2,6 +2,7 @@ package com.smit.flightops.entity;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * Lifecycle of a flight, and the one question the booking path needs answered
@@ -61,5 +62,56 @@ public enum FlightStatus {
      */
     public static List<FlightStatus> bookableStatuses() {
         return Arrays.stream(values()).filter(FlightStatus::isBookable).toList();
+    }
+
+    /**
+     * Whether this status is allowed to become {@code next}.
+     *
+     * <p>{@code Flight.updateStatus} used to accept any status from any status,
+     * which meant {@code PATCH /api/v1/flights/UA123 {"status":"SCHEDULED"}}
+     * would un-cancel a cancelled flight and put its seats back on sale, and
+     * an arrived flight could be sent back to BOARDING. Neither is a thing that
+     * happens to an aeroplane. The old Javadoc called the missing graph a
+     * "known limitation, and a conscious one"; this is the graph.
+     *
+     * <p>Two rules are worth stating because they are judgement calls rather
+     * than facts about aviation:
+     *
+     * <ul>
+     *   <li><b>A status may always transition to itself.</b> PATCH is not
+     *       required to be idempotent, but a client that re-sends DELAYED after
+     *       a timeout should get 200 and no change, not 409. Rejecting the
+     *       no-op would make the endpoint unsafe to retry, which is the same
+     *       mistake the booking path exists to avoid.</li>
+     *   <li><b>ARRIVED and CANCELLED are terminal.</b> Correcting a status
+     *       recorded in error is a data-repair job with an audit trail, not a
+     *       PATCH. Leaving the door open so that operations can fix a typo is
+     *       how a cancelled flight ends up selling seats.</li>
+     * </ul>
+     *
+     * <p>Exhaustive switch, no {@code default}, for the same reason as
+     * {@link #isBookable()}: a new constant must not inherit a transition
+     * policy nobody chose.
+     */
+    public boolean canTransitionTo(FlightStatus next) {
+        Objects.requireNonNull(next, "next must not be null");
+        if (next == this) {
+            return true;
+        }
+        return switch (this) {
+            // No BOARDING step is required first: flights depart without one
+            // ever being recorded, and refusing DEPARTED here would make the
+            // system disagree with the aircraft.
+            case SCHEDULED -> next == BOARDING || next == DEPARTED
+                           || next == DELAYED  || next == CANCELLED;
+            case DELAYED   -> next == BOARDING || next == DEPARTED
+                           || next == CANCELLED;
+            case BOARDING  -> next == DEPARTED || next == DELAYED
+                           || next == CANCELLED;
+            // In the air. It lands, or the record is wrong. A diversion still
+            // ends in ARRIVED, at a different airport.
+            case DEPARTED  -> next == ARRIVED;
+            case ARRIVED, CANCELLED -> false;
+        };
     }
 }

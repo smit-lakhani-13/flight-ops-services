@@ -14,6 +14,12 @@ spring:
       maximum-pool-size: 10
       minimum-idle: 2
       connection-timeout: 30000
+      # H2's spelling of the postgres profile's lock_timeout, in milliseconds.
+      # Same reasoning, same number; see that profile for why the bound exists
+      # at all. Set explicitly rather than left to H2's default so the local
+      # run and the test slices behave the way production does instead of
+      # however this version of H2 happens to be configured.
+      connection-init-sql: SET LOCK_TIMEOUT 3000
 
   jpa:
     hibernate:
@@ -23,8 +29,23 @@ spring:
     open-in-view: false
     properties:
       hibernate:
-        jdbc:
-          batch_size: 50
+        # No jdbc.batch_size here, and its absence is deliberate. It used to be
+        # 50, sitting next to two entities that both use
+        # GenerationType.IDENTITY - and IDENTITY disables JDBC insert batching
+        # outright, because Hibernate has to execute each INSERT on its own to
+        # read the generated key back before it can return a managed entity.
+        # So the setting did nothing at all, while reading as though inserts
+        # were batched. A configuration line that is quietly inert is worse
+        # than a missing one: it answers the question "did anyone think about
+        # this?" with a yes that is not true.
+        #
+        # Getting batching would mean GenerationType.SEQUENCE with a pooled
+        # optimiser, which is the right call for a write-heavy table on
+        # PostgreSQL. It is not the right call here: this service inserts one
+        # booking per request, so there is nothing to batch, and the only
+        # multi-row insert in the codebase is the three flights DataSeeder
+        # writes at startup. Sequences would also mean a schema change and a
+        # migration for a benefit of zero.
         order_inserts: true
         format_sql: true
 
@@ -70,6 +91,31 @@ management:
       probes:
         enabled: true
       show-details: when-authorized
+      group:
+        # The db indicator goes in readiness and NOT in liveness, and that
+        # split is the whole point of having two probes.
+        #
+        # Liveness answers "should Kubernetes kill this pod?". A database
+        # outage is not a reason to: restarting the pod does not fix the
+        # database, and it throws away a warm JVM, a JIT-compiled code cache
+        # and a connection pool. Worse, every replica fails the probe at the
+        # same moment, so the whole deployment restarts in a loop while the
+        # database is down and then stampedes it with cold pools the instant
+        # it comes back. Liveness therefore stays on livenessState alone: the
+        # application context is running, or it is not.
+        #
+        # Readiness answers "should this pod receive traffic?". With no
+        # database it cannot serve a booking, so no - take it out of the
+        # Service endpoints, leave it running, and put it back when the
+        # database returns. That is a load-balancer decision, not a restart.
+        #
+        # Before this, db was in neither group. /actuator/health showed it, so
+        # it looked configured, but both probes ignored it: a pod with a dead
+        # database reported ready and kept taking bookings it could not write.
+        liveness:
+          include: livenessState
+        readiness:
+          include: readinessState,db
 
 app:
   events:
@@ -92,7 +138,7 @@ logging:
 # postgres -- real database on localhost, Flyway owns the schema.
 #   docker run --name pg -e POSTGRES_PASSWORD=pass -e POSTGRES_DB=flightops \
 #     -p 5432:5432 -d postgres:16-alpine
-#   mvn spring-boot:run -Dspring-boot.run.profiles=postgres
+#   DB_PASSWORD=pass ./mvnw spring-boot:run -Dspring-boot.run.profiles=postgres
 # -----------------------------------------------------------------------------
 spring:
   config:
@@ -101,7 +147,47 @@ spring:
   datasource:
     url: ${DB_URL:jdbc:postgresql://localhost:5432/flightops}
     username: ${DB_USER:postgres}
-    password: ${DB_PASSWORD:pass}
+    # No default for the password, which is why the command above sets it.
+    # This line used to read ${DB_PASSWORD:pass}. It was only ever a localhost
+    # convenience, but a literal password in a committed file is the thing
+    # every secret scanner flags and every reviewer stops reading at, and the
+    # convenience it bought was one environment variable on one command. A
+    # missing value now fails at startup with the property name in the message,
+    # which is a better outcome than silently trying "pass" against a real
+    # database and getting an authentication error nobody can place.
+    password: ${DB_PASSWORD}
+    hikari:
+      # Bounds how long a statement will wait for a row lock before giving up.
+      #
+      # Without it the wait is unlimited. BookingWriter.insertNewBooking takes
+      # SELECT ... FOR UPDATE on the flight row, so concurrent bookings for the
+      # same flight queue behind each other by design - that queueing IS the
+      # oversell guarantee. The failure mode is the queue never draining: one
+      # transaction stalls while holding the lock and every request for that
+      # flight blocks forever, each holding a virtual thread and one of ten
+      # Hikari connections. With virtual threads enabled there is no thread
+      # pool to run out of first, so the pool is the only bound, and ten stuck
+      # bookings take down every read as well. An unlimited lock wait plus a
+      # bounded connection pool is how a single slow row becomes a total outage.
+      #
+      # 3s rather than NOWAIT: legitimate contention for the last seats on a
+      # busy flight is normal and resolves in milliseconds, so failing
+      # immediately would reject requests that were about to succeed. Three
+      # seconds is far longer than a healthy lock is ever held and far shorter
+      # than a client's patience.
+      #
+      # connection-init-sql, not a JPA query hint: PostgreSQL has no FOR UPDATE
+      # WAIT n syntax - only NOWAIT and SKIP LOCKED - so jakarta.persistence.
+      # lock.timeout with a positive value has nowhere to go and Hibernate
+      # discards it. A session-level lock_timeout is the mechanism PostgreSQL
+      # actually provides, and setting it as connection init SQL applies it once
+      # per pooled connection rather than on every query.
+      #
+      # PostgreSQL raises SQLSTATE 55P03, which Hibernate's PostgreSQLDialect
+      # converts to a LockTimeoutException and Spring translates to
+      # PessimisticLockingFailureException - handled as 503 with Retry-After in
+      # GlobalExceptionHandler, because a busy row is a "try again", not a bug.
+      connection-init-sql: SET lock_timeout = '3s'
   jpa:
     hibernate:
       # Flyway creates the schema; Hibernate verifies the entities still match
@@ -126,6 +212,13 @@ spring:
     url: ${DB_URL}
     username: ${DB_USER}
     password: ${DB_PASSWORD}
+    hikari:
+      # Same bound as the postgres profile, which is where the reasoning is
+      # written out. Repeated rather than inherited because Spring's profile
+      # merging would not bring it across: the postgres and prod documents are
+      # siblings, not parent and child, so prod would silently have had no lock
+      # timeout at all - the one environment where it matters.
+      connection-init-sql: SET lock_timeout = '3s'
   jpa:
     hibernate:
       ddl-auto: validate
