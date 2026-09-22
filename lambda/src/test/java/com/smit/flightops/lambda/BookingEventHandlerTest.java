@@ -52,16 +52,14 @@ class BookingEventHandlerTest {
 
     @BeforeEach
     void setUp() {
-        // The package-private constructor. Deliberately never touches the Holder
-        // class, so DynamoDbClient.create() is not called and these tests need no
-        // AWS region, credentials or network.
+        // The package-private constructor never loads Holder, so no AWS region,
+        // credentials or network are needed.
         handler = new BookingEventHandler(dynamoDb, TABLE);
     }
 
     /**
-     * Built per-test rather than in {@code @BeforeEach} because
-     * {@code MockitoExtension} uses strict stubs: a test that never reaches
-     * {@code getLogger()} would fail with UnnecessaryStubbingException.
+     * Built per test, not in {@code @BeforeEach}: with strict stubs, a test that
+     * never reaches {@code getLogger()} would fail with UnnecessaryStubbingException.
      */
     private static Context contextWithLogger() {
         Context context = mock(Context.class);
@@ -69,11 +67,7 @@ class BookingEventHandlerTest {
         return context;
     }
 
-    /**
-     * The same context, but with a logger the test keeps hold of. The two trace
-     * tests below are about the log line itself, which is the only place the
-     * producer's trace id surfaces in this function.
-     */
+    /** For the tests that assert on the log line itself. */
     private static Context contextLoggingTo(LambdaLogger logger) {
         Context context = mock(Context.class);
         when(context.getLogger()).thenReturn(logger);
@@ -106,6 +100,18 @@ class BookingEventHandlerTest {
                """.formatted(bookingId, flightNumber, seats, timestamp);
     }
 
+    /** A body whose seats value is raw JSON, for the shapes {@link #body} cannot express. */
+    private static String bodyWithSeats(String bookingId, String seatsJson) {
+        return body(bookingId, "UA1", 1, "2026-09-15T09:41:12.481923Z")
+                .replace("\"seats\":1,", "\"seats\":" + seatsJson + ",");
+    }
+
+    private static List<String> failedIds(SQSBatchResponse response) {
+        return response.getBatchItemFailures().stream()
+                .map(SQSBatchResponse.BatchItemFailure::getItemIdentifier)
+                .toList();
+    }
+
     // ------------------------------------------------------------------
     // Happy path, against the real payload shape Lambda delivers
     // ------------------------------------------------------------------
@@ -113,9 +119,8 @@ class BookingEventHandlerTest {
     @Test
     @DisplayName("writes one item per message and reports no failures")
     void writesOneItemPerMessage() {
-        // Loaded from events/sqs.json — the same file `sam local invoke -e` uses,
-        // deserialised by Lambda's own serializer rather than a hand-built object,
-        // so a change to the real SQS envelope shape would surface here.
+        // events/sqs.json is the file `sam local invoke -e` uses, loaded by
+        // Lambda's own serialiser, so a change to the SQS envelope shows here.
         SQSEvent event = EventLoader.loadSQSEvent("sqs.json");
 
         SQSBatchResponse response = handler.handleRequest(event, contextWithLogger());
@@ -142,7 +147,7 @@ class BookingEventHandlerTest {
         assertThat(request.item().get("bookingId").s()).isEqualTo("1001");
         assertThat(request.item().get("bookingTime").s()).isEqualTo("2026-09-15T09:41:12.481923Z");
         assertThat(request.item().get("eventType").s()).isEqualTo("BOOKING_CREATED");
-        // N, not S — numeric type, string wire format.
+        // N, not S: numeric type, string wire format.
         assertThat(request.item().get("seats").n()).isEqualTo("2");
         assertThat(request.item().get("seats").s()).isNull();
     }
@@ -157,25 +162,20 @@ class BookingEventHandlerTest {
         verify(dynamoDb).putItem(putItem.capture());
         assertThat(putItem.getValue().item().get("eventTime").s())
                 .isEqualTo("2026-09-15T09:41:12.481923Z#1001")
-                // Still ISO-8601-prefixed, which is what keeps range queries and
-                // begins_with() working on the sort key.
+                // The ISO-8601 prefix keeps range queries and begins_with() working.
                 .startsWith("2026-09-15T09:41:12.481923Z");
     }
 
     // ------------------------------------------------------------------
-    // The bug this handler deviates from the spec to fix
+    // The composite sort key
     // ------------------------------------------------------------------
 
     @Test
     @DisplayName("REGRESSION: two bookings on one flight in the same instant both get written")
     void sameInstantSameFlightDoesNotCollide() {
-        // events/sqs-same-instant.json: bookings 2001 and 2002, both on UA2402,
-        // both stamped 2026-09-15T09:41:12.481923Z.
-        //
-        // With the bare timestamp as the sort key these two share a primary key.
-        // The second putItem's attribute_not_exists condition then fails, the
-        // handler logs "Duplicate ignored", SQS deletes the message, and a real
-        // booking is gone — reported as success. This test is the guard.
+        // events/sqs-same-instant.json holds bookings 2001 and 2002 on UA2402 with
+        // one timestamp. Keyed on the bare timestamp, the second write would fail
+        // its condition and be logged as a duplicate, losing a real booking.
         SQSEvent event = EventLoader.loadSQSEvent("sqs-same-instant.json");
 
         SQSBatchResponse response = handler.handleRequest(event, contextWithLogger());
@@ -199,11 +199,8 @@ class BookingEventHandlerTest {
     @Test
     @DisplayName("the sort key is stable across redeliveries of the same message")
     void sortKeyIsStableAcrossRedeliveries() {
-        // The property that makes the conditional write an idempotency check
-        // rather than a coin flip: both halves of the key come from the persisted
-        // event, so a redelivery two minutes later produces the identical key.
-        // A key built from Instant.now() at consume time would differ every
-        // attempt and duplicates would never be detected at all.
+        // Both halves of the key come from the event, so a redelivery produces
+        // the same key and the conditional write can recognise it.
         String sameBody = body("1001", "UA2402", 2, "2026-09-15T09:41:12.481923Z");
 
         handler.handleRequest(event(sameBody), contextWithLogger());
@@ -232,9 +229,7 @@ class BookingEventHandlerTest {
                 event(body("1001", "UA2402", 2, "2026-09-15T09:41:12.481923Z")),
                 contextWithLogger());
 
-        // Reporting it as a failure would send it back to the queue, fail
-        // identically three times, and land a message that ALREADY SUCCEEDED in
-        // the DLQ as a fake incident.
+        // Reported, a message that already succeeded would end up in the DLQ.
         assertThat(response.getBatchItemFailures()).isEmpty();
     }
 
@@ -252,13 +247,10 @@ class BookingEventHandlerTest {
                       body("3", "UA3", 1, "2026-09-15T09:00:02Z")),
                 contextWithLogger());
 
-        // Not all three. Without ReportBatchItemFailures + this per-message
-        // handling, messages 1 and 3 would be redelivered and reprocessed too.
-        assertThat(response.getBatchItemFailures())
-                .extracting(SQSBatchResponse.BatchItemFailure::getItemIdentifier)
-                .containsExactly("msg-1");
+        // A handler that threw instead would have all three redelivered.
+        assertThat(failedIds(response)).containsExactly("msg-1");
 
-        // The batch keeps going after a failure rather than aborting.
+        // The batch keeps going after a failure.
         verify(dynamoDb, times(3)).putItem(any(PutItemRequest.class));
     }
 
@@ -268,25 +260,19 @@ class BookingEventHandlerTest {
         SQSBatchResponse response = handler.handleRequest(
                 event("{not json at all"), contextWithLogger());
 
-        // A message the handler does not report is DELETED by Lambda. Retrying
-        // unparseable JSON cannot succeed, so two of the three attempts are
-        // wasted — but the alternative is silently destroying the event.
-        assertThat(response.getBatchItemFailures())
-                .extracting(SQSBatchResponse.BatchItemFailure::getItemIdentifier)
-                .containsExactly("msg-0");
+        // Lambda deletes any message the handler does not report.
+        assertThat(failedIds(response)).containsExactly("msg-0");
         verifyNoInteractions(dynamoDb);
     }
 
     // ------------------------------------------------------------------
-    // Schema evolution and edge cases
+    // Schema evolution and invalid payloads
     // ------------------------------------------------------------------
 
     @Test
     @DisplayName("unknown fields from a newer producer are ignored, not fatal")
     void toleratesUnknownFields() {
-        // The producer and this consumer deploy independently, so the producer
-        // WILL ship a new field first. With Jackson's default
-        // FAIL_ON_UNKNOWN_PROPERTIES that deploy poisons every message in flight.
+        // The producer deploys on its own and will ship a new field first.
         String body = """
                       {"bookingId":"1001","flightNumber":"UA2402","seats":2,
                        "timestamp":"2026-09-15T09:41:12.481923Z",
@@ -303,11 +289,8 @@ class BookingEventHandlerTest {
     @Test
     @DisplayName("REGRESSION: a missing seats field is a failure, not a booking for nought seats")
     void anAbsentSeatsFieldIsNotWritten() {
-        // This used to be the worst failure shape available here. Jackson's
-        // record deserialiser passes null for an absent creator parameter and
-        // Java unboxes it to 0, so the item was written with seats = 0, the
-        // conditional write succeeded, and nothing retried or alerted. A
-        // projection that quietly reads zero is worse than one missing a row.
+        // Jackson passes null for an absent creator parameter and Java unboxes it
+        // to 0, which would be stored as a successful booking for no seats.
         String body = """
                       {"bookingId":"1001","flightNumber":"UA2402",
                        "timestamp":"2026-09-15T09:41:12.481923Z"}
@@ -315,17 +298,14 @@ class BookingEventHandlerTest {
 
         SQSBatchResponse response = handler.handleRequest(event(body), contextWithLogger());
 
-        assertThat(response.getBatchItemFailures())
-                .extracting(SQSBatchResponse.BatchItemFailure::getItemIdentifier)
-                .containsExactly("msg-0");
+        assertThat(failedIds(response)).containsExactly("msg-0");
         verifyNoInteractions(dynamoDb);
     }
 
     @Test
     @DisplayName("an explicitly null seats field fails the same way an absent one does")
     void anExplicitNullSeatsFieldIsNotWritten() {
-        // The two shapes take different paths through Jackson and only one
-        // feature covers both, so they are pinned separately.
+        // An explicit null takes a different path through Jackson from an absent field.
         String body = """
                       {"bookingId":"1001","flightNumber":"UA2402","seats":null,
                        "timestamp":"2026-09-15T09:41:12.481923Z"}
@@ -333,31 +313,49 @@ class BookingEventHandlerTest {
 
         SQSBatchResponse response = handler.handleRequest(event(body), contextWithLogger());
 
-        assertThat(response.getBatchItemFailures())
-                .extracting(SQSBatchResponse.BatchItemFailure::getItemIdentifier)
-                .containsExactly("msg-0");
+        assertThat(failedIds(response)).containsExactly("msg-0");
+        verifyNoInteractions(dynamoDb);
+    }
+
+    @Test
+    @DisplayName("a seats value that is not a positive whole number fails instead of being coerced")
+    void aSeatsValueThatIsNotAPositiveWholeNumberIsNotWritten() {
+        // Jackson's defaults would store "2" and 2.9 as two seats, and nothing
+        // in Jackson rejects 0 or a negative count.
+        SQSBatchResponse response = handler.handleRequest(
+                event(bodyWithSeats("1", "0"), bodyWithSeats("2", "-3"),
+                      bodyWithSeats("3", "\"2\""), bodyWithSeats("4", "2.9")),
+                contextWithLogger());
+
+        assertThat(failedIds(response)).containsExactly("msg-0", "msg-1", "msg-2", "msg-3");
         verifyNoInteractions(dynamoDb);
     }
 
     @Test
     @DisplayName("a renamed key field is reported with the field name, not as a DynamoDB error")
     void aMissingKeyFieldNamesItself() {
-        // The realistic cause is the producer renaming flight_number. Nothing
-        // in Jackson catches a missing String: it binds null,
-        // AttributeValue.fromS(null) returns an AttributeValue with no
-        // datatype rather than throwing, and the failure used to arrive from
-        // DynamoDB three receives later naming nothing.
-        String body = """
-                      {"bookingId":"1001","seats":2,
-                       "timestamp":"2026-09-15T09:41:12.481923Z"}
-                      """;
+        // A missing string binds to null in Jackson. The log line has to name the
+        // field, because that is what someone reading the DLQ starts from.
+        LambdaLogger logger = mock(LambdaLogger.class);
+        String noFlightNumber = """
+                                {"bookingId":"1001","seats":2,
+                                 "timestamp":"2026-09-15T09:41:12.481923Z"}
+                                """;
+        String noBookingId = """
+                             {"flightNumber":"UA2402","seats":2,
+                              "timestamp":"2026-09-15T09:41:12.481923Z"}
+                             """;
 
-        SQSBatchResponse response = handler.handleRequest(event(body), contextWithLogger());
+        SQSBatchResponse response = handler.handleRequest(
+                event(noFlightNumber, noBookingId), contextLoggingTo(logger));
 
-        assertThat(response.getBatchItemFailures())
-                .extracting(SQSBatchResponse.BatchItemFailure::getItemIdentifier)
-                .containsExactly("msg-0");
+        assertThat(failedIds(response)).containsExactly("msg-0", "msg-1");
         verifyNoInteractions(dynamoDb);
+        verify(logger, times(2)).log(logLine.capture());
+        assertThat(logLine.getAllValues().get(0))
+                .contains("FAILED msg-0").contains("'flightNumber'");
+        assertThat(logLine.getAllValues().get(1))
+                .contains("FAILED msg-1").contains("'bookingId'");
     }
 
     @Test
@@ -375,9 +373,8 @@ class BookingEventHandlerTest {
     @Test
     @DisplayName("a null record list is a no-op, not a NullPointerException")
     void nullRecordListIsANoOp() {
-        // getRecords() is null on a default-constructed SQSEvent, and a
-        // NullPointerException inside the handler is an unhandled invocation
-        // error — the whole batch retries three times and lands in the DLQ.
+        // A NullPointerException here would be an invocation error, and the
+        // whole batch would be retried.
         SQSBatchResponse response = handler.handleRequest(new SQSEvent(), contextWithLogger());
 
         assertThat(response.getBatchItemFailures()).isEmpty();
@@ -391,9 +388,6 @@ class BookingEventHandlerTest {
     @Test
     @DisplayName("a missing DDB_TABLE fails at initialisation, not per message")
     void missingTableNameFailsFast() {
-        // Lambda surfaces a constructor throw as an init error on the first
-        // invocation, with the message in CloudWatch. Left unvalidated, a null
-        // table name is an opaque SDK validation error repeated once per message.
         assertThatThrownBy(() -> new BookingEventHandler(dynamoDb, null))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("DDB_TABLE");
@@ -404,19 +398,14 @@ class BookingEventHandlerTest {
     }
 
     // ------------------------------------------------------------------
-    // The producer's trace, carried across the queue
+    // What reaches the log
     // ------------------------------------------------------------------
 
     @Test
     @DisplayName("the producer's traceparent reaches the log line, and its absence is silent")
     void theProducersTraceReachesTheLog() {
-        // events/sqs-with-trace.json holds both halves of the real distribution:
-        // booking 1003 was made inside a traced HTTP request, so the service
-        // stored the trace on the outbox row and SqsEventPublisher sent it as a
-        // message attribute; booking 1004 was not, so it carries eventType only.
-        // This log line is the whole join — it is what lets someone holding a
-        // trace id from an API response find the projection of that booking in
-        // a different process, on the far side of a queue.
+        // events/sqs-with-trace.json: booking 1003 was made in a traced request
+        // and carries a traceparent attribute; booking 1004 carries none.
         LambdaLogger logger = mock(LambdaLogger.class);
 
         SQSBatchResponse response = handler.handleRequest(
@@ -427,8 +416,7 @@ class BookingEventHandlerTest {
         assertThat(logLine.getAllValues()).containsExactly(
                 "[traceparent=00-5808f6bf5ea044458d4ea574d7adfcb7-ed4eca047d02925c-01] "
                 + "Processed booking 1003",
-                // No prefix, and no placeholder either. An invented trace id is
-                // worse than none: it stitches unrelated work into one trace.
+                // No placeholder: an invented trace id would join unrelated work.
                 "Processed booking 1004");
     }
 
@@ -442,31 +430,21 @@ class BookingEventHandlerTest {
                 body("3", "UA3", 1, "2026-09-15T09:00:02Z"));
         List<SQSEvent.SQSMessage> records = event.getRecords();
 
-        // msg-0 keeps the null attribute map that event() builds — the shape a
-        // producer sending no attributes at all delivers, and the shape of every
-        // hand-written fixture. A NullPointerException here would be an unhandled
-        // invocation error: the whole batch retries three times and hits the DLQ,
-        // because of a diagnostic field.
-        //
-        // msg-1 sends the attribute with a binary data type, so getStringValue()
-        // is null even though the attribute exists.
+        // msg-0 has no attribute map at all, like a producer that sends none.
+        // msg-1 sends the attribute as binary, so getStringValue() is null.
         SQSEvent.MessageAttribute binary = new SQSEvent.MessageAttribute();
         binary.setDataType("Binary");
         binary.setBinaryValue(ByteBuffer.wrap("00-abc".getBytes(StandardCharsets.UTF_8)));
         records.get(1).setMessageAttributes(Map.of("traceparent", binary));
 
-        // msg-2 is the attack: a well-formed traceparent followed by a newline
-        // and a second, entirely fabricated log line. Logged unvalidated, that
-        // forged line is indistinguishable from a real one in CloudWatch Logs
-        // Insights, and the record an incident gets reconstructed from now
-        // contains a booking that never happened.
+        // msg-2 is a valid traceparent followed by a newline and a fabricated line.
         records.get(2).setMessageAttributes(Map.of("traceparent", stringAttribute(
                 "00-5808f6bf5ea044458d4ea574d7adfcb7-ed4eca047d02925c-01\n"
                 + "Processed booking 9999")));
 
         SQSBatchResponse response = handler.handleRequest(event, contextLoggingTo(logger));
 
-        // All three project. The trace is a diagnostic; the event is the payload.
+        // All three project: the trace is a diagnostic, the event is the payload.
         assertThat(response.getBatchItemFailures()).isEmpty();
         verify(dynamoDb, times(3)).putItem(any(PutItemRequest.class));
 
@@ -477,5 +455,30 @@ class BookingEventHandlerTest {
                 .allSatisfy(line -> assertThat(line)
                         .doesNotContain("traceparent")
                         .doesNotContain("\n"));
+    }
+
+    @Test
+    @DisplayName("a value from the body reaches the log on one line and at a bounded length")
+    void bodyValuesAreLoggedOnOneBoundedLine() {
+        // The body comes from the same senders as the traceparent. The bookingId is
+        // logged on success, and Jackson and java.time quote rejected input in
+        // their messages, so both must reach the log printable and capped.
+        LambdaLogger logger = mock(LambdaLogger.class);
+        SQSEvent event = event(
+                body("1\\r\\nProcessed booking 9999", "UA1", 1, "2026-09-15T09:41:12.481923Z"),
+                body("2", "UA1", 1, "yesterday\\nProcessed booking 8888"),
+                bodyWithSeats("3", "\"x\\nFORGED\""),
+                bodyWithSeats("4", "\"" + "x".repeat(5000) + "\""));
+
+        SQSBatchResponse response = handler.handleRequest(event, contextLoggingTo(logger));
+
+        assertThat(failedIds(response)).containsExactly("msg-1", "msg-2", "msg-3");
+        verify(logger, times(4)).log(logLine.capture());
+        List<String> lines = logLine.getAllValues();
+        assertThat(lines.get(0)).isEqualTo("Processed booking 1??Processed booking 9999");
+        assertThat(lines.get(1)).startsWith("FAILED msg-1: DateTimeParseException: ");
+        assertThat(lines.get(2)).startsWith("FAILED msg-2: MismatchedInputException: ");
+        assertThat(lines.get(3)).startsWith("FAILED msg-3: ").endsWith("...").hasSizeLessThan(1100);
+        assertThat(lines).allSatisfy(line -> assertThat(line).doesNotContain("\n", "\r"));
     }
 }

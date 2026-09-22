@@ -1,6 +1,5 @@
 package com.smit.flightops.lambda;
 
-import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -14,31 +13,17 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * The consumer's half of the {@code BookingCreated} contract.
- *
- * <p>Reads {@code contracts/booking-created-v1.json} — the same file the
- * producer's test of this name asserts it emits — and proves this Lambda can
- * actually do something useful with it. Neither test imports the other side's
- * code; the file is the whole of the shared surface, which is what lets these
- * two builds deploy on their own schedules and still find out immediately when
- * one of them moves.
- *
- * <p>This is the consumer-driven half in the literal sense: it is written from
- * the consumer's needs. It does not check that the producer sent something
- * well-formed, it checks that every field this handler actually depends on
- * arrives populated and usable.
+ * The consumer's half of the {@code BookingCreated} contract. It reads
+ * {@code contracts/booking-created-v1.json}, the file the producer's test of the
+ * same name asserts it emits, and checks that every field this handler depends
+ * on arrives populated and usable. Neither side imports the other's code.
  */
 class BookingEventContractTest {
 
-    /** Configured exactly as {@code BookingEventHandler.MAPPER} is. */
-    private static final ObjectMapper MAPPER = new ObjectMapper()
-            .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
+    /** The handler's own mapper, so a change to its configuration is tested here too. */
+    private static final ObjectMapper MAPPER = BookingEventHandler.MAPPER;
 
-    /**
-     * The build runs from {@code lambda/}, an IDE might run from the repository
-     * root. Trying both keeps a failure here meaning "the contract broke"
-     * rather than "the path was wrong".
-     */
+    /** The build runs from {@code lambda/} and an IDE may run from the repository root. */
     private static String contractJson() throws IOException {
         for (Path candidate : List.of(Path.of("../contracts/booking-created-v1.json"),
                                       Path.of("contracts/booking-created-v1.json"))) {
@@ -56,14 +41,13 @@ class BookingEventContractTest {
         BookingEventHandler.BookingEvent event =
                 MAPPER.readValue(contractJson(), BookingEventHandler.BookingEvent.class);
 
-        // Every field asserted individually rather than by comparing whole
-        // records. A rename on the producer side leaves Jackson with nothing to
-        // bind, so the field comes back null (or 0 for the int) and the record
-        // still constructs - the failure is silent unless something looks.
-        assertThat(event.bookingId()).as("partition key input").isNotBlank();
+        // A rename on the producer side fails in readValue: a missing string in
+        // the record's constructor, a missing seats in FAIL_ON_NULL_FOR_PRIMITIVES.
+        // These assertions also catch a value that binds but is blank or zero.
+        assertThat(event.bookingId()).as("sort key suffix").isNotBlank();
         assertThat(event.flightNumber()).as("DynamoDB partition key").isNotBlank();
-        assertThat(event.seats()).as("0 would mean the field did not bind").isPositive();
-        assertThat(event.timestamp()).as("sort key input").isNotBlank();
+        assertThat(event.seats()).isPositive();
+        assertThat(event.timestamp()).as("sort key prefix").isNotBlank();
     }
 
     @Test
@@ -75,22 +59,14 @@ class BookingEventContractTest {
         String key = BookingEventHandler.sortKey(event);
 
         assertThat(key).isEqualTo("2026-09-15T10:00:00.000000Z#" + event.bookingId());
-        // Fixed width up to the '#'. Two keys of different lengths do not sort
-        // the way their instants do, which is the defect this format exists to
-        // prevent - see sortKey's Javadoc. The trailing Z is part of it: the
-        // separator must land at the same offset for every event ever written.
+        // The '#' at a fixed offset is what makes keys sort in time order.
         assertThat(key.indexOf('#')).isEqualTo(27);
     }
 
     /**
-     * Forward compatibility, pinned rather than assumed.
-     *
-     * <p>The producer must be able to add a field and deploy without this
-     * Lambda being redeployed first — otherwise the queue between them has
-     * bought nothing and the two are coupled again. That works only because
-     * {@code FAIL_ON_UNKNOWN_PROPERTIES} is disabled, which is one line in the
-     * handler that reads like tidying up. This test is what makes removing it
-     * a red build instead of an outage on the next producer release.
+     * The producer must be able to add a field and deploy before this Lambda
+     * does. That rests on one line in the handler's mapper, and this test fails
+     * if it goes.
      */
     @Test
     @DisplayName("a field this consumer has never heard of does not break it")
@@ -105,13 +81,7 @@ class BookingEventContractTest {
         assertThat(event.seats()).isEqualTo(3);
     }
 
-    /**
-     * The other direction is not tolerated, and should not be. A message whose
-     * timestamp is missing or malformed cannot produce a sort key, and the
-     * handler lets that throw so the message becomes a batch item failure and
-     * ends up in the DLQ. Writing a row with an unsortable key and reporting
-     * success would be the quiet version of losing the event.
-     */
+    /** A timestamp that is not an instant cannot make a sort key, so the message must fail. */
     @Test
     @DisplayName("a malformed timestamp is rejected rather than stored under a nonsense key")
     void aMalformedTimestampIsRejected() throws Exception {
@@ -125,22 +95,8 @@ class BookingEventContractTest {
     }
 
     /**
-     * The hole in the fixed-width guarantee that padding the fraction does not
-     * close.
-     *
-     * <p>Six fractional digits fix everything to the right of the seconds.
-     * Nothing fixes what is to the left: {@code Instant.parse} accepts expanded
-     * years, and the {@code uuuu} pattern then emits a leading sign.
-     * {@code +12026-09-15T10:00:00Z} formats to twenty-nine characters starting
-     * with {@code +} (0x2B), which is below every ASCII digit — so the row sorts
-     * ahead of every other item in its partition, while
-     * {@code begins_with(eventTime, "2026-")} never matches it. First in every
-     * query and invisible to the day filter at the same time.
-     *
-     * <p>It is reachable: redriving a hand-edited DLQ message, or any second
-     * producer on this contract, both get there. The handler rejects it so the
-     * message becomes a batch item failure, which is the same treatment a
-     * malformed timestamp gets and for the same reason.
+     * {@code Instant.parse} accepts expanded and negative years, which format
+     * with a sign and sort ahead of every other item in the partition.
      */
     @Test
     @DisplayName("a year outside the fixed-width range is rejected, not written under a shorter-sorting key")
@@ -154,14 +110,11 @@ class BookingEventContractTest {
             assertThatThrownBy(() -> BookingEventHandler.sortKey(event))
                     .as("%s formats to a different width and breaks the ordering guarantee", outOfRange)
                     .isInstanceOf(java.time.DateTimeException.class)
-                    .hasMessageContaining("fixed-width sort-key range");
+                    .hasMessageContaining("sort-key range");
         }
     }
 
-    /**
-     * The boundary, asserted in both directions so the range check cannot be
-     * quietly widened or narrowed without a test noticing.
-     */
+    /** Pins both ends of the accepted range, so it cannot be widened or narrowed unnoticed. */
     @Test
     @DisplayName("the first and last four-digit years are accepted, and produce equal-width keys")
     void theFourDigitYearBoundariesAreAccepted() throws Exception {
