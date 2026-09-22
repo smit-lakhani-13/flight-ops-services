@@ -1,14 +1,23 @@
 name: build-and-deploy
 
-# One file, six jobs. Five gates run on every trigger; the sixth deploys, and
-# only a configured push to main can reach it.
+# One file, six jobs, and no trigger runs all six.
 #
-#   build              both Maven modules, the whole suite, coverage, SBOM
-#   infra-lint         the manifests and CloudFormation that nothing compiles
-#   trivy-fs           dependency CVEs and committed secrets
-#   dependency-review  what a pull request ADDS (pull_request only)
-#   docs-check         citations, links, attribution and privacy sweeps
-#   deploy             gated: render, apply, wait, smoke
+#   build              every trigger      both Maven modules, suite, coverage, SBOM
+#   infra-lint         every trigger      the manifests and CloudFormation that nothing compiles
+#   trivy-fs           every trigger      dependency CVEs and committed secrets
+#   docs-check         every trigger      citations, links, attribution and privacy sweeps
+#   dependency-review  pull_request only  what a pull request ADDS
+#   deploy             gated push to main render, apply, wait, smoke
+#
+# So a pull request runs five jobs, a push to main runs four plus a deploy that
+# is skipped unless it is configured, and `workflow_dispatch` runs four. The
+# asymmetry is deliberate: dependency-review diffs a pull request's dependency
+# manifest against its base, and a push has no base to diff against.
+#
+# Branch protection requires the four that run on every trigger. Requiring
+# dependency-review as well would be safe — it does report on pull requests —
+# but it is the one gate that passes on a repository setting rather than on the
+# code, so it is advisory here rather than blocking.
 #
 # Six jobs rather than one long one, for three reasons. They run in parallel, so
 # the wall clock is the slowest gate instead of the sum of all of them. A red
@@ -43,6 +52,14 @@ env:
   EKS_CLUSTER: flight-ops-cluster
   K8S_NAMESPACE: flight-ops
   DEPLOYMENT: flight-ops
+
+  # Declared once, at the workflow level, and used by both jobs that install
+  # kubectl. It used to be a job-level variable in infra-lint and a literal in
+  # deploy, which is a drift waiting to happen: infra-lint would validate the
+  # render with one client and deploy would apply it with another, and the two
+  # only disagree on a resource one of them cannot serialise. That failure
+  # arrives as a schema error at apply time on a manifest CI just passed.
+  KUBECTL_VERSION: v1.36.0
 
 # Least privilege at the top; individual jobs raise it where they must. Only
 # `deploy` gets id-token, and only trivy-fs gets security-events.
@@ -131,11 +148,32 @@ jobs:
           if-no-files-found: warn
           retention-days: 5
 
-      # `if-no-files-found: error`, unlike the two above. A missing surefire
-      # directory means the build failed and you already know. A missing SBOM
-      # means the CycloneDX plugin silently stopped running, which nothing else
-      # would tell you — the build would stay green and the artefact list would
-      # just get quieter.
+      # `if-no-files-found: error` on a two-path upload only fires when BOTH
+      # are missing, which is the wrong question: the failure worth catching is
+      # CycloneDX silently stopping in ONE module, and that upload would still
+      # succeed with a single file in it. So the existence of each file is
+      # asserted here, by name, before the upload runs.
+      #
+      # Why it is worth asserting at all: a missing surefire directory means the
+      # build failed and you already know. A missing SBOM means the plugin
+      # stopped running, which nothing else would tell you — the build stays
+      # green and the artefact just gets quieter.
+      - name: Both SBOMs exist
+        run: |
+          missing=0
+          for f in target/bom.json lambda/target/bom.json; do
+            if [ -s "$f" ]; then
+              printf '  %s (%s bytes)\n' "$f" "$(wc -c < "$f" | tr -d ' ')"
+            else
+              printf '  MISSING or empty: %s\n' "$f" >&2
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ] || {
+            echo 'The CycloneDX plugin did not produce an SBOM for every module.' >&2
+            exit 1
+          }
+
       - name: Publish the SBOM
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -158,13 +196,14 @@ jobs:
 
     env:
       KUBECONFORM_VERSION: v0.8.0
+      # From the CHECKSUMS file published beside the v0.8.0 release.
+      KUBECONFORM_SHA256: 9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883
       # The schema set to validate against — deliberately the version pinned in
       # cluster.yaml, not "master". Validating 1.36 manifests against the
       # development schemas would accept a field that does not exist yet on the
       # cluster this repository actually creates.
       KUBERNETES_VERSION: 1.36.0
       CFN_LINT_VERSION: 1.57.0
-      KUBECTL_VERSION: v1.36.0
       # Pinned, and not for supply-chain reasons: shellcheck ships on the runner
       # image, and its version therefore drifts whenever GitHub rebuilds that
       # image. Different versions disagree about which patterns are worth
@@ -175,6 +214,11 @@ jobs:
       # it. Bump this deliberately, fix what the new version finds, and commit
       # both together.
       SHELLCHECK_VERSION: v0.11.0
+      # shellcheck publishes no checksum file, so this was computed from the
+      # asset itself over TLS. That is weaker than a signed manifest -- it pins
+      # the bytes seen once rather than proving what upstream intended -- and it
+      # still turns a silently replaced asset into a failed job.
+      SHELLCHECK_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -188,10 +232,17 @@ jobs:
         with:
           version: ${{ env.KUBECTL_VERSION }}
 
+      # The tag is a pointer in somebody else's repository and a release asset
+      # can be replaced under it, which is the whole reason every action in this
+      # file is pinned to a commit SHA. A tarball fetched by tag deserves the
+      # same treatment, so the published sha256 is checked before anything is
+      # unpacked as root. Refresh it from the release page when the version
+      # moves; a mismatch fails here rather than executing the download.
       - name: Install kubeconform ${{ env.KUBECONFORM_VERSION }}
         run: |
           curl -sSfL -o /tmp/kubeconform.tar.gz \
             "https://github.com/yannh/kubeconform/releases/download/${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          echo "${KUBECONFORM_SHA256}  /tmp/kubeconform.tar.gz" | sha256sum -c -
           sudo tar -xzf /tmp/kubeconform.tar.gz -C /usr/local/bin kubeconform
           kubeconform -v
 
@@ -257,6 +308,7 @@ jobs:
         run: |
           curl -sSfL -o /tmp/shellcheck.tar.xz \
             "https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          echo "${SHELLCHECK_SHA256}  /tmp/shellcheck.tar.xz" | sha256sum -c -
           tar -xJf /tmp/shellcheck.tar.xz -C /tmp
           sudo install "/tmp/shellcheck-${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck
           shellcheck --version
@@ -278,6 +330,13 @@ jobs:
       # To file the findings in the repository's Security tab rather than
       # leaving them in a log that expires.
       security-events: write
+      # upload-sarif reads workflow run metadata to attribute the results to a
+      # run. On a public repository the default token can already do that, so
+      # omitting it works — until the repository is made private or forked into
+      # a private org, and then this one job starts failing on permissions while
+      # codeql.yml beside it, which grants the scope, keeps working. Granting it
+      # here costs nothing and removes a failure nobody would think to look for.
+      actions: read
 
     env:
       # Trivy pulls its vulnerability database from a container registry, and a
@@ -385,6 +444,21 @@ jobs:
             echo "dependency graph available (HTTP $code)"
             exit 0
           fi
+
+          # 403 and 404 are the two answers that mean "the feature is off for
+          # this repository" — the only case this probe exists to tolerate.
+          # Anything else is GitHub having a bad minute (000 for a connection
+          # failure, 5xx for an outage, 401 for a token problem), and treating
+          # that as "switched off" is how a gate quietly stops running for a
+          # week without a single red square. So it fails instead, and the
+          # re-run button fixes it.
+          case "$code" in
+            403|404) : ;;
+            *)
+              echo "::error title=dependency-review probe failed::the dependency graph API answered $code, which does not mean the feature is disabled — re-run the job"
+              exit 1
+              ;;
+          esac
 
           echo 'available=false' >> "$GITHUB_OUTPUT"
           {
@@ -523,14 +597,42 @@ jobs:
       # flag is needed. Building on an Apple Silicon Mac is a different story: a
       # plain `docker build` produces arm64 and the pod crash-loops with
       # `exec /bin/sh: exec format error`. See README.
+      # Immutable tags have one sharp edge, and it shows up on exactly the day
+      # you least want it: the deploy failed AFTER the push -- a bad rollout, an
+      # expired kubeconfig, a flaky smoke test -- and the obvious response, "Re-
+      # run failed jobs", now fails at `docker push` with ImageTagAlreadyExists
+      # before `kubectl apply` is ever reached. The commit is unchanged, so
+      # there is nothing to push and nothing to fix; the only escape is to
+      # delete the image from ECR by hand or to push an empty commit.
+      #
+      # So the tag is looked up first. Already there means the build and the
+      # push are skipped and the deploy continues from the image that is
+      # already in the registry -- which is the same image, byte for byte,
+      # because the tag is the commit SHA and the tag is immutable.
+      - name: Is this commit already in ECR?
+        id: image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+        run: |
+          echo "IMAGE=$REGISTRY/$ECR_REPOSITORY:${{ github.sha }}" >> "$GITHUB_ENV"
+          if aws ecr describe-images \
+               --repository-name "$ECR_REPOSITORY" \
+               --image-ids "imageTag=${{ github.sha }}" \
+               --region "$AWS_REGION" >/dev/null 2>&1; then
+            echo 'exists=true' >> "$GITHUB_OUTPUT"
+            echo "${{ github.sha }} is already in ECR — reusing it, not rebuilding"
+          else
+            echo 'exists=false' >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build the image
+        if: steps.image.outputs.exists == 'false'
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
         run: |
           docker build \
             --build-arg "GIT_SHA=${{ github.sha }}" \
             -t "$REGISTRY/$ECR_REPOSITORY:${{ github.sha }}" .
-          echo "IMAGE=$REGISTRY/$ECR_REPOSITORY:${{ github.sha }}" >> "$GITHUB_ENV"
 
       # Before the push, not after. Once an image is in ECR with an immutable
       # tag it cannot be replaced, and a vulnerable layer sitting in a registry
@@ -542,6 +644,7 @@ jobs:
       # Temurin ships a rebuild. ECR also scans on push, so a HIGH is still
       # reported — it just does not stop the pipeline.
       - name: Scan the image before pushing it
+        if: steps.image.outputs.exists == 'false'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         env:
           TRIVY_DB_REPOSITORY: mirror.gcr.io/aquasec/trivy-db:2,ghcr.io/aquasecurity/trivy-db:2,public.ecr.aws/aquasecurity/trivy-db:2
@@ -555,12 +658,13 @@ jobs:
           exit-code: '1'
 
       - name: Push the image
+        if: steps.image.outputs.exists == 'false'
         run: docker push "$IMAGE"
 
       - name: Set up kubectl
         uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5.1.0
         with:
-          version: v1.36.0
+          version: ${{ env.KUBECTL_VERSION }}
 
       # `apply` of the rendered overlay rather than `kubectl set image`.
       #
@@ -576,10 +680,17 @@ jobs:
       # traffic on each push. With the field absent, `apply` leaves the live
       # replica count alone and the HPA keeps ownership.
       #
-      # render-aws.sh is the one render path — up.sh uses it, infra-lint above
-      # validates its output, and this applies it. Three ways of producing the
-      # manifests would be three ways for them to differ, and the difference
-      # only ever shows up in the cluster.
+      # render-aws.sh is the one render path for these six resources — up.sh
+      # uses it, infra-lint above validates its output, and this applies it.
+      # Three ways of producing the manifests would be three ways for them to
+      # differ, and the difference only ever shows up in the cluster.
+      #
+      # It does not render the Namespace or the Ingress. Both are applied by
+      # up.sh, and both are outside CI's reach on purpose: the Namespace is
+      # cluster-scoped and the deploy role's access entry is namespace-scoped,
+      # and the Ingress bills an ALB, which is a decision an operator takes once
+      # rather than something a push recreates. render-aws.sh's header lists
+      # them.
       - name: Render and apply the manifests
         env:
           AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
@@ -603,10 +714,25 @@ jobs:
       # `rollout status` returns non-zero on timeout, and with maxUnavailable: 0
       # the old pods are still serving traffic, so the job fails loudly rather
       # than half-deploying quietly.
+      #
+      # 12 minutes, and the number is arithmetic rather than a guess. With
+      # maxUnavailable: 0 and maxSurge: 1 pods are replaced one at a time, and
+      # one replacement costs an ECR pull plus a JVM start plus Flyway plus the
+      # readiness probe's initialDelaySeconds — call it 90s on a cold node. The
+      # HPA's ceiling is 4 replicas, so the worst legitimate rollout this
+      # Deployment permits is 4 x 90s = 6 minutes, and 12 leaves room for a slow
+      # pull without waiting out a genuinely stuck rollout for a quarter hour.
+      #
+      # It was 5 minutes, which is shorter than a successful 4-replica rollout:
+      # the deploy would go red, the diagnostics would show four healthy pods,
+      # and the engineer reading them would be debugging a rollout that had
+      # already worked. A gate must not fail on the system behaving as designed.
+      #
+      # Raise this if maxReplicas in k8s/base/hpa.yaml is raised.
       - name: Wait for the rollout
         run: |
           kubectl rollout status "deployment/$DEPLOYMENT" \
-            -n "$K8S_NAMESPACE" --timeout=5m
+            -n "$K8S_NAMESPACE" --timeout=12m
 
       # A rollout that completed proves the pods pass their own readiness probe.
       # It does not prove the application answers anything useful, and the two

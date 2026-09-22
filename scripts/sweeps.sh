@@ -69,15 +69,47 @@ fi
 
 echo
 echo 'Privacy'
-# The character class before the name stops this matching "adr/docs" or a URL
-# path. git ls-files rather than git grep here so the check covers a file's
-# whole contents regardless of how git has it indexed.
+# The leading character class used to exclude '/' as well, to stop the pattern
+# matching "adr/docs" or a URL path -- and in doing so it exempted exactly the
+# forms a leaked reference is most likely to take: an absolute
+# /Users/.../docs/ path, a relative ../docs/, a repo-relative java/docs/. Only
+# a bare `docs/` at the start of a token was ever caught, which is the one form
+# nobody writes by accident.
+#
+# So the class is narrower now and the URL case is handled where it actually
+# occurs: a second pattern drops lines carrying a scheme. That is one
+# understandable exemption instead of a silent hole, and the exemption is
+# visible in the output when somebody needs to know why a line passed.
+PRIVATE_DIR='(^|[^A-Za-z0-9_-])d[o]cs/'
+ARTEFACTS='FINAL-HANDOVER|smit_cv|Claude Chat|interview/A[0-9]|iwebtechno'
+# A URL path segment called docs is somebody else's repository, not this one's
+# sibling. The load balancer controller's iam_policy.json lives under one.
+URL_LINE='https?://'
+
+# git ls-files rather than git grep here so the check covers a file's whole
+# contents regardless of how git has it indexed.
 report 'no reference to the private sibling directory' \
-    "$(git ls-files -z -- . "$SELF" | xargs -0 grep -n -E "(^|[^A-Za-z0-9_./-])d[o]cs/" 2>/dev/null || true)"
+    "$(git ls-files -z -- . "$SELF" | xargs -0 grep -n -E "$PRIVATE_DIR" 2>/dev/null \
+        | grep -v -E "$URL_LINE" || true)"
 report 'no private artefact names' \
-    "$(git grep -n -i -E 'FINAL-HANDOVER|smit_cv|Claude Chat|interview/A[0-9]|iwebtechno' -- . "$SELF" 2>/dev/null || true)"
+    "$(git grep -n -i -E "$ARTEFACTS" -- . "$SELF" 2>/dev/null || true)"
 report 'nothing tracked under the private directory' \
     "$(git ls-files | grep '^d[o]cs/' || true)"
+
+if [ "$TREE_ONLY" = 0 ]; then
+    # The header of this script has always said the privacy rule covers commit
+    # messages -- "including in a commit message, which survives a later
+    # deletion of the file" -- and until now only the ATTRIBUTION rules were
+    # actually checked there. A path named in a commit message is published the
+    # moment the branch is pushed and is not removed by deleting the file it
+    # named; rewriting history is the only fix, and it is much cheaper to catch
+    # before the push.
+    report 'no reference to the private directory in commit messages' \
+        "$(git log --all --format='%H %B' | grep -E "$PRIVATE_DIR" \
+            | grep -v -E "$URL_LINE" || true)"
+    report 'no private artefact names in commit messages' \
+        "$(git log --all --format='%H %B' | grep -i -E "$ARTEFACTS" || true)"
+fi
 
 echo
 if [ "$failures" -eq 0 ]; then
