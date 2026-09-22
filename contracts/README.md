@@ -31,6 +31,34 @@ this file, which is the point: if the producer changes its record, the
 producer's test fails here and now, in its own build, and the author is
 told in the same commit that they are about to break a consumer.
 
+## What travels beside the body
+
+`booking-created-v1.json` is the body, and only the body. Two SQS message
+attributes ride alongside it — `eventType`, so a consumer can route or
+filter without parsing the payload, and `traceparent`, the W3C trace
+context of the HTTP request that made the booking, captured by
+`OutboxWriter` at booking time and carried on the outbox row until
+`SqsEventPublisher` sends it. `BookingEventHandler` logs the traceparent
+it receives, which is what lets an engineer holding a trace id from an
+API response find that booking's projection in a different process on
+the far side of a queue.
+
+Neither attribute is in the contract file, and that is the decision, not
+an omission. The body is what the consumer's correctness depends on, so
+it is pinned field by field on both sides. Metadata is not: a booking
+made outside a traced request has no trace context, the service refuses
+to invent one, and the attribute is simply absent. A consumer that
+required it would reject perfectly good events. So the Lambda reads it
+null-safely at three separate levels — no attribute map at all, no
+`traceparent` key, a `traceparent` sent with a binary data type — and
+validates the value against the W3C shape before it goes anywhere near a
+log line, because an attribute is attacker-influenced input and a
+newline in it forges a CloudWatch entry that reads exactly like a real
+one. A missing or malformed trace never fails a projection. See
+`BookingEventHandlerTest#theProducersTraceReachesTheLog` and
+`#aHostileTraceparentIsIgnored`, and `events/sqs-with-trace.json`, which
+carries one message with a trace and one without.
+
 ## Changing a contract
 
 Additive changes — a new field — are safe in one direction only. The

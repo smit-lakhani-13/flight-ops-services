@@ -20,6 +20,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * Consumes {@code BookingCreated} events from SQS and projects them into a
@@ -49,6 +50,19 @@ import java.util.Map;
  * at-least-once, so duplicate delivery is a certainty over time, not a risk. The
  * {@code attribute_not_exists} condition makes reprocessing a no-op instead of a
  * double-count.
+ *
+ * <p><b>4. The producer's trace id is logged, not regenerated.</b> The service
+ * captures the booking request's W3C trace context at the moment of the booking
+ * and carries it on the outbox row; {@code SqsEventPublisher} sends it as the
+ * {@code traceparent} message attribute. Logging it here is what joins the two
+ * halves: an engineer holding a trace id from an API response can find the log
+ * line for the same booking in this function's log group, across a queue and a
+ * process boundary that otherwise share nothing.
+ *
+ * <p>No tracing SDK is added to do it. An OpenTelemetry or X-Ray SDK in this
+ * function would mean a span exporter, an endpoint to export to, and cold-start
+ * cost on every invocation, in exchange for something one string in a log line
+ * already provides at this size. See {@code contracts/README.md}.
  */
 public class BookingEventHandler implements RequestHandler<SQSEvent, SQSBatchResponse> {
 
@@ -147,10 +161,14 @@ public class BookingEventHandler implements RequestHandler<SQSEvent, SQSBatchRes
         }
 
         for (SQSEvent.SQSMessage message : records) {
+            // Read before the try, so a message that fails to parse still logs
+            // the trace of the request that produced it. That is precisely the
+            // message somebody will be looking for.
+            String trace = tracePrefix(message);
             try {
                 BookingEvent booking = MAPPER.readValue(message.getBody(), BookingEvent.class);
                 dynamoDb.putItem(putRequest(booking));
-                logger.log("Processed booking " + booking.bookingId());
+                logger.log(trace + "Processed booking " + booking.bookingId());
 
             } catch (ConditionalCheckFailedException e) {
                 // The item is already there, so this is a redelivery of a message
@@ -158,7 +176,7 @@ public class BookingEventHandler implements RequestHandler<SQSEvent, SQSBatchRes
                 // returning it as a failure would loop it back to the queue and it
                 // would fail the same way three times, then land in the DLQ as a
                 // fake incident.
-                logger.log("Duplicate ignored: " + message.getMessageId());
+                logger.log(trace + "Duplicate ignored: " + message.getMessageId());
 
             } catch (Exception e) {
                 // Deliberately includes JsonProcessingException, which is a
@@ -168,7 +186,7 @@ public class BookingEventHandler implements RequestHandler<SQSEvent, SQSBatchRes
                 // the event. Two wasted retries buy a message preserved in the DLQ
                 // where it can be inspected and redriven. Splitting parse failures
                 // onto their own "quarantine" queue is the production refinement.
-                logger.log("FAILED " + message.getMessageId() + ": "
+                logger.log(trace + "FAILED " + message.getMessageId() + ": "
                            + e.getClass().getSimpleName() + ": " + e.getMessage());
                 failures.add(SQSBatchResponse.BatchItemFailure.builder()
                         .withItemIdentifier(message.getMessageId())
@@ -177,6 +195,54 @@ public class BookingEventHandler implements RequestHandler<SQSEvent, SQSBatchRes
         }
 
         return SQSBatchResponse.builder().withBatchItemFailures(failures).build();
+    }
+
+    /**
+     * The W3C traceparent shape, in full:
+     * {@code version-traceid-parentid-flags}.
+     *
+     * <p>Matched rather than trusted, and the reason is not tidiness. This value
+     * arrives from outside and goes straight into a log line, so an unvalidated
+     * one is log injection: a newline in the middle of it forges a second log
+     * entry that CloudWatch Logs Insights will happily parse as real, which is a
+     * bad property for the record an incident is reconstructed from. A bounded
+     * pattern with no whitespace in it removes that entirely, and it also caps
+     * the length -- an SQS message attribute may be 256 KB, and paying to ship
+     * that to CloudWatch on every invocation because a producer put something
+     * strange in a diagnostic field is a bill, not an error.
+     */
+    private static final Pattern W3C_TRACEPARENT =
+            Pattern.compile("[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}");
+
+    /**
+     * The log prefix carrying the producer's trace, or an empty string.
+     *
+     * <p>Every step here is a null that really happens. {@code
+     * getMessageAttributes()} is null for an event whose JSON omits the field —
+     * a hand-written fixture, a redriven DLQ message, or any producer that sends
+     * no attributes at all. The attribute itself is absent whenever the booking
+     * was made outside a traced request, which the service treats as normal and
+     * refuses to paper over with a fabricated id. And {@code getStringValue()}
+     * is null when the attribute was sent with a binary data type. A missing
+     * trace must never fail a booking projection — it is a diagnostic, and the
+     * event is the payload.
+     */
+    private static String tracePrefix(SQSEvent.SQSMessage message) {
+        Map<String, SQSEvent.MessageAttribute> attributes = message.getMessageAttributes();
+        if (attributes == null) {
+            return "";
+        }
+        SQSEvent.MessageAttribute attribute = attributes.get("traceparent");
+        if (attribute == null) {
+            return "";
+        }
+        String value = attribute.getStringValue();
+        if (value == null || !W3C_TRACEPARENT.matcher(value).matches()) {
+            return "";
+        }
+        // The trace id is the second field; searching the log group for it is
+        // the whole point, and it is a substring of this either way.
+        return "[traceparent=" + value + "] ";
     }
 
     private PutItemRequest putRequest(BookingEvent booking) {

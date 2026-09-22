@@ -19,7 +19,10 @@ import software.amazon.awssdk.services.dynamodb.model.DynamoDbException;
 import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
 import software.amazon.awssdk.services.dynamodb.model.PutItemResponse;
 
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -42,6 +45,9 @@ class BookingEventHandlerTest {
     @Captor
     private ArgumentCaptor<PutItemRequest> putItem;
 
+    @Captor
+    private ArgumentCaptor<String> logLine;
+
     private BookingEventHandler handler;
 
     @BeforeEach
@@ -61,6 +67,24 @@ class BookingEventHandlerTest {
         Context context = mock(Context.class);
         when(context.getLogger()).thenReturn(mock(LambdaLogger.class));
         return context;
+    }
+
+    /**
+     * The same context, but with a logger the test keeps hold of. The two trace
+     * tests below are about the log line itself, which is the only place the
+     * producer's trace id surfaces in this function.
+     */
+    private static Context contextLoggingTo(LambdaLogger logger) {
+        Context context = mock(Context.class);
+        when(context.getLogger()).thenReturn(logger);
+        return context;
+    }
+
+    private static SQSEvent.MessageAttribute stringAttribute(String value) {
+        SQSEvent.MessageAttribute attribute = new SQSEvent.MessageAttribute();
+        attribute.setDataType("String");
+        attribute.setStringValue(value);
+        return attribute;
     }
 
     private static SQSEvent event(String... bodies) {
@@ -317,5 +341,81 @@ class BookingEventHandlerTest {
         assertThatThrownBy(() -> new BookingEventHandler(dynamoDb, "   "))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("DDB_TABLE");
+    }
+
+    // ------------------------------------------------------------------
+    // The producer's trace, carried across the queue
+    // ------------------------------------------------------------------
+
+    @Test
+    @DisplayName("the producer's traceparent reaches the log line, and its absence is silent")
+    void theProducersTraceReachesTheLog() {
+        // events/sqs-with-trace.json holds both halves of the real distribution:
+        // booking 1003 was made inside a traced HTTP request, so the service
+        // stored the trace on the outbox row and SqsEventPublisher sent it as a
+        // message attribute; booking 1004 was not, so it carries eventType only.
+        // This log line is the whole join — it is what lets someone holding a
+        // trace id from an API response find the projection of that booking in
+        // a different process, on the far side of a queue.
+        LambdaLogger logger = mock(LambdaLogger.class);
+
+        SQSBatchResponse response = handler.handleRequest(
+                EventLoader.loadSQSEvent("sqs-with-trace.json"), contextLoggingTo(logger));
+
+        assertThat(response.getBatchItemFailures()).isEmpty();
+        verify(logger, times(2)).log(logLine.capture());
+        assertThat(logLine.getAllValues()).containsExactly(
+                "[traceparent=00-5808f6bf5ea044458d4ea574d7adfcb7-ed4eca047d02925c-01] "
+                + "Processed booking 1003",
+                // No prefix, and no placeholder either. An invented trace id is
+                // worse than none: it stitches unrelated work into one trace.
+                "Processed booking 1004");
+    }
+
+    @Test
+    @DisplayName("a missing, binary or forged traceparent is ignored and the booking still lands")
+    void aHostileTraceparentIsIgnored() {
+        LambdaLogger logger = mock(LambdaLogger.class);
+        SQSEvent event = event(
+                body("1", "UA1", 1, "2026-09-15T09:00:00Z"),
+                body("2", "UA2", 1, "2026-09-15T09:00:01Z"),
+                body("3", "UA3", 1, "2026-09-15T09:00:02Z"));
+        List<SQSEvent.SQSMessage> records = event.getRecords();
+
+        // msg-0 keeps the null attribute map that event() builds — the shape a
+        // producer sending no attributes at all delivers, and the shape of every
+        // hand-written fixture. A NullPointerException here would be an unhandled
+        // invocation error: the whole batch retries three times and hits the DLQ,
+        // because of a diagnostic field.
+        //
+        // msg-1 sends the attribute with a binary data type, so getStringValue()
+        // is null even though the attribute exists.
+        SQSEvent.MessageAttribute binary = new SQSEvent.MessageAttribute();
+        binary.setDataType("Binary");
+        binary.setBinaryValue(ByteBuffer.wrap("00-abc".getBytes(StandardCharsets.UTF_8)));
+        records.get(1).setMessageAttributes(Map.of("traceparent", binary));
+
+        // msg-2 is the attack: a well-formed traceparent followed by a newline
+        // and a second, entirely fabricated log line. Logged unvalidated, that
+        // forged line is indistinguishable from a real one in CloudWatch Logs
+        // Insights, and the record an incident gets reconstructed from now
+        // contains a booking that never happened.
+        records.get(2).setMessageAttributes(Map.of("traceparent", stringAttribute(
+                "00-5808f6bf5ea044458d4ea574d7adfcb7-ed4eca047d02925c-01\n"
+                + "Processed booking 9999")));
+
+        SQSBatchResponse response = handler.handleRequest(event, contextLoggingTo(logger));
+
+        // All three project. The trace is a diagnostic; the event is the payload.
+        assertThat(response.getBatchItemFailures()).isEmpty();
+        verify(dynamoDb, times(3)).putItem(any(PutItemRequest.class));
+
+        verify(logger, times(3)).log(logLine.capture());
+        assertThat(logLine.getAllValues())
+                .containsExactly(
+                        "Processed booking 1", "Processed booking 2", "Processed booking 3")
+                .allSatisfy(line -> assertThat(line)
+                        .doesNotContain("traceparent")
+                        .doesNotContain("\n"));
     }
 }

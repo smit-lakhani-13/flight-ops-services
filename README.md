@@ -116,8 +116,8 @@ What has been executed, and what has not. This table is the contract for every c
 
 | | What |
 |---|---|
-| ✅ **Built, tested, and exercised over HTTP** | The whole app module. Every endpoint hit with `curl` against a running instance; every status code in the tables below observed, not inferred, including the 401 and 403 bodies. The Lambda handler's logic, via 18 unit tests. |
-| ✅ **Verified against real PostgreSQL in CI** | All 197 tests, including the 5 Testcontainers integration tests: the Flyway migrations applied to an empty database, `ddl-auto: validate` checked against the schema those migrations produced, `SELECT … FOR UPDATE` under 20 threads competing for 5 seats, and the same idempotency key replayed by 20 threads at once. The runners have Docker, so these execute there and skip on a laptop without one. |
+| ✅ **Built, tested, and exercised over HTTP** | The whole app module. Every endpoint hit with `curl` against a running instance; every status code in the tables below observed, not inferred, including the 401 and 403 bodies. The Lambda handler's logic, via 20 unit tests. |
+| ✅ **Verified against real PostgreSQL in CI** | All 199 tests, including the 5 Testcontainers integration tests: the Flyway migrations applied to an empty database, `ddl-auto: validate` checked against the schema those migrations produced, `SELECT … FOR UPDATE` under 20 threads competing for 5 seats, and the same idempotency key replayed by 20 threads at once. The runners have Docker, so these execute there and skip on a laptop without one. |
 | ⚠️ **Authored and reviewed, never executed** | The container image. `sam build`, `sam local invoke`, `sam deploy`. Every `kubectl` and `eksctl` step. The deploy half of the GitHub Actions workflow — gated off deliberately, see below. |
 | ❌ **Not implemented** | A Solace binding. Trace **export** — ids are generated and logged, but there is no collector to send spans to. Rate limiting. |
 
@@ -503,6 +503,7 @@ Three things here were wrong when first written, and all three are the sort that
 `spring-boot-starter-opentelemetry` has two halves with **opposite defaults**, which is worth knowing before deploying it.
 
 - **Traces** are opt-in: the exporter starts only when `management.opentelemetry.tracing.export.otlp.endpoint` is set. Unset, the ids are still generated and still reach the logs, which is the whole benefit on a single-cluster deployment with no collector.
+- **The queue hop is crossed by the log line, not by a collector.** `OutboxWriter` stores the booking request's `traceparent` on the outbox row, `OutboxPublisher` sends it as an SQS message attribute, and the Lambda logs it verbatim. So following one booking from the API into DynamoDB is two greps for the same id — the pod logs here, the function's log group there — with no exporter running on either side. It is not a waterfall, and it answers the question a waterfall is usually opened to answer. See [Lambda module](#lambda-module).
 - **Metrics** are opt-out. The starter brings `micrometer-registry-otlp`, a *push* registry that defaults to `http://localhost:4318/v1/metrics` and begins publishing every 60 seconds with nothing listening. The first run after adding the starter logged exactly that. `application.yml` sets `management.otlp.metrics.export.enabled: ${OTLP_METRICS_ENABLED:false}`; this service is scraped, not pushed.
 
 ### Structured logs
@@ -524,7 +525,7 @@ The `prod` profile sets `logging.structured.format.console: ecs` — one JSON ob
 
 ```bash
 ./mvnw clean verify                       # 179 tests: 174 run, 5 skipped, 0 failures
-./mvnw -f lambda/pom.xml clean verify     # 18 tests, 0 failures
+./mvnw -f lambda/pom.xml clean verify     # 20 tests, 0 failures
 ```
 
 | Layer | Tests | Tooling |
@@ -535,14 +536,14 @@ The `prod` profile sets `logging.structured.format.console: ecs` — one JSON ob
 | Repository slice | 13 | `@DataJpaTest` + `TestEntityManager` — derived queries, JPQL, `JOIN FETCH`, constraints |
 | Full context (H2) | 63 | `@SpringBootTest` — the idempotency guarantee end to end (two 10-thread races on one key), the authorisation rules against the real filter chain, the outbox including its trace capture, the attempt ceiling and the retention pruner against a real database, the published OpenAPI document compared against a real response, the lock timeout, the error contract, and a lazy-loading regression with no mocking anywhere in the chain |
 | Event contract | 11 | one producer-side class and one consumer-side class, both asserting against `contracts/booking-created-v1.json` |
-| Lambda handler | 12 | separate module — batch parsing, partial batch failure, conditional write |
+| Lambda handler | 14 | separate module — batch parsing, partial batch failure, the conditional write, and the producer's trace context surviving the queue |
 | Configuration binding | 15 | plain JUnit driving a standalone Jakarta `Validator` and Boot's `Binder` — proves an unresolved `${...}` placeholder is rejected at startup rather than binding as a literal, and that every outbox bound is enforced and every default is actually wired |
 | Architecture | 9 | ArchUnit over `target/classes` — the layering, no field injection, no `@Transactional` outside `service/`, no wall-clock reads outside `entity/`. Each rule was checked against a deliberate violation before being committed |
 | Observability | 8 | the request-id filter against a hostile inbound header, and the meters scraped through a real `PrometheusMeterRegistry` rather than a `SimpleMeterRegistry` that would accept any name |
-| **Run** | **192** | **0 failures** (12 + 24 + 25 + 13 + 63 + 11 + 12 + 15 + 9 + 8) |
+| **Run** | **194** | **0 failures** (12 + 24 + 25 + 13 + 63 + 11 + 14 + 15 + 9 + 8) |
 | PostgreSQL integration | 5 | `@Testcontainers(disabledWithoutDocker = true)` — skipped without a container runtime |
 
-197 tests exist across the two modules; 192 run without Docker, 5 skip. CI runs all 197 and they pass — the runner has Docker, so it is the only place the real PostgreSQL path (Flyway + `ddl-auto=validate` + `SELECT FOR UPDATE` under 20-way contention, and a 20-thread idempotency-key race) gets exercised. The surefire summary there reads `Tests run: 179, Failures: 0, Errors: 0, Skipped: 0` for this module and `Tests run: 18 … Skipped: 0` for the Lambda. `Skipped: 0` rather than `Skipped: 5` is the part worth reading: it is the difference between the integration tests passing and the integration tests quietly opting out, and a green build alone does not distinguish the two.
+199 tests exist across the two modules; 194 run without Docker, 5 skip. CI runs all 199 and they pass — the runner has Docker, so it is the only place the real PostgreSQL path (Flyway + `ddl-auto=validate` + `SELECT FOR UPDATE` under 20-way contention, and a 20-thread idempotency-key race) gets exercised. The surefire summary there reads `Tests run: 179, Failures: 0, Errors: 0, Skipped: 0` for this module and `Tests run: 20 … Skipped: 0` for the Lambda. `Skipped: 0` rather than `Skipped: 5` is the part worth reading: it is the difference between the integration tests passing and the integration tests quietly opting out, and a green build alone does not distinguish the two.
 
 **The `@WebMvcTest` slices run with `addFilters = false`, and that is deliberate.** A slice does not load `SecurityConfig` — it is a `@Configuration` class, not a controller, so the slice filter excludes it — and what Boot substitutes is its *own* default chain. Leaving the filters on would therefore have every controller test authenticate against rules that are not this application's rules, and pass. That is worse than no coverage: it reads as though authorisation is tested. The real rules are tested once, properly, against the real `SecurityConfig` with real credentials and the real 401/403 bodies, in `SecurityRulesTest`.
 
@@ -622,9 +623,10 @@ Separate Maven module, separate lifecycle, deployed by SAM. Consumes `booking-ev
 - **Idempotent writes.** `conditionExpression("attribute_not_exists(bookingId)")`. SQS is at-least-once; the consumer has to be able to see the same message twice.
 - **Composite sort key**: `timestamp#bookingId`, not `timestamp` alone. Two bookings on the same flight in the same instant would otherwise collide on the key and one would be lost. There is a fixture (`events/sqs-same-instant.json`) and a test for exactly that.
 - **The timestamp in that key is fixed-width, and it has to be.** DynamoDB sorts range keys as bytes, so lexicographic order is only chronological order if every value is the same length. `Instant.toString()` is not: it prints 0, 3, 6 or 9 fractional digits depending on the value, and `…:00Z` sorts *after* `…:00.000001Z` because `Z` is `0x5A` and `.` is `0x2E`. Both sides format with `uuuu-MM-dd'T'HH:mm:ss.SSSSSS'Z'` instead, and a test asserts the `#` lands at index 27 every time — which is the assertion that fails if anyone changes the pattern on one side only.
+- **The producer's trace, logged rather than regenerated.** The booking request's `traceparent` rides on the SQS message as an attribute and goes into the log line, so a trace id taken from an API response finds the projection of that booking in a different process on the far side of a queue. It is read null-safely at three levels — no attribute map, no `traceparent` key, a `traceparent` sent as binary — and matched against the W3C shape before it is logged, because a message attribute is attacker-influenced input and a newline in one forges a CloudWatch entry that reads like a real record. A missing or malformed trace never fails a projection. No tracing SDK was added to do it: that would mean an exporter and an endpoint to export to, on a function chosen for a 34 KB dependency tree. `events/sqs-with-trace.json` carries one message with a trace and one without.
 - **`DynamoDbClient` behind an initialization-on-demand holder**, so the SDK client is created once per execution environment and reused across warm invocations rather than per request.
 - **No framework.** A plain `RequestHandler`, not Spring Cloud Function — the handler does one thing, and a container to start is a container to start on every cold invocation.
-- **18 tests, 6 of them the consumer half of the contract.** The producer and consumer never share a jar — that would make them deploy together, which is the coupling a queue exists to remove — so both read `contracts/booking-created-v1.json` and assert against it independently. See [Tests](#tests).
+- **20 tests, 6 of them the consumer half of the contract.** The producer and consumer never share a jar — that would make them deploy together, which is the coupling a queue exists to remove — so both read `contracts/booking-created-v1.json` and assert against it independently. See [Tests](#tests).
 
 ### The deployment package
 
@@ -721,7 +723,7 @@ Every row is a decision, not an oversight. Left column: what the code does. Righ
 | Retention is a batched `DELETE` on a schedule | a partitioned table, dropping yesterday's partition | `DROP PARTITION` is O(1) and a delete is not, which matters from roughly the first hundred million rows. Below that it buys a partitioning scheme, a maintenance job to create partitions ahead of time, and an outage when that job is the thing that fails. The pruner is 40 lines and bounded; it is the right size for this. |
 | No circuit breaker | Resilience4j | One outbound dependency, and the outbox already absorbs the failure mode a breaker would protect against: a down SQS leaves rows unpublished and the next drain retries them. |
 | Contract tests are a **shared JSON file**, not Pact | a broker, with versioned pacts and a `can-i-deploy` gate in CI | The file catches the change that breaks the consumer, which is the whole job at two modules in one repository. A broker earns its keep when the consumers are other people's services on other people's release trains. |
-| Traces are generated but **not exported** | an OTLP collector, and the trace id carried through the SQS message attributes into the Lambda | The ids are on every log line and in every response header, which is what makes one booking followable inside this service. Crossing the process boundary into the Lambda needs a collector to send to, and there is no collector in this deployment. See [Observability](#observability). |
+| Traces are generated but **not exported**; the trace id crosses into the Lambda as a log line, not as a span | an OTLP collector on both sides, so the queue hop is one waterfall | The ids are on every log line and in every response header, and the producer's `traceparent` travels on the SQS message and is logged by `BookingEventHandler` — so one booking is followable end to end today by grepping two log groups for the same id. Turning that into a waterfall needs a collector to export to, and an exporter in a function whose whole point is a 34 KB dependency tree and a fast cold start. See [Observability](#observability). |
 | H2 uses `create-drop` | already done for PostgreSQL: Flyway + `validate` | Migrations on a throwaway in-memory database buy nothing. |
 | `events/*.json` `md5OfBody` values are placeholders | real captured messages | Nothing reads the field, but it is not real traffic. |
 
