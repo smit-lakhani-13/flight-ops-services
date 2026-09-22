@@ -190,9 +190,9 @@ Three properties keep that from becoming an outage:
 - **A bounded wait.** `SET lock_timeout = '3s'` runs once per connection, as
   HikariCP's `connection-init-sql` in the `postgres` and `prod` profiles of
   `src/main/resources/application.yml` — a session setting, not a statement
-  inside the transaction. No Java code issues it: a JPA `@QueryHint` for a lock
-  timeout is silently discarded by the PostgreSQL dialect, which is how the
-  session-level form was arrived at. A request that cannot get the lock fails in
+  inside the transaction. No Java code issues it, so every lock the service
+  takes, native SQL included, gets the same bound and no query can forget a
+  hint (why not a per-query hint: [ADR 0002](adr/0002-pessimistic-locking.md)). A request that cannot get the lock fails in
   seconds with `503 LOCK_TIMEOUT` rather than holding a connection until the
   pool is empty. `LockTimeoutTest` proves the timeout and the status code; H2
   gets the same bound spelled `SET LOCK_TIMEOUT 3000`.

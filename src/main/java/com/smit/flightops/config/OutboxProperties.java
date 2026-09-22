@@ -31,8 +31,8 @@ import java.time.Duration;
  * @param maxAttempts    how many times a row may fail before the poller stops
  *                       claiming it. Ten, because the failures worth retrying
  *                       are transient — a throttle, a DNS blip, a redeployed
- *                       endpoint — and ten seconds of retries clears all of
- *                       them. A payload the transport structurally rejects
+ *                       endpoint — and ten attempts spread over about
+ *                       thirteen and a half minutes clears all of them. A payload the transport structurally rejects
  *                       fails identically on attempt 10,000, and because the
  *                       claim is {@code ORDER BY id} it fails <em>first</em>
  *                       every time, spending the batch on a row that cannot
@@ -57,8 +57,8 @@ import java.time.Duration;
  *                       happened. Zero disables backoff, which only the tests
  *                       that drain twice in a row have any use for.
  * @param maxRetryBackoff the cap on the doubling. Two seconds doubling to a
- *                       five-minute ceiling spans about twenty minutes over ten
- *                       attempts, so an outage has to outlast a deployment
+ *                       five-minute ceiling spans about thirteen and a half
+ *                       minutes (810s of waits) over ten attempts, so an outage has to outlast a deployment
  *                       before anything is given up on, and a genuinely poison
  *                       row still drops out after the same ten attempts.
  */

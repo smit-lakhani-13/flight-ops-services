@@ -373,7 +373,7 @@ matters asserts that the documented page schema — `{content, page}` — has th
 as an actual `GET /api/v1/flights`, rather than the same keys as an expectation written by the
 same hand that wrote the schema.
 
-### The 20 error codes
+### The 21 error codes
 
 | Code | Status | Meaning |
 |---|---|---|
@@ -387,7 +387,7 @@ same hand that wrote the schema.
 | `IDEMPOTENCY_KEY_REUSED` | 409 | the key is known, and it was first used for a **different** request. Not a replay — a client bug, said out loud |
 | `ILLEGAL_STATUS_TRANSITION` | 409 | the flight cannot go from its current status to the requested one (`BOARDING → ARRIVED`, anything out of `ARRIVED`) |
 | `LOCK_TIMEOUT` | 503 + `Retry-After` | the `SELECT … FOR UPDATE` waited out `lock_timeout`. 503, not 500: the request was fine and the answer is "try again", which is a statement about load |
-| `UNKNOWN_SORT_PROPERTY` | 400 | `?sort=nonsense` — Spring Data could not resolve the property. The client sent a bad parameter; the server did not break |
+| `UNKNOWN_SORT_PROPERTY` | 400 | `?sort=nonsense` — the property is not on the endpoint's published sort list (`SortPolicy`). The client sent a bad parameter; the server did not break |
 | `UNAUTHENTICATED` | 401 | no credentials, or credentials that do not verify. Written by `JsonAuthenticationEntryPoint`, not by the advice |
 | `FORBIDDEN` | 403 | authenticated, and lacking the authority this path needs. Written by `JsonAccessDeniedHandler` |
 | `VALIDATION_FAILED` | 400 | Bean Validation, reported per field — including the class-level `@DistinctEndpoints`, which refuses a flight from EWR to EWR |
@@ -396,6 +396,7 @@ same hand that wrote the schema.
 | `METHOD_NOT_ALLOWED` | 405 | wrong verb |
 | `UNSUPPORTED_MEDIA_TYPE` | 415 | wrong `Content-Type` |
 | `REQUEST_REJECTED` | 4xx | any other Spring MVC client error |
+| `BAD_REQUEST` | 4xx | any other client error the servlet container forwards to `/error`. Written by `ApiErrorController`, so even that path answers in the same envelope |
 | `INTERNAL_ERROR` | 500 | last resort — stack trace logged, never returned |
 
 Two deliberate details in there:
@@ -625,7 +626,7 @@ mockMvc.perform(get(location)).andExpect(status().isOk());       // this would h
 
 Same lesson as the cancelled-flight bug, in a different place: **a test that asserts the mechanism passes; a test that asserts the consequence catches things.** Both defects here were found by probing a running instance, not by reading code, and both are now pinned by tests that follow through to the outcome.
 
-**The build logs alarming things that are tests passing.** H2 `SqlExceptionHelper` ERRORs about `CONSTRAINT_INDEX_A ON PUBLIC.BOOKINGS(IDEMPOTENCY_KEY)`, a `GlobalExceptionHandler` WARN naming `uk_bookings_idempotency_key`, and an enum parse failure for a status of `TELEPORTED` are the duplicate-key and malformed-request tests doing their job. Don't "fix" them.
+**The build logs alarming things that are tests passing.** Hibernate WARNs from `org.hibernate.orm.jdbc.error` about `CONSTRAINT_INDEX_A ON PUBLIC.BOOKINGS(IDEMPOTENCY_KEY)`, a `GlobalExceptionHandler` WARN naming `uk_bookings_idempotency_key`, and an enum parse failure for a status of `TELEPORTED` are the duplicate-key and malformed-request tests doing their job. Don't "fix" them. On a laptop with no Docker the one ERROR is Testcontainers saying it cannot find a container runtime, which is the seven PostgreSQL tests skipping as designed.
 
 ### The third bug: a concurrency test found a contract two Javadocs disagreed about
 
@@ -826,7 +827,7 @@ survive so the claim is checkable rather than merely asserted.
 | `GET /api/v1/flights?sort=nonsense` returned **500 `INTERNAL_ERROR`** — `PropertyReferenceException` reached the catch-all | 400 `UNKNOWN_SORT_PROPERTY`, naming the property. The client sent a bad parameter; the server did not break |
 | Re-using an idempotency key with a **different payload** returned the original booking with 201 — different passenger, different flight, all replayed the first booking | 409 `IDEMPOTENCY_KEY_REUSED`. Each booking stores a SHA-256 fingerprint of its request (`V3__booking_request_fingerprint.sql`), compared on both the pre-flight read and the post-constraint recovery |
 | The readiness probe ignored the database: `/actuator/health` went 503 while `/actuator/health/readiness` stayed 200 and every API call returned 500 | `readiness.include: readinessState,db`. Liveness deliberately stays on `livenessState` alone — a database outage must not restart every pod |
-| `SELECT … FOR UPDATE` had no lock timeout; a stuck holder blocked every other booker until the JDBC socket gave up | `SET lock_timeout = '3s'` as a Hikari `connection-init-sql`, surfacing as 503 `LOCK_TIMEOUT` with `Retry-After`. A session-level setting, because a `@QueryHint` is silently discarded by the PostgreSQL dialect |
+| `SELECT … FOR UPDATE` had no lock timeout; a stuck holder blocked every other booker until the JDBC socket gave up | `SET lock_timeout = '3s'` as a Hikari `connection-init-sql`, surfacing as 503 `LOCK_TIMEOUT` with `Retry-After`. A connection-level setting, so every lock the service takes — native SQL included — gets the same bound and no query can forget a hint |
 | `SqsClient` was built with SDK defaults — no `apiCallTimeout` — so a slow endpoint held a row lock and a pool connection indefinitely | 5s `apiCallTimeout`, 2s `apiCallAttemptTimeout`. And the publish no longer happens inside the booking transaction at all — see [the outbox](#the-outbox-why-the-event-is-a-database-row-first) |
 | The DynamoDB sort key used `Instant.toString()`, which prints 0, 3, 6 or 9 fractional digits, so `…:01Z` sorted **after** `…:01.000001Z` | A fixed-width `uuuu-MM-dd'T'HH:mm:ss.SSSSSS'Z'` formatter on both sides, pinned by a test that asserts the `#` separator is always at index 27 |
 | `PATCH …/status` accepted any transition, including `CANCELLED → SCHEDULED`, after which the flight sold seats again | `FlightStatus.canTransitionTo` — an exhaustive switch. `ARRIVED` and `CANCELLED` are terminal; a self-transition is allowed so a retried PATCH is safe |

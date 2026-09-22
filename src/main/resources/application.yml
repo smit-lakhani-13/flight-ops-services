@@ -246,8 +246,8 @@ app:
     # -- none of them defective -- while outbox.pending fell to ZERO, because a
     # dead row is not a pending row. The alert cleared as the damage completed.
     #
-    # Two seconds doubling to a five-minute ceiling spans about twenty minutes
-    # over ten attempts. An outage now has to outlast a deployment before
+    # Two seconds doubling to a five-minute ceiling spans about thirteen and a
+    # half minutes (810s of waits) over ten attempts. An outage now has to outlast a deployment before
     # anything is given up on; a genuinely poison row still drops out after the
     # same ten attempts. Zero disables the wait, and only a test wants that.
     retry-backoff: ${OUTBOX_RETRY_BACKOFF:2s}
@@ -383,12 +383,12 @@ spring:
       # seconds is far longer than a healthy lock is ever held and far shorter
       # than a client's patience.
       #
-      # connection-init-sql, not a JPA query hint: PostgreSQL has no FOR UPDATE
-      # WAIT n syntax - only NOWAIT and SKIP LOCKED - so jakarta.persistence.
-      # lock.timeout with a positive value has nowhere to go and Hibernate
-      # discards it. A session-level lock_timeout is the mechanism PostgreSQL
-      # actually provides, and setting it as connection init SQL applies it once
-      # per pooled connection rather than on every query.
+      # connection-init-sql, not a JPA query hint: a hint bounds only the queries
+      # that carry it, so a native FOR UPDATE or a method added later without
+      # the annotation would wait forever. A session-level lock_timeout set as
+      # connection init SQL applies once per pooled connection and covers every
+      # lock the service takes. (PostgreSQL has no FOR UPDATE WAIT n; Hibernate
+      # 7.4 turns a positive hint into SET LOCAL lock_timeout - see ADR 0002.)
       #
       # PostgreSQL raises SQLSTATE 55P03, which Hibernate's PostgreSQLDialect
       # converts to a LockTimeoutException and Spring translates to

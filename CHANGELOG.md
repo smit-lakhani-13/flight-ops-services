@@ -26,7 +26,25 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
 
 ## Unreleased
 
-Nothing yet.
+### Fixed (documentation only; no behaviour change)
+
+- The README listed 20 error codes; there are 21. `BAD_REQUEST`, which
+  `ApiErrorController` returns for any other client error forwarded to `/error`,
+  was missing, and `UNKNOWN_SORT_PROPERTY` still described the pre-`SortPolicy`
+  behaviour.
+- ADR 0002, ARCHITECTURE.md, the README and `application.yml` said the
+  PostgreSQL dialect discards a JPA lock-timeout hint. Hibernate 7.4.5 applies it
+  with `SET LOCAL lock_timeout`. The decision stands on a different reason, and
+  ADR 0002 carries a dated correction.
+- The outbox retry window was described as about twenty minutes, and once as ten
+  seconds. Two seconds doubling to a five-minute ceiling over ten attempts is
+  810 seconds, about thirteen and a half. The comment in
+  `V7__outbox_next_attempt_at.sql` still says twenty: an applied migration
+  cannot be edited without changing its Flyway checksum.
+- The build-log note in the README called Hibernate's duplicate-key lines
+  ERRORs; they are WARNs.
+- The CI workflow comments said Flyway V1–V6 (it is V1–V8) and described branch
+  protection as already enforced.
 
 ## 1.1.0 — 2026-09-23
 

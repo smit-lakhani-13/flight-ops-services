@@ -163,7 +163,7 @@ missing is a domain, not the work.
   entitled to see who is on the flight — and it is stated in the OpenAPI
   description so nobody has to guess.
 - Error responses are `{code, message, timestamp}` and never carry stack
-  traces, SQL, or internal class names. The 20 codes are enumerated in the
+  traces, SQL, or internal class names. The 21 codes are enumerated in the
   README.
 - `X-Request-Id` is echoed on every response and appears in logs. It is
   accepted from the client only if it matches `^[A-Za-z0-9._:-]{1,128}$`;

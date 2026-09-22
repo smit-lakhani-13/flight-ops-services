@@ -14,7 +14,8 @@ name: build-and-deploy
 # asymmetry is deliberate: dependency-review diffs a pull request's dependency
 # manifest against its base, and a push has no base to diff against.
 #
-# Branch protection requires the four that run on every trigger. Requiring
+# Branch protection is meant to require the four that run on every trigger
+# (it is a repository setting, so it lives outside this file). Requiring
 # dependency-review as well would be safe — it does report on pull requests —
 # but it is the one gate that passes on a repository setting rather than on the
 # code, so it is advisory here rather than blocking.
@@ -110,7 +111,7 @@ jobs:
       # Docker IS available on ubuntu-latest, so the Testcontainers tests in
       # BookingIntegrationTest actually execute here even though they skip on a
       # laptop with no container runtime. CI is the only place the real
-      # PostgreSQL path — Flyway V1–V6, ddl-auto=validate, SELECT FOR UPDATE
+      # PostgreSQL path — Flyway V1–V8, ddl-auto=validate, SELECT FOR UPDATE
       # under 20-way contention — is exercised. If this step is green, that ran.
       #
       # `./mvnw` rather than `mvn`: the runner image happens to ship Maven, but

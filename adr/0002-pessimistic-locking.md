@@ -24,14 +24,20 @@ as HikariCP's `connection-init-sql` in `src/main/resources/application.yml`.
 A request that cannot acquire the lock inside that window fails with
 `503 LOCK_TIMEOUT`.
 
-Session-level rather than per-transaction, and not by preference: a JPA
-`@QueryHint` carrying `jakarta.persistence.lock.timeout` is accepted by the API
-and then discarded by the PostgreSQL dialect, which has no way to express it —
-so the bound looked configured and was not. `SET LOCAL` inside the transaction
-would work, but needs a statement executed on the same connection before the
-lock is taken, which means either a native query at the top of every write path
-or an `AOP` interceptor around them. The connection-level setting costs one line
-of configuration and cannot be forgotten on a path added later.
+Connection-level rather than per-query. A per-query hint
+(`jakarta.persistence.lock.timeout`) covers only the queries that carry it: a
+native `SELECT ... FOR UPDATE`, or a repository method added next year without
+the annotation, would wait forever and nothing would say so. The
+connection-level setting costs one line of configuration, covers every lock the
+service takes, and cannot be forgotten on a path added later.
+
+**Correction (2026-09-23).** This section used to give a different reason: that
+the PostgreSQL dialect silently discards a positive `lock.timeout` hint. For the
+Hibernate version this project ships (7.4.5) that is not true. Reading the jar
+shows `PostgreSQLLockingSupport` applying a positive timeout by issuing
+`SET LOCAL lock_timeout` on the connection before the locking query. That was read from the
+bytecode, not exercised by a test here. The decision stands on the reason above;
+only the old reason was wrong.
 
 ## Consequences
 
