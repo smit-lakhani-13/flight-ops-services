@@ -1,7 +1,7 @@
 package com.smit.flightops.service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 import com.smit.flightops.config.AwsProperties;
 import com.smit.flightops.dto.BookingCreatedEvent;
 import com.smit.flightops.dto.BookingDto;
@@ -54,7 +54,10 @@ public class SqsEventPublisher implements EventPublisher {
         String body;
         try {
             body = objectMapper.writeValueAsString(event);
-        } catch (JsonProcessingException e) {
+        } catch (JacksonException e) {
+            // Unchecked in Jackson 3, so this is deliberate: a serialisation
+            // failure is a bug in the event contract, and it should surface with
+            // the event in the message rather than as a bare Jackson stack.
             throw new IllegalStateException("Failed to serialise " + event, e);
         }
 

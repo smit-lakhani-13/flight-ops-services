@@ -1,7 +1,7 @@
 package com.smit.flightops.service;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
 import com.smit.flightops.dto.BookingCreatedEvent;
 import com.smit.flightops.dto.BookingDto;
 import org.slf4j.Logger;
@@ -35,9 +35,12 @@ public class LoggingEventPublisher implements EventPublisher {
         try {
             log.info("BookingCreated (not sent — publisher=log): {}",
                      objectMapper.writeValueAsString(event));
-        } catch (JsonProcessingException e) {
-            // Unreachable for a record of String/int, but silence here would
-            // hide exactly the contract break this publisher exists to catch.
+        } catch (JacksonException e) {
+            // Jackson 3 made its exceptions unchecked, so this catch is a choice
+            // rather than a compiler requirement. Keeping it: unreachable for a
+            // record of String/int, but silence here would hide exactly the
+            // contract break this publisher exists to catch, and the wrapped
+            // message names the event.
             throw new IllegalStateException("Failed to serialise " + event, e);
         }
     }

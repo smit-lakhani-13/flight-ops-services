@@ -7,7 +7,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.5.16</version>
+        <version>4.1.1</version>
         <relativePath/>
     </parent>
 
@@ -71,9 +71,16 @@
     </dependencyManagement>
 
     <dependencies>
+        <!--
+          spring-boot-starter-webmvc, not spring-boot-starter-web: Boot 4 kept
+          the old artifact working but its own POM now describes it as
+          "deprecated in favor of spring-boot-starter-webmvc". Same Tomcat, same
+          MVC; the rename is part of splitting every technology into its own
+          module. Nothing else in this file needed to change for it.
+        -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-web</artifactId>
+            <artifactId>spring-boot-starter-webmvc</artifactId>
         </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -102,10 +109,16 @@
             <scope>runtime</scope>
         </dependency>
 
-        <!-- Schema is owned by Flyway on PostgreSQL; Hibernate only validates it. -->
+        <!--
+          Schema is owned by Flyway on PostgreSQL; Hibernate only validates it.
+          Boot 4 made every technology's auto-configuration a separate module, so
+          this is the starter rather than bare flyway-core - the starter is what
+          carries FlywayAutoConfiguration. The postgresql dialect module is still
+          a direct dependency because Flyway 10 split the databases out of core.
+        -->
         <dependency>
-            <groupId>org.flywaydb</groupId>
-            <artifactId>flyway-core</artifactId>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-flyway</artifactId>
         </dependency>
         <dependency>
             <groupId>org.flywaydb</groupId>
@@ -134,19 +147,42 @@
             <artifactId>spring-boot-starter-test</artifactId>
             <scope>test</scope>
         </dependency>
+        <!--
+          Boot 4 split the test slices out of spring-boot-starter-test the same
+          way it split the auto-configurations: @WebMvcTest now lives in the
+          webmvc-test starter and @DataJpaTest plus TestEntityManager in the
+          data-jpa-test starter. Without these two the slice tests do not
+          compile - the annotations are gone, not deprecated.
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webmvc-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-jpa-test</artifactId>
+            <scope>test</scope>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-testcontainers</artifactId>
             <scope>test</scope>
         </dependency>
+        <!--
+          Testcontainers 2.x renamed every module: org.testcontainers:postgresql
+          became testcontainers-postgresql, and junit-jupiter became
+          testcontainers-junit-jupiter. The old coordinates are simply not
+          published any more, so this is a rename and not a preference.
+        -->
         <dependency>
             <groupId>org.testcontainers</groupId>
-            <artifactId>postgresql</artifactId>
+            <artifactId>testcontainers-postgresql</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>
             <groupId>org.testcontainers</groupId>
-            <artifactId>junit-jupiter</artifactId>
+            <artifactId>testcontainers-junit-jupiter</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>
