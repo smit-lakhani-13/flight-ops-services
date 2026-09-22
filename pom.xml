@@ -67,6 +67,14 @@
         <maven.enforcer.plugin.version>3.6.3</maven.enforcer.plugin.version>
         <jacoco.plugin.version>0.8.15</jacoco.plugin.version>
         <cyclonedx.plugin.version>2.9.3</cyclonedx.plugin.version>
+
+        <!--
+          ArchUnit is not in Boot's BOM either. The artifact is archunit-junit6,
+          not archunit-junit5: the junit5 artifact binds to JUnit Platform 1.x
+          and Boot 4.1 ships Platform 6, so it fails at discovery time with a
+          NoSuchMethodError rather than anything that reads like a version clash.
+        -->
+        <archunit.version>1.5.0</archunit.version>
     </properties>
 
     <dependencyManagement>
@@ -215,6 +223,12 @@
         <dependency>
             <groupId>org.testcontainers</groupId>
             <artifactId>testcontainers-junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.tngtech.archunit</groupId>
+            <artifactId>archunit-junit6</artifactId>
+            <version>${archunit.version}</version>
             <scope>test</scope>
         </dependency>
     </dependencies>
