@@ -22,13 +22,14 @@
 #        of spring-boot-starter-test, renamed spring-boot-starter-web and moved
 #        the whole project from Jackson 2 to Jackson 3. None of that is a merge
 #        button, and the same will be true of 5.x
-#      - JUnit: lambda/pom.xml has no parent, so its major is whatever this file
-#        lets through, while the service module's is whatever Boot's BOM says.
-#        The pin exists to keep those two the same number; the comment above
-#        <junit.version> gives the reason it matters
-#    A major upgrade of any of the four is a deliberate piece of work, not a
-#    merge. Everything else — minors, patches, and every dependency not named
-#    here — still flows automatically.
+#      - JUnit: lambda/pom.xml has no parent, so its version is whatever this
+#        file lets through, while the service module's is whatever Boot's BOM
+#        says. The pin exists to keep those two the same number, which is why
+#        it is the one rule here that covers minors and patches too; the
+#        comment above it gives the full reason
+#    An upgrade of any of the four is a deliberate piece of work, not a merge.
+#    Everything else — every dependency not named here, and majors aside, the
+#    minors and patches of the other three — still flows automatically.
 version: 2
 
 updates:
@@ -70,17 +71,31 @@ updates:
       test:
         patterns: ["org.junit*:*", "org.mockito:*"]
     ignore:
-      # Still ignored, for a reason that survived the upgrade even though the
-      # version in it did not. Both modules are on JUnit 6.0.3 now: the service
-      # gets it from the Boot 4.1.1 BOM, and lambda/pom.xml was moved to match.
-      # The rule is not "stay on 5.x", it is "do not let Dependabot move one
-      # module's major on its own" - whichever side moves first splits the
-      # repository across two JUnit majors, and last time that was this module.
-      # Minors and patches on the 6.x line still flow, and a major is a
-      # two-line change plus a test run, done deliberately on the day Boot's BOM
-      # moves too.
+      # Every update type, not just majors, and the reason is narrower than it
+      # looks. <junit.version> in lambda/pom.xml is not an independent choice:
+      # it is a copy of whatever Boot's BOM manages for the service module, so
+      # that one repository does not run two JUnit versions. Today that is
+      # 6.0.3 on both sides. A Dependabot PR against this module alone cannot
+      # honour that - it sees a parentless POM and offers the newest release,
+      # which is how PR #15 arrived offering 6.1.3 here while the service stayed
+      # on 6.0.3. Accepting it would have split the repository for no gain.
+      #
+      # So this version moves when Boot's BOM moves and at no other time. The
+      # procedure is two lines: read the managed version with
+      # `./mvnw help:evaluate -Dexpression=junit-jupiter.version -DforceStdout`
+      # and copy it here, then run both builds.
+      #
+      # The cost, stated because the header says ignores have one: security
+      # advisories for junit-bom will not open a PR on this module either. JUnit
+      # is test scope, it never ships in the Lambda artifact, and the service
+      # module still receives Boot's own advisories - so the exposure is a test
+      # harness on a CI runner, which is a trade worth naming rather than
+      # discovering later.
       - dependency-name: "org.junit:junit-bom"
-        update-types: ["version-update:semver-major"]
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
 
   # The workflow now pins every action to a full commit SHA rather than a major
   # tag, so this ecosystem changed character. A tag is a mutable pointer in
