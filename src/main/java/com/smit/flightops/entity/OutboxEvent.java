@@ -89,12 +89,33 @@ public class OutboxEvent {
     @Column(name = "last_error", length = 500)
     private String lastError;
 
+    /**
+     * The W3C trace context of the request that produced this event, or null.
+     *
+     * <p>Null is normal, not exceptional: rows written before {@code V6}, and
+     * any booking made outside a traced request, legitimately have none. The
+     * publisher must treat it as optional rather than assume it — see
+     * {@code OutboxPublisher.headersFor}.
+     *
+     * <p>55 is the exact maximum length of a traceparent, not a rounded-up 64.
+     * A value that does not fit is not a traceparent, and failing on it is
+     * better than truncating it into something a collector will reject.
+     */
+    @Column(length = 55)
+    private String traceparent;
+
     protected OutboxEvent() {
         // JPA
     }
 
     public OutboxEvent(String aggregateType, String aggregateId, String eventType,
                        String payload, Instant createdAt) {
+        this(aggregateType, aggregateId, eventType, payload, createdAt, null);
+    }
+
+    public OutboxEvent(String aggregateType, String aggregateId, String eventType,
+                       String payload, Instant createdAt, String traceparent) {
+        this.traceparent = traceparent;
         this.aggregateType = aggregateType;
         this.aggregateId = aggregateId;
         this.eventType = eventType;
@@ -129,6 +150,11 @@ public class OutboxEvent {
         this.lastError = error == null ? null
                 : error.length() <= 500 ? error
                 : error.substring(0, 497) + "...";
+    }
+
+    /** Null when the booking was not made inside a traced request. */
+    public String getTraceparent() {
+        return traceparent;
     }
 
     public Long getId() {

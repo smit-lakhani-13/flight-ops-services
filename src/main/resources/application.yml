@@ -186,6 +186,28 @@ app:
     # Rows per drain. Bounds how long one replica holds outbox row locks, and
     # therefore how badly a slow queue can affect the other replicas.
     batch-size: ${OUTBOX_BATCH_SIZE:100}
+    # After this many failures a row stops being claimed. The claim is
+    # ORDER BY id, so a payload the transport structurally rejects is retried
+    # FIRST on every tick and spends the whole batch failing while live events
+    # queue behind it -- one bad row becomes a total publishing outage that
+    # waiting never fixes. Ten covers every transient cause (a throttle, a DNS
+    # blip, a redeploy) and stops short of the ones that are not transient.
+    # The row then shows up in the outbox.dead gauge, and bringing it back is
+    # deliberate: UPDATE outbox_events SET attempts = 0 WHERE id = ?
+    max-attempts: ${OUTBOX_MAX_ATTEMPTS:10}
+    # How long a PUBLISHED row is kept before OutboxPruner may delete it.
+    # Seven days is the window in which somebody still asks "did that booking
+    # publish?" and can be answered from this table. Unpublished rows are never
+    # touched by the pruner at any age.
+    retention: ${OUTBOX_RETENTION:7d}
+    # The pruner is maintenance, not a hot path. Hourly.
+    prune-interval: ${OUTBOX_PRUNE_INTERVAL:1h}
+    # Rows per DELETE statement. A single unbounded delete of a real backlog
+    # takes row locks across the whole range, writes a WAL burst large enough
+    # to stall replication and shuts the poller out of the table until it
+    # commits. Batching makes every statement the same small size however far
+    # behind the pruner has fallen.
+    prune-batch-size: ${OUTBOX_PRUNE_BATCH_SIZE:1000}
   seed:
     enabled: true
   aws:

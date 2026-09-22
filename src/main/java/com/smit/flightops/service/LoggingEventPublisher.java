@@ -5,6 +5,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
+import java.util.Map;
+
 /**
  * The default transport: writes the event to the log instead of a queue.
  *
@@ -25,8 +27,13 @@ public class LoggingEventPublisher implements EventPublisher {
 
     private static final Logger log = LoggerFactory.getLogger(LoggingEventPublisher.class);
 
+    /**
+     * The headers are logged rather than dropped, so that the trace-propagation
+     * path is exercised by every local run and every test — not only by the SQS
+     * implementation, which is the one nobody can run on a laptop.
+     */
     @Override
-    public void publish(String eventType, String payload) {
-        log.info("[EVENT] {} -> {}", eventType, payload);
+    public void publish(String eventType, String payload, Map<String, String> headers) {
+        log.info("[EVENT] {} {} -> {}", eventType, headers, payload);
     }
 }

@@ -1,0 +1,30 @@
+-- Carries the W3C trace context from the booking request into the event, so a
+-- booking can be followed across the process boundary into the Lambda.
+--
+-- Why the column and not a field inside the payload: the payload is a
+-- published contract (contracts/booking-created-v1.json), asserted field-set
+-- exact by tests on both sides of the queue. Adding a diagnostic field to it
+-- would mean a contract change, a consumer change and a version conversation,
+-- all to carry something that is metadata about the delivery rather than part
+-- of the event. It travels as an SQS message attribute for the same reason the
+-- event type does.
+--
+-- VARCHAR(55) is the exact maximum a W3C traceparent can be:
+--   version(2) + "-" + trace-id(32) + "-" + parent-id(16) + "-" + flags(2)
+-- Sized to the specification rather than rounded up to 64, so a value that
+-- does not fit is a value that is not a traceparent and should fail loudly
+-- here rather than be silently truncated into something a collector will
+-- reject later.
+--
+-- Nullable, and it must be. Rows written before this migration have no trace
+-- context and never will, and a booking made by a scheduled job or a test
+-- harness has none either. A NOT NULL with a placeholder default would put a
+-- fabricated trace id on the queue, which is worse than an absent one: a
+-- consumer cannot tell it is fake.
+ALTER TABLE outbox_events ADD COLUMN traceparent VARCHAR(55);
+
+-- No index. The column is never a predicate -- nothing searches the outbox by
+-- trace id, because by the time anyone is looking at a trace they are in the
+-- tracing backend, not in this table. An index here would be write amplification
+-- on the hot insert path of the booking transaction in exchange for a query
+-- nobody runs.

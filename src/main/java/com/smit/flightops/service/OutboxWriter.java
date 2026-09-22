@@ -4,6 +4,9 @@ import com.smit.flightops.dto.BookingCreatedEvent;
 import com.smit.flightops.dto.BookingDto;
 import com.smit.flightops.entity.OutboxEvent;
 import com.smit.flightops.repository.OutboxEventRepository;
+import io.micrometer.tracing.Span;
+import io.micrometer.tracing.Tracer;
+import io.micrometer.tracing.propagation.Propagator;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -11,6 +14,8 @@ import tools.jackson.core.JacksonException;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.Clock;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * Records an event in the outbox table, in the caller's transaction.
@@ -31,13 +36,19 @@ public class OutboxWriter {
 
     private final OutboxEventRepository outboxEventRepository;
     private final ObjectMapper objectMapper;
+    private final Tracer tracer;
+    private final Propagator propagator;
     private final Clock clock;
 
     public OutboxWriter(OutboxEventRepository outboxEventRepository,
                         ObjectMapper objectMapper,
+                        Tracer tracer,
+                        Propagator propagator,
                         Clock clock) {
         this.outboxEventRepository = outboxEventRepository;
         this.objectMapper = objectMapper;
+        this.tracer = tracer;
+        this.propagator = propagator;
         this.clock = clock;
     }
 
@@ -71,6 +82,43 @@ public class OutboxWriter {
 
         outboxEventRepository.save(new OutboxEvent(
                 AGGREGATE_TYPE, String.valueOf(booking.bookingId()),
-                BOOKING_CREATED, payload, clock.instant()));
+                BOOKING_CREATED, payload, clock.instant(), currentTraceparent()));
+    }
+
+    /**
+     * The trace context of the request making this booking, in W3C form, or
+     * null if there is not one.
+     *
+     * <p>Captured <em>here</em>, at the moment of the booking, and not by the
+     * poller. The poller runs on a scheduler thread minutes later with no
+     * relationship to the request that caused the event; a traceparent read
+     * there would either be absent or, worse, belong to the drain itself — so
+     * every event on the queue would share one meaningless trace and the trace
+     * a support engineer actually wants would be nowhere. Persisting it is the
+     * price of the outbox: the transaction that knows the trace is not the one
+     * that sends the message.
+     *
+     * <p>{@link Propagator#inject} rather than formatting the id by hand. The
+     * W3C format has a version prefix, a flags byte whose sampled bit matters
+     * to the collector, and rules about which of those a non-recording span
+     * emits. Building the string from {@code traceId} and {@code spanId} looks
+     * like four lines and gets the sampling flag wrong, which a collector
+     * silently drops rather than rejects.
+     *
+     * <p>The length guard is not paranoia about the propagator. It is about the
+     * column: a value longer than 55 characters is not a valid traceparent, and
+     * accepting it would either blow up the INSERT — rolling back a perfectly
+     * good booking for the sake of a diagnostic field — or be silently
+     * truncated into an id that resolves to nothing.
+     */
+    private String currentTraceparent() {
+        Span span = tracer.currentSpan();
+        if (span == null) {
+            return null;
+        }
+        Map<String, String> carrier = new HashMap<>(2);
+        propagator.inject(span.context(), carrier, Map::put);
+        String traceparent = carrier.get("traceparent");
+        return traceparent != null && traceparent.length() <= 55 ? traceparent : null;
     }
 }

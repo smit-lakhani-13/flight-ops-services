@@ -113,10 +113,10 @@ What has been executed, and what has not. This table is the contract for every c
 
 | | What |
 |---|---|
-| ✅ **Built, tested, and exercised over HTTP** | The whole app module. Every endpoint hit with `curl` against a running instance; every status code in the tables below observed, not inferred, including the 401 and 403 bodies. The Lambda handler's logic, via 16 unit tests. |
-| ✅ **Verified against real PostgreSQL in CI** | All 176 tests, including the 5 Testcontainers integration tests: the Flyway migrations applied to an empty database, `ddl-auto: validate` checked against the schema those migrations produced, `SELECT … FOR UPDATE` under 20 threads competing for 5 seats, and the same idempotency key replayed by 20 threads at once. The runners have Docker, so these execute there and skip on a laptop without one. |
+| ✅ **Built, tested, and exercised over HTTP** | The whole app module. Every endpoint hit with `curl` against a running instance; every status code in the tables below observed, not inferred, including the 401 and 403 bodies. The Lambda handler's logic, via 18 unit tests. |
+| ✅ **Verified against real PostgreSQL in CI** | All 193 tests, including the 5 Testcontainers integration tests: the Flyway migrations applied to an empty database, `ddl-auto: validate` checked against the schema those migrations produced, `SELECT … FOR UPDATE` under 20 threads competing for 5 seats, and the same idempotency key replayed by 20 threads at once. The runners have Docker, so these execute there and skip on a laptop without one. |
 | ⚠️ **Authored and reviewed, never executed** | The container image. `sam build`, `sam local invoke`, `sam deploy`. Every `kubectl` and `eksctl` step. The deploy half of the GitHub Actions workflow — gated off deliberately, see below. |
-| ❌ **Not implemented** | A Solace binding. Structured JSON logging with a correlation id. Distributed tracing. Rate limiting. |
+| ❌ **Not implemented** | A Solace binding. Trace **export** — ids are generated and logged, but there is no collector to send spans to. Rate limiting. |
 
 **Nothing here has ever been deployed, and merging to `main` does not deploy it.** The deploy job is gated on a `DEPLOY_ENABLED` repository variable which has never been set, so it reports as skipped on every run. Read the green badge as "it builds and the tests pass", which is what it says.
 
@@ -189,10 +189,10 @@ Two further things this repository does not claim:
 ## Repository layout
 
 ```
-├── src/main/java/com/smit/flightops/       48 files, 3,617 lines
+├── src/main/java/com/smit/flightops/       50 files, 4,169 lines
 │   ├── controller/     HTTP only — bind, validate, map to DTO, choose status code
-│   ├── service/        orchestration, the transaction boundaries, the outbox drain,
-│   │                   EventPublisher + 2 impls
+│   ├── service/        orchestration, the transaction boundaries, the outbox drain
+│   │                   and its retention pruner, EventPublisher + 2 impls
 │   ├── entity/         Flight, Booking, FlightStatus, OutboxEvent — the invariants live here
 │   ├── repository/     Spring Data JPA: the SELECT … FOR UPDATE query and the
 │   │                   FOR UPDATE SKIP LOCKED outbox claim
@@ -201,15 +201,15 @@ Two further things this repository does not claim:
 │   ├── security/       the 401 and 403 writers — Spring Security rejects before the
 │   │                   DispatcherServlet, so @RestControllerAdvice never sees those two
 │   ├── observability/  RequestIdFilter (X-Request-Id on every response, MDC, ahead of
-│   │                   Spring Security) and BookingMetrics (the three counters HTTP
-│   │                   metrics cannot express)
+│   │                   Spring Security), BookingMetrics (the three counters HTTP
+│   │                   metrics cannot express) and OutboxMetrics (backlog and dead rows)
 │   ├── validation/     @DistinctEndpoints — a custom class-level Bean Validation constraint
 │   └── config/         SecurityConfig, AwsConfig, three @ConfigurationProperties records,
 │                       TimeConfig (an injected Clock), DataSeeder
 ├── src/main/resources/
 │   ├── application.yml            profiles: default (H2), postgres, prod
-│   └── db/migration/              Flyway, V1–V5 — owns the PostgreSQL schema
-├── src/test/java/                 20 test classes, layered — see Tests (22 with the Lambda's)
+│   └── db/migration/              Flyway, V1–V6 — owns the PostgreSQL schema
+├── src/test/java/                 24 test classes, layered — see Tests (26 with the Lambda's)
 ├── contracts/                     the event schema both modules test against
 ├── lambda/                        separate parentless Maven module: SQS → DynamoDB consumer
 ├── k8s/                           6 manifests + secret.example.yaml
@@ -378,21 +378,27 @@ A separate `@Scheduled` drain does the network call afterwards:
 ```sql
 SELECT * FROM outbox_events
  WHERE published_at IS NULL
+   AND attempts < :maxAttempts
  ORDER BY id
  LIMIT :batchSize
    FOR UPDATE SKIP LOCKED
 ```
 
-Four decisions in that query and the loop around it, each of which is a bug if taken the other way:
+Five decisions in that query and the loop around it, each of which is a bug if taken the other way:
 
 - **`FOR UPDATE SKIP LOCKED`** is what makes the drain safe on every replica at once with no leader election and no distributed lock. Each poller claims rows nobody else holds and steps over the rest; without `SKIP LOCKED` the replicas queue behind each other and the drain runs at single-writer speed.
 - **Publish, *then* mark published** — at-least-once, not at-most-once. Marking first and crashing before the send loses the event permanently; sending first and crashing before the mark sends it twice. The consumer's conditional DynamoDB write already absorbs a duplicate, so the recoverable failure is the one to choose.
 - **`@Transactional(propagation = MANDATORY)` on the writer.** Without it, calling `recordBookingCreated` outside a transaction would work perfectly — and silently discard the entire atomicity guarantee this exists for. `MANDATORY` turns that mistake into a startup-shaped failure instead of a correctness one nobody notices.
 - **A `try`/`catch` per row, not around the loop.** Letting one failure propagate would roll back the `markPublished` on rows whose payloads had *already left the process*, turning one bad event into N duplicates on the next drain.
+- **`AND attempts < :maxAttempts`** is an availability bound, not tidiness. The claim is `ORDER BY id`, so an event the transport structurally rejects is retried **first** on every tick and spends the whole batch failing while live events queue behind it: one malformed row is a total publishing outage that waiting never resolves. After ten attempts the row drops out of the claim, `outbox_dead` goes above zero, and a WARN names the id and the booking. Bringing it back is deliberate and manual — `UPDATE outbox_events SET attempts = 0 WHERE id = ?` — which is the statement `OutboxPoisonRowTest` runs, so the sentence an operator will paste is the one that is tested.
 
 `fixedDelay`, not `fixedRate`: `fixedRate` measures from the previous *start*, so a drain slower than the interval queues invocations behind itself. `fixedDelay` measures from the previous finish.
 
-**What this buys and what it costs.** Exactly-once *recording*, at-least-once *delivery*, and a bounded queue you can query — `SELECT count(*) FROM outbox_events WHERE published_at IS NULL` is a lag metric and an alert. What it costs is a table, a poller, up to one poll interval of latency, and rows that need pruning. For a booking event that is worth it; for a fire-and-forget metric it would not be.
+**The trace context is captured by the writer, not by the poller.** `OutboxWriter` asks Micrometer's `Propagator` to inject the current span into the row as a `traceparent` (`V6__outbox_traceparent.sql`), and `OutboxPublisher` sends that stored value as an SQS message attribute. Reading the current span in the poller instead compiles and looks equivalent: it is not, because the poller runs on a scheduler thread minutes later with no relationship to the request, so every event drained in one tick would share one meaningless trace and the request a support engineer is actually looking for would appear nowhere. `OutboxTest.theDrainDoesNotOverwriteTheTrace` drains inside a *different* span to keep that regression red. The header is omitted entirely when there is no trace — a fabricated id is worse than a missing one, because a consumer cannot tell that it is fake. The sampled bit inside it follows `management.tracing.sampling.probability`, which Boot defaults to 0.1, so most traceparents on the queue are real ids marked not-sampled; that is the first thing to check before concluding a collector is dropping spans.
+
+**Published rows are deleted on a schedule.** `OutboxPruner` removes rows published longer than `app.outbox.retention` ago (7 days), in batches of 1,000, each in its own transaction, at most 50 batches per run. Every bound there is about the first run rather than the steady state: `DELETE FROM outbox_events WHERE published_at < :cutoff` is one line shorter and, against a table that has been growing for a year, takes row locks over the whole range, writes a WAL burst large enough to stall replication and shuts the poller out of the table until it commits. Unpublished rows are never touched at any age — an undelivered event is a backlog, not rubbish.
+
+**What this buys and what it costs.** Exactly-once *recording*, at-least-once *delivery*, and a bounded queue you can query — `SELECT count(*) FROM outbox_events WHERE published_at IS NULL` is a lag metric and an alert. What it costs is a table, a poller, up to one poll interval of latency, and a retention job to keep the table from growing forever. For a booking event that is worth it; for a fire-and-forget metric it would not be.
 
 
 ---
@@ -425,7 +431,7 @@ Three details in that filter are worth a sentence each.
 
 ### Metrics
 
-`/actuator/prometheus` (requires `ops` credentials) carries the Micrometer defaults plus three meters that the HTTP metrics cannot express, in [`observability/BookingMetrics`](src/main/java/com/smit/flightops/observability/BookingMetrics.java):
+`/actuator/prometheus` (requires `ops` credentials) carries the Micrometer defaults plus seven meters that the HTTP metrics cannot express. Three are about bookings, in [`observability/BookingMetrics`](src/main/java/com/smit/flightops/observability/BookingMetrics.java):
 
 | Series | Why it is not redundant with `http_server_requests` |
 |---|---|
@@ -433,10 +439,22 @@ Three details in that filter are worth a sentence each.
 | `bookings_cancelled_total{outcome="cancelled"\|"already_cancelled"}` | A repeated `DELETE` returns 200 and releases nothing, by design. `already_cancelled` climbing alone means a client thinks its cancellations are not sticking. |
 | `bookings_lock_timeout_total` | 503s are in the HTTP metrics, mixed with every other cause. This one names the specific failure — somebody held the flight row past `lock_timeout` — and it is the leading indicator for the whole write path stalling. |
 
-Two things here were wrong when first written, and both are the sort that ship green:
+Four more are about the outbox, in [`observability/OutboxMetrics`](src/main/java/com/smit/flightops/observability/OutboxMetrics.java). The outbox's whole advantage over a direct send is that the backlog is a table you can query, which is only true if something queries it:
+
+| Series | What it answers |
+|---|---|
+| `outbox_pending` | Unpublished and still retryable. A rising line is publisher lag, and it is the alert that catches an SQS outage before a consumer notices missing events. |
+| `outbox_dead` | Unpublished and out of attempts. **This is the one to page on at `> 0`**: unlike pending it does not recover on its own, and it means a booking has an event that will never be sent until somebody re-drives the row. |
+| `outbox_publish_total{result="success"\|"failure"\|"exhausted"}` | The transport's health. The absolute failure rate shows a partial outage that `pending` hides while the backlog still drains faster than it grows. |
+| `outbox_pruned_total` | Rows deleted by the retention job. Flat at zero while the table grows is otherwise a completely silent failure. |
+
+Both gauges query the database on the scrape thread, so both return `NaN` rather than throwing. A gauge function that throws takes the **whole** `/actuator/prometheus` response with it — so a database blip would remove every unrelated metric at exactly the moment they are most wanted, and the graph would show a hole where a problem should be.
+
+Three things here were wrong when first written, and all three are the sort that ship green:
 
 - The meter was called `bookings.created`. It exported as **`bookings_total`** — `_created` is a reserved suffix in OpenMetrics, so the Prometheus client strips it before appending `_total`. No warning, no error, a meter under a name no dashboard would query. `BookingMetricsTest.exportedNamesSurviveTheTripThroughPrometheus` scrapes a real `PrometheusMeterRegistry`, because a `SimpleMeterRegistry` stores the name verbatim and would have passed for any name at all.
 - Every counter is registered in the constructor rather than on first increment. A series that does not exist yet returns *no data* rather than zero, and most alerting rules treat no-data as neither firing nor resolved — so the alert written to catch the first lock timeout would have been silent for exactly the first lock timeout.
+- Two counters shared a meter name with different descriptions. The exporter prints one `# HELP` line per name, so whichever registered last described both series — the metric was right and the documentation attached to it was wrong, which is the harder of the two to notice. One description per meter name, as a constant.
 
 ### Tracing, and what is deliberately off
 
@@ -463,26 +481,26 @@ The `prod` profile sets `logging.structured.format.console: ecs` — one JSON ob
 ## Tests
 
 ```bash
-./mvnw clean verify                       # 158 tests: 153 run, 5 skipped, 0 failures
+./mvnw clean verify                       # 175 tests: 170 run, 5 skipped, 0 failures
 ./mvnw -f lambda/pom.xml clean verify     # 18 tests, 0 failures
 ```
 
 | Layer | Tests | Tooling |
 |---|---|---|
 | Domain entity | 12 | plain JUnit — no Spring, no database. A domain rule should be provable without either. |
-| Service | 21 | `@ExtendWith(MockitoExtension.class)`, `@Mock`, `@InjectMocks`, `@Captor` — split across `BookingServiceTest` (orchestration), `BookingWriterTest` (the write path), `FlightServiceTest` |
+| Service | 24 | `@ExtendWith(MockitoExtension.class)`, `@Mock`, `@InjectMocks`, `@Captor` — split across `BookingServiceTest` (orchestration), `BookingWriterTest` (the write path), `FlightServiceTest`, and `SqsEventPublisherTest` for what actually goes on the wire |
 | Web slice | 25 | `@WebMvcTest` + `@MockitoBean` — status codes, `Location` headers, error JSON |
 | Repository slice | 13 | `@DataJpaTest` + `TestEntityManager` — derived queries, JPQL, `JOIN FETCH`, constraints |
-| Full context (H2) | 49 | `@SpringBootTest` — the idempotency guarantee end to end (two 10-thread races on one key), the authorisation rules against the real filter chain, the outbox, the lock timeout, the error contract, and a lazy-loading regression with no mocking anywhere in the chain |
+| Full context (H2) | 59 | `@SpringBootTest` — the idempotency guarantee end to end (two 10-thread races on one key), the authorisation rules against the real filter chain, the outbox including its trace capture, the attempt ceiling and the retention pruner against a real database, the lock timeout, the error contract, and a lazy-loading regression with no mocking anywhere in the chain |
 | Event contract | 11 | one producer-side class and one consumer-side class, both asserting against `contracts/booking-created-v1.json` |
 | Lambda handler | 12 | separate module — batch parsing, partial batch failure, conditional write |
-| Configuration binding | 11 | plain JUnit driving a standalone Jakarta `Validator` — proves an unresolved `${...}` placeholder is rejected at startup rather than binding as a literal |
+| Configuration binding | 15 | plain JUnit driving a standalone Jakarta `Validator` and Boot's `Binder` — proves an unresolved `${...}` placeholder is rejected at startup rather than binding as a literal, and that every outbox bound is enforced and every default is actually wired |
 | Architecture | 9 | ArchUnit over `target/classes` — the layering, no field injection, no `@Transactional` outside `service/`, no wall-clock reads outside `entity/`. Each rule was checked against a deliberate violation before being committed |
 | Observability | 8 | the request-id filter against a hostile inbound header, and the meters scraped through a real `PrometheusMeterRegistry` rather than a `SimpleMeterRegistry` that would accept any name |
-| **Run** | **171** | **0 failures** (12 + 21 + 25 + 13 + 49 + 11 + 12 + 11 + 9 + 8) |
+| **Run** | **188** | **0 failures** (12 + 24 + 25 + 13 + 59 + 11 + 12 + 15 + 9 + 8) |
 | PostgreSQL integration | 5 | `@Testcontainers(disabledWithoutDocker = true)` — skipped without a container runtime |
 
-176 tests exist across the two modules; 171 run without Docker, 5 skip. CI runs all 176 and they pass — the runner has Docker, so it is the only place the real PostgreSQL path (Flyway + `ddl-auto=validate` + `SELECT FOR UPDATE` under 20-way contention, and a 20-thread idempotency-key race) gets exercised. The surefire summary there reads `Tests run: 158, Failures: 0, Errors: 0, Skipped: 0` for this module and `Tests run: 18 … Skipped: 0` for the Lambda. `Skipped: 0` rather than `Skipped: 5` is the part worth reading: it is the difference between the integration tests passing and the integration tests quietly opting out, and a green build alone does not distinguish the two.
+193 tests exist across the two modules; 188 run without Docker, 5 skip. CI runs all 193 and they pass — the runner has Docker, so it is the only place the real PostgreSQL path (Flyway + `ddl-auto=validate` + `SELECT FOR UPDATE` under 20-way contention, and a 20-thread idempotency-key race) gets exercised. The surefire summary there reads `Tests run: 175, Failures: 0, Errors: 0, Skipped: 0` for this module and `Tests run: 18 … Skipped: 0` for the Lambda. `Skipped: 0` rather than `Skipped: 5` is the part worth reading: it is the difference between the integration tests passing and the integration tests quietly opting out, and a green build alone does not distinguish the two.
 
 **The `@WebMvcTest` slices run with `addFilters = false`, and that is deliberate.** A slice does not load `SecurityConfig` — it is a `@Configuration` class, not a controller, so the slice filter excludes it — and what Boot substitutes is its *own* default chain. Leaving the filters on would therefore have every controller test authenticate against rules that are not this application's rules, and pass. That is worse than no coverage: it reads as though authorisation is tested. The real rules are tested once, properly, against the real `SecurityConfig` with real credentials and the real 401/403 bodies, in `SecurityRulesTest`.
 
@@ -658,7 +676,7 @@ Every row is a decision, not an oversight. Left column: what the code does. Righ
 | Two users in an `InMemoryUserDetailsManager` | Cognito, Okta or Entra behind `issuer-uri` | The *rules* are real and tested; the user store is a stub. The resource-server half is already wired and activates the moment an issuer is configured, so the swap is configuration, not a rewrite. |
 | Idempotent replay returns **201**, not 200 | arguable either way | It replays the original response Stripe-style, so the body is identical. "201 Created" for something not created this time is a fair challenge. Documented rather than silently changed. |
 | The outbox is drained by a **poller**, not by logical replication | Debezium reading the WAL | A 1-second poll costs one indexed query per replica per second and adds up to a second of latency. CDC removes both and adds Kafka Connect, a connector to operate and a replication slot that will fill the disk if the consumer stops. Not free, and not obviously worth it at this size. |
-| Outbox rows are never pruned | a partial-index-friendly delete of published rows older than N days | The table grows forever. It is one scheduled `DELETE` and it is not written, because nothing here runs long enough to notice — which is exactly the reasoning that produces a 400 GB table in a real system, so it is written down rather than forgotten. |
+| Retention is a batched `DELETE` on a schedule | a partitioned table, dropping yesterday's partition | `DROP PARTITION` is O(1) and a delete is not, which matters from roughly the first hundred million rows. Below that it buys a partitioning scheme, a maintenance job to create partitions ahead of time, and an outage when that job is the thing that fails. The pruner is 40 lines and bounded; it is the right size for this. |
 | No circuit breaker | Resilience4j | One outbound dependency, and the outbox already absorbs the failure mode a breaker would protect against: a down SQS leaves rows unpublished and the next drain retries them. |
 | Contract tests are a **shared JSON file**, not Pact | a broker, with versioned pacts and a `can-i-deploy` gate in CI | The file catches the change that breaks the consumer, which is the whole job at two modules in one repository. A broker earns its keep when the consumers are other people's services on other people's release trains. |
 | Traces are generated but **not exported** | an OTLP collector, and the trace id carried through the SQS message attributes into the Lambda | The ids are on every log line and in every response header, which is what makes one booking followable inside this service. Crossing the process boundary into the Lambda needs a collector to send to, and there is no collector in this deployment. See [Observability](#observability). |
@@ -703,12 +721,20 @@ local run stays green, which is precisely the class of defect a first pass does 
 | **The contract test checked the shape, not the values.** Changing the formatter's zone from UTC to the host's keeps 27 characters, six fractional digits, a trailing `Z` (a quoted literal in the pattern, not the offset field) and monotonic ordering — so every assertion stayed green while every event on the queue shifted by the host offset | The serialised event is compared against `contracts/booking-created-v1.json` as a whole document, plus a test that names the zone in its failure message. CI runs in UTC and a laptop does not, which is exactly the arrangement in which a zone bug ships green |
 | **`k8s/secret.example.yaml` did not carry the two API passwords**, so anyone following the example deployed a pod with neither set — which is the first row of this table | Both keys are in the example, with the `htpasswd -bnBC 10 "" 'pw' \| tr -d ':\n'` recipe and a note that omitting them now fails startup |
 
+**Third pass — the three gaps this README itself listed as open.** Not found by a reviewer:
+written down here as known and unfixed, which is the easiest kind of debt to leave alone
+forever. Each one now has a test that fails without the fix, like every row above.
+
+| What used to happen | What happens now |
+|---|---|
+| **Nothing tied a log line to a request.** A 500 in a three-replica deployment meant grepping by timestamp and hoping. The README called this the largest operability gap and it had been open the longest | `RequestIdFilter` puts a request id in the MDC ahead of Spring Security and echoes it on *every* response including 401 and 403, `traceId`/`spanId` sit beside it, and the prod profile emits ECS JSON so all four are queryable fields rather than substrings. See [Observability](#observability) |
+| **Published outbox rows were kept forever.** Nothing breaks for months, which is the problem: the partial index only covers unpublished rows, so the poller keeps performing perfectly while the heap underneath it grows, and the first symptom is a backup window or a disk alert on a Sunday | `OutboxPruner` deletes published rows past a 7-day retention, in bounded batches with a per-run ceiling. `OutboxPrunerTest` proves the statement against a real database — including that an unpublished row is never deleted however old it is, which is the failure that would be both silent and permanent |
+| **A poisoned event was retried first, forever.** `ORDER BY id` puts the oldest failing row at the head of every batch, so one payload the transport structurally rejects consumes the batch on every tick while live events queue behind it — one bad row, total publishing outage, and waiting is what it is already doing | The claim carries `AND attempts < :maxAttempts`, the row drops out after ten failures, `outbox_dead` rises and a WARN names the id and the booking. The documented re-drive, `UPDATE outbox_events SET attempts = 0 WHERE id = ?`, is run verbatim by a test so the sentence an operator will paste is a tested one |
+
 ### Still open
 
 | What happens | What should happen | The fix |
 |---|---|---|
-| `outbox_events` rows are kept forever. Published rows are dead weight that the partial index does not cover but the table scan eventually does. | Published rows older than a retention window are deleted on a schedule. | One `@Scheduled` `DELETE … WHERE published_at < :cutoff`, about fifteen lines with a test. |
-| An outbox event that fails deterministically — a payload the transport rejects — is retried forever at the poll interval, and `ORDER BY id` means it is retried *first* every time. | After N attempts the row moves to a dead-letter state and stops being claimed, with an alert. | `attempts` is already persisted; the claim query gains `AND attempts < :maxAttempts` and the drain gains a counter. Roughly twenty lines. |
 | There is no rate limiting. A single caller with valid credentials can saturate the pool. | A token bucket per principal at the gateway, or Bucket4j in front of the write endpoints. | Out of scope for the service itself — this belongs at the ingress, and saying so is the answer rather than adding a half-measure here. |
 
 ---

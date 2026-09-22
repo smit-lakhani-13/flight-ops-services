@@ -11,6 +11,8 @@ import com.smit.flightops.service.EventPublisher;
 import com.smit.flightops.service.FlightService;
 import com.smit.flightops.service.OutboxPublisher;
 import com.smit.flightops.service.OutboxWriter;
+import io.micrometer.tracing.ScopedSpan;
+import io.micrometer.tracing.Tracer;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -22,9 +24,11 @@ import org.springframework.transaction.IllegalTransactionStateException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
@@ -57,7 +61,12 @@ import static org.mockito.Mockito.verifyNoInteractions;
         webEnvironment = SpringBootTest.WebEnvironment.NONE,
         properties = {
                 "spring.datasource.url=jdbc:h2:mem:outboxtest;DB_CLOSE_DELAY=-1",
-                "app.outbox.poll-interval=3600000"
+                "app.outbox.poll-interval=3600000",
+                // Sampling is 0.1 in production, which would make the trace
+                // assertions below pass nine times in ten. Every span here is
+                // sampled so that "no traceparent" can only mean the code did
+                // not capture one.
+                "management.tracing.sampling.probability=1.0"
         })
 class OutboxTest {
 
@@ -66,6 +75,7 @@ class OutboxTest {
     @Autowired private OutboxEventRepository outboxEventRepository;
     @Autowired private OutboxPublisher outboxPublisher;
     @Autowired private OutboxWriter outboxWriter;
+    @Autowired private Tracer tracer;
 
     /**
      * The transport is mocked so the tests can make it fail on demand. Note
@@ -83,7 +93,7 @@ class OutboxTest {
 
     @BeforeEach
     void resetTransport() {
-        doNothing().when(eventPublisher).publish(anyString(), anyString());
+        doNothing().when(eventPublisher).publish(anyString(), anyString(), anyMap());
     }
 
     // -----------------------------------------------------------------
@@ -181,7 +191,7 @@ class OutboxTest {
 
         outboxPublisher.drainOutbox();
 
-        verify(eventPublisher).publish("BookingCreated", payload);
+        verify(eventPublisher).publish(eq("BookingCreated"), eq(payload), anyMap());
         OutboxEvent event = eventsFor(String.valueOf(booking.bookingId())).getFirst();
         assertThat(event.getPublishedAt()).isNotNull();
         assertThat(event.getLastError()).isNull();
@@ -204,7 +214,7 @@ class OutboxTest {
         // claimUnpublished is the only thing standing between a poller and a
         // consumer receiving every event it has ever been sent, once per tick,
         // forever.
-        verify(eventPublisher).publish(eq("BookingCreated"), eq(payload));
+        verify(eventPublisher).publish(eq("BookingCreated"), eq(payload), anyMap());
     }
 
     /**
@@ -223,7 +233,7 @@ class OutboxTest {
         String id = String.valueOf(booking.bookingId());
 
         doThrow(new IllegalStateException("queue unreachable"))
-                .when(eventPublisher).publish(anyString(), anyString());
+                .when(eventPublisher).publish(anyString(), anyString(), anyMap());
         outboxPublisher.drainOutbox();
 
         OutboxEvent afterFailure = eventsFor(id).getFirst();
@@ -231,7 +241,7 @@ class OutboxTest {
         assertThat(afterFailure.getAttempts()).isEqualTo(1);
         assertThat(afterFailure.getLastError()).contains("queue unreachable");
 
-        doNothing().when(eventPublisher).publish(anyString(), anyString());
+        doNothing().when(eventPublisher).publish(anyString(), anyString(), anyMap());
         outboxPublisher.drainOutbox();
 
         OutboxEvent afterRecovery = eventsFor(id).getFirst();
@@ -262,7 +272,7 @@ class OutboxTest {
 
         String poisonPayload = eventsFor(String.valueOf(poisoned.bookingId())).getFirst().getPayload();
         doThrow(new IllegalStateException("that one specifically"))
-                .when(eventPublisher).publish(anyString(), eq(poisonPayload));
+                .when(eventPublisher).publish(anyString(), eq(poisonPayload), anyMap());
 
         outboxPublisher.drainOutbox();
 
@@ -297,6 +307,114 @@ class OutboxTest {
                 .isInstanceOf(IllegalTransactionStateException.class);
 
         assertThat(outboxEventRepository.count()).isEqualTo(before);
-        verify(eventPublisher, never()).publish(anyString(), anyString());
+        verify(eventPublisher, never()).publish(anyString(), anyString(), anyMap());
+    }
+
+    // -----------------------------------------------------------------
+    // The trace context.
+    // -----------------------------------------------------------------
+
+    /**
+     * The one piece of a request that an outbox destroys if nobody saves it.
+     *
+     * <p>A direct send carries the caller's trace context for free, because the
+     * send happens on the caller's thread. The outbox moves the send to a
+     * scheduler thread minutes later, and that thread has no relationship to
+     * the request that caused the event — so a consumer's spans would attach to
+     * nothing, and the one question worth asking of a distributed trace
+     * ("where did this message come from?") would have no answer. Persisting
+     * the traceparent on the row is the price of the pattern.
+     */
+    @Test
+    @DisplayName("the booking's own trace context is stored on the row and travels with the send")
+    void theTraceContextIsCapturedAtBookingTime() {
+        flightService.create(new CreateFlightRequest("OB008", "EWR", "LHR", 20,
+                Instant.now().plus(Duration.ofHours(6))));
+
+        ScopedSpan span = tracer.startScopedSpan("booking-request");
+        String traceId = span.context().traceId();
+        BookingDto booking;
+        try {
+            booking = bookingService.book(
+                    new BookingRequest("OB008", "Smit Lakhani", 1, "outbox-trace"));
+        } finally {
+            span.end();
+        }
+
+        OutboxEvent event = eventsFor(String.valueOf(booking.bookingId())).getFirst();
+        assertThat(event.getTraceparent())
+                .as("W3C form, built by the propagator rather than assembled by hand")
+                .matches("00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}")
+                .contains(traceId);
+
+        outboxPublisher.drainOutbox();
+
+        verify(eventPublisher).publish(eq("BookingCreated"), eq(event.getPayload()),
+                eq(Map.of("traceparent", event.getTraceparent())));
+    }
+
+    /**
+     * A booking made outside a trace — by a scheduled job, a seeder, a console
+     * — gets no traceparent and no header. The alternative, inventing one, is
+     * worse than the gap it fills: a consumer cannot tell a fabricated id from
+     * a real one, so it would stitch unrelated work into a single trace and
+     * corrupt exactly the thing the field exists to provide.
+     */
+    @Test
+    @DisplayName("a booking made outside a trace stores no traceparent and sends no header")
+    void anUntracedBookingCarriesNothing() {
+        flightService.create(new CreateFlightRequest("OB009", "EWR", "LHR", 20,
+                Instant.now().plus(Duration.ofHours(6))));
+
+        BookingDto booking = bookingService.book(
+                new BookingRequest("OB009", "Smit Lakhani", 1, "outbox-untraced"));
+
+        OutboxEvent event = eventsFor(String.valueOf(booking.bookingId())).getFirst();
+        assertThat(event.getTraceparent()).isNull();
+
+        outboxPublisher.drainOutbox();
+
+        verify(eventPublisher).publish(eq("BookingCreated"), eq(event.getPayload()), eq(Map.of()));
+    }
+
+    /**
+     * The test that pins <em>where</em> the capture happens.
+     *
+     * <p>Reading the current span in the poller instead of in the writer
+     * compiles, passes a naive test, and is wrong: every event on the queue
+     * would then carry the drain's trace, so all events published in one tick
+     * would share one meaningless id and the request a support engineer is
+     * actually looking for would appear nowhere. The drain below runs inside
+     * its own span precisely so that a regression to that design fails here.
+     */
+    @Test
+    @DisplayName("the event carries the booking's trace, not the drain's")
+    void theDrainDoesNotOverwriteTheTrace() {
+        flightService.create(new CreateFlightRequest("OB010", "EWR", "LHR", 20,
+                Instant.now().plus(Duration.ofHours(6))));
+
+        ScopedSpan bookingSpan = tracer.startScopedSpan("booking-request");
+        String bookingTraceId = bookingSpan.context().traceId();
+        BookingDto booking;
+        try {
+            booking = bookingService.book(
+                    new BookingRequest("OB010", "Smit Lakhani", 1, "outbox-trace-owner"));
+        } finally {
+            bookingSpan.end();
+        }
+        OutboxEvent event = eventsFor(String.valueOf(booking.bookingId())).getFirst();
+
+        ScopedSpan drainSpan = tracer.startScopedSpan("outbox-drain");
+        String drainTraceId = drainSpan.context().traceId();
+        try {
+            outboxPublisher.drainOutbox();
+        } finally {
+            drainSpan.end();
+        }
+
+        assertThat(drainTraceId).isNotEqualTo(bookingTraceId);
+        verify(eventPublisher).publish(eq("BookingCreated"), eq(event.getPayload()),
+                eq(Map.of("traceparent", event.getTraceparent())));
+        assertThat(event.getTraceparent()).contains(bookingTraceId).doesNotContain(drainTraceId);
     }
 }

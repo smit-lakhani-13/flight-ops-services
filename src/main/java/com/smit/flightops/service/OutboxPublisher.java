@@ -2,6 +2,7 @@ package com.smit.flightops.service;
 
 import com.smit.flightops.config.OutboxProperties;
 import com.smit.flightops.entity.OutboxEvent;
+import com.smit.flightops.observability.OutboxMetrics;
 import com.smit.flightops.repository.OutboxEventRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -12,6 +13,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Drains the outbox: claims a batch of unpublished events, hands each payload
@@ -32,6 +34,18 @@ import java.util.List;
  * by a consumer that can absorb them; a lost booking event is not recoverable
  * by anyone. The Lambda's conditional write to DynamoDB is what absorbs them.
  *
+ * <h2>A row does not retry forever</h2>
+ * The claim query carries {@code AND attempts < :maxAttempts}, and that bound
+ * is about availability rather than tidiness. The claim is {@code ORDER BY id},
+ * so an event the transport structurally rejects — a payload it will refuse
+ * identically on attempt 10,000 — is retried <em>first</em> on every single
+ * tick, consuming the batch while live events queue up behind it. Without the
+ * ceiling one malformed row is a total publishing outage that no amount of
+ * waiting resolves. With it, the row drops out of the claim, {@code
+ * outbox.dead} goes above zero, and the log names the id and the booking.
+ * Bringing it back is deliberate and manual:
+ * {@code UPDATE outbox_events SET attempts = 0 WHERE id = ?}.
+ *
  * <h2>Safe on every replica</h2>
  * No leader election, no distributed lock, no designated drainer pod. {@code
  * SKIP LOCKED} in {@code claimUnpublished} means concurrent replicas take
@@ -47,15 +61,18 @@ public class OutboxPublisher {
     private final OutboxEventRepository outboxEventRepository;
     private final EventPublisher eventPublisher;
     private final OutboxProperties properties;
+    private final OutboxMetrics metrics;
     private final Clock clock;
 
     public OutboxPublisher(OutboxEventRepository outboxEventRepository,
                            EventPublisher eventPublisher,
                            OutboxProperties properties,
+                           OutboxMetrics metrics,
                            Clock clock) {
         this.outboxEventRepository = outboxEventRepository;
         this.eventPublisher = eventPublisher;
         this.properties = properties;
+        this.metrics = metrics;
         this.clock = clock;
     }
 
@@ -90,7 +107,8 @@ public class OutboxPublisher {
     @Scheduled(fixedDelayString = "${app.outbox.poll-interval}")
     @Transactional
     public void drainOutbox() {
-        List<OutboxEvent> batch = outboxEventRepository.claimUnpublished(properties.batchSize());
+        List<OutboxEvent> batch = outboxEventRepository.claimUnpublished(
+                properties.batchSize(), properties.maxAttempts());
         if (batch.isEmpty()) {
             return;
         }
@@ -98,8 +116,9 @@ public class OutboxPublisher {
         int published = 0;
         for (OutboxEvent event : batch) {
             try {
-                eventPublisher.publish(event.getEventType(), event.getPayload());
+                eventPublisher.publish(event.getEventType(), event.getPayload(), headersFor(event));
                 event.markPublished(clock.instant());
+                metrics.publishSucceeded();
                 published++;
             } catch (RuntimeException e) {
                 // Per row, deliberately. Letting this propagate would roll the
@@ -108,8 +127,23 @@ public class OutboxPublisher {
                 // on the queue, so the next tick would send them again. One bad
                 // row must not turn into N duplicates.
                 event.markFailed(e.toString());
-                log.warn("Outbox event {} ({}) failed to publish on attempt {}: {}",
-                        event.getId(), event.getEventType(), event.getAttempts(), e.toString());
+                metrics.publishFailed();
+
+                if (event.getAttempts() >= properties.maxAttempts()) {
+                    // The claim query will not return this row again. Said at
+                    // WARN with the id in it because the row is now invisible
+                    // to the poller and only a human can bring it back:
+                    //   UPDATE outbox_events SET attempts = 0 WHERE id = ?
+                    metrics.attemptsExhausted();
+                    log.warn("Outbox event {} ({}) exhausted {} attempts and will not be retried. "
+                             + "Booking {} has no published event. Last error: {}",
+                             event.getId(), event.getEventType(), properties.maxAttempts(),
+                             event.getAggregateId(), e.toString());
+                } else {
+                    log.warn("Outbox event {} ({}) failed to publish on attempt {} of {}: {}",
+                            event.getId(), event.getEventType(), event.getAttempts(),
+                            properties.maxAttempts(), e.toString());
+                }
             }
         }
 
@@ -120,5 +154,21 @@ public class OutboxPublisher {
         } else if (log.isDebugEnabled()) {
             log.debug("Outbox drain published {} event(s)", published);
         }
+    }
+
+    /**
+     * The transport metadata for one row: the stored {@code traceparent}, if
+     * the booking that produced it was made inside a traced request.
+     *
+     * <p>An absent trace context yields an empty map rather than a placeholder.
+     * A fabricated traceparent is worse than none — a consumer cannot tell it
+     * is fake, so it would stitch unrelated work into one trace and quietly
+     * corrupt the very thing the field exists to provide.
+     */
+    private static Map<String, String> headersFor(OutboxEvent event) {
+        String traceparent = event.getTraceparent();
+        return traceparent == null || traceparent.isBlank()
+                ? Map.of()
+                : Map.of("traceparent", traceparent);
     }
 }

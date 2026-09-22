@@ -1,5 +1,7 @@
 package com.smit.flightops.service;
 
+import java.util.Map;
+
 /**
  * Seam between the outbox and whatever transport carries the event — SQS here,
  * Solace or Kafka elsewhere. One bean definition changes to swap transports;
@@ -30,8 +32,18 @@ public interface EventPublisher {
      *                  filter without parsing the body
      * @param payload   the exact serialised event; implementations send it
      *                  unchanged
+     * @param headers   transport metadata to send alongside the body. Today it
+     *                  holds {@code traceparent} and nothing else. A map rather
+     *                  than a {@code String traceparent} parameter because the
+     *                  next piece of metadata would otherwise be a second
+     *                  breaking change to every implementation, and this
+     *                  interface exists to be implemented by transports nobody
+     *                  has written yet. Never null; empty is normal, because a
+     *                  booking made outside a traced request has no trace
+     *                  context and inventing one would put a fabricated id on
+     *                  the queue.
      * @throws RuntimeException if the transport rejects the message; the caller
      *                          records the failure and retries the row later
      */
-    void publish(String eventType, String payload);
+    void publish(String eventType, String payload, Map<String, String> headers);
 }
