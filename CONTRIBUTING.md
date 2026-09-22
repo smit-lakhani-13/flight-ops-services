@@ -74,9 +74,9 @@ off and reports as skipped.
 | `build` | ArchUnit | a layering rule broken — 9 rules in `ArchitectureTest` |
 | `infra-lint` | kubeconform | the rendered `k8s/overlays/aws` is not valid against the Kubernetes 1.36 schemas |
 | `infra-lint` | `cfn-lint`, `sam validate` | a CloudFormation or SAM template is malformed |
-| `infra-lint` | `shellcheck`, `bash -n` | any tracked `*.sh` has a lint finding or a syntax error |
+| `infra-lint` | `shellcheck` v0.11.0, `bash -n` | any tracked `*.sh` has a lint finding or a syntax error |
 | `trivy-fs` | Trivy | a CRITICAL/HIGH vulnerability **with a fix available**, or a committed secret |
-| `dependency-review` | dependency-review | the pull request *adds* a dependency with a high-severity advisory |
+| `dependency-review` | dependency-review | the pull request *adds* a dependency with a high-severity advisory. Needs the repository's dependency graph; the job warns and passes if it is switched off, rather than going red over a setting |
 | `docs-check` | `scripts/refcheck.py` | a backticked `path` or `path#symbol` in any Markdown file does not resolve |
 | `docs-check` | `scripts/linkcheck.py` | a relative link or heading anchor is broken |
 | `docs-check` | `scripts/sweeps.sh` | a co-author trailer, a generated-with signature, or a reference to the private sibling directory, in a file **or a commit message** |
@@ -91,6 +91,19 @@ Run the doc gates before pushing; they are fast and they catch real mistakes:
 ```bash
 python3 scripts/refcheck.py && python3 scripts/linkcheck.py && scripts/sweeps.sh
 ```
+
+The shell gate is worth matching locally too, and the version matters — 0.10 and
+0.11 disagree about `cmd && log … || true`, so CI pins v0.11.0 rather than using
+whatever the runner image happens to ship. `brew install shellcheck` gives the
+same one today:
+
+```bash
+shellcheck $(git ls-files '*.sh')
+```
+
+All the scripts in one invocation, not one per file: `deploy/aws/lib.sh` is
+sourced by the others, and shellcheck only follows it when it is in the input
+list. Leave it out and every script that sources it reports SC1091.
 
 Both have already caught errors in this repository's own documentation — a
 method name that did not exist, and a README count that was wrong — which is

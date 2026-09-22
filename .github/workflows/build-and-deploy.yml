@@ -165,6 +165,16 @@ jobs:
       KUBERNETES_VERSION: 1.36.0
       CFN_LINT_VERSION: 1.57.0
       KUBECTL_VERSION: v1.36.0
+      # Pinned, and not for supply-chain reasons: shellcheck ships on the runner
+      # image, and its version therefore drifts whenever GitHub rebuilds that
+      # image. Different versions disagree about which patterns are worth
+      # mentioning -- 0.10 reports SC2015 on `cmd && log ... || true`, 0.11 has
+      # decided that idiom is fine -- so an unpinned linter turns main red on a
+      # morning when nobody changed a line of shell. That is the precise failure
+      # CONTRIBUTING.md warns about, and a gate should not be the thing causing
+      # it. Bump this deliberately, fix what the new version finds, and commit
+      # both together.
+      SHELLCHECK_VERSION: v0.11.0
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -234,12 +244,23 @@ jobs:
       - name: Validate the SAM template
         run: sam validate --lint --region "$AWS_REGION"
 
-      # shellcheck ships on ubuntu-latest. `bash -n` afterwards because the two
-      # catch different things: shellcheck finds unquoted expansions and the
-      # bash-3.2 array traps that bite on macOS, `bash -n` finds an unbalanced
-      # heredoc that shellcheck will happily parse around.
+      # `bash -n` as well as shellcheck, because the two catch different
+      # things: shellcheck finds unquoted expansions and the bash-3.2 array
+      # traps that bite on macOS, `bash -n` finds an unbalanced heredoc that
+      # shellcheck will happily parse around.
+      #
+      # Every tracked script in one invocation, not one per file. It matters for
+      # the sourced ones: with lib.sh in the input list shellcheck follows the
+      # `. "$here/lib.sh"` and knows what it defines, and without it every
+      # script that sources it reports SC1091.
       - name: Check every tracked shell script
         run: |
+          curl -sSfL -o /tmp/shellcheck.tar.xz \
+            "https://github.com/koalaman/shellcheck/releases/download/${SHELLCHECK_VERSION}/shellcheck-${SHELLCHECK_VERSION}.linux.x86_64.tar.xz"
+          tar -xJf /tmp/shellcheck.tar.xz -C /tmp
+          sudo install "/tmp/shellcheck-${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck
+          shellcheck --version
+
           mapfile -t scripts < <(git ls-files '*.sh')
           printf 'checking %d scripts:\n' "${#scripts[@]}"
           printf '  %s\n' "${scripts[@]}"
@@ -337,7 +358,50 @@ jobs:
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+
+      # The action below reads the repository's dependency graph, and when that
+      # is switched off it fails with "Dependency review is not supported on
+      # this repository" — a red square that no commit can fix and that every
+      # contributor learns to scroll past.
+      #
+      # So the availability of the feature is checked first, and its absence is
+      # reported as a warning and a job summary naming the exact setting rather
+      # than as a failure. A gate that is off should say so loudly; it should
+      # not pretend the code is broken.
+      - name: Is the dependency graph available?
+        id: graph
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          code=$(curl -sS -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Accept: application/vnd.github+json' \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/dependency-graph/compare/$BASE_SHA...$HEAD_SHA")
+
+          if [ "$code" = 200 ]; then
+            echo 'available=true' >> "$GITHUB_OUTPUT"
+            echo "dependency graph available (HTTP $code)"
+            exit 0
+          fi
+
+          echo 'available=false' >> "$GITHUB_OUTPUT"
+          {
+            echo '### dependency-review did not run'
+            echo
+            echo "The dependency graph API answered \`$code\`, so this repository has the"
+            echo 'dependency graph switched off and there is nothing for the review to read.'
+            echo
+            echo 'Turn it on at **Settings → Code security → Dependency graph**. Until then'
+            echo 'this job passes without checking anything, which is said here rather than'
+            echo 'hidden — a gate nobody knows is off is worse than no gate at all.'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::warning title=dependency-review skipped::the dependency graph is disabled for this repository (API returned $code) — enable it at Settings → Code security"
+
+      - name: Review what this pull request adds
+        if: steps.graph.outputs.available == 'true'
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           fail-on-severity: high
           # The summary lands in the job summary either way. It is not posted as

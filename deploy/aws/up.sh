@@ -179,7 +179,9 @@ VPC_ID=$(eksctl_stack_output VPC)
 PRIVATE_SUBNETS=$(eksctl_stack_output SubnetsPrivate)
 CLUSTER_SG=$(eksctl_stack_output ClusterSecurityGroupId)
 SHARED_NODE_SG=$(eksctl_stack_output SharedNodeSecurityGroup)
-[ -n "$VPC_ID" ] && [ -n "$PRIVATE_SUBNETS" ] || die "could not read the eksctl stack outputs"
+if [ -z "$VPC_ID" ] || [ -z "$PRIVATE_SUBNETS" ]; then
+    die "could not read the eksctl stack outputs"
+fi
 
 if stack_exists "$DATA_STACK"; then
     ok "data stack already exists — not touching the password"

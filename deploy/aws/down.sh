@@ -113,8 +113,10 @@ fi
 # this is a no-op. It stays because a function deployed before that declaration
 # existed owns a group CloudFormation never knew about, with retention set to
 # "Never expire". $0.03/GB/month: pennies, and permanent.
-aws logs delete-log-group --log-group-name /aws/lambda/booking-event-handler 2>/dev/null \
-    && ok "lambda log group deleted" || true
+if aws logs delete-log-group \
+        --log-group-name /aws/lambda/booking-event-handler 2>/dev/null; then
+    ok "lambda log group deleted"
+fi
 
 # ---------------------------------------------------------------------------
 step "5/9  The database, BEFORE the cluster"
@@ -179,8 +181,10 @@ elif stack_exists "$FOUNDATION_STACK"; then
     # EmptyOnDelete, which foundation.yaml does. This is the belt to that
     # braces: an ECR repo created before that setting existed would block here.
     ECR_NAME=flight-ops-service
-    aws ecr delete-repository --repository-name "$ECR_NAME" --force >/dev/null 2>&1 \
-        && log "emptied and deleted the ECR repository" || true
+    if aws ecr delete-repository \
+            --repository-name "$ECR_NAME" --force >/dev/null 2>&1; then
+        log "emptied and deleted the ECR repository"
+    fi
     aws cloudformation delete-stack --stack-name "$FOUNDATION_STACK"
     aws cloudformation wait stack-delete-complete --stack-name "$FOUNDATION_STACK" 2>/dev/null || true
     ok "$FOUNDATION_STACK deleted"
