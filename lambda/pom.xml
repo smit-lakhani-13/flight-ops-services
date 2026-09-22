@@ -115,6 +115,8 @@
         <mockito.version>5.23.0</mockito.version>
         <assertj.version>3.27.7</assertj.version>
 
+        <maven.enforcer.plugin.version>3.6.3</maven.enforcer.plugin.version>
+        <cyclonedx.plugin.version>2.9.3</cyclonedx.plugin.version>
         <maven.compiler.plugin.version>3.16.0</maven.compiler.plugin.version>
         <maven.surefire.plugin.version>3.6.0</maven.surefire.plugin.version>
         <maven.shade.plugin.version>3.6.2</maven.shade.plugin.version>
@@ -343,6 +345,74 @@
         </testResources>
 
         <plugins>
+            <!--
+              Same toolchain gate as the service module, and it earns its place
+              here more than there: this POM has no parent, so nothing else in
+              the file checks which JDK is running. maven.compiler.release=21
+              above makes a JDK 17 build fail at compilation with a message about
+              a release version; this makes it fail at validate with a message
+              about the JDK.
+
+              requireUpperBoundDeps is also worth more here. The service module
+              has Boot's BOM arbitrating every transitive version; this module
+              has three BOMs it imports by hand and a shade plugin that flattens
+              whatever they resolve to into one jar.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <version>${maven.enforcer.plugin.version}</version>
+                <executions>
+                    <execution>
+                        <id>enforce-toolchain</id>
+                        <phase>validate</phase>
+                        <goals><goal>enforce</goal></goals>
+                        <configuration>
+                            <rules>
+                                <requireJavaVersion>
+                                    <version>[21,22)</version>
+                                    <message>This build needs JDK 21. On this Mac: export JAVA_HOME=/opt/homebrew/opt/openjdk@21</message>
+                                </requireJavaVersion>
+                                <requireMavenVersion>
+                                    <version>[3.9.0,)</version>
+                                    <message>Use ./mvnw -f lambda/pom.xml, which pins the wrapper to a known Maven version.</message>
+                                </requireMavenVersion>
+                                <banDuplicatePomDependencyVersions/>
+                                <requireUpperBoundDeps/>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!--
+              An SBOM for the Lambda artifact too. It is the module where it
+              matters most: shade inlines every dependency into one jar, so the
+              deployed file has no dependency list of its own to read. This is
+              that list.
+
+              No JaCoCo here on purpose. Eighteen Mockito tests cover a handler
+              with two branches; a coverage gate on that is ceremony, and the
+              service module is where the coverage question is real.
+            -->
+            <plugin>
+                <groupId>org.cyclonedx</groupId>
+                <artifactId>cyclonedx-maven-plugin</artifactId>
+                <version>${cyclonedx.plugin.version}</version>
+                <executions>
+                    <execution>
+                        <id>build-sbom</id>
+                        <phase>package</phase>
+                        <goals><goal>makeBom</goal></goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <outputFormat>json</outputFormat>
+                    <outputName>bom</outputName>
+                    <includeTestScope>false</includeTestScope>
+                </configuration>
+            </plugin>
+
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-compiler-plugin</artifactId>
