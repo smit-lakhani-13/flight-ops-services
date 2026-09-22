@@ -25,8 +25,10 @@ import java.util.Map;
  * Consumes {@code BookingCreated} events from SQS and projects them into a
  * DynamoDB table of flight events.
  *
- * <p>The producer is {@code SqsEventPublisher} in the main service; the wire
- * contract is {@code com.smit.flightops.dto.BookingCreatedEvent} and
+ * <p>The producer is the main service's transactional outbox, drained by
+ * {@code OutboxPublisher} through {@code SqsEventPublisher}. The wire contract
+ * is {@code contracts/booking-created-v1.json}, which both sides test against
+ * without sharing a jar — see {@code BookingEventContractTest} — and
  * {@link BookingEvent} below must stay field-compatible with it.
  *
  * <h2>Design notes</h2>
@@ -265,7 +267,7 @@ public class BookingEventHandler implements RequestHandler<SQSEvent, SQSBatchRes
      *         falling back to the raw string would put an unsortable key in the
      *         table and call it a success.
      */
-    private static String sortKey(BookingEvent booking) {
+    static String sortKey(BookingEvent booking) {
         Instant at = Instant.parse(booking.timestamp());
         return SORT_KEY_TIME.format(at) + "#" + booking.bookingId();
     }
@@ -274,8 +276,14 @@ public class BookingEventHandler implements RequestHandler<SQSEvent, SQSBatchRes
      * Mirror of {@code com.smit.flightops.dto.BookingCreatedEvent} in the main
      * service. Duplicated on purpose: a shared jar between producer and consumer
      * couples their deploys, which is precisely what an event-driven boundary is
-     * supposed to avoid. The cost is that a rename on one side is caught by the
-     * tests here, not by the compiler.
+     * supposed to avoid. The cost is that a rename on one side is not caught by
+     * the compiler.
+     *
+     * <p>It is caught by {@code contracts/booking-created-v1.json}, which both
+     * sides test against without either importing the other's code — see
+     * {@code BookingEventContractTest} here and the file of the same name in
+     * the service. That is the substitute for the type system across a queue,
+     * and it fails in the producer's own build rather than in this one.
      */
     public record BookingEvent(String bookingId, String flightNumber, int seats, String timestamp) {}
 }
