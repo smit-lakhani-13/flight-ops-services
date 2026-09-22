@@ -185,6 +185,26 @@ class FlightControllerTest {
                 .andExpect(jsonPath("$.code").value("DUPLICATE_REQUEST"));
     }
 
+    /** Both writes accept JSON only, for the reason {@code BookingControllerTest#yamlBodyReturns415} gives. */
+    @Test
+    @DisplayName("a YAML body is 415 on both flight writes")
+    void yamlBodyReturns415() throws Exception {
+        mockMvc.perform(post("/api/v1/flights")
+                        .contentType("application/yaml")
+                        .content("flightNumber: UA999\norigin: EWR\ndestination: SFO\ntotalSeats: 100.7\n"))
+                .andExpect(status().isUnsupportedMediaType())
+                .andExpect(header().string("Accept", MediaType.APPLICATION_JSON_VALUE))
+                .andExpect(jsonPath("$.code").value("UNSUPPORTED_MEDIA_TYPE"));
+        mockMvc.perform(patch("/api/v1/flights/UA123/status")
+                        .contentType("application/yaml")
+                        .content("status: BOARDING\n"))
+                .andExpect(status().isUnsupportedMediaType())
+                .andExpect(jsonPath("$.code").value("UNSUPPORTED_MEDIA_TYPE"));
+
+        verify(flightService, never()).create(any());
+        verify(flightService, never()).updateStatus(any(), any());
+    }
+
     @Test
     void patchStatusReturns200() throws Exception {
         when(flightService.updateStatus("UA123", FlightStatus.BOARDING)).thenReturn(dto());

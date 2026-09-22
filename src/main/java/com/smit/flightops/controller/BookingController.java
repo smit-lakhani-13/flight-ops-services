@@ -101,7 +101,7 @@ public class BookingController {
                     "`LOCK_TIMEOUT` — the flight row was held past `lock_timeout`. Carries `Retry-After`.",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     })
-    @PostMapping
+    @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<BookingDto> book(@Valid @RequestBody BookingRequest request) {
         BookingDto booking = bookingService.book(request);
         URI location = UriComponentsBuilder.fromPath("/api/v1/bookings/{bookingId}")

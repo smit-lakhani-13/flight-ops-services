@@ -222,6 +222,24 @@ class BookingControllerTest {
                 .andExpect(jsonPath("$.code").value("UNSUPPORTED_MEDIA_TYPE"));
     }
 
+    /**
+     * A YAML reader sits on the classpath beside Jackson's JSON one, and none of
+     * the {@code spring.jackson} settings reach it, so it would book 2 seats for
+     * {@code seats: 2.5}. The write accepts JSON only.
+     */
+    @Test
+    @DisplayName("a YAML body is 415 and never reaches the service")
+    void yamlBodyReturns415() throws Exception {
+        mockMvc.perform(post("/api/v1/bookings")
+                        .contentType("application/yaml")
+                        .content("flightNumber: UA123\npassengerName: Ada\nseats: 2.5\nidempotencyKey: k-1\n"))
+                .andExpect(status().isUnsupportedMediaType())
+                .andExpect(header().string("Accept", MediaType.APPLICATION_JSON_VALUE))
+                .andExpect(jsonPath("$.code").value("UNSUPPORTED_MEDIA_TYPE"));
+
+        verify(bookingService, never()).book(any());
+    }
+
     /** Follows the header rather than asserting its text, which is what shows it resolves. */
     @Test
     @DisplayName("the Location header from a POST actually resolves — followed, not just asserted")

@@ -31,8 +31,12 @@ import java.util.Set;
  * and no try/catch; errors go to
  * {@link com.smit.flightops.exception.GlobalExceptionHandler}.
  *
- * <p>JSON only. Without {@code produces}, {@code Accept: application/yaml} is
- * served YAML with epoch-number timestamps; with it, the caller gets a 406.
+ * <p>JSON only, both ways. Without {@code produces}, {@code Accept: application/yaml}
+ * is served YAML with epoch-number timestamps; with it, the caller gets a 406.
+ * The writes set {@code consumes} too. swagger-core puts a YAML reader on the
+ * classpath, none of the {@code spring.jackson} settings reach it, and without
+ * {@code consumes} it would read {@code totalSeats: 100.7} as 100. With it, a
+ * YAML body gets a 415.
  */
 @RestController
 @RequestMapping(path = "/api/v1/flights", produces = MediaType.APPLICATION_JSON_VALUE)
@@ -117,7 +121,7 @@ public class FlightController {
                     another request created the same number at the same moment.""",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     })
-    @PostMapping
+    @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
     public ResponseEntity<FlightDto> create(@Valid @RequestBody CreateFlightRequest request) {
         FlightDto flight = flightService.create(request);
         URI location = UriComponentsBuilder.fromPath("/api/v1/flights/{flightNumber}")
@@ -160,7 +164,7 @@ public class FlightController {
                     past `lock_timeout`. Carries `Retry-After`.""",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     })
-    @PatchMapping("/{flightNumber}/status")
+    @PatchMapping(path = "/{flightNumber}/status", consumes = MediaType.APPLICATION_JSON_VALUE)
     public FlightDto updateStatus(@PathVariable String flightNumber,
                                   @Valid @RequestBody StatusUpdate update) {
         return flightService.updateStatus(flightNumber, update.status());
