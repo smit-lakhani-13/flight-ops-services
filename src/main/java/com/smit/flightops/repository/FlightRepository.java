@@ -19,17 +19,31 @@ public interface FlightRepository extends JpaRepository<Flight, Long> {
 
     Optional<Flight> findByFlightNumber(String flightNumber);
 
+    boolean existsByFlightNumber(String flightNumber);
+
+    /** {@code SELECT ... FOR UPDATE}: serialises the read-modify-write on one flight's seat count. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT f FROM Flight f WHERE f.flightNumber = :fn")
+    Optional<Flight> findByFlightNumberForUpdate(@Param("fn") String fn);
+
+    // Paged search. Three explicit derived queries (plus the inherited findAll) instead
+    // of one query with ":origin IS NULL OR ...", which PostgreSQL cannot type and
+    // which defeats the idx_origin_dest index.
+    Page<Flight> findByOriginAndDestination(String origin, String destination, Pageable pageable);
+
+    Page<Flight> findByOrigin(String origin, Pageable pageable);
+
+    Page<Flight> findByDestination(String destination, Pageable pageable);
+
+    // Not called by the API: kept, with FlightRepositoryTest, as examples of a derived,
+    // an enum-driven IN and a native query.
+
     List<Flight> findByOriginAndDestination(String origin, String destination);
 
     List<Flight> findByStatusAndDepartureTimeBetween(FlightStatus s, Instant from, Instant to);
 
-    boolean existsByFlightNumber(String flightNumber);
-
-    // Bookability is FlightStatus.isBookable()'s answer, not this query's. The
-    // status list is derived from the enum rather than spelled out here, so a
-    // new constant cannot quietly get one answer from the entity and another
-    // from the database — this being the "second caller that forgets" is the
-    // exact failure FlightStatus's Javadoc exists to prevent.
+    // The status list comes from FlightStatus.bookableStatuses(), so the query cannot
+    // disagree with the entity about what is bookable.
     @Query("SELECT f FROM Flight f WHERE f.availableSeats >= :min AND f.status IN :statuses")
     List<Flight> findBookable(@Param("min") int min,
                               @Param("statuses") Collection<FlightStatus> statuses);
@@ -38,26 +52,9 @@ public interface FlightRepository extends JpaRepository<Flight, Long> {
         return findBookable(min, FlightStatus.bookableStatuses());
     }
 
-    // LIMIT is not Oracle syntax. Native queries trade portability for control —
-    // the JPQL/derived equivalents above run unchanged on Oracle and PostgreSQL.
+    // Native, so it trades portability (LIMIT is not Oracle syntax) for control. No
+    // status or time filter: departed and cancelled flights are included.
     @Query(value = "SELECT * FROM flights WHERE origin = :o ORDER BY departure_time LIMIT 10",
            nativeQuery = true)
     List<Flight> findNextTen(@Param("o") String origin);
-
-    /**
-     * SELECT ... FOR UPDATE. Serialises the read-modify-write on a single
-     * flight's seat count, which is where last-seat contention actually lives.
-     */
-    @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("SELECT f FROM Flight f WHERE f.flightNumber = :fn")
-    Optional<Flight> findByFlightNumberForUpdate(@Param("fn") String fn);
-
-    // Paged search. Four explicit derived queries instead of one query with
-    // ":origin IS NULL OR ..." — that pattern makes PostgreSQL unable to infer
-    // the parameter type, and it defeats the idx_origin_dest index.
-    Page<Flight> findByOriginAndDestination(String origin, String destination, Pageable pageable);
-
-    Page<Flight> findByOrigin(String origin, Pageable pageable);
-
-    Page<Flight> findByDestination(String destination, Pageable pageable);
 }

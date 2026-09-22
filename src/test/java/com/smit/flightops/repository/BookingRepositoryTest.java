@@ -20,9 +20,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * The two things worth proving at this layer: the unique index on
- * {@code idempotency_key} really exists (it is the last line of defence against
- * a double booking), and the {@code JOIN FETCH} really avoids the lazy load.
+ * The unique index on {@code idempotency_key} exists (the backstop for one key on two
+ * flights), and the {@code JOIN FETCH} avoids the lazy load.
  */
 @DataJpaTest
 class BookingRepositoryTest {
@@ -50,7 +49,7 @@ class BookingRepositoryTest {
     }
 
     @Test
-    @DisplayName("REGRESSION: JOIN FETCH on findByIdempotencyKey too — the caller reads it after BookingService.book's transaction already closed")
+    @DisplayName("REGRESSION: JOIN FETCH on findByIdempotencyKey too, because the caller reads it after BookingService.book's transaction has closed")
     void findByIdempotencyKeyAlsoJoinFetchesTheFlight() {
         Flight flight = flight("UA123");
         bookingRepository.saveAndFlush(new Booking(flight, "Smit Lakhani", 3, "demo-1", null));
@@ -66,7 +65,7 @@ class BookingRepositoryTest {
     }
 
     @Test
-    @DisplayName("the unique index — not the service check — is what makes a replay impossible")
+    @DisplayName("the unique index rejects a second row with the same key, whatever the service checked")
     void duplicateIdempotencyKeyIsRejectedByTheDatabase() {
         Flight flight = flight("UA123");
         bookingRepository.saveAndFlush(new Booking(flight, "Smit Lakhani", 3, "demo-1", null));
@@ -77,7 +76,7 @@ class BookingRepositoryTest {
     }
 
     @Test
-    @DisplayName("JOIN FETCH loads the flight eagerly — no N+1 when listing bookings")
+    @DisplayName("JOIN FETCH loads the flight eagerly, so listing bookings has no N+1")
     void joinFetchInitialisesTheFlight() {
         Flight flight = flight("UA123");
         bookingRepository.saveAndFlush(new Booking(flight, "Smit Lakhani", 3, "demo-1", null));

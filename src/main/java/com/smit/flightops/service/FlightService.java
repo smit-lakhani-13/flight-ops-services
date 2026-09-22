@@ -17,10 +17,8 @@ import org.springframework.transaction.annotation.Transactional;
 import java.util.Locale;
 
 /**
- * Flight lifecycle. Every method is transactional at this layer — the
- * controller stays a thin HTTP adapter and the repository stays a thin data
- * adapter, so the transaction boundary sits exactly where the business
- * operation does.
+ * Flight lifecycle. Every method is transactional here, so the transaction boundary
+ * sits where the business operation does and the controller and repository stay thin.
  */
 @Service
 @Transactional(readOnly = true)
@@ -39,10 +37,8 @@ public class FlightService {
     }
 
     /**
-     * Paged search on any combination of origin and destination. Four explicit
-     * branches instead of a Specification or a null-tolerant JPQL predicate:
-     * each branch produces a query the planner can index, and the code says
-     * plainly which index it expects to use.
+     * Paged search on any combination of origin and destination. Four explicit branches,
+     * each a query the planner can index, instead of a null-tolerant predicate.
      */
     public Page<FlightDto> search(String origin, String destination, Pageable pageable) {
         String o = normalise(origin);
@@ -62,11 +58,12 @@ public class FlightService {
     }
 
     /**
-     * The {@code existsByFlightNumber} check is a courtesy that turns the common
-     * case into a clean 409. It is not the guarantee: two concurrent creates can
-     * both pass it. The real guarantee is {@code uk_flights_flight_number}, whose
-     * violation surfaces as a {@code DataIntegrityViolationException} and is
-     * mapped to 409 in the exception handler.
+     * {@code existsByFlightNumber} turns the common duplicate into 409
+     * {@code DUPLICATE_FLIGHT}. Two concurrent creates can both pass it; the loser then
+     * hits {@code uk_flights_flight_number} and gets 409 {@code DUPLICATE_REQUEST} from
+     * the exception handler, and its retry gets {@code DUPLICATE_FLIGHT}. I left that
+     * as it is: mapping the violation here would change an error code, which the
+     * changelog treats as a major change.
      */
     @Transactional
     public FlightDto create(CreateFlightRequest request) {
@@ -87,10 +84,7 @@ public class FlightService {
         return FlightDto.from(saved);
     }
 
-    /**
-     * No explicit save: the entity is managed inside this transaction, so the
-     * dirty check at flush time writes the UPDATE (and bumps {@code @Version}).
-     */
+    /** No explicit save: dirty checking writes the UPDATE and bumps {@code @Version}. */
     @Transactional
     public FlightDto updateStatus(String flightNumber, FlightStatus status) {
         Flight flight = load(flightNumber);
@@ -100,11 +94,7 @@ public class FlightService {
         return FlightDto.from(flight);
     }
 
-    /**
-     * Soft cancel. Bookings hold a foreign key to this row, so deleting it would
-     * either fail or destroy booking history — the status transition is the
-     * cancellation.
-     */
+    /** Soft cancel: bookings hold a foreign key to this row, so it is never deleted. */
     @Transactional
     public void cancel(String flightNumber) {
         Flight flight = load(flightNumber);
@@ -117,11 +107,7 @@ public class FlightService {
                 .orElseThrow(() -> new FlightNotFoundException(flightNumber));
     }
 
-    /**
-     * Airline codes are upper-case by convention, and the unique constraint is
-     * case-sensitive — normalising on the way in stops {@code ua123} and
-     * {@code UA123} from becoming two flights.
-     */
+    /** Upper-cased because the unique constraint is case-sensitive: ua123 is UA123. */
     private static String normalise(String value) {
         if (value == null || value.isBlank()) {
             return null;

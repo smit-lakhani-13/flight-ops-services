@@ -1,5 +1,6 @@
 package com.smit.flightops.service;
 
+import com.smit.flightops.config.EventProperties;
 import com.smit.flightops.config.OutboxProperties;
 import com.smit.flightops.entity.OutboxEvent;
 import com.smit.flightops.observability.OutboxMetrics;
@@ -18,40 +19,16 @@ import java.util.Map;
 
 /**
  * Drains the outbox: claims a batch of unpublished events, hands each payload
- * to the transport, and marks the ones that were accepted.
+ * to the transport, and marks the ones it accepted. {@link OutboxWriter} records
+ * events inside the booking transaction; this class delivers them outside it.
  *
- * <p>This is the half of the outbox pattern that does the delivering. The other
- * half, {@link OutboxWriter}, does the recording, and the split between them is
- * the whole point: recording is transactional with the booking, delivering is
- * not transactional with anything.
+ * <p>Publish, then mark, so delivery is at-least-once: a crash between the two
+ * republishes on the next tick, and the Lambda's conditional write absorbs the
+ * duplicate. A row stops being claimed after {@code max-attempts} failures,
+ * because the {@code ORDER BY id} claim would otherwise retry a poison row first
+ * on every tick. {@code SKIP LOCKED} lets every replica run this safely.
  *
- * <h2>At-least-once, and why that is the correct choice rather than a
- * compromise</h2>
- * The order below is publish, then mark. A crash in between republishes the
- * event on the next tick. The alternative order — mark, then publish — loses
- * the event entirely on the same crash. There is no third option that is
- * atomic, because the queue and the database are two systems, which is the
- * same reason the outbox exists in the first place. Duplicates are recoverable
- * by a consumer that can absorb them; a lost booking event is not recoverable
- * by anyone. The Lambda's conditional write to DynamoDB is what absorbs them.
- *
- * <h2>A row does not retry forever</h2>
- * The claim query carries {@code AND attempts < :maxAttempts}, and that bound
- * is about availability rather than tidiness. The claim is {@code ORDER BY id},
- * so an event the transport structurally rejects — a payload it will refuse
- * identically on attempt 10,000 — is retried <em>first</em> on every single
- * tick, consuming the batch while live events queue up behind it. Without the
- * ceiling one malformed row is a total publishing outage that no amount of
- * waiting resolves. With it, the row drops out of the claim, {@code
- * outbox.dead} goes above zero, and the log names the id and the booking.
- * Bringing it back is deliberate and manual:
- * {@code UPDATE outbox_events SET attempts = 0, next_attempt_at = NULL WHERE id = ?}.
- *
- * <h2>Safe on every replica</h2>
- * No leader election, no distributed lock, no designated drainer pod. {@code
- * SKIP LOCKED} in {@code claimUnpublished} means concurrent replicas take
- * disjoint batches — see that query's Javadoc, which is where the reasoning
- * lives.
+ * @see OutboxEventRepository#claimUnpublished
  */
 @Component
 @ConditionalOnProperty(name = "app.outbox.enabled", havingValue = "true", matchIfMissing = true)
@@ -65,7 +42,13 @@ public class OutboxPublisher {
     private final OutboxMetrics metrics;
     private final Clock clock;
 
-    public OutboxPublisher(OutboxEventRepository outboxEventRepository,
+    /**
+     * {@code events} comes first on purpose: Spring resolves constructor arguments
+     * in order, so an unknown {@code app.events.publisher} fails on its binding, which
+     * names the property, before the missing {@code EventPublisher} bean is reported.
+     */
+    public OutboxPublisher(EventProperties events,
+                           OutboxEventRepository outboxEventRepository,
                            EventPublisher eventPublisher,
                            OutboxProperties properties,
                            OutboxMetrics metrics,
@@ -75,35 +58,21 @@ public class OutboxPublisher {
         this.properties = properties;
         this.metrics = metrics;
         this.clock = clock;
+        log.info("Outbox publisher started with event transport '{}'", events.publisher());
     }
 
     /**
      * One drain.
      *
-     * <p>{@code fixedDelay}, not {@code fixedRate}. {@code fixedRate} schedules
-     * the next run a fixed time after the previous one <em>started</em>, so a
-     * drain that takes longer than the interval — which is exactly what happens
-     * when the queue is slow, the moment you least want it — has the next run
-     * queued behind it and the one after that queued behind them. The backlog
-     * that builds is of scheduler invocations, not of events, and it does not
-     * drain when the queue recovers. {@code fixedDelay} measures from the
-     * previous run's <em>finish</em>, so a slow drain simply slows the polling
-     * down, which is the behaviour you want from a system under strain.
+     * <p>{@code fixedDelay}, so a slow drain delays the next poll instead of queueing
+     * scheduler runs behind it. {@code @Scheduled} and {@code @Transactional} work
+     * together only while this method is public and non-final: the scheduler calls
+     * the proxy. Otherwise the transaction is lost and {@code SKIP LOCKED} protects
+     * nothing, with no error from the compiler or at runtime.
      *
-     * <p>{@code @Scheduled} and {@code @Transactional} on the same method work
-     * because the scheduler is handed the proxy, not the target — but only for
-     * a public, non-final method on a proxied bean. Make it {@code private} or
-     * {@code final} and the schedule still fires, the transaction silently does
-     * not, and {@code SKIP LOCKED} stops protecting anything because the locks
-     * are released the instant the query returns. It is a two-keyword change
-     * with no compiler error and no runtime error.
-     *
-     * <p>The send does happen inside this transaction, which looks like the
-     * thing this class was written to avoid. It is not the same thing: the rows
-     * locked here are outbox rows, not the flight row on the request path, and
-     * holding them for the duration of the send is what stops a second replica
-     * publishing the same event. A slow queue delays events; before the outbox
-     * it rejected bookings. That is the trade the batch size bounds.
+     * <p>The send runs inside the transaction. The locks held are outbox rows, not
+     * the flight row, and holding them is what stops a second replica sending the
+     * same event. The batch size bounds how long they are held.
      */
     @Scheduled(fixedDelayString = "${app.outbox.poll-interval}")
     @Transactional
@@ -123,18 +92,14 @@ public class OutboxPublisher {
                 metrics.publishSucceeded();
                 published++;
             } catch (RuntimeException e) {
-                // Per row, deliberately. Letting this propagate would roll the
-                // whole batch back, so one poisoned event would undo the
-                // successful sends beside it - and those payloads are already
-                // on the queue, so the next tick would send them again. One bad
-                // row must not turn into N duplicates.
+                // Caught per row: rolling the batch back would resend the rows
+                // already accepted by the queue on the next tick.
                 event.markFailed(e.toString(), nextAttemptAt(now, event.getAttempts() + 1));
                 metrics.publishFailed();
 
                 if (event.getAttempts() >= properties.maxAttempts()) {
-                    // The claim query will not return this row again. Said at
-                    // WARN with the id in it because the row is now invisible
-                    // to the poller and only a human can bring it back:
+                    // The claim will not return this row again, so only a person can
+                    // bring it back:
                     //   UPDATE outbox_events SET attempts = 0, next_attempt_at = NULL WHERE id = ?
                     metrics.attemptsExhausted();
                     log.warn("Outbox event {} ({}) exhausted {} attempts and will not be retried. "
@@ -149,8 +114,7 @@ public class OutboxPublisher {
             }
         }
 
-        // Dirty checking flushes markPublished/markFailed on commit; no explicit
-        // save() call. These are managed entities, loaded in this transaction.
+        // Managed entities: dirty checking flushes markPublished/markFailed on commit.
         if (published < batch.size()) {
             log.warn("Outbox drain published {} of {} claimed events", published, batch.size());
         } else if (log.isDebugEnabled()) {
@@ -159,18 +123,10 @@ public class OutboxPublisher {
     }
 
     /**
-     * When a row that just failed its {@code attempt}-th attempt may be claimed
-     * again: {@code retry-backoff} doubled once per attempt, capped at
-     * {@code max-retry-backoff}.
-     *
-     * <p>Returns null — "claimable on the next tick" — when backoff is
-     * configured to zero. That is not a production setting; it exists so a test
-     * can drain twice in a row without moving a clock.
-     *
-     * <p>The doubling is written as a bounded loop rather than
-     * {@code base << (attempt - 1)} on purpose: the loop stops at the cap, so
-     * there is no attempt count and no configured base that can overflow it.
-     * A shift is one character shorter and silently wrong at attempt 64.
+     * When a row that just failed its {@code attempt}-th attempt may be claimed again:
+     * {@code retry-backoff} doubled per attempt, capped at {@code max-retry-backoff}.
+     * Null (claimable next tick) when backoff is zero, which only tests use. A loop
+     * that stops at the cap, because a shift overflows at attempt 64.
      */
     private Instant nextAttemptAt(Instant now, int attempt) {
         long baseMillis = properties.retryBackoff().toMillis();
@@ -186,13 +142,8 @@ public class OutboxPublisher {
     }
 
     /**
-     * The transport metadata for one row: the stored {@code traceparent}, if
-     * the booking that produced it was made inside a traced request.
-     *
-     * <p>An absent trace context yields an empty map rather than a placeholder.
-     * A fabricated traceparent is worse than none — a consumer cannot tell it
-     * is fake, so it would stitch unrelated work into one trace and quietly
-     * corrupt the very thing the field exists to provide.
+     * The stored {@code traceparent}, if the booking was made inside a traced request.
+     * No placeholder when absent: a consumer cannot tell a fabricated one is fake.
      */
     private static Map<String, String> headersFor(OutboxEvent event) {
         String traceparent = event.getTraceparent();

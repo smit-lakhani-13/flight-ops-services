@@ -10,57 +10,40 @@ import org.springframework.boot.testcontainers.service.connection.ServiceConnect
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
-import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 
 import java.time.Clock;
 import java.time.Duration;
+import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * The prune statement, on the database it actually runs against.
+ * The outbox's native statements, on the database they run against.
  *
- * <p>{@link OutboxPrunerTest} covers the pruner's behaviour — retention window,
- * batch ceiling, counters — and covers it on H2, where it runs everywhere and
- * costs nothing. What H2 cannot cover is the statement itself. The prune is a
- * {@code nativeQuery}, so Hibernate hands it to the driver unchanged, and H2
- * parses {@code LIMIT ... FOR UPDATE SKIP LOCKED} inside a subquery
- * permissively. An edit that H2 still accepts and PostgreSQL rejects would ship
- * green and fail at the first prune interval — an hour after deployment, in a
- * scheduled job whose failure surfaces only as retention quietly never running.
+ * <p>{@link OutboxPrunerTest} and the outbox tests cover behaviour on H2, which
+ * parses {@code LIMIT ... FOR UPDATE SKIP LOCKED} permissively. An edit H2 accepts
+ * and PostgreSQL rejects would pass the build and fail in a scheduled job. This
+ * class proves that PostgreSQL accepts the prune and the claim, and that two
+ * callers of either take disjoint rows while the first transaction is still open.
  *
- * <p>Two things are proved here and nowhere else:
- * <ol>
- *   <li><b>PostgreSQL accepts the statement.</b> Parsed, planned and executed
- *       by the real database, not by a compatibility mode.</li>
- *   <li><b>{@code SKIP LOCKED} does what the Javadoc on
- *       {@link OutboxEventRepository#deletePublishedBefore} claims.</b> Two
- *       replicas pruning at the same moment take <em>disjoint</em> rows. This
- *       is the claim that cannot be checked by reading the query: without
- *       {@code SKIP LOCKED} the second pruner blocks on the first's locks and
- *       then finds those rows gone, so it returns zero — same final state,
- *       completely different behaviour under load, and no test would notice.</li>
- * </ol>
- *
- * <p>{@code disabledWithoutDocker = true}, like {@link
- * com.smit.flightops.BookingIntegrationTest}: on a laptop with no container
- * runtime this skips rather than failing the build. Read the skip count.
+ * <p>{@code disabledWithoutDocker = true}, like
+ * {@link com.smit.flightops.BookingIntegrationTest}, so read the skip count.
  */
 @SpringBootTest(
         webEnvironment = SpringBootTest.WebEnvironment.NONE,
         properties = {
-                // The scheduled poller and pruner are both parked: this class
-                // drives the repository method directly, and a background job
-                // deleting rows underneath it would make the assertions flaky
-                // in a way that looks like a locking bug.
+                // The scheduled poller and pruner are parked: this class calls the
+                // repository directly, and a background job would race it.
                 "app.outbox.poll-interval=3600000",
                 "app.outbox.prune-interval=24h",
                 // Two connections are held open simultaneously below.
@@ -72,7 +55,7 @@ class OutboxPrunePostgresTest {
 
     @Container
     @ServiceConnection
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:17-alpine");
+    static PostgreSQLContainer postgres = new PostgreSQLContainer("postgres:17-alpine");
 
     @Autowired private OutboxEventRepository outboxEventRepository;
     @Autowired private PlatformTransactionManager transactionManager;
@@ -80,6 +63,7 @@ class OutboxPrunePostgresTest {
 
     private static final int ELIGIBLE_ROWS = 10;
     private static final int BATCH = 5;
+    private static final int MAX_ATTEMPTS = 10;
 
     private void publishedAgo(String aggregateId, Duration age) {
         OutboxEvent event = new OutboxEvent("Booking", aggregateId, "BookingCreated",
@@ -95,8 +79,7 @@ class OutboxPrunePostgresTest {
         publishedAgo("PG-OLD-1", Duration.ofDays(9));
         publishedAgo("PG-OLD-2", Duration.ofDays(9));
         publishedAgo("PG-NEW-1", Duration.ofMinutes(1));
-        // Never published, and older than everything else: the cutoff comparison
-        // must not reach it, because NULL < anything is unknown, not true.
+        // Never published and older than everything: NULL < cutoff is unknown, not true.
         outboxEventRepository.save(new OutboxEvent("Booking", "PG-UNSENT", "BookingCreated",
                 "{}", clock.instant().minus(Duration.ofDays(30))));
 
@@ -111,10 +94,8 @@ class OutboxPrunePostgresTest {
     }
 
     /**
-     * The second pruner must not block on the first, and must not come back
-     * empty. Both outcomes look identical once the dust settles — the rows are
-     * gone either way — so the assertion is on what the second call returns
-     * <em>while the first transaction is still open</em>.
+     * The rows are gone either way, so the assertion is on what the second pruner
+     * returns while the first transaction is still open.
      */
     @Test
     @DisplayName("two pruners running at once take disjoint rows instead of one blocking on the other")
@@ -127,10 +108,8 @@ class OutboxPrunePostgresTest {
         CountDownLatch firstHoldsItsRows = new CountDownLatch(1);
         CountDownLatch releaseFirst = new CountDownLatch(1);
 
-        // Same shape as LockTimeoutTest: the countDown that releases the holder
-        // is inside the try-with-resources, because ExecutorService.close()
-        // blocks until the submitted task finishes and the task is waiting on
-        // that latch. Outside it, the two wait for each other.
+        // The releasing countDown sits inside the try-with-resources: close() waits
+        // for the task, and the task waits on that latch.
         try (ExecutorService pool = Executors.newFixedThreadPool(2)) {
             try {
                 Future<Integer> first = pool.submit(() ->
@@ -155,16 +134,14 @@ class OutboxPrunePostgresTest {
                                 outboxEventRepository.deletePublishedBefore(
                                         clock.instant().minus(Duration.ofHours(1)), BATCH)));
 
-                // 10 seconds is not a performance assertion. Without SKIP LOCKED
-                // this call blocks until releaseFirst fires 30 seconds later, so
-                // a timeout here IS the failure -- and it fails with "the second
-                // pruner blocked" rather than with a bare TimeoutException.
+                // Not a performance bound: without SKIP LOCKED this call blocks
+                // until releaseFirst fires, so the timeout is the failure.
                 Integer secondCount;
                 try {
                     secondCount = second.get(10, TimeUnit.SECONDS);
-                } catch (java.util.concurrent.TimeoutException e) {
+                } catch (TimeoutException e) {
                     throw new AssertionError(
-                            "the second pruner blocked on the first pruner's row locks — "
+                            "the second pruner blocked on the first pruner's row locks, so "
                                     + "FOR UPDATE SKIP LOCKED is not in effect", e);
                 }
 
@@ -181,7 +158,78 @@ class OutboxPrunePostgresTest {
 
         List<OutboxEvent> left = outboxEventRepository.findAll();
         assertThat(left)
-                .as("between them the two pruners took every eligible row, each exactly once")
+                .as("between them the two pruners took every eligible row, each only once")
                 .isEmpty();
+    }
+
+    /**
+     * The poller's claim, held open by one transaction while a second claims. The
+     * row not yet due has the lowest id, so {@code ORDER BY id} would reach it first
+     * if the {@code next_attempt_at} predicate let it through.
+     */
+    @Test
+    @DisplayName("two pollers claiming at once take disjoint rows, and a row not yet due is never claimed")
+    void concurrentClaimsAreDisjointAndSkipRowsNotYetDue() throws Exception {
+        outboxEventRepository.deleteAll();
+        Instant now = clock.instant();
+        OutboxEvent notYetDue = new OutboxEvent("Booking", "PG-LATER", "BookingCreated", "{}", now);
+        notYetDue.markFailed("earlier failure", now.plus(Duration.ofHours(1)));
+        Long notYetDueId = outboxEventRepository.save(notYetDue).getId();
+        for (int i = 0; i < ELIGIBLE_ROWS; i++) {
+            outboxEventRepository.save(new OutboxEvent("Booking", "PG-CLAIM-" + i, "BookingCreated", "{}", now));
+        }
+
+        CountDownLatch firstHoldsItsRows = new CountDownLatch(1);
+        CountDownLatch releaseFirst = new CountDownLatch(1);
+        List<Long> firstIds;
+        List<Long> secondIds;
+
+        try (ExecutorService pool = Executors.newFixedThreadPool(2)) {
+            try {
+                Future<List<Long>> first = pool.submit(() ->
+                        new TransactionTemplate(transactionManager).execute(status -> {
+                            List<Long> ids = claimIds(now);
+                            firstHoldsItsRows.countDown();
+                            try {
+                                releaseFirst.await(30, TimeUnit.SECONDS);
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                            }
+                            return ids;
+                        }));
+
+                assertThat(firstHoldsItsRows.await(30, TimeUnit.SECONDS))
+                        .as("the first poller should have claimed its batch")
+                        .isTrue();
+
+                Future<List<Long>> second = pool.submit(() ->
+                        new TransactionTemplate(transactionManager).execute(status -> claimIds(now)));
+                try {
+                    secondIds = second.get(10, TimeUnit.SECONDS);
+                } catch (TimeoutException e) {
+                    throw new AssertionError(
+                            "the second poller blocked on the first poller's row locks, so "
+                                    + "FOR UPDATE SKIP LOCKED is not in effect", e);
+                }
+
+                releaseFirst.countDown();
+                firstIds = first.get(30, TimeUnit.SECONDS);
+            } finally {
+                releaseFirst.countDown();
+            }
+        }
+
+        assertThat(firstIds).hasSize(BATCH).doesNotContain(notYetDueId);
+        assertThat(secondIds)
+                .as("the second poller steps over the locked rows and takes the rest")
+                .hasSize(BATCH)
+                .doesNotContain(notYetDueId)
+                .doesNotContainAnyElementsOf(firstIds);
+    }
+
+    private List<Long> claimIds(Instant now) {
+        return outboxEventRepository.claimUnpublished(BATCH, MAX_ATTEMPTS, now).stream()
+                .map(OutboxEvent::getId)
+                .toList();
     }
 }

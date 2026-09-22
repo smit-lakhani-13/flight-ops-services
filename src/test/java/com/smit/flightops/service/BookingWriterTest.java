@@ -38,11 +38,9 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
- * The write path that used to live directly in {@code BookingService.book}
- * before the idempotency-race fix split it out — see {@link BookingWriter}'s
- * Javadoc for why. These tests exercise exactly what
- * {@code insertNewBooking} does; the replay/recovery orchestration is
- * {@link BookingServiceTest}'s job.
+ * The transactional write path in {@link BookingWriter}: the lock, the in-lock re-read,
+ * the seat debit, the outbox record and cancellation. The replay and recovery
+ * orchestration is {@link BookingServiceTest}'s job.
  */
 @ExtendWith(MockitoExtension.class)
 class BookingWriterTest {
@@ -53,12 +51,7 @@ class BookingWriterTest {
     @Mock private BookingRepository bookingRepository;
     @Mock private OutboxWriter outboxWriter;
 
-    /**
-     * A real fixed Clock, not a mock. The cancellation path stores whatever
-     * this returns, so the assertions can be equalities against a known
-     * instant; a mock would need stubbing in every test that touches it and
-     * would fail Mockito's strict-stubs check in the ones that do not.
-     */
+    /** A fixed Clock, so cancellation times are known; a mock would trip strict stubs. */
     @Spy private Clock clock = Clock.fixed(CANCELLED_AT, ZoneOffset.UTC);
 
     @InjectMocks private BookingWriter bookingWriter;
@@ -85,33 +78,22 @@ class BookingWriterTest {
         assertThat(flight.getAvailableSeats()).isEqualTo(177);
         assertThat(dto.flightNumber()).isEqualTo("UA123");
         assertThat(dto.seats()).isEqualTo(3);
-        // The key is stored and not returned, and both halves of that matter:
-        // the column is what makes the next replay of this request idempotent,
-        // and the response is where echoing it would hand one caller's key to
-        // whoever can read the list endpoint. So the assertion is on the row
-        // that was saved, not on the DTO that went back.
+        // The key is stored for replays but not returned, since the list endpoint
+        // would expose it. So the assertion is on the saved row.
         ArgumentCaptor<Booking> saved = ArgumentCaptor.forClass(Booking.class);
         verify(bookingRepository).save(saved.capture());
         assertThat(saved.getValue().getIdempotencyKey()).isEqualTo("demo-1");
-        // The outbox, not the transport. Before the outbox this line read
-        // verify(eventPublisher).publishBookingCreated(dto), and the change in
-        // that line is the change in the design: what happens inside this
-        // transaction is now a database insert, and the network call happens
-        // later, somewhere else, holding none of these locks. A test still
-        // verifying the publisher here would be pinning behaviour that was
-        // deliberately removed.
+        // The outbox, not the transport: inside this transaction the event is an
+        // insert, and the network call happens later holding none of these locks.
         verify(outboxWriter).recordBookingCreated(dto);
     }
 
     @Test
     @DisplayName("REGRESSION: a replay that arrives when the winner took the last seats is a lost race, not an oversell")
     void racingReplayOnTheLastSeatIsNotAnOversell() {
-        // The exact shape of the bug. The winner has just committed under the
-        // lock this call is waiting on, and it took every remaining seat. Read
-        // in the old order the next statement was reserveSeats, which threw
-        // InsufficientSeatsException — so the caller retrying a request that
-        // HAD succeeded was told the flight was full, with a 409 that named the
-        // wrong reason.
+        // The winner committed under this lock and took every remaining seat. If
+        // reserveSeats ran before the re-read, a retry of a request that succeeded
+        // would get InsufficientSeatsException.
         Flight full = flight();
         full.reserveSeats(180);
         when(flightRepository.findByFlightNumberForUpdate("UA123")).thenReturn(Optional.of(full));
@@ -122,8 +104,7 @@ class BookingWriterTest {
                 .isInstanceOf(LostIdempotencyRaceException.class)
                 .hasMessageContaining("raced-key");
 
-        // Nothing written, nothing published, and no second debit: the seat
-        // count is the winner's and only the winner's.
+        // Nothing written, nothing published and no second debit.
         assertThat(full.getAvailableSeats()).isZero();
         verify(bookingRepository, never()).save(any());
         verifyNoInteractions(outboxWriter);
@@ -140,9 +121,8 @@ class BookingWriterTest {
         assertThatThrownBy(() -> bookingWriter.insertNewBooking(request(1, "raced-key-2")))
                 .isInstanceOf(LostIdempotencyRaceException.class);
 
-        // Order is the whole point: outside the lock the read is the one
-        // BookingService.book already did and already found nothing, so a
-        // re-check there would be a second copy of the same wrong answer.
+        // Outside the lock the read would repeat the pre-check BookingService.book
+        // already did, so it has to come after findByFlightNumberForUpdate.
         InOrder inOrder = inOrder(flightRepository, bookingRepository);
         inOrder.verify(flightRepository).findByFlightNumberForUpdate("UA123");
         inOrder.verify(bookingRepository).findByIdempotencyKey("raced-key-2");
@@ -178,11 +158,8 @@ class BookingWriterTest {
     @Test
     @DisplayName("REGRESSION: booking a cancelled flight writes nothing and publishes nothing")
     void cancelledFlightIsRejected() {
-        // The service does not repeat the check — it calls reserveSeats and lets
-        // the entity refuse. What this test pins is the CONSEQUENCE of the throw
-        // landing where it does: before bookingRepository.save() and before the
-        // event is published, so a cancelled flight produces no booking row and
-        // no downstream DynamoDB projection of a booking that never happened.
+        // The entity refuses in reserveSeats. This pins that the throw lands before
+        // save() and before the outbox record, so no row and no event exist.
         Flight flight = flight();
         flight.cancel();
         when(flightRepository.findByFlightNumberForUpdate("UA123")).thenReturn(Optional.of(flight));
@@ -212,10 +189,8 @@ class BookingWriterTest {
     @DisplayName("recoverReplay returns the winner's booking when the fingerprints match")
     void recoverReplayFindsTheWinner() {
         Flight flight = flight();
-        // A real fingerprint, taken from the same request the caller is
-        // replaying. The first version of this test stored null, and
-        // Booking.matchesRequest short-circuits on null — so it passed whatever
-        // fingerprint was handed in and proved nothing about the comparison.
+        // A real fingerprint: Booking.matchesRequest short-circuits on null, which
+        // would pass any fingerprint.
         BookingRequest original = request(3, "raced-key");
         Booking winner = new Booking(flight, "Smit Lakhani", 3, "raced-key", original.fingerprint());
         when(bookingRepository.findByIdempotencyKey("raced-key")).thenReturn(Optional.of(winner));
@@ -230,10 +205,8 @@ class BookingWriterTest {
     @Test
     @DisplayName("recoverReplay refuses the winner when the loser asked for a different booking")
     void recoverReplayRejectsAReusedKey() {
-        // Two callers reuse one key for different bookings and arrive close
-        // enough together that neither sees the other's committed row. The
-        // loser reaches recoverReplay and must get the same 409 the sequential
-        // case gets, not the winner's booking.
+        // Two callers reuse one key for different bookings at the same moment. The
+        // loser must get the same 409 as the sequential case.
         Flight flight = flight();
         Booking winner = new Booking(flight, "Ada Lovelace", 3, "reused-key",
                                      request(3, "reused-key").fingerprint());
@@ -244,8 +217,8 @@ class BookingWriterTest {
         assertThatThrownBy(() -> bookingWriter.recoverReplay("reused-key", differentRequest))
                 .isInstanceOf(IdempotencyKeyConflictException.class)
                 .hasMessageContaining("reused-key")
-                // The message must not describe the booking that won: a
-                // guessable key would otherwise read out somebody's reservation.
+                // The message must not describe the winner, or a guessable key
+                // would read out someone else's reservation.
                 .hasMessageNotContaining("Ada");
     }
 
@@ -286,9 +259,7 @@ class BookingWriterTest {
         BookingWriter.Cancellation result = bookingWriter.cancelBooking(8L);
 
         assertThat(result.seatsReleased()).isFalse();
-        // The original cancellation time, not this one: that is what a client
-        // reconciling its own state needs, and it is the reason this endpoint
-        // returns a body at all.
+        // The original cancellation time, which a client reconciling its state needs.
         assertThat(result.booking().cancelledAt()).isEqualTo(CANCELLED_AT.minusSeconds(60));
         assertThat(flight.getAvailableSeats()).isEqualTo(177);
     }
@@ -306,11 +277,9 @@ class BookingWriterTest {
 
         bookingWriter.cancelBooking(9L);
 
-        // insertNewBooking locks the flight and then writes to bookings. If
-        // this path took them the other way round the two deadlock under
-        // concurrency, and the database resolves that by killing one of them
-        // intermittently, in production, under load. The scalar projection
-        // first is what makes the order possible without loading the Booking.
+        // insertNewBooking locks the flight, then writes bookings; the reverse order
+        // here would deadlock with it. The scalar projection allows this order
+        // without loading the Booking.
         InOrder order = inOrder(bookingRepository, flightRepository);
         order.verify(bookingRepository).findFlightNumberById(9L);
         order.verify(flightRepository).findByFlightNumberForUpdate("UA123");
@@ -331,9 +300,9 @@ class BookingWriterTest {
     @Test
     @DisplayName("REGRESSION: recoverReplay refuses to invent a booking that doesn't exist")
     void recoverReplayThrowsIfSomehowNothingWon() {
-        // Should be unreachable in production — a DataIntegrityViolationException
-        // on this key means someone won. Pinned anyway: silently returning null or
-        // fabricating a response here would be far worse than a loud 500.
+        // Reached when an insert failed for a reason other than the key.
+        // BookingService then rethrows that failure, so this must not return null
+        // or invent a booking.
         when(bookingRepository.findByIdempotencyKey("ghost-key")).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> bookingWriter.recoverReplay("ghost-key", "any-fingerprint"))

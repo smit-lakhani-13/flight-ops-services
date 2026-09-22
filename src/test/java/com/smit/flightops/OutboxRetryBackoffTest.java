@@ -28,21 +28,11 @@ import static org.mockito.Mockito.verify;
 /**
  * The difference between "this row is poison" and "the queue is down".
  *
- * <p>{@code max-attempts} bounds the first. Until {@code next_attempt_at}
- * existed it also, accidentally, bounded the second — and far too tightly.
- * Attempts were counted per tick and the poller ticks every second, so ten
- * attempts took ten seconds: a brief SQS outage permanently dead-lettered every
- * pending event and every event written during it, none of them defective. The
- * gauge that is supposed to catch exactly that, {@code outbox.pending}, would
- * have fallen to zero as it happened, because a dead row is not a pending row.
- *
- * <p>These tests pin the three properties that make the ceiling a bound on time
- * rather than on ticks: a failed row waits, the wait doubles, and the wait is
- * part of what an operator has to clear to re-drive a row.
- *
- * <p>The waits here are minutes long, and no test sleeps. The clock is moved by
- * writing {@code next_attempt_at} into the past, which is also what makes these
- * assertions about the claim query rather than about {@code Thread.sleep}.
+ * <p>{@code max-attempts} bounds the first. Counted per one-second tick, ten attempts
+ * would take ten seconds, and a short SQS outage would dead-letter every pending event.
+ * {@code next_attempt_at} makes the ceiling a bound on time: a failed row waits, the
+ * wait doubles, and the re-drive has to clear it. No test sleeps; each moves the retry
+ * clock by writing {@code next_attempt_at} into the past.
  */
 @SpringBootTest(
         webEnvironment = SpringBootTest.WebEnvironment.NONE,
@@ -85,12 +75,9 @@ class OutboxRetryBackoffTest {
                 event.getId());
     }
 
-    /**
-     * THE REGRESSION. Ten drains, back to back, is what a ten-second outage used
-     * to look like at a one-second poll interval. It must not exhaust the row.
-     */
+    /** Ten back-to-back drains stand in for a ten-second outage at a one-second poll. */
     @Test
-    @DisplayName("REGRESSION: ten drains in a row cost ONE attempt, not ten — the ceiling is on time, not on ticks")
+    @DisplayName("ten drains in a row cost one attempt, not ten: the ceiling is on time, not on ticks")
     void aBurstOfDrainsDoesNotBurnTheCeiling() {
         OutboxEvent event = unpublishedEvent("BK001");
 
@@ -109,10 +96,7 @@ class OutboxRetryBackoffTest {
                 .isEqualTo(1);
     }
 
-    /**
-     * The wait itself, and the doubling. Both are read off the row rather than
-     * timed, so this test is deterministic and takes milliseconds.
-     */
+    /** The wait and its doubling, read off the row so the test is deterministic. */
     @Test
     @DisplayName("the first retry waits retry-backoff, the second waits twice that, and the cap holds")
     void theWaitDoublesUpToTheCap() {
@@ -142,11 +126,8 @@ class OutboxRetryBackoffTest {
     }
 
     /**
-     * The re-drive an operator actually pastes. It had to change when this
-     * column arrived: resetting {@code attempts} alone leaves a row that the
-     * claim query still refuses, for as long as its last backoff has left to
-     * run — which is the most confusing possible outcome for somebody who has
-     * just fixed the cause and is watching for the event to go.
+     * Resetting {@code attempts} alone leaves a row the claim still refuses until its
+     * backoff runs out, so the re-drive clears {@code next_attempt_at} too.
      */
     @Test
     @DisplayName("the documented re-drive clears the retry clock as well as the counter")
@@ -157,9 +138,7 @@ class OutboxRetryBackoffTest {
 
         doNothing().when(eventPublisher).publish(anyString(), anyString(), anyMap());
 
-        // Exactly the statement in OPERATIONS.md, ARCHITECTURE.md, the README
-        // and three Javadoc comments. Resetting only `attempts` would not
-        // publish anything here, and that is the point of running it verbatim.
+        // The statement from OPERATIONS.md, ARCHITECTURE.md and the README, verbatim.
         jdbcTemplate.update(
                 "UPDATE outbox_events SET attempts = 0, next_attempt_at = NULL WHERE id = ?",
                 event.getId());

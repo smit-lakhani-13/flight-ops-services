@@ -21,36 +21,19 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * The producer's half of the {@code BookingCreated} contract.
  *
- * <p>This service and the Lambda in {@code lambda/} are separate Maven builds
- * with no shared module, so the agreement between {@link BookingCreatedEvent}
- * and the consumer's {@code BookingEvent} record is checked by nothing. Rename
- * a field on either side and both projects compile, both suites stay green, and
- * the break arrives in production as a consumer writing rows with a null
- * partition key.
- *
- * <p>{@code contracts/booking-created-v1.json} is the agreement written down.
- * This test asserts the service produces it; the consumer's test of the same
- * name asserts the Lambda can read it. Neither imports the other's code — the
- * file is the only thing they share, which is what lets the two deploy
- * independently while still failing fast when one of them moves.
- *
- * <p>A {@code @SpringBootTest} rather than a plain unit test, because the
- * {@link ObjectMapper} has to be the container's. A privately constructed one
- * would serialise the same field names with different conventions the moment
- * anyone configures Jackson, and this test would keep passing while the wire
- * format changed underneath it.
+ * <p>This service and the Lambda are separate Maven builds with no shared module.
+ * A renamed field on either side compiles and passes both suites, then shows up in
+ * production as every message failing in the consumer and draining into the DLQ.
+ * {@code contracts/booking-created-v1.json} is the agreement: this test asserts the
+ * service produces it, and the consumer's test of the same name asserts the Lambda reads it.
+ * It is a {@code @SpringBootTest} so the {@link ObjectMapper} is the container's.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
 class BookingEventContractTest {
 
     @Autowired private ObjectMapper objectMapper;
 
-    /**
-     * The build runs from the module root, but a developer running one test
-     * from an IDE may not. Trying both keeps the failure "the contract does not
-     * match" rather than "file not found", which is a much less interesting
-     * thing to debug.
-     */
+    /** Tries the module root and its parent, since an IDE may run one test from either. */
     private static JsonNode contract(ObjectMapper mapper) throws IOException {
         for (Path candidate : List.of(Path.of("contracts/booking-created-v1.json"),
                                       Path.of("../contracts/booking-created-v1.json"))) {
@@ -69,17 +52,12 @@ class BookingEventContractTest {
     }
 
     /**
-     * Both directions, and both matter.
-     *
-     * <p>A missing field breaks the consumer immediately. An <em>extra</em>
-     * field is the more interesting failure: the consumer tolerates it at
-     * runtime, so nothing breaks today, and the contract file silently stops
-     * describing what is actually on the queue. The next person to write a
-     * consumer reads the file, believes it, and is wrong. Asserting set
-     * equality rather than "contains" is what keeps the document true.
+     * Set equality, both ways. A missing field breaks the consumer at once; an extra
+     * one is tolerated at runtime but leaves the contract file describing less than
+     * the queue carries.
      */
     @Test
-    @DisplayName("the serialised event has exactly the contract's fields — no more, no fewer")
+    @DisplayName("the serialised event has the contract's fields, no more and no fewer")
     void theWireFormatMatchesTheContractExactly() throws Exception {
         BookingDto booking = new BookingDto(1L, "UA123", "Smit Lakhani", 3,
                 Instant.parse("2026-09-15T10:00:00Z"), null);
@@ -92,17 +70,9 @@ class BookingEventContractTest {
                         + "contracts/booking-created-v1.json and read its README on ordering")
                 .isEqualTo(fieldNames(contract(objectMapper)));
 
-        // And the VALUES, not only the names. Every other assertion in this
-        // class checks a shape, and a shape check cannot see the failure that
-        // actually costs you: change WIRE_TIME's zone from UTC to
-        // systemDefault() and this service starts emitting a different instant
-        // under the same field name. The 'Z' in the pattern is a quoted
-        // literal, not the offset field, so the output is still 27 characters,
-        // still six fractional digits, still ends in Z and still sorts
-        // monotonically - every name, type, width and ordering assertion here
-        // stays green while every event on the queue shifts by the host's
-        // offset. Comparing the whole document against the fixture is the only
-        // thing that ties the bytes to the contract.
+        // The values too. The 'Z' in WIRE_TIME is a quoted literal, so a zone change
+        // to systemDefault() keeps every shape assertion green while each event
+        // shifts by the host's offset. Only the whole-document comparison sees it.
         assertThat(produced)
                 .as("the serialised event must equal the contract document for the "
                         + "contract's own inputs - a zone, source-field or value change "
@@ -111,13 +81,9 @@ class BookingEventContractTest {
     }
 
     /**
-     * The specific regression the assertion above exists for, pinned on its own
-     * so the failure message names the cause rather than printing two JSON
-     * documents and leaving you to spot the hour.
-     *
-     * <p>The formatter must render in UTC regardless of the host's zone. CI
-     * runs in UTC and this laptop does not, which is exactly the arrangement in
-     * which a zone bug reaches production green.
+     * The zone regression on its own, so the failure names the cause. The build pins
+     * the test JVM to Asia/Kolkata through the Surefire argLine, so this bites on a
+     * UTC CI runner too.
      */
     @Test
     @DisplayName("the wire timestamp is UTC, not the host's zone")
@@ -133,12 +99,9 @@ class BookingEventContractTest {
     }
 
     /**
-     * Names alone are not the contract. {@code seats} arriving as
-     * {@code "3"} instead of {@code 3} has the right field name, passes the
-     * test above, and fails in the consumer's deserialiser — and
-     * {@code bookingId} is deliberately a string here even though it is a
-     * {@code Long} in the database, so getting that one backwards is an easy
-     * mistake to make in the right direction.
+     * {@code seats} as {@code "3"} has the right name and fails in the consumer's
+     * deserialiser. {@code bookingId} is a string on the wire though a {@code Long}
+     * in the database.
      */
     @Test
     @DisplayName("the JSON types match the contract too, not just the field names")
@@ -156,15 +119,13 @@ class BookingEventContractTest {
     }
 
     /**
-     * The consumer builds a DynamoDB sort key by concatenating this string, so
-     * its width is part of the contract even though JSON has no notion of one.
-     * {@code Instant.toString()} prints 0, 3, 6 or 9 fractional digits, and
-     * strings of different lengths do not sort the way the instants do — a
-     * whole second sorts <em>after</em> the microsecond that follows it,
-     * because {@code Z} is greater than {@code .}.
+     * The consumer builds a DynamoDB sort key from this string, so its width is part
+     * of the contract. {@code Instant.toString()} prints 0, 3, 6 or 9 fractional
+     * digits, and a whole second then sorts after the next microsecond because
+     * {@code Z} is greater than {@code .}.
      */
     @Test
-    @DisplayName("the timestamp is fixed width — six fractional digits and a Z, whatever the instant")
+    @DisplayName("the timestamp is fixed width: six fractional digits and a Z, whatever the instant")
     void theTimestampIsFixedWidth() {
         List<Instant> awkward = List.of(
                 Instant.parse("2026-09-15T10:00:00Z"),          // no fractional part at all
@@ -179,17 +140,14 @@ class BookingEventContractTest {
 
         assertThat(rendered).allMatch(t -> t.matches("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{6}Z"));
         assertThat(rendered.stream().map(String::length).distinct()).hasSize(1);
-        // The property that actually matters downstream: string order is instant
-        // order. This is the assertion that fails if anyone "simplifies" the
-        // formatter back to Instant::toString.
+        // String order is instant order; this fails if the formatter goes back to Instant::toString.
         assertThat(rendered).isSorted();
     }
 
     /**
-     * The contract file has to be a document the producer could actually have
-     * emitted. Left unchecked it drifts into an illustration — a rounded
-     * timestamp, a placeholder id — and then the consumer's test is passing
-     * against something the producer never sends.
+     * The contract file must be a document the producer could emit. A rounded
+     * timestamp or placeholder id would let the consumer's test pass against
+     * something the producer never sends.
      */
     @Test
     @DisplayName("the contract file is itself a document this service could have produced")

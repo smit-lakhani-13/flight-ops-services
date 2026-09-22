@@ -33,9 +33,8 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * Service logic in isolation: the repository is mocked, so these tests fail only
- * when the branching or the mapping is wrong — never because a database is slow,
- * absent, or holding data from another test.
+ * Service logic in isolation. The repository is mocked, so these tests fail only when
+ * the branching or the mapping is wrong.
  */
 @ExtendWith(MockitoExtension.class)
 class FlightServiceTest {
@@ -67,7 +66,7 @@ class FlightServiceTest {
     }
 
     @Test
-    @DisplayName("lower-case input finds the same flight — codes are normalised")
+    @DisplayName("lower-case input finds the same flight: codes are normalised")
     void findByNumberNormalisesCase() {
         when(flightRepository.findByFlightNumber("UA123")).thenReturn(Optional.of(flight()));
 
@@ -131,7 +130,7 @@ class FlightServiceTest {
     }
 
     @Test
-    @DisplayName("updateStatus mutates the managed entity — no explicit save needed")
+    @DisplayName("updateStatus mutates the managed entity, so no explicit save is needed")
     void updateStatusReliesOnDirtyChecking() {
         Flight flight = flight();
         when(flightRepository.findByFlightNumber("UA123")).thenReturn(Optional.of(flight));

@@ -31,10 +31,9 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
- * {@code BookingService.book} is pure orchestration now: replay check, then
- * delegate to {@link BookingWriter}, then recover if the writer lost a race.
- * The write path itself (locking, debiting, publishing) is
- * {@link BookingWriterTest}'s job — this class only pins the orchestration.
+ * The orchestration in {@code BookingService.book}: replay check, delegate to
+ * {@link BookingWriter}, recover if the writer lost a race. Locking, debiting and
+ * the outbox write are {@link BookingWriterTest}'s job.
  */
 @ExtendWith(MockitoExtension.class)
 class BookingServiceTest {
@@ -100,10 +99,8 @@ class BookingServiceTest {
     @Test
     @DisplayName("REGRESSION: the writer's own lost-race signal recovers the winner too, not just the constraint")
     void theWritersLostRaceSignalAlsoRecovers() {
-        // Same outcome as the constraint path above, reached the other way: the
-        // writer's re-read under the flight lock saw the winner before the
-        // insert could be attempted. Both routes must answer 201 with the
-        // winner's booking, or the two halves of one fix disagree.
+        // The writer's re-read under the flight lock saw the winner before the
+        // insert. Both routes must answer 201 with the winner's booking.
         when(bookingRepository.findByIdempotencyKey("raced-key")).thenReturn(Optional.empty());
         when(bookingWriter.insertNewBooking(any()))
                 .thenThrow(new LostIdempotencyRaceException("raced-key"));
@@ -115,6 +112,28 @@ class BookingServiceTest {
         assertThat(dto).isEqualTo(winner);
         verify(bookingWriter).recoverReplay(eq("raced-key"), any());
         verify(metrics).bookingReplayed();
+        verify(metrics, never()).bookingCreated();
+    }
+
+    /**
+     * A data error such as a NUL byte PostgreSQL refuses also arrives as
+     * {@code DataIntegrityViolationException}. With no row holding the key there is
+     * no winner, so the original failure is rethrown with the recovery failure attached.
+     */
+    @Test
+    @DisplayName("an integrity violation with no winning booking is rethrown, not reported as a race")
+    void aViolationWithNoWinnerIsRethrown() {
+        when(bookingRepository.findByIdempotencyKey("bad-data")).thenReturn(Optional.empty());
+        DataIntegrityViolationException violation = new DataIntegrityViolationException("invalid byte sequence");
+        when(bookingWriter.insertNewBooking(any())).thenThrow(violation);
+        IllegalStateException noWinner = new IllegalStateException("no booking holds the key");
+        when(bookingWriter.recoverReplay(eq("bad-data"), any())).thenThrow(noWinner);
+
+        assertThatThrownBy(() -> bookingService.book(request(1, "bad-data")))
+                .isSameAs(violation)
+                .satisfies(thrown -> assertThat(thrown.getSuppressed()).containsExactly(noWinner));
+
+        verify(metrics, never()).bookingReplayed();
         verify(metrics, never()).bookingCreated();
     }
 
@@ -170,11 +189,8 @@ class BookingServiceTest {
     @Test
     @DisplayName("a retried cancellation is counted as a no-op, not as a second cancellation")
     void retriedCancellationIsCountedAsANoOp() {
-        // The counters used to be incremented inside BookingWriter's
-        // transaction, which meant a commit that later failed on Flight's
-        // @Version still moved the graph. They are here now, and the boolean
-        // is the only way this layer can tell the two outcomes apart: both
-        // return a booking carrying a cancelledAt.
+        // Both outcomes return a booking carrying a cancelledAt; only the
+        // boolean tells this layer which one happened.
         BookingDto alreadyCancelled = new BookingDto(1L, "UA123", "Smit Lakhani", 3, Instant.now(), Instant.now());
         when(bookingWriter.cancelBooking(1L))
                 .thenReturn(new BookingWriter.Cancellation(alreadyCancelled, false));

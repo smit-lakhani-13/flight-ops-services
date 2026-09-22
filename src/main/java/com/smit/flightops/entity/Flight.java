@@ -11,19 +11,15 @@ import java.time.Instant;
 import java.util.Objects;
 
 @Entity
-// No @Index for flightNumber: @Column(unique = true) below already makes
-// ddl-auto emit a unique constraint, and every database backs that with an
-// index. Declaring both asks for a second index on the same column — write
-// cost paid twice for no read benefit. Same reasoning as Booking.java.
+// No @Index for flightNumber: unique = true already gives it one, as in Booking.
 @Table(name = "flights", indexes = {
     @Index(name = "idx_origin_dest", columnList = "origin,destination")
 })
-// The same four checks V2__seat_and_route_invariants.sql adds to PostgreSQL,
-// declared here so the H2 schema Hibernate generates for the default profile
-// and the @DataJpaTest slices has them too. Without this the constraints would
-// exist only in the profile nobody develops against, and a test could pass on
-// H2 while violating the production schema. ddl-auto: validate does not compare
-// check constraints, so there is no drift risk in the other direction.
+// The four checks V2__seat_and_route_invariants.sql adds to PostgreSQL, declared so
+// the create-drop H2 schema has them too and a test cannot pass by breaking one. V2
+// is the source of truth; this list only shapes the H2 schema. ddl-auto: validate does
+// not compare check constraints, so nothing catches this list drifting from V2;
+// change both together.
 @Checks({
     @Check(name = "ck_flights_seat_floor", constraints = "available_seats >= 0"),
     @Check(name = "ck_flights_seat_ceiling", constraints = "available_seats <= total_seats"),
@@ -50,7 +46,7 @@ public class Flight {
 
     @Column(nullable = false) private Instant departureTime;
 
-    /** Optimistic locking: a conflicting concurrent commit fails instead of silently overwriting. */
+    /** Optimistic locking: a conflicting concurrent commit fails instead of overwriting the other write. */
     @Version
     private Long version;
 
@@ -67,20 +63,10 @@ public class Flight {
     }
 
     /**
-     * Business invariants live on the entity — can't be bypassed.
-     *
-     * <p>Two of them, and the order matters. The status check is first because it
-     * is the more useful answer: told "not enough seats" on a cancelled flight a
-     * client retries with fewer seats, forever. Told "flight is CANCELLED" it
-     * stops.
-     *
-     * <p>The status check is a regression guard. Without it, {@code DELETE
-     * /api/v1/flights/UA123} soft-cancels the flight and a booking posted
-     * immediately afterwards still returns 201 and decrements availableSeats —
-     * a seat sold on a flight that is not going anywhere. It is guarded here
-     * rather than in {@code BookingService} for the reason the class comment
-     * gives: a second caller would forget it. See
-     * {@link FlightStatus#isBookable()}.
+     * Debits seats, refusing a flight that is not bookable before one that is short of
+     * seats: "flight is CANCELLED" stops a client retrying, "not enough seats" does not.
+     * Guarded here, not in {@code BookingService}, for the reason {@link FlightStatus}'s
+     * class Javadoc gives: a second caller would forget it.
      */
     public void reserveSeats(int count) {
         if (count <= 0) throw new IllegalArgumentException("count must be positive");
@@ -92,29 +78,17 @@ public class Flight {
     }
 
     /**
-     * Deliberately NOT status-guarded. Releasing seats back is the refund path,
-     * and refunds happen precisely on the flights that were cancelled. The
-     * {@code min(totalSeats, ...)} clamp is the invariant that matters here: a
-     * double-release must not inflate capacity past the aircraft.
+     * Not status-guarded, because refunds happen on cancelled flights. The clamp stops a
+     * double release inflating capacity past {@code totalSeats}.
      */
     public void releaseSeats(int count) {
         this.availableSeats = Math.min(totalSeats, availableSeats + count);
     }
 
     /**
-     * Applies a status change, if the lifecycle allows it.
-     *
-     * <p>This method used to accept any status from any status, and its Javadoc
-     * called the missing transition graph a conscious limitation on the grounds
-     * that {@link FlightStatus#isBookable()} already covered the case where
-     * getting it wrong loses money. That was wrong, and the hole was one PATCH
-     * wide: {@code CANCELLED -> SCHEDULED} made {@code isBookable()} start
-     * answering true again, putting the seats of a cancelled flight back on
-     * sale. The guard against overselling a cancelled flight was being enforced
-     * by a field that any caller could set to anything.
-     *
-     * <p>Enforced on the entity rather than in {@code FlightService} for the
-     * reason the class comment gives: a second caller would forget.
+     * Applies a status change, if {@link FlightStatus#canTransitionTo} allows it. Enforced
+     * here, not in {@code FlightService}, for the reason {@link FlightStatus}'s class
+     * Javadoc gives: a second caller would forget.
      *
      * @throws IllegalFlightTransitionException if the flight cannot reach
      *         {@code newStatus} from where it is now
@@ -128,12 +102,9 @@ public class Flight {
     }
 
     /**
-     * Soft cancel: bookings still reference this row, so it is never deleted.
-     *
-     * <p>Goes through {@link #updateStatus} rather than assigning the field, so
-     * cancelling an already-arrived flight is refused here too. Cancelling an
-     * already-cancelled flight is allowed and does nothing, which keeps {@code
-     * DELETE /api/v1/flights/{n}} safe to retry.
+     * Soft cancel: bookings still reference this row, so it is never deleted. Goes
+     * through {@link #updateStatus}, so an arrived flight cannot be cancelled, and a
+     * repeated cancel is a no-op, which keeps {@code DELETE} safe to retry.
      */
     public void cancel() {
         updateStatus(FlightStatus.CANCELLED);

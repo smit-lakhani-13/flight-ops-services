@@ -17,28 +17,16 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Retention, proved on a real database rather than on a mock.
+ * Retention rules, proved on an in-memory H2 database rather than on a mock.
+ * Whether the native {@code DELETE ... FOR UPDATE SKIP LOCKED} is valid PostgreSQL
+ * is {@link OutboxPrunePostgresTest}'s job.
  *
- * <p>A mocked repository would have made these four tests pass without ever
- * running the statement they are about — and the statement is the only part
- * that can be wrong. {@code DELETE … WHERE id IN (SELECT … ORDER BY id LIMIT n
- * FOR UPDATE SKIP LOCKED)} either works on the database in front of it or does
- * not, and the answer is not knowable from the Java.
- *
- * <p>Retention is squeezed to the one-hour floor and the batch to a single row,
- * so the loop, the ceiling and the short-batch exit all happen within a test
- * method rather than only in production at some scale nobody here can create.
- *
- * <p>Not {@code @Transactional}: the pruner commits each batch through its own
- * {@link org.springframework.transaction.support.TransactionTemplate}, and a
- * test transaction wrapped around that would be a different shape from the
- * thing being tested. Rows therefore survive between methods, which is what
- * {@link #clearTheTable()} is for.
- *
- * <p>In {@code com.smit.flightops.service} rather than beside the other outbox
- * tests so that {@link OutboxPruner#MAX_BATCHES_PER_RUN} can be read rather
- * than copied. A test that hard-codes 50 keeps passing after somebody changes
- * the ceiling to 5, and tests the number instead of the behaviour.
+ * <p>Retention sits at the one-hour floor and the batch at one row, so the loop, the
+ * ceiling and the short-batch exit all run inside a test. The class is not
+ * {@code @Transactional} because the pruner commits each batch through its own
+ * {@code TransactionTemplate}; {@link #clearTheTable()} resets rows instead. It lives
+ * in this package so it can read {@link OutboxPruner#MAX_BATCHES_PER_RUN} instead of
+ * copying 50.
  */
 @SpringBootTest(
         webEnvironment = SpringBootTest.WebEnvironment.NONE,
@@ -108,16 +96,9 @@ class OutboxPrunerTest {
     }
 
     /**
-     * The test that matters most, because the failure it guards against is
-     * silent and permanent: a pruner that deleted unpublished rows would
-     * quietly destroy events that had never been sent, and the booking they
-     * describe would simply never reach the consumer. No error, no retry, no
-     * trace of what went missing.
-     *
-     * <p>The row here is older than every other row in the class and has no
-     * {@code published_at} at all — exactly the shape a {@code WHERE
-     * published_at < cutoff} written against a database with two-valued logic
-     * would sweep up.
+     * Deleting an unpublished row loses an event that was never sent, with no error
+     * or retry. The row is older than any other here and has no {@code published_at},
+     * the shape a {@code WHERE published_at < cutoff} under two-valued logic would sweep up.
      */
     @Test
     @DisplayName("an unpublished row is never pruned, however old it is")
@@ -132,11 +113,9 @@ class OutboxPrunerTest {
     }
 
     /**
-     * With the batch size at one row, {@link OutboxPruner#MAX_BATCHES_PER_RUN}
-     * is reached after fifty deletes and the run stops with work left over —
-     * the behaviour that keeps a first run against a huge backlog from holding
-     * a connection and a scheduler thread for as long as it takes to delete
-     * everything. The second call proves the leftover is not stranded.
+     * With one-row batches the run stops at {@link OutboxPruner#MAX_BATCHES_PER_RUN}
+     * with work left over, so a large backlog does not hold a connection and a
+     * scheduler thread for the whole delete. The second call picks up the leftover.
      */
     @Test
     @DisplayName("a run stops at the batch ceiling and the next run picks up the remainder")

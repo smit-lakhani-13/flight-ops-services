@@ -38,41 +38,24 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 
 /**
- * The transactional outbox, proved rather than asserted.
+ * The transactional outbox: the event row and the booking row share a fate.
+ * {@link #aRolledBackBookingLeavesNoEvent()} is the central test; the rest cover the
+ * poller, retries, the MANDATORY guard and trace context.
  *
- * <p>The claim the pattern makes is narrow and testable: <b>the event row and
- * the booking row share a fate</b>. Everything else — the poller, the retries,
- * the batching — is machinery in service of that one sentence, so
- * {@link #aRolledBackBookingLeavesNoEvent()} is the test this class exists for
- * and the rest support it.
- *
- * <p>The poller's schedule is pushed out to an hour so that nothing drains
- * behind the assertions; {@code drainOutbox()} is called directly instead.
- * Testing a scheduled job by waiting for its schedule is how a suite acquires
- * a sleep and, eventually, a flake.
- *
- * <p>Not {@code @Transactional}, for the same reason
- * {@code BookingIdempotencyTest} is not: a rolled-back test would let these
- * assertions read uncommitted state and the atomicity test in particular would
- * pass without proving anything. Rows therefore survive between tests, so each
- * one uses its own flight number and counts only its own events.
+ * <p>The schedule is pushed out to an hour and {@code drainOutbox()} is called directly,
+ * so no test waits on a timer. The class is not {@code @Transactional}, since a
+ * rolled-back test could read uncommitted state; each test uses its own flight number.
  */
 @SpringBootTest(
         webEnvironment = SpringBootTest.WebEnvironment.NONE,
         properties = {
                 "spring.datasource.url=jdbc:h2:mem:outboxtest;DB_CLOSE_DELAY=-1",
                 "app.outbox.poll-interval=3600000",
-                // These tests drain twice in a row with no clock in
-                // between, so the retry backoff — which is what stops a brief
-                // outage from dead-lettering the table, see V7 — would make
-                // the second drain claim nothing. Zero is the documented way
-                // to switch it off, and OutboxRetryBackoffTest is where the
-                // backoff itself is pinned.
+                // Back-to-back drains with a fixed clock: the V7 backoff would make the
+                // second claim nothing. Zero switches it off; OutboxRetryBackoffTest pins it.
                 "app.outbox.retry-backoff=0",
-                // Sampling is 0.1 in production, which would make the trace
-                // assertions below pass nine times in ten. Every span here is
-                // sampled so that "no traceparent" can only mean the code did
-                // not capture one.
+                // Production samples 0.1. Sampling every span here means "no traceparent"
+                // can only mean the code did not capture one.
                 "management.tracing.sampling.probability=1.0"
         })
 class OutboxTest {
@@ -84,12 +67,7 @@ class OutboxTest {
     @Autowired private OutboxWriter outboxWriter;
     @Autowired private Tracer tracer;
 
-    /**
-     * The transport is mocked so the tests can make it fail on demand. Note
-     * what is <em>not</em> mocked: the repository, the writer, the poller, the
-     * transaction boundaries and the database. The only thing replaced is the
-     * one hop that would otherwise need a queue.
-     */
+    /** Only the transport is mocked, so it can fail on demand; the rest is real. */
     @MockitoBean private EventPublisher eventPublisher;
 
     private List<OutboxEvent> eventsFor(String bookingId) {
@@ -108,7 +86,7 @@ class OutboxTest {
     // -----------------------------------------------------------------
 
     @Test
-    @DisplayName("a committed booking leaves exactly one unpublished event carrying the booking's own data")
+    @DisplayName("a committed booking leaves a single unpublished event carrying the booking's own data")
     void aCommittedBookingLeavesOneEvent() {
         flightService.create(new CreateFlightRequest("OB001", "EWR", "LHR", 20,
                 Instant.now().plus(Duration.ofHours(6))));
@@ -129,21 +107,14 @@ class OutboxTest {
                 .contains("\"flightNumber\":\"OB001\"")
                 .contains("\"seats\":2");
 
-        // Recording is not sending. Nothing should have reached the transport
-        // during the booking transaction - that separation is the whole change.
+        // Recording is not sending: nothing reaches the transport during the booking transaction.
         verifyNoInteractions(eventPublisher);
     }
 
     /**
-     * The atomicity proof, and the one test here that could not be written
-     * before the outbox existed.
-     *
-     * <p>The booking fails on the seat check, so its transaction rolls back.
-     * The event row was written inside that transaction, so it has to go with
-     * it. If this ever fails, the outbox has stopped being an outbox: a
-     * consumer would be told a booking was created that the database has no
-     * record of, and no amount of retrying or reconciling downstream can
-     * invent the reservation.
+     * The booking fails the seat check and rolls back, and the event row written in
+     * the same transaction goes with it. Otherwise a consumer would hear about a
+     * booking the database has no record of.
      */
     @Test
     @DisplayName("ATOMICITY: a rolled-back booking leaves no event at all")
@@ -163,10 +134,8 @@ class OutboxTest {
     }
 
     /**
-     * The payload is a snapshot of what happened, not a view of what is true
-     * now. A poller that re-read the booking row at send time would publish
-     * "BookingCreated" describing a cancelled booking, which is a statement
-     * about the present wearing the name of an event.
+     * The payload is a snapshot. A poller that re-read the booking at send time would
+     * publish a {@code BookingCreated} describing a cancelled booking.
      */
     @Test
     @DisplayName("the stored payload describes the booking as it was, even after the booking changes")
@@ -217,18 +186,13 @@ class OutboxTest {
         outboxPublisher.drainOutbox();
         outboxPublisher.drainOutbox();
 
-        // Once, not three times. The WHERE published_at IS NULL in
-        // claimUnpublished is the only thing standing between a poller and a
-        // consumer receiving every event it has ever been sent, once per tick,
-        // forever.
+        // Once, not three times: the WHERE published_at IS NULL in claimUnpublished.
         verify(eventPublisher).publish(eq("BookingCreated"), eq(payload), anyMap());
     }
 
     /**
-     * A transport failure must not look like a delivery. The row stays
-     * unpublished, the attempt is counted, the reason is recorded where an
-     * operator can read it, and the next tick tries again — which is the entire
-     * reason the event was written to a table instead of a socket.
+     * A transport failure must not look like a delivery. The row stays unpublished,
+     * the attempt and reason are recorded, and the next tick tries again.
      */
     @Test
     @DisplayName("a failed send is recorded, left unpublished, and succeeds on the next drain")
@@ -258,14 +222,8 @@ class OutboxTest {
     }
 
     /**
-     * One poisoned event must not take its batch down with it.
-     *
-     * <p>If the per-row catch in {@code drainOutbox} were removed, the whole
-     * transaction would roll back — including {@code markPublished} on rows
-     * whose payloads had <em>already left the process</em>. Those would be
-     * resent on the next tick. A single bad event would turn into a duplicate
-     * for every good event beside it, which is the failure the outbox is meant
-     * to bound rather than amplify.
+     * Without the per-row catch in {@code drainOutbox}, one failure would roll back
+     * {@code markPublished} on rows already sent, and the next tick would resend them.
      */
     @Test
     @DisplayName("one failing event does not block the others in the same batch")
@@ -294,17 +252,12 @@ class OutboxTest {
     // -----------------------------------------------------------------
 
     /**
-     * {@code Propagation.MANDATORY} in action.
-     *
-     * <p>Without it this call would quietly succeed in its own transaction and
-     * the outbox would still appear to work — right up to the first rollback,
-     * when the event would commit and the booking would not. The exception here
-     * is the design refusing to be used incorrectly, and this test is what
-     * stops someone "fixing" the annotation to {@code REQUIRED} because a new
-     * caller threw.
+     * {@code Propagation.MANDATORY}. Under {@code REQUIRED} this call would commit in
+     * its own transaction, and after a booking rollback the event would survive alone.
+     * This test stops someone switching the annotation because a new caller threw.
      */
     @Test
-    @DisplayName("recording an event outside a transaction is refused, not silently committed")
+    @DisplayName("recording an event outside a transaction is refused, not committed on its own")
     void recordingOutsideATransactionIsRefused() {
         BookingDto orphan = new BookingDto(999L, "OB999", "Nobody", 1,
                 Instant.now(), null);
@@ -322,15 +275,8 @@ class OutboxTest {
     // -----------------------------------------------------------------
 
     /**
-     * The one piece of a request that an outbox destroys if nobody saves it.
-     *
-     * <p>A direct send carries the caller's trace context for free, because the
-     * send happens on the caller's thread. The outbox moves the send to a
-     * scheduler thread minutes later, and that thread has no relationship to
-     * the request that caused the event — so a consumer's spans would attach to
-     * nothing, and the one question worth asking of a distributed trace
-     * ("where did this message come from?") would have no answer. Persisting
-     * the traceparent on the row is the price of the pattern.
+     * The outbox sends from a scheduler thread, which has no link to the request, so
+     * the traceparent is stored on the row at booking time and sent as a header.
      */
     @Test
     @DisplayName("the booking's own trace context is stored on the row and travels with the send")
@@ -361,11 +307,8 @@ class OutboxTest {
     }
 
     /**
-     * A booking made outside a trace — by a scheduled job, a seeder, a console
-     * — gets no traceparent and no header. The alternative, inventing one, is
-     * worse than the gap it fills: a consumer cannot tell a fabricated id from
-     * a real one, so it would stitch unrelated work into a single trace and
-     * corrupt exactly the thing the field exists to provide.
+     * A booking made outside a trace gets no traceparent and no header. An invented
+     * id would let a consumer stitch unrelated work into one trace.
      */
     @Test
     @DisplayName("a booking made outside a trace stores no traceparent and sends no header")
@@ -385,14 +328,8 @@ class OutboxTest {
     }
 
     /**
-     * The test that pins <em>where</em> the capture happens.
-     *
-     * <p>Reading the current span in the poller instead of in the writer
-     * compiles, passes a naive test, and is wrong: every event on the queue
-     * would then carry the drain's trace, so all events published in one tick
-     * would share one meaningless id and the request a support engineer is
-     * actually looking for would appear nowhere. The drain below runs inside
-     * its own span precisely so that a regression to that design fails here.
+     * Pins where the capture happens. Reading the span in the poller would give every
+     * event in a tick the drain's trace; the drain runs in its own span so that fails here.
      */
     @Test
     @DisplayName("the event carries the booking's trace, not the drain's")

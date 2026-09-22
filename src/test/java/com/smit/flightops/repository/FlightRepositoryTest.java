@@ -17,9 +17,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Derived-query names and the native query are only checked at context startup
- * or first execution, so a typo in a repository method is invisible until
- * something exercises it. These tests are that something.
+ * Derived-query names and the native query are checked only at startup or first
+ * execution, so these tests run each one. Several are examples the API does not call.
  *
  * <p>{@code @DataJpaTest} rolls each test back and starts an embedded database,
  * so no test can see another's rows.
@@ -85,9 +84,7 @@ class FlightRepositoryTest {
         full.reserveSeats(2);
         Flight cancelled = save("UA125", "EWR", "LHR", 180);
         cancelled.cancel();
-        // A delayed flight is still selling seats — FlightStatus.isBookable()
-        // says so, and this query has to agree with it. It did not until the
-        // JPQL stopped hardcoding status = 'SCHEDULED'.
+        // A delayed flight still sells seats, per FlightStatus.isBookable(), and this query must agree.
         Flight delayed = save("UA126", "EWR", "LHR", 180);
         delayed.updateStatus(FlightStatus.DELAYED);
         flightRepository.flush();
@@ -110,7 +107,7 @@ class FlightRepositoryTest {
     }
 
     @Test
-    @DisplayName("the native LIMIT query executes — it is not portable, so it needs a test")
+    @DisplayName("the native LIMIT query executes; it is not portable, so it needs a test")
     void nativeQueryRuns() {
         save("UA123", "EWR", "LHR", 180);
 

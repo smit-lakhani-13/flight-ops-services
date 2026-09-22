@@ -5,15 +5,12 @@ import java.util.List;
 import java.util.Objects;
 
 /**
- * Lifecycle of a flight, and the one question the booking path needs answered
- * about it: can this flight still take a reservation?
+ * Lifecycle of a flight, and whether it can still take a reservation.
  *
- * <p>{@link #isBookable()} lives here rather than in the service on purpose. As
- * a {@code status != CANCELLED} check in {@code BookingService} it would be one
- * caller's opinion, and the second caller — a bulk import, an admin endpoint, a
- * message consumer — would forget it. As a {@code switch} over every constant it
- * is exhaustive: adding a status to this enum stops compiling until somebody
- * decides whether that status accepts bookings.
+ * <p>{@link #isBookable()} lives here, not in the service: as a check in
+ * {@code BookingService} it would be one caller's rule, and a second caller (a bulk
+ * import, an admin endpoint, a message consumer) would forget it. The switches have
+ * no {@code default}, so a new constant does not compile until someone classifies it.
  */
 public enum FlightStatus {
 
@@ -35,14 +32,7 @@ public enum FlightStatus {
     /** Late, but still going. Delays do not stop ticket sales. */
     DELAYED;
 
-    /**
-     * Whether this status still accepts seat reservations.
-     *
-     * <p>Written as an exhaustive switch with no {@code default}, which is the
-     * point: {@code default -> false} (or {@code -> true}) would let a new
-     * constant inherit an answer nobody chose. Without it, javac rejects the
-     * switch as non-exhaustive and the new status has to be classified.
-     */
+    /** Whether this status still accepts seat reservations. */
     public boolean isBookable() {
         return switch (this) {
             case SCHEDULED, BOARDING, DELAYED -> true;
@@ -51,47 +41,23 @@ public enum FlightStatus {
     }
 
     /**
-     * The same answer as {@link #isBookable()}, in the form a database query
-     * needs.
-     *
-     * <p>This exists so a JPQL {@code status IN :statuses} can be driven by the
-     * enum instead of repeating the list as a literal. A hardcoded
-     * {@code status = 'SCHEDULED'} in a query is precisely the "second caller
-     * that forgets" this class's Javadoc warns about — it compiles, it passes,
-     * and it silently stops selling seats on every delayed flight.
+     * {@link #isBookable()} as a list, so a JPQL {@code status IN :statuses} is driven by
+     * the enum instead of a literal such as {@code status = 'SCHEDULED'}.
      */
     public static List<FlightStatus> bookableStatuses() {
         return Arrays.stream(values()).filter(FlightStatus::isBookable).toList();
     }
 
     /**
-     * Whether this status is allowed to become {@code next}.
-     *
-     * <p>{@code Flight.updateStatus} used to accept any status from any status,
-     * which meant {@code PATCH /api/v1/flights/UA123 {"status":"SCHEDULED"}}
-     * would un-cancel a cancelled flight and put its seats back on sale, and
-     * an arrived flight could be sent back to BOARDING. Neither is a thing that
-     * happens to an aeroplane. The old Javadoc called the missing graph a
-     * "known limitation, and a conscious one"; this is the graph.
-     *
-     * <p>Two rules are worth stating because they are judgement calls rather
-     * than facts about aviation:
+     * Whether this status may become {@code next}. The judgement calls:
      *
      * <ul>
-     *   <li><b>A status may always transition to itself.</b> PATCH is not
-     *       required to be idempotent, but a client that re-sends DELAYED after
-     *       a timeout should get 200 and no change, not 409. Rejecting the
-     *       no-op would make the endpoint unsafe to retry, which is the same
-     *       mistake the booking path exists to avoid.</li>
-     *   <li><b>ARRIVED and CANCELLED are terminal.</b> Correcting a status
-     *       recorded in error is a data-repair job with an audit trail, not a
-     *       PATCH. Leaving the door open so that operations can fix a typo is
-     *       how a cancelled flight ends up selling seats.</li>
+     *   <li><b>A status may always transition to itself</b>, so a client re-sending
+     *       DELAYED after a timeout gets 200 and no change, not 409.</li>
+     *   <li><b>ARRIVED and CANCELLED are terminal.</b> Correcting one recorded in error
+     *       is a data repair with an audit trail, not a PATCH; otherwise a cancelled
+     *       flight could go back on sale.</li>
      * </ul>
-     *
-     * <p>Exhaustive switch, no {@code default}, for the same reason as
-     * {@link #isBookable()}: a new constant must not inherit a transition
-     * policy nobody chose.
      */
     public boolean canTransitionTo(FlightStatus next) {
         Objects.requireNonNull(next, "next must not be null");
@@ -99,17 +65,14 @@ public enum FlightStatus {
             return true;
         }
         return switch (this) {
-            // No BOARDING step is required first: flights depart without one
-            // ever being recorded, and refusing DEPARTED here would make the
-            // system disagree with the aircraft.
+            // No BOARDING step is required: flights depart without one being recorded.
             case SCHEDULED -> next == BOARDING || next == DEPARTED
                            || next == DELAYED  || next == CANCELLED;
             case DELAYED   -> next == BOARDING || next == DEPARTED
                            || next == CANCELLED;
             case BOARDING  -> next == DEPARTED || next == DELAYED
                            || next == CANCELLED;
-            // In the air. It lands, or the record is wrong. A diversion still
-            // ends in ARRIVED, at a different airport.
+            // In the air: it lands. A diversion still ends in ARRIVED.
             case DEPARTED  -> next == ARRIVED;
             case ARRIVED, CANCELLED -> false;
         };

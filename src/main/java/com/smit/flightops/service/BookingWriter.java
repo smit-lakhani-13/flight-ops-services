@@ -22,17 +22,11 @@ import java.util.Locale;
 /**
  * Every transaction that moves seats, in one bean.
  *
- * <p>Split out of {@link BookingService} so that {@code book} — which is
- * deliberately NOT itself {@code @Transactional} — can call each edge through
- * Spring's AOP proxy rather than through {@code this.}, which is what makes the
- * propagation below actually apply. See {@link BookingService#book} for why
- * that split exists and what it fixed.
- *
- * <p>Three edges now: the insert, the race recovery, and the cancellation. The
- * cancellation belongs here rather than in {@code BookingService} because it
- * takes the same lock on the same row in the same order as the insert, and that
- * ordering is the only thing standing between the two paths and a deadlock.
- * Keeping both in one file is how the next person finds that out.
+ * <p>Separate from {@link BookingService} so that {@code book}, which is not
+ * {@code @Transactional}, calls each method here through Spring's proxy and the
+ * propagation below applies. The cancellation lives here beside the insert
+ * because both lock the flight row and then the booking row, in that order, and
+ * the two paths deadlock if either one reverses it.
  */
 @Component
 public class BookingWriter {
@@ -44,9 +38,8 @@ public class BookingWriter {
     private final OutboxWriter outboxWriter;
     private final Clock clock;
 
-    // No BookingMetrics here, and its absence is the point: everything this
-    // class does happens inside a transaction that can still roll back, so
-    // there is nothing here worth counting yet. BookingService owns the meters.
+    // No BookingMetrics: everything here can still roll back, so BookingService
+    // counts outcomes after these methods return.
     public BookingWriter(FlightRepository flightRepository,
                           BookingRepository bookingRepository,
                           OutboxWriter outboxWriter,
@@ -58,15 +51,13 @@ public class BookingWriter {
     }
 
     /**
-     * The insert attempt, in its own transaction. Locks the flight row, debits
-     * seats, saves the booking, records the event — all four in a strict
-     * order, per {@link BookingService#book}'s numbered comment.
+     * The insert attempt, in its own transaction. Locks the flight row, re-checks
+     * the idempotency key under that lock, debits seats, saves the booking and
+     * records the event, in that order.
      *
-     * <p>If this throws {@code DataIntegrityViolationException} (the
-     * {@code idempotency_key} unique constraint lost a race), the whole
-     * transaction rolls back, including the seat debit: a losing attempt must
-     * leave no trace, exactly like {@code oversellLeavesNoTrace} already pins
-     * for the oversell case.
+     * <p>Any failure rolls the whole transaction back, seat debit included, so a
+     * losing attempt leaves no trace ({@code oversellLeavesNoTrace} pins the same
+     * for an oversell).
      */
     @Transactional
     public BookingDto insertNewBooking(BookingRequest request) {
@@ -74,29 +65,12 @@ public class BookingWriter {
         Flight flight = flightRepository.findByFlightNumberForUpdate(flightNumber)
                 .orElseThrow(() -> new FlightNotFoundException(request.flightNumber()));
 
-        // The idempotency key, checked a second time — and this is the only
-        // place in the request where the answer can be trusted.
-        //
-        // BookingService.book checked it before calling, outside any lock, and
-        // could not see a concurrent request that had not committed yet. Here
-        // the flight row is locked, so a competing booking on this flight has
-        // either committed or has not started: if it committed, its key is
-        // visible to this read.
-        //
-        // Without this the race was still resolved — by
-        // uk_bookings_idempotency_key, a few lines further down — but only
-        // when there were seats left to debit first. When the winner took the
-        // LAST seats, reserveSeats threw InsufficientSeatsException before the
-        // insert ever ran, and the loser got 409 for a booking that had in fact
-        // been made. A client retrying a request that succeeded was told the
-        // flight was full, and the race on the last seat is exactly the request
-        // somebody retries.
-        //
-        // The constraint stays as the backstop, because this read cannot cover
-        // everything: the same key used for a DIFFERENT flight locks a
-        // different row, so those two requests never queue behind each other.
-        // That case reaches the insert, fails the constraint, and recoverReplay
-        // answers it with the 409 it deserves — same key, different request.
+        // The key again, now under the flight row lock. A competing booking on this
+        // flight has either committed, and is visible here, or has not started. This
+        // read comes before reserveSeats so that a replay racing a winner who took
+        // the last seats gets the winner's booking, not InsufficientSeatsException.
+        // uk_bookings_idempotency_key stays as the backstop for one key on two
+        // flights: they lock different rows and never queue behind each other.
         if (bookingRepository.findByIdempotencyKey(request.idempotencyKey()).isPresent()) {
             throw new LostIdempotencyRaceException(request.idempotencyKey());
         }
@@ -107,71 +81,42 @@ public class BookingWriter {
                 flight, request.passengerName(), request.seats(),
                 request.idempotencyKey(), request.fingerprint()));
 
-        // No passenger name in this line. It used to be here, and it is the one
-        // field in the request that is personal data: log aggregation ships
-        // these lines to a third party, keeps them for months and indexes them
-        // for search, which turns an application log into an un-audited copy of
-        // the passenger list. The booking id is the join key to the row that
-        // does hold the name, behind whatever authorisation the database has.
+        // No passenger name: it is personal data, and log aggregation keeps and
+        // indexes these lines. The booking id joins to the row that holds it.
         log.info("Booked {} seat(s) on {} (booking {}, {} seats left)",
                  booking.getSeats(), flightNumber,
                  booking.getId(), flight.getAvailableSeats());
 
         BookingDto dto = BookingDto.from(booking);
 
-        // An INSERT into outbox_events, in this transaction. Not a network
-        // call: that is the entire change, and it is why the flight row lock is
-        // now held for the duration of two local writes instead of for however
-        // long SQS takes to answer. If this transaction rolls back - an
-        // oversell, a lost idempotency race - the event row rolls back with the
-        // booking, so there is no event describing a booking that does not
-        // exist. OutboxPublisher does the sending, afterwards, outside every
-        // lock this method holds.
+        // An INSERT into outbox_events in this transaction, not a network call, so
+        // the event rolls back with the booking. OutboxPublisher sends it later,
+        // outside every lock held here.
         outboxWriter.recordBookingCreated(dto);
         return dto;
     }
 
     /**
-     * Re-reads the winner of a lost idempotency-key race, in a brand-new
-     * transaction.
+     * Re-reads the winner of a lost idempotency-key race, in a new transaction.
      *
-     * <p>{@code REQUIRES_NEW} is belt-and-braces here, not the thing that
-     * makes this work — worth being precise about, because the obvious story
-     * is the wrong one. What makes it work is that {@link BookingService#book}
-     * is not {@code @Transactional}: by the time {@code
-     * DataIntegrityViolationException} reaches its catch block, Spring's
-     * interceptor has already rolled {@code insertNewBooking}'s transaction
-     * back and returned its connection, so there is no transaction left to
-     * join and a plain {@code @Transactional(readOnly = true)} would behave
-     * identically. Before the {@code BookingWriter} split, {@code book} *was*
-     * transactional, and then this read genuinely did run on the connection
-     * PostgreSQL had marked aborted — it got {@code current transaction is
-     * aborted} instead of a row, which is how the race loser ended up with a
-     * 409. {@code REQUIRES_NEW} keeps that guarantee if {@code book} ever
-     * becomes transactional again.
+     * <p>The winner has committed by now: the loser's re-read waited on the flight
+     * row lock, and a PostgreSQL {@code INSERT} blocks on the unique index until the
+     * other transaction resolves. {@code book} is not transactional, so a plain
+     * read-only transaction would also work. {@code REQUIRES_NEW} keeps this off an
+     * aborted connection if {@code book} ever becomes transactional.
      *
-     * <p>Safe to assume the winning row is already committed and visible:
-     * PostgreSQL does not let the loser's {@code INSERT} discover the
-     * conflict until the winner's transaction has actually committed or
-     * rolled back — the loser blocks on the unique index until then. By the
-     * time {@code DataIntegrityViolationException} reaches
-     * {@link BookingService#book}, the winner is not "probably" done, it is
-     * done.
+     * @throws IllegalStateException if no booking holds the key, meaning the insert
+     *         failed for some other reason; {@code book} then rethrows that failure
      */
     @Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
     public BookingDto recoverReplay(String idempotencyKey, String fingerprint) {
         Booking winner = bookingRepository.findByIdempotencyKey(idempotencyKey)
                 .orElseThrow(() -> new IllegalStateException(
-                        "Lost a unique-constraint race on idempotency key " + idempotencyKey +
-                        " but no winning booking exists to recover — should be unreachable, " +
-                        "see BookingWriter.recoverReplay's Javadoc for why."));
+                        "No booking holds idempotency key " + idempotencyKey
+                        + " after a failed insert, so there is no winner to recover"));
 
-        // The fingerprint check belongs here as well as on the committed-replay
-        // path in BookingService, and forgetting it here would leave the bug
-        // half fixed: two requests reusing one key for different bookings can
-        // arrive close enough together that neither sees the other's row, and
-        // then the loser arrives at exactly this line. Same key, different
-        // request, so the same 409 the sequential case gets.
+        // The same fingerprint check as the replay path in BookingService: two
+        // different requests on one key can arrive together and meet here instead.
         if (!winner.matchesRequest(fingerprint)) {
             throw new IdempotencyKeyConflictException(idempotencyKey);
         }
@@ -179,57 +124,31 @@ public class BookingWriter {
     }
 
     /**
-     * Cancels a booking and credits its seats back to the flight.
-     *
-     * <p>The lock order is the load-bearing part: flight row first, booking row
-     * second, which is the same order {@link #insertNewBooking} takes them in
-     * (it locks the flight, then inserts into {@code bookings}). Two paths that
-     * take the same two locks in opposite orders deadlock under concurrency,
-     * and the database resolves it by killing one of them — intermittently, in
-     * production, under load. That is why the flight number is fetched with a
-     * scalar projection first: loading the {@code Booking} entity to read
-     * {@code booking.getFlight().getFlightNumber()} would put it in the
-     * persistence context before the flight is locked, and the later
-     * {@code findByIdForUpdate} would hand back that same stale instance from
-     * the first-level cache instead of going to the database for the committed
-     * {@code cancelled_at}.
-     *
-     * <p>Idempotent by construction: {@link Booking#cancel} returns false if
-     * the row is already cancelled, and the seats are only credited when it
-     * returns true. So a retried {@code DELETE} is a no-op, not a second
-     * refund. {@code Flight.releaseSeats} clamps to {@code totalSeats}, which
-     * would bound the damage of a double credit, but bounding is not
-     * preventing: on a 180-seat flight with 100 sold, a double cancel of a
-     * 2-seat booking would still invent 2 seats.
-     *
-     * <p>The counters are <em>not</em> incremented here, which is the rule the
-     * booking counter already follows: a meter records an outcome, not an
-     * attempt. This method is {@code @Transactional}, so everything in it can
-     * still be undone after the last statement runs — {@code Flight} carries an
-     * {@code @Version}, and a concurrent write makes the commit itself throw.
-     * A counter incremented before that commit counts a cancellation that never
-     * happened, and the graph then disagrees with the table it is supposed to
-     * describe. {@code BookingService.cancel} increments it once this returns.
-     *
-     * <p>No {@code BookingCancelled} event, and that is a deliberate omission
-     * rather than an oversight. Publishing one means a second event type on the
-     * queue, a second branch in the Lambda and a decision about what a
-     * cancellation does to the DynamoDB record it can no longer find — real
-     * work, and none of it needed to make cancellation correct here. The
-     * limitation is written down rather than papered over.
-     */
-    /**
-     * What a cancellation did, so the caller can count it after the commit.
-     *
-     * <p>The outcome is not recoverable from the returned {@link BookingDto}: a
-     * booking cancelled a moment ago and one cancelled an hour ago both carry a
-     * {@code cancelledAt}, and only this transaction knows which of the two it
-     * just wrote. Returning the flag is the alternative to incrementing a
-     * counter inside a transaction that can still roll back.
+     * What a cancellation did, so the caller can count it after the commit. The
+     * returned {@link BookingDto} cannot say whether this call or an earlier one
+     * wrote {@code cancelledAt}.
      */
     public record Cancellation(BookingDto booking, boolean seatsReleased) {
     }
 
+    /**
+     * Cancels a booking and credits its seats back to the flight.
+     *
+     * <p>Lock order: flight row first, booking row second, as in
+     * {@link #insertNewBooking}. Opposite orders on two paths deadlock under load.
+     * The flight number comes from a scalar projection because loading the
+     * {@code Booking} first would put it in the persistence context unlocked, and
+     * {@code findByIdForUpdate} would return that stale instance.
+     *
+     * <p>Idempotent: {@link Booking#cancel} returns false for a booking already
+     * cancelled, and seats are credited only on true, so a retried {@code DELETE}
+     * is a no-op. {@code Flight.releaseSeats} clamps to {@code totalSeats}, which
+     * bounds a double credit but does not prevent it.
+     *
+     * <p>No counters here: {@code Flight}'s {@code @Version} can still fail the
+     * commit. There is no {@code BookingCancelled} event either. It would need a
+     * second event type and a second branch in the Lambda.
+     */
     @Transactional
     public Cancellation cancelBooking(Long bookingId) {
         String flightNumber = bookingRepository.findFlightNumberById(bookingId)

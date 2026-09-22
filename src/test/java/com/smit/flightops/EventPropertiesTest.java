@@ -3,6 +3,8 @@ package com.smit.flightops;
 import com.smit.flightops.config.EventProperties;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.WebApplicationType;
+import org.springframework.boot.builder.SpringApplicationBuilder;
 import org.springframework.boot.context.properties.bind.Bindable;
 import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.boot.context.properties.source.MapConfigurationPropertySource;
@@ -15,19 +17,15 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /**
  * The event transport mode refusing an unrecognised value at startup.
  *
- * <p>The regression this pins is a real one: {@code compose.yaml} shipped
- * {@code APP_EVENTS_PUBLISHER=noop}, which matches neither publisher's
- * {@code @ConditionalOnProperty}. The container failed with an unsatisfied
- * dependency on {@code EventPublisher} — a message that names an interface
- * nobody configured and not the property that was wrong.
+ * <p>A value such as {@code noop} matches neither publisher's
+ * {@code @ConditionalOnProperty}. Without this check the application fails on an
+ * unsatisfied dependency on {@code EventPublisher}, which does not name the property.
  */
 class EventPropertiesTest {
 
     /**
-     * {@code bindOrCreate}, not {@code bind}, because that is what Spring Boot
-     * does for an {@code @ConfigurationProperties} bean: the record is
-     * constructed even when nothing under the prefix is set, which is the only
-     * way {@code @DefaultValue} is ever exercised.
+     * {@code bindOrCreate}, as Spring Boot does for an {@code @ConfigurationProperties}
+     * bean, so the record is built even with nothing set and {@code @DefaultValue} runs.
      */
     private static EventProperties bind(Map<String, String> properties) {
         return new Binder(new MapConfigurationPropertySource(properties))
@@ -45,6 +43,34 @@ class EventPropertiesTest {
                 .hasMessageContaining("noop");
     }
 
+    /**
+     * The whole application, with the outbox poller enabled as it is by default.
+     * {@code OutboxPublisher} takes {@code EventProperties} before {@code EventPublisher},
+     * so the named binding failure is what stops startup. The settings go in as
+     * arguments because {@code application.yml} outranks builder defaults.
+     */
+    @Test
+    @DisplayName("an unrecognised mode stops the application, and the failure names the property")
+    void applicationStartupNamesTheProperty() {
+        SpringApplicationBuilder app = new SpringApplicationBuilder(FlightOpsServiceApplication.class)
+                .web(WebApplicationType.NONE);
+
+        assertThatThrownBy(() -> {
+            try (var context = app.run(
+                    "--app.events.publisher=noop",
+                    "--app.outbox.enabled=true",
+                    "--spring.datasource.url=jdbc:h2:mem:eventmode;DB_CLOSE_DELAY=-1",
+                    "--spring.main.banner-mode=off")) {
+                assertThat(context.isActive()).isFalse();
+            }
+        })
+                .rootCause()
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("app.events.publisher")
+                .hasMessageContaining("[log, sqs]")
+                .hasMessageContaining("noop");
+    }
+
     @Test
     @DisplayName("both real modes bind")
     void acceptsBothModes() {
@@ -52,11 +78,7 @@ class EventPropertiesTest {
         assertThat(bind(Map.of("app.events.publisher", "sqs")).publisher()).isEqualTo("sqs");
     }
 
-    /**
-     * The default has to match {@code matchIfMissing = true} on
-     * {@code LoggingEventPublisher}. If it did not, this class would reject a
-     * configuration that starts perfectly well today.
-     */
+    /** The default has to match {@code matchIfMissing = true} on {@code LoggingEventPublisher}. */
     @Test
     @DisplayName("an absent property defaults to log, which is the publisher that matchIfMissing selects")
     void defaultsToLog() {

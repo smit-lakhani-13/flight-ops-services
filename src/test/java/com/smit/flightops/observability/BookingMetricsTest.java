@@ -10,6 +10,7 @@ import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+/** The booking counters: eager registration, tag separation and the names Prometheus exposes. */
 class BookingMetricsTest {
 
     private final MeterRegistry registry = new SimpleMeterRegistry();
@@ -24,16 +25,9 @@ class BookingMetricsTest {
     }
 
     /**
-     * The reason the constructor registers every counter eagerly instead of
-     * creating them on first use.
-     *
-     * <p>A Prometheus alert like
-     * {@code rate(bookings_lock_timeout_total[5m]) > 0.1} evaluates against a
-     * series that does not exist yet, and most alerting rules treat "no data"
-     * as neither firing nor resolved — so the alert that was written to catch
-     * the first lock timeout is silent for exactly the first lock timeout. This
-     * test fails if someone moves the registration into the increment methods,
-     * which is the tidier-looking version of this class.
+     * An alert on {@code rate(bookings_lock_timeout_total[5m])} sees "no data" until the
+     * series exists, so it would miss the first lock timeout. This fails if the
+     * registration moves into the increment methods.
      */
     @Test
     @DisplayName("every series exists at zero before anything has happened")
@@ -63,7 +57,7 @@ class BookingMetricsTest {
     }
 
     @Test
-    @DisplayName("a replay and a real booking are distinguishable, which is the whole point")
+    @DisplayName("a replay and a real booking are distinguishable")
     void replaysAreNotCountedAsSales() {
         for (int i = 0; i < 10; i++) {
             metrics.bookingReplayed();
@@ -77,17 +71,10 @@ class BookingMetricsTest {
     }
 
     /**
-     * The test that pays for this whole class.
-     *
-     * <p>A {@link SimpleMeterRegistry} stores the Micrometer name verbatim, so
-     * the assertions above pass for any name at all. What reaches a dashboard
-     * is the Prometheus <em>exposition</em> name, and the translation is not a
-     * simple dots-to-underscores: the client strips OpenMetrics' reserved
-     * suffixes first. The original {@code bookings.created} came out of
-     * {@code /actuator/prometheus} as {@code bookings_total}, because
-     * {@code _created} is reserved — no warning, no error, just a meter under a
-     * name nobody would query. Scraping a real
-     * {@link PrometheusMeterRegistry} is the only way to see that from a test.
+     * A {@link SimpleMeterRegistry} keeps names verbatim, so only a real
+     * {@link PrometheusMeterRegistry} shows the exposed name. The client strips
+     * OpenMetrics' reserved suffixes such as {@code _created}, which would turn
+     * {@code bookings.created} into {@code bookings_total}.
      */
     @Test
     @DisplayName("the names Prometheus actually exposes are the names an alert would query")
@@ -104,12 +91,12 @@ class BookingMetricsTest {
                 .contains("bookings_cancelled_total{outcome=\"already_cancelled\"}")
                 .contains("bookings_lock_timeout_total");
 
-        // The regression itself, named: a reserved suffix silently eaten.
+        // A reserved suffix eaten from a meter name.
         assertThat(scrape)
                 .as("if this appears, a reserved suffix has eaten part of a meter name again")
                 .doesNotContain("bookings_total");
 
-        // One HELP line per meter, describing both of its series honestly.
+        // One HELP line per meter, describing both of its series.
         assertThat(scrape.lines().filter(l -> l.startsWith("# HELP bookings_booked_total")).count())
                 .isEqualTo(1);
         assertThat(scrape).contains(

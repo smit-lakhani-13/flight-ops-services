@@ -18,20 +18,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /**
  * The outbox's configuration refusing to start wrong.
  *
- * <p>Every value here has a failure mode that is invisible at startup and
- * expensive later. {@code batch-size: 0} makes the poller run every second and
- * publish nothing, which looks exactly like an empty queue. {@code
- * max-attempts: 0} means no row is ever claimed at all. A negative {@code
- * poll-interval} takes the scheduler down at a point where the stack trace
- * names Spring rather than this file. None of them fail a health check, so the
- * constructor fails instead, at startup, naming the property in the message
- * that a human will read in a pod log.
- *
- * <p>The tests are against the record directly and against the binder, because
- * they answer different questions. The record proves the bounds hold; the
- * binder proves the {@code @DefaultValue}s exist — a missing one binds to zero
- * or null rather than to the documented value, and no amount of constructor
- * testing sees that.
+ * <p>{@code batch-size: 0} publishes nothing and looks like an empty queue;
+ * {@code max-attempts: 0} claims no row. Neither fails a health check, so the
+ * constructor fails at startup and names the property. The record tests prove the
+ * bounds; the binder tests prove the {@code @DefaultValue}s exist, since a missing one
+ * binds to zero or null.
  */
 class OutboxPropertiesTest {
 
@@ -50,14 +41,9 @@ class OutboxPropertiesTest {
     }
 
     /**
-     * The one bound that is a relationship rather than a range, and the reason
-     * this validation is written in Java instead of as {@code @Positive}.
-     *
-     * <p>Retention below an hour, with an hourly pruner, means a row can be
-     * deleted minutes after it was published — so the operator who asks "did
-     * booking 4471 publish?" finds nothing and cannot tell "published and
-     * pruned" from "never recorded at all". Those two answers call for opposite
-     * actions, which makes an empty result worse than no table.
+     * The one bound that is a relationship, which is why the checks are Java and not
+     * {@code @Positive}. Under an hour, with an hourly pruner, an operator cannot tell
+     * "published and pruned" from "never recorded".
      */
     @Test
     @DisplayName("a retention shorter than an hour is refused, with a reason")
@@ -72,7 +58,7 @@ class OutboxPropertiesTest {
         assertThatCode(() -> new OutboxProperties(true, 1000, 100, 10,
                 Duration.ofHours(1), Duration.ofHours(1), 1000,
                 Duration.ofSeconds(2), Duration.ofMinutes(5)))
-                .as("exactly the floor is allowed; the message says 'at least'")
+                .as("the floor itself is allowed; the message says 'at least'")
                 .doesNotThrowAnyException();
     }
 
@@ -120,11 +106,8 @@ class OutboxPropertiesTest {
     }
 
     /**
-     * A deployment that sets none of the new keys must get the documented
-     * behaviour rather than zeroes. This is the test that fails if somebody
-     * drops a {@code @DefaultValue} while tidying the record — in which case
-     * {@code maxAttempts} binds to 0 and the poller silently stops claiming
-     * anything at all.
+     * Fails if a {@code @DefaultValue} is dropped: {@code maxAttempts} would then bind
+     * to 0 and the poller would stop claiming.
      */
     @Test
     @DisplayName("the defaults bind for a deployment that configures none of them")
@@ -139,12 +122,7 @@ class OutboxPropertiesTest {
         assertThat(properties.maxRetryBackoff()).isEqualTo(Duration.ofMinutes(5));
     }
 
-    /**
-     * The values in {@code application.yml} are written in the short form
-     * ({@code 7d}, {@code 1h}), which is Boot's relaxed duration syntax and not
-     * ISO-8601. Pinned because a record field typed {@code Duration} accepts
-     * both and a reader cannot tell from the Java which one the yaml is using.
-     */
+    /** {@code application.yml} uses Boot's short duration form ({@code 7d}, {@code 1h}), not ISO-8601. */
     @Test
     @DisplayName("the short duration form used in application.yml binds")
     void theShortDurationFormBinds() {

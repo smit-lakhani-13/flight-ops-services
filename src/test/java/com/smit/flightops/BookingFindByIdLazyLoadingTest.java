@@ -16,15 +16,12 @@ import java.time.temporal.ChronoUnit;
 import static org.assertj.core.api.Assertions.assertThatCode;
 
 /**
- * Deliberately NOT {@code @Transactional} on this class: that is exactly what
- * would mask the bug. {@code BookingService.findById} has no transaction
- * boundary of its own, so {@code bookingRepository.findById} — the plain
- * inherited {@code JpaRepository} method, not the {@code JOIN FETCH} query
- * {@code findByIdempotencyKey} uses — opens and closes its own short session,
- * and {@code BookingDto.from} dereferences the lazy {@code Booking.flight}
- * proxy after that session is already closed. A real sequential
- * create-then-fetch, through the real service layer, against real H2 (the
- * default profile, no Testcontainers needed), reproduces it every time.
+ * A create-then-fetch through the real service on H2, guarding the
+ * {@code @Transactional(readOnly = true)} on {@code BookingService.findById}.
+ * The inherited {@code findById} has no {@code JOIN FETCH}, so {@code BookingDto.from}
+ * reads the lazy {@code Booking.flight} and needs an open session. The class is not
+ * {@code @Transactional}, because a test transaction would keep the session open and
+ * hide a missing annotation.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE)
 class BookingFindByIdLazyLoadingTest {
@@ -42,9 +39,8 @@ class BookingFindByIdLazyLoadingTest {
                 new BookingRequest("UA900", "Smit Lakhani", 2, "lazy-load-repro-1"));
 
         assertThatCode(() -> bookingService.findById(created.bookingId()))
-                .as("BookingService.findById has no @Transactional; BookingDto.from touches " +
-                    "the lazy Booking.flight proxy after the repository's own short session " +
-                    "has already closed")
+                .as("BookingService.findById needs a transaction open while BookingDto.from " +
+                    "touches the lazy Booking.flight proxy")
                 .doesNotThrowAnyException();
     }
 }

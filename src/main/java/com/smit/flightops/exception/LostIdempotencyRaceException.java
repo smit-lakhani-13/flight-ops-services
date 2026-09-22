@@ -1,24 +1,14 @@
 package com.smit.flightops.exception;
 
 /**
- * Internal signal: this request lost a concurrent race on its idempotency key,
- * and the winner is already committed.
+ * Internal signal: this request lost a race on its idempotency key, and the winner
+ * has committed. It never reaches a client and has no handler in
+ * {@code GlobalExceptionHandler}: {@code BookingService.book} catches it and returns
+ * the winner's booking with 201, or 409 when the two requests differ.
  *
- * <p><b>Not an API error.</b> It never reaches a client and it is deliberately
- * absent from {@code GlobalExceptionHandler}: {@code BookingService.book} is
- * the only thing that can see it, and it answers by recovering the winner's
- * booking and returning 201 — the same answer the winner got. A replay of a
- * request that succeeded is a success.
- *
- * <p>It exists because the alternative was worse. The unique constraint on
- * {@code idempotency_key} catches the same race a moment later, and for most of
- * this service's life that was the whole mechanism. It has one blind spot:
- * {@code insertNewBooking} debits seats before it inserts, so when the winner
- * took the last seats the loser threw {@code InsufficientSeatsException} and
- * the caller got 409 for a booking that had in fact been made. The race that
- * matters is precisely the one on the last seat, so the check moved earlier —
- * under the flight row lock, where the winner is guaranteed committed — and
- * this is how that check reports what it found.
+ * <p>{@code insertNewBooking} throws it from its re-read under the flight row lock,
+ * before seats are debited. That ordering makes a replay that races a winner who took
+ * the last seats get the booking, not {@code InsufficientSeatsException}.
  *
  * @see com.smit.flightops.service.BookingWriter#insertNewBooking
  */

@@ -14,16 +14,12 @@ import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 
 /**
- * One event, recorded in the same transaction as the change that caused it.
+ * One event, recorded in the same transaction as the change that caused it
+ * (see {@code V5__outbox.sql} for why the table exists).
  *
- * <p>See {@code V5__outbox.sql} for why the table exists at all; this class is
- * the part of that story the compiler can enforce.
- *
- * <p>The setters are package-private and there is no general-purpose one. A row
- * has exactly two legal transitions after it is written — published, or failed
- * another attempt — and they are the two methods below. Exposing
- * {@code setPublishedAt} would make "mark it published without ever sending
- * it" a one-line mistake in a class nobody reviews twice.
+ * <p>There are no setters. After a row is written its only transitions are
+ * {@link #markPublished} and {@link #markFailed}, so marking a row published
+ * without sending it is not a one-line mistake.
  */
 @Entity
 @Table(name = "outbox_events")
@@ -43,34 +39,15 @@ public class OutboxEvent {
     private String eventType;
 
     /**
-     * An arbitrary-length JSON document, rather than something with a column
-     * width somebody has to guess and then raise in a migration the day a field
-     * is added.
+     * The JSON document, of any length.
      *
-     * <p><b>Deliberately not {@code @Lob}, and the reason is the sharpest schema
-     * trap in this repository.</b> {@code @Lob} on a {@code String} resolves to
-     * {@code SqlTypes.CLOB}, and PostgreSQL's dialect maps {@code CLOB} to the
-     * column type {@code oid} - a pointer into {@code pg_largeobject}, not
-     * inline text. {@code V5__outbox.sql} creates this column as {@code TEXT},
-     * so {@code ddl-auto: validate} compares {@code text (Types#VARCHAR)}
-     * against {@code oid (Types#CLOB)}, refuses to match, and the application
-     * context fails to refresh. Every replica would have entered {@code
-     * CrashLoopBackOff} - not a broken outbox, a service that never starts.
-     *
-     * <p>It is invisible locally, which is what makes it worth a comment this
-     * long: H2 runs {@code ddl-auto: create-drop}, so Hibernate generates the
-     * column itself and the two can never disagree. The only test that runs
-     * Flyway and {@code validate} against real PostgreSQL is {@code
-     * BookingIntegrationTest}, and it skips without Docker.
-     *
-     * <p>{@code LONG32VARCHAR} is the explicit spelling of what was wanted all
-     * along: PostgreSQL renders it as {@code text} and binds it as a plain
-     * string, and H2 falls back to the same {@code clob} it already had. The
-     * second-order win is that nothing goes through {@code
-     * PreparedStatement.setClob} any more - that path creates a server-side
-     * large object per write, and because this entity has no {@code
-     * DynamicUpdate}, every {@code markPublished} would have rewritten the
-     * payload and orphaned one.
+     * <p>Not {@code @Lob}: on PostgreSQL that maps to {@code oid}, {@code V5__outbox.sql}
+     * creates {@code TEXT}, and {@code ddl-auto: validate} would refuse to start the
+     * application. H2 runs {@code create-drop}, so it never shows locally. The tests
+     * that run Flyway and {@code validate} against real PostgreSQL are
+     * {@code BookingIntegrationTest} and {@code OutboxPrunePostgresTest}; both skip
+     * without Docker. {@code LONG32VARCHAR} renders as {@code text} on PostgreSQL and
+     * binds as a plain string, so no large object is created per write.
      */
     @JdbcTypeCode(SqlTypes.LONG32VARCHAR)
     @Column(nullable = false)
@@ -90,27 +67,16 @@ public class OutboxEvent {
     private String lastError;
 
     /**
-     * When this row becomes claimable again, or null for "now".
-     *
-     * <p>The reason retries are spaced at all is in
-     * {@code V7__outbox_next_attempt_at.sql}: without it the attempt ceiling
-     * was burned at the poll rate, so a ten-second queue outage abandoned every
-     * pending event permanently.
+     * When this row becomes claimable again, or null for "now". Why retries are
+     * spaced is in {@code V7__outbox_next_attempt_at.sql}.
      */
     @Column(name = "next_attempt_at")
     private Instant nextAttemptAt;
 
     /**
-     * The W3C trace context of the request that produced this event, or null.
-     *
-     * <p>Null is normal, not exceptional: rows written before {@code V6}, and
-     * any booking made outside a traced request, legitimately have none. The
-     * publisher must treat it as optional rather than assume it — see
-     * {@code OutboxPublisher.headersFor}.
-     *
-     * <p>55 is the exact maximum length of a traceparent, not a rounded-up 64.
-     * A value that does not fit is not a traceparent, and failing on it is
-     * better than truncating it into something a collector will reject.
+     * The W3C trace context of the request that produced this event. Null for rows
+     * written before {@code V6} and for bookings made outside a traced request.
+     * 55 is the exact length of a traceparent; a longer value is not one.
      */
     @Column(length = 55)
     private String traceparent;
@@ -131,11 +97,8 @@ public class OutboxEvent {
         this.aggregateId = aggregateId;
         this.eventType = eventType;
         this.payload = payload;
-        // Truncated for the same reason Booking.createdAt is: PostgreSQL
-        // TIMESTAMP(6) stores microseconds and Instant holds nanoseconds, so an
-        // untruncated value is not equal to itself after a round trip, and
-        // every equality assertion against it becomes flaky on one database and
-        // not the other.
+        // PostgreSQL TIMESTAMP(6) stores microseconds, so a nanosecond Instant
+        // would not equal itself after a round trip.
         this.createdAt = createdAt.truncatedTo(ChronoUnit.MICROS);
         this.attempts = 0;
     }
@@ -147,23 +110,16 @@ public class OutboxEvent {
     }
 
     /**
-     * Records a failed send so the row is visible to an operator rather than
-     * merely retried forever in silence.
-     *
-     * <p>The message is truncated to the column width here rather than left to
-     * the database. An over-long value would otherwise fail the UPDATE, which
-     * would roll back the attempt counter along with it — so the one row that
-     * most needs its failure recorded would be the one row that never records
-     * it, and the counter would stay at zero while the event retried forever.
+     * Records a failed send. The message is truncated here to the 500-character
+     * column: an over-long value would fail the UPDATE and roll back the attempt
+     * counter with it.
      */
     public void markFailed(String error, Instant nextAttemptAt) {
         this.attempts++;
         this.lastError = error == null ? null
                 : error.length() <= 500 ? error
                 : error.substring(0, 497) + "...";
-        // Null is legal and means "claimable on the next tick". The caller
-        // passes null when backoff is switched off, which is what the tests
-        // that drain twice in a row rely on.
+        // Null means "claimable on the next tick" (backoff switched off).
         this.nextAttemptAt = nextAttemptAt;
     }
 

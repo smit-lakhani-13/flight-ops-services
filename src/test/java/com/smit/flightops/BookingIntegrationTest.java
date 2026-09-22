@@ -15,12 +15,13 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.DefaultApplicationArguments;
 import org.springframework.data.domain.Pageable;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.ActiveProfiles;
-import org.testcontainers.containers.PostgreSQLContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -37,29 +38,27 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * The tests that cannot be faked: a real PostgreSQL, the real Flyway migration,
- * {@code ddl-auto: validate}, and real concurrent transactions.
+ * The tests that need a real PostgreSQL: the Flyway migrations,
+ * {@code ddl-auto: validate}, and concurrent transactions.
  *
- * <p>Three things are proved here and nowhere else:
  * <ol>
- *   <li><b>The migration matches the entities.</b> Under {@code validate}, any
- *       drift between {@code V1__init.sql} and the {@code @Entity} classes fails
- *       context startup — so if this class runs at all, the schemas agree.</li>
- *   <li><b>SELECT ... FOR UPDATE actually prevents an oversell.</b> H2 will not
- *       tell you this; only a real database under real contention will.</li>
- *   <li><b>The unique constraint is the real idempotency guarantee.</b> Twenty
- *       threads replaying one key produce exactly one row.</li>
+ *   <li><b>The migrations match the entities.</b> Under {@code validate}, a table or
+ *       column an {@code @Entity} expects but the migrations lack, or a column of the
+ *       wrong type, fails context startup. It does not compare check constraints or
+ *       indexes.</li>
+ *   <li><b>{@code SELECT ... FOR UPDATE} prevents an oversell</b> under real contention.</li>
+ *   <li><b>One key books once.</b> Twenty threads replaying one key produce one row,
+ *       under the {@code FOR UPDATE} lock and the in-lock re-read; the unique
+ *       constraint is the backstop for one key on two flights.</li>
  * </ol>
  *
- * <p>{@code disabledWithoutDocker = true} means {@code mvn verify} on a laptop
- * with no container runtime skips this class rather than failing the build. That
- * is a deliberate trade-off: the build stays green, so read the skip count.
+ * <p>{@code disabledWithoutDocker = true} skips the class on a machine with no
+ * container runtime, so read the skip count.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.NONE,
                 properties = {
-                        // 20 threads contend below; a 10-connection pool would make them
-                        // queue on connections instead of on the row lock, which is not
-                        // what this test is measuring.
+                        // 20 threads contend below, and they should queue on the row
+                        // lock, not on a 10-connection pool.
                         "spring.datasource.hikari.maximum-pool-size=20",
                         "logging.level.org.hibernate.SQL=WARN"
                 })
@@ -68,21 +67,14 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class BookingIntegrationTest {
 
     /**
-     * {@code @ServiceConnection} beats the profile's hard-coded localhost URL:
-     * it contributes a JdbcConnectionDetails bean, and bean-based connection
-     * details take priority over {@code spring.datasource.*} properties.
-     *
-     * <p>{@code 17-alpine}, and the major version is the load-bearing part.
-     * This container is the only place the Flyway migrations are ever executed
-     * against real PostgreSQL, so it is what decides whether a migration is
-     * accepted. {@code compose.yaml} and {@code deploy/aws/data.yaml} are both
-     * on 17; this was on 16, which meant CI was clearing migrations against a
-     * major version nothing runs. A migration that passes on one major and
-     * fails on another is a class of bug that costs one word to remove.
+     * {@code @ServiceConnection} contributes a {@code JdbcConnectionDetails} bean,
+     * which outranks the profile's localhost URL. PostgreSQL 17, the major version
+     * {@code compose.yaml} and {@code deploy/aws/data.yaml} run, because this is
+     * where the migrations are accepted or refused.
      */
     @Container
     @ServiceConnection
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:17-alpine");
+    static PostgreSQLContainer postgres = new PostgreSQLContainer("postgres:17-alpine");
 
     @Autowired private BookingService bookingService;
     @Autowired private FlightService flightService;
@@ -108,20 +100,8 @@ class BookingIntegrationTest {
 
     /**
      * Runs every task at once and reports how many completed without throwing.
-     *
-     * <p>{@code allowedFailure} is the load-bearing argument. This method used
-     * to swallow bare {@code Exception}, which made the two race tests below
-     * assert far less than they appear to: a contender that failed because the
-     * pool starved, because {@code lock_timeout} fired, or because the entity
-     * manager was in a broken state was counted as a correctly-losing racer.
-     * The oversell test would then still pass on a build where the row lock had
-     * stopped working, provided the number of wrong failures happened to land
-     * on {@code SEATS_ON_SALE}.
-     *
-     * <p>So exactly one cause is tolerated, named by the caller, and anything
-     * else is rethrown and fails the test with the real stack trace. The cause
-     * is unwrapped because {@code Future.get} wraps everything in an
-     * {@code ExecutionException}.
+     * Only {@code allowedFailure} counts as a losing contender; any other cause,
+     * such as pool starvation or a lock timeout, fails the test with its stack trace.
      */
     private static int countSuccesses(List<Callable<Void>> tasks,
                                       Class<? extends Throwable> allowedFailure) throws Exception {
@@ -150,13 +130,16 @@ class BookingIntegrationTest {
     }
 
     @Test
-    @DisplayName("Flyway applied V1 and Hibernate validated the entities against it")
-    void migrationRanAndSchemaValidates() {
+    @DisplayName("Flyway applied V1-V8 and Hibernate validated the entities against them")
+    void migrationRanAndSchemaValidates() throws Exception {
         List<String> applied = jdbcTemplate.queryForList(
                 "SELECT version FROM flyway_schema_history WHERE success = true ORDER BY installed_rank",
                 String.class);
 
-        assertThat(applied).contains("1");
+        assertThat(applied).containsExactly("1", "2", "3", "4", "5", "6", "7", "8");
+        // A file on the classpath that Flyway did not pick up, such as a misnamed one.
+        assertThat(applied).hasSameSizeAs(new PathMatchingResourcePatternResolver()
+                .getResources("classpath:db/migration/V*.sql"));
         // Reaching this line at all means ddl-auto: validate passed at startup.
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT count(*) FROM information_schema.table_constraints "
@@ -165,18 +148,9 @@ class BookingIntegrationTest {
     }
 
     /**
-     * The name promised idempotency and the body only proved the seeder had run
-     * once, which is a different claim and a much weaker one. Deleting the
-     * existence guard from {@code DataSeeder} left this test green.
-     *
-     * <p>So the seeder is invoked a second time, by hand, exactly as a second
-     * application start would invoke it, and the row count is asserted on both
-     * sides. This matters on PostgreSQL and not on H2: H2 is
-     * {@code create-drop}, so a second start never meets the first start's
-     * rows. On PostgreSQL with {@code ddl-auto: validate} a duplicate insert
-     * makes {@code findByFlightNumber} — which returns an {@code Optional} —
-     * throw {@code IncorrectResultSizeDataAccessException} on every lookup of
-     * that flight, and the README's own demo curls stop working.
+     * A second seeder run, as a second application start would make it. This matters
+     * on PostgreSQL only: H2 is {@code create-drop}, and a duplicate row here makes
+     * every {@code Optional} lookup of that flight throw.
      */
     @Test
     @DisplayName("running the seeder twice inserts nothing the second time")
@@ -192,13 +166,12 @@ class BookingIntegrationTest {
         assertThat(flightRepository.count())
                 .as("a second seeder run must insert nothing")
                 .isEqualTo(before);
-        // And the consequence of a duplicate, stated as the assertion an
-        // operator would actually notice: Optional-returning lookups still work.
+        // The symptom a duplicate would cause: Optional lookups still work.
         assertThat(flightRepository.findByFlightNumber("UA123")).isPresent();
     }
 
     @Test
-    @DisplayName(CONTENDERS + " threads chase " + SEATS_ON_SALE + " seats: exactly " + SEATS_ON_SALE
+    @DisplayName(CONTENDERS + " threads chase " + SEATS_ON_SALE + " seats: " + SEATS_ON_SALE
                  + " win, none oversell")
     void concurrentBookingsCannotOversell() throws Exception {
         String flightNumber = createFlight("CC001", SEATS_ON_SALE);
@@ -210,19 +183,17 @@ class BookingIntegrationTest {
                 })
                 .toList();
 
-        // InsufficientSeatsException and nothing else: a contender that lost
-        // the seat race is expected, a contender that fell over for any other
-        // reason is a bug this test now reports instead of absorbing.
+        // Losing the seat race is expected; any other failure is a bug.
         int booked = countSuccesses(attempts, InsufficientSeatsException.class);
 
-        assertThat(booked).as("the row lock lets exactly the seat count through").isEqualTo(SEATS_ON_SALE);
+        assertThat(booked).as("the row lock lets the seat count through, no more and no fewer").isEqualTo(SEATS_ON_SALE);
         assertThat(availableSeats(flightNumber)).isZero();
         assertThat(bookingRepository.findByFlightNumber(flightNumber, Pageable.unpaged()))
                 .hasSize(SEATS_ON_SALE);
     }
 
     @Test
-    @DisplayName("REGRESSION: " + CONTENDERS + " threads replay one idempotency key concurrently — "
+    @DisplayName("REGRESSION: " + CONTENDERS + " threads replay one idempotency key concurrently: "
                  + "ONE booking, and every caller gets it back, zero errors")
     void concurrentReplaysOfOneKeyBookOnce() throws Exception {
         String flightNumber = createFlight("CC002", 50);
@@ -234,14 +205,8 @@ class BookingIntegrationTest {
                 })
                 .toList();
 
-        // Unlike concurrentBookingsCannotOversell above, losing this race is NOT
-        // a legitimate failure — BookingWriter.recoverReplay exists precisely so
-        // every caller on the same key gets the winner's booking back instead of
-        // a 409. countSuccesses would previously report ~1 success and
-        // (CONTENDERS - 1) caught exceptions for this same test; it now reports
-        // CONTENDERS, which is the whole point of the fix.
-        // null: no failure is legitimate here at all, so any exception at all
-        // fails the test rather than quietly lowering the count.
+        // null: no failure is legitimate. Every caller on one key gets the
+        // winner's booking back through BookingWriter.recoverReplay.
         int booked = countSuccesses(attempts, null);
 
         assertThat(booked).as("no caller should see an exception on a raced replay")
@@ -251,7 +216,7 @@ class BookingIntegrationTest {
     }
 
     @Test
-    @DisplayName("an oversell rolls back on PostgreSQL too — seats and rows both untouched")
+    @DisplayName("an oversell rolls back on PostgreSQL too, leaving seats and rows untouched")
     void oversellRollsBack() {
         String flightNumber = createFlight("CC003", 2);
 

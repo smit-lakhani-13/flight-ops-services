@@ -20,13 +20,9 @@ import java.util.Map;
 /**
  * Records an event in the outbox table, in the caller's transaction.
  *
- * <p>The event is built and serialised here, once, at the moment the booking
- * happened — not later by the poller. That is what makes the stored payload a
- * description of what occurred rather than of what the row happens to look like
- * whenever it is eventually sent. A booking that is cancelled two seconds after
- * it is made must still publish a {@code BookingCreated} describing the
- * booking, and a poller that re-derived the payload from the current row would
- * publish something else.
+ * <p>The payload is built and serialised here, when the booking happens, so it
+ * describes what occurred. A booking cancelled two seconds later still publishes
+ * the {@code BookingCreated} it was.
  */
 @Component
 public class OutboxWriter {
@@ -53,18 +49,10 @@ public class OutboxWriter {
     }
 
     /**
-     * {@code Propagation.MANDATORY} is the most important annotation in this
-     * class, and it is there to make one specific mistake impossible.
-     *
-     * <p>The entire value of an outbox comes from the event row committing
-     * <em>with</em> the booking row. Called outside a transaction, this method
-     * would still work perfectly: Spring Data would open its own transaction
-     * for the {@code save}, the row would appear, every test would pass — and
-     * the atomicity would be gone, silently, with nothing in the logs and
-     * nothing failing. {@code MANDATORY} turns that into an
-     * {@code IllegalTransactionStateException} at the first call. {@code
-     * REQUIRED}, the default, is the version of this that looks identical and
-     * quietly removes the guarantee.
+     * {@code MANDATORY}, so a call outside a transaction throws
+     * {@code IllegalTransactionStateException}. With the default {@code REQUIRED} the
+     * save would open its own transaction and the event would no longer commit with
+     * the booking, with nothing failing to show it.
      */
     @Transactional(propagation = Propagation.MANDATORY)
     public void recordBookingCreated(BookingDto booking) {
@@ -73,10 +61,7 @@ public class OutboxWriter {
         try {
             payload = objectMapper.writeValueAsString(event);
         } catch (JacksonException e) {
-            // Unchecked in Jackson 3, so this catch is a choice. Kept because a
-            // serialisation failure is a bug in the event contract and needs to
-            // surface with the event in the message rather than as a bare
-            // Jackson stack trace from inside a transaction.
+            // Unchecked in Jackson 3; caught to name the event in the failure.
             throw new IllegalStateException("Failed to serialise " + event, e);
         }
 
@@ -86,30 +71,11 @@ public class OutboxWriter {
     }
 
     /**
-     * The trace context of the request making this booking, in W3C form, or
-     * null if there is not one.
-     *
-     * <p>Captured <em>here</em>, at the moment of the booking, and not by the
-     * poller. The poller runs on a scheduler thread minutes later with no
-     * relationship to the request that caused the event; a traceparent read
-     * there would either be absent or, worse, belong to the drain itself — so
-     * every event on the queue would share one meaningless trace and the trace
-     * a support engineer actually wants would be nowhere. Persisting it is the
-     * price of the outbox: the transaction that knows the trace is not the one
-     * that sends the message.
-     *
-     * <p>{@link Propagator#inject} rather than formatting the id by hand. The
-     * W3C format has a version prefix, a flags byte whose sampled bit matters
-     * to the collector, and rules about which of those a non-recording span
-     * emits. Building the string from {@code traceId} and {@code spanId} looks
-     * like four lines and gets the sampling flag wrong, which a collector
-     * silently drops rather than rejects.
-     *
-     * <p>The length guard is not paranoia about the propagator. It is about the
-     * column: a value longer than 55 characters is not a valid traceparent, and
-     * accepting it would either blow up the INSERT — rolling back a perfectly
-     * good booking for the sake of a diagnostic field — or be silently
-     * truncated into an id that resolves to nothing.
+     * The W3C trace context of the request making this booking, or null. Captured
+     * here because the poller runs later on a scheduler thread, where the current
+     * trace belongs to the drain. {@link Propagator#inject} gets the sampled flag
+     * right, which hand formatting does not. More than 55 characters is not a
+     * traceparent, and would fail the INSERT and roll back the booking.
      */
     private String currentTraceparent() {
         Span span = tracer.currentSpan();

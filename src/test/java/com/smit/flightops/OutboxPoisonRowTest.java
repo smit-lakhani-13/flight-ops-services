@@ -26,28 +26,18 @@ import static org.mockito.Mockito.verify;
 /**
  * What happens to an event the transport will never accept.
  *
- * <p>The answer before the attempt ceiling existed was: it is retried first on
- * every tick, forever. The claim is {@code ORDER BY id}, so the oldest failing
- * row is always at the head of the batch — a payload that fails identically on
- * attempt ten thousand spends the batch failing while every live event queues
- * up behind it. One malformed row is a total publishing outage, and waiting
- * does not fix it because waiting is what it is doing.
- *
- * <p>So the ceiling is an availability feature, not tidiness, and these three
- * tests are the three things an operator needs to be true: the row drops out,
- * the row is visible while it is out, and the row can be brought back.
- *
- * <p>{@code max-attempts} is two here. Ten is right in production and would
- * make this class ten drains long for no extra proof.
+ * <p>The claim is {@code ORDER BY id}, so without the attempt ceiling the oldest failing
+ * row heads every batch and one malformed row stops all publishing. These tests cover
+ * what an operator needs: the row drops out, it is visible while out, and it can be
+ * brought back. {@code max-attempts} is two here so the class stays short.
  */
 @SpringBootTest(
         webEnvironment = SpringBootTest.WebEnvironment.NONE,
         properties = {
                 "spring.datasource.url=jdbc:h2:mem:outboxpoison;DB_CLOSE_DELAY=-1",
                 "app.outbox.poll-interval=3600000",
-                // Two drains, back to back, with no clock moved between
-                // them. The retry backoff (V7) would make the second one claim
-                // nothing, so it is off here; OutboxRetryBackoffTest pins it.
+                // Back-to-back drains with a fixed clock: the V7 backoff would make the
+                // second claim nothing, so it is off here. OutboxRetryBackoffTest pins it.
                 "app.outbox.retry-backoff=0",
                 "app.outbox.max-attempts=2"
         })
@@ -98,10 +88,8 @@ class OutboxPoisonRowTest {
     }
 
     /**
-     * A row nobody will retry has to be visible, or the ceiling has traded a
-     * loud failure for a silent one. {@code outbox.pending} recovers on its own
-     * and is therefore the wrong thing to page on; {@code outbox.dead} does
-     * not, which is what makes it the alert.
+     * A row that will not be retried has to be visible. {@code outbox.pending} recovers
+     * on its own, so {@code outbox.dead}, which does not, is the one to alert on.
      */
     @Test
     @DisplayName("an exhausted row moves from the pending gauge to the dead one")
@@ -118,10 +106,8 @@ class OutboxPoisonRowTest {
     }
 
     /**
-     * The documented re-drive, run as the documentation gives it. OPERATIONS.md
-     * and three Javadoc comments tell an operator to run exactly this
-     * statement; a test that reset the counter through some helper of its own
-     * would leave the sentence they will actually paste unverified.
+     * The re-drive statement from OPERATIONS.md, run verbatim, so the SQL an operator
+     * pastes is the SQL under test.
      */
     @Test
     @DisplayName("resetting attempts brings an exhausted row back, and it publishes")

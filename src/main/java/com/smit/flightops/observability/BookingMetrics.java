@@ -5,52 +5,22 @@ import io.micrometer.core.instrument.MeterRegistry;
 import org.springframework.stereotype.Component;
 
 /**
- * The three counters that {@code http.server.requests} cannot give you.
- *
- * <p><b>Why so few.</b> Micrometer already counts every request by URI, method
- * and status, so a meter for "bookings that 404'd" would be a worse copy of
- * data that exists. These three are here because each one is invisible in the
- * HTTP metrics:
- *
+ * Three meters that {@code http.server.requests} cannot give you.
  * <ul>
- *   <li>{@code bookings.booked{outcome}} — a replay and a genuine booking are
- *       both 201 on the same URI. Only this counter can answer "are we actually
- *       selling seats, or is a client stuck in a retry loop?", which is the
- *       difference between a healthy graph and an incident.</li>
- *   <li>{@code bookings.cancelled{outcome}} — same shape, same reason: a
- *       repeated {@code DELETE} returns 200 and releases nothing, by design.
- *       {@code already_cancelled} climbing on its own means a client believes
- *       its cancellations are not sticking.</li>
- *   <li>{@code bookings.lock_timeout} — 503s do show up in the HTTP metrics,
- *       but mixed in with every other cause of a 503. This one names the
- *       specific failure: somebody held the flight row for longer than the
- *       three-second {@code lock_timeout}. It is the leading indicator for the
- *       whole write path stalling, so it gets its own meter and its own alert
- *       rather than a status-code filter somebody has to remember to write.</li>
+ *   <li>{@code bookings.booked{outcome}}: a replay and a new booking are both 201 on
+ *       the same URI; only this tells them apart.</li>
+ *   <li>{@code bookings.cancelled{outcome}}: a repeated {@code DELETE} returns 200 and
+ *       releases nothing; {@code already_cancelled} rising means a client thinks its
+ *       cancels are not sticking.</li>
+ *   <li>{@code bookings.lock_timeout}: a flight row held past the 3s {@code lock_timeout},
+ *       the earliest sign of the write path stalling, so it has its own alert.</li>
  * </ul>
  *
- * <p><b>{@code bookings.booked}, not {@code bookings.created}.</b> That was the
- * first name, and scraping it showed {@code bookings_total} — the word
- * "created" had vanished. {@code _created} is a reserved suffix in OpenMetrics
- * (it names a counter's own creation timestamp), so the Prometheus client
- * strips it before appending {@code _total}, silently, with no warning
- * anywhere. The meter was fine and the dashboard query would have returned
- * nothing. {@code BookingMetricsTest} scrapes a real
- * {@code PrometheusMeterRegistry} so that this is caught by the build rather
- * than by somebody wondering why a panel is empty.
- *
- * <p>Both series of one meter share a description, which is not tidiness: with
- * two different descriptions the exporter prints whichever registered last as
- * the {@code # HELP} line for both, so the text on the graph describes half the
- * data. That is also how it was first written.
- *
- * <p>Counters are registered eagerly in the constructor rather than looked up
- * per call. A counter that is only created on first increment is absent from
- * {@code /actuator/prometheus} until the event happens, which breaks the alert
- * that was supposed to fire on it: {@code rate(bookings_lock_timeout_total[5m])}
- * over a missing series returns no data, and "no data" is not "zero" to most
- * alerting rules. Registering up front means every series exists at zero from
- * the first scrape.
+ * <p>Not {@code bookings.created}: {@code _created} is a reserved OpenMetrics suffix
+ * that the Prometheus client strips ({@code BookingMetricsTest} scrapes a real registry
+ * to check). Both series of a meter share one description because Prometheus prints
+ * one {@code # HELP} line per name. Registered eagerly so every series exists at zero
+ * from the first scrape; an alert on a missing series sees no data, not zero.
  */
 @Component
 public class BookingMetrics {
@@ -105,13 +75,7 @@ public class BookingMetrics {
         created.increment();
     }
 
-    /**
-     * Covers both replay paths — the one served from a committed row and the
-     * one recovered after losing a unique-constraint race. They are the same
-     * event from a client's point of view, and splitting them would produce a
-     * series whose only reader is somebody debugging this service rather than
-     * operating it.
-     */
+    /** Both replay paths: from a committed row, and recovered after a lost race. */
     public void bookingReplayed() {
         replayed.increment();
     }

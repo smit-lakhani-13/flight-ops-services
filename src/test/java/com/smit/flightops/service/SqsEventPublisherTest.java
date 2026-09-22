@@ -22,18 +22,11 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * What actually goes on the wire.
+ * The message metadata on the wire; {@code BookingEventContractTest} covers the body.
  *
- * <p>The body is covered by {@code BookingEventContractTest} on both sides of
- * the queue. What is left, and what these tests are about, is the metadata —
- * which is the half that can break a send rather than a consumer.
- *
- * <p>SQS rejects the entire {@code SendMessage} request if any message
- * attribute has an empty value. That turns a missing traceparent, a field
- * nobody would fail a booking event over, into an exception the poller cannot
- * distinguish from a queue outage: same retry, same rising attempt count, same
- * row eventually declared dead. A diagnostic must not be able to stop a
- * delivery, hence the filtering this pins.
+ * <p>SQS rejects the whole {@code SendMessage} if any attribute is empty. A missing
+ * traceparent would then look like a queue outage to the poller and end with a dead
+ * row, so the publisher drops blank attributes and these tests pin that.
  */
 @ExtendWith(MockitoExtension.class)
 class SqsEventPublisherTest {
@@ -62,7 +55,7 @@ class SqsEventPublisherTest {
 
         assertThat(request.queueUrl()).isEqualTo(QUEUE_URL);
         assertThat(request.messageBody())
-                .as("the payload is sent exactly as the outbox stored it")
+                .as("the payload is sent as the outbox stored it, unchanged")
                 .isEqualTo("{\"bookingId\":\"1\"}");
 
         Map<String, MessageAttributeValue> attributes = request.messageAttributes();
@@ -88,12 +81,9 @@ class SqsEventPublisherTest {
     }
 
     /**
-     * The queue URL is checked in the constructor, so a misconfigured
-     * deployment fails at startup and is caught by the readiness probe rather
-     * than by the first booking of the day. The blank case is the real one:
-     * the ConfigMap ships {@code SQS_QUEUE_URL: ""} until a deploy fills it in,
-     * and an empty string is present as far as {@code @ConditionalOnProperty}
-     * is concerned.
+     * The constructor checks the queue URL, so a bad deployment fails at startup. The
+     * ConfigMap ships {@code SQS_QUEUE_URL: ""}, which {@code @ConditionalOnProperty}
+     * treats as present.
      */
     @Test
     @DisplayName("a blank queue URL fails at startup, not at the first send")

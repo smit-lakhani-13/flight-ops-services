@@ -50,62 +50,33 @@
 
     <properties>
         <java.version>21</java.version>
-        <!--
-          Spring Boot's BOM does not manage the AWS SDK, so this pin is the only
-          thing controlling it. That makes it easy to forget and drift years
-          behind, which is a supply-chain problem as much as a features one.
-        -->
+        <!-- Boot's BOM does not manage the AWS SDK, so this pin is the only thing controlling it. -->
         <aws.sdk.version>2.55.2</aws.sdk.version>
 
         <!--
-          springdoc is not in Boot's BOM either, and its major line tracks Boot's:
-          3.x targets Boot 4.x. 3.1.1 is the first release built against 4.1;
-          3.1.0 was compiled against 4.1.0 and predates the 4.1.1 web changes.
-          The version is pinned here for the same reason as the AWS SDK - nothing
-          else is managing it.
+          Not in Boot's BOM either. springdoc 3.x targets Boot 4.x; 3.1.1 is the
+          first release built against 4.1.
         -->
         <springdoc.version>3.1.1</springdoc.version>
 
         <!--
-          Boot 4 runs on Jackson 3 (tools.jackson) and still manages the Jackson 2
-          coordinates at 2.21.5 for libraries that have not moved. swagger-core,
-          which springdoc uses to build the OpenAPI document, is one of those and
-          needs 2.22.1. Left alone, Maven's nearest-wins would hand swagger-core
-          the older Jackson 2 it was not compiled against - the enforcer's
-          requireUpperBoundDeps rule refused the build over exactly that, which is
-          the rule earning its place rather than being noise.
-
-          Overriding Boot's own property rather than importing a second BOM, so
-          the whole Jackson 2 line moves together and nothing ends up half
-          upgraded. It touches Jackson 2 only; Jackson 3 stays on Boot's version
-          and remains what this application actually serialises with. Delete this
-          the day springdoc's swagger-core lands on Boot's Jackson 2 version.
-
-          Kept in step with <jackson.version> in lambda/pom.xml. The two modules
-          are separate builds, so nothing enforces that; what it buys is that
-          the producer and the consumer serialise the event contract with the
-          same Jackson, which is the one place a difference between them would
-          be expensive. 2.22.1 is the floor swagger-core needs, so this can move
-          up with the Lambda's pin and not down.
+          Jackson 2 only, for swagger-core (springdoc), which needs 2.22.1 while Boot
+          manages Jackson 2 at 2.21.5; requireUpperBoundDeps refuses the older one. The
+          service serialises with Jackson 3 on Boot's version. The Lambda reads the event
+          with Jackson 2 (<jackson.version> in lambda/pom.xml), so the two sides do not
+          share a serialiser, which is why contracts/booking-created-v1.json is tested
+          from both. Keep the two pins in step; 2.22.1 is the floor.
         -->
         <jackson-2-bom.version>2.22.2</jackson-2-bom.version>
 
-        <!--
-          Build-gate plugin versions. These are pinned here rather than inherited
-          because Boot's parent manages the plugins it ships with and says nothing
-          about these three; an unpinned plugin version resolves to whatever is
-          newest on the day, which makes a build non-reproducible for the most
-          boring possible reason.
-        -->
+        <!-- Boot's parent does not manage these three plugins, so they are pinned for a reproducible build. -->
         <maven.enforcer.plugin.version>3.6.3</maven.enforcer.plugin.version>
         <jacoco.plugin.version>0.8.15</jacoco.plugin.version>
         <cyclonedx.plugin.version>2.9.3</cyclonedx.plugin.version>
 
         <!--
-          ArchUnit is not in Boot's BOM either. The artifact is archunit-junit6,
-          not archunit-junit5: the junit5 artifact binds to JUnit Platform 1.x
-          and Boot 4.1 ships Platform 6, so it fails at discovery time with a
-          NoSuchMethodError rather than anything that reads like a version clash.
+          archunit-junit6, not archunit-junit5: the junit5 artifact binds to JUnit
+          Platform 1.x and fails at discovery with a NoSuchMethodError on Boot 4.1's Platform 6.
         -->
         <archunit.version>1.5.0</archunit.version>
     </properties>
@@ -123,13 +94,7 @@
     </dependencyManagement>
 
     <dependencies>
-        <!--
-          spring-boot-starter-webmvc, not spring-boot-starter-web: Boot 4 kept
-          the old artifact working but its own POM now describes it as
-          "deprecated in favor of spring-boot-starter-webmvc". Same Tomcat, same
-          MVC; the rename is part of splitting every technology into its own
-          module. Nothing else in this file needed to change for it.
-        -->
+        <!-- spring-boot-starter-webmvc: Boot 4 deprecates spring-boot-starter-web in its favour. -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-webmvc</artifactId>
@@ -148,11 +113,8 @@
         </dependency>
 
         <!--
-          Two starters, because the service authenticates two different kinds of
-          caller. The base starter carries the filter chain and HTTP Basic, used
-          by the operations endpoints behind the gateway. The resource-server
-          starter carries the JWT verification used by machine callers, and it
-          only activates when an issuer is configured - see SecurityConfig.
+          HTTP Basic for the operations endpoints, and JWT verification for machine
+          callers, active only when an issuer is configured (see SecurityConfig).
         -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -164,12 +126,8 @@
         </dependency>
 
         <!--
-          Registers /actuator/prometheus. The actuator starter alone does NOT:
-          `management.endpoints.web.exposure.include` can name the endpoint and
-          Spring will silently not create it if no registry is on the classpath,
-          so the config reads as if scraping works and the endpoint 404s. Needed
-          because the HPA scales on CPU from metrics-server today but any real
-          deployment scales on application metrics, and those come from here.
+          Registers /actuator/prometheus. The actuator starter alone does not: the
+          exposure list can name the endpoint and it still 404s without a registry.
         -->
         <dependency>
             <groupId>io.micrometer</groupId>
@@ -178,25 +136,10 @@
         </dependency>
 
         <!--
-          Tracing. This starter is what puts a traceId and spanId on every log
-          line, which is the whole reason it is here: a booking touches the
-          controller, the writer, the outbox and then a Lambda in a different
-          process, and without a shared id those are four unrelated log streams.
-          It brings Micrometer Tracing bridged onto the OpenTelemetry SDK plus
-          the OTLP exporter.
-
-          No SPANS are exported by default: Boot starts the trace exporter only
-          once management.opentelemetry.tracing.export.otlp.endpoint has a
-          value, so on a laptop with no collector this is pure log correlation.
-
-          METRICS are a different story and the starter is not innocent here.
-          It drags in micrometer-registry-otlp, which is a push registry that
-          defaults to http://localhost:4318/v1/metrics and starts publishing
-          every 60 seconds whether or not anything is listening. The first run
-          after adding this starter logged exactly that, which is why
-          application.yml turns management.otlp.metrics.export.enabled off.
-          Prometheus scrapes this service; a second metrics pipeline pushing
-          into the void is noise at best.
+          Tracing: a traceId and spanId on every log line. Spans are exported only once
+          management.opentelemetry.tracing.export.otlp.endpoint is set. The starter also
+          brings a push OTLP metrics registry, which application.yml turns off because
+          Prometheus scrapes this service.
         -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -204,15 +147,8 @@
         </dependency>
 
         <!--
-          OpenAPI 3.1 from the controllers, plus the Swagger UI that renders it.
-          The -ui starter rather than -api because a JSON document nobody can
-          click through is documentation only for people who already have a
-          client generator; the UI is what makes the API explorable in a browser
-          on a demo URL, which is the point of publishing it at all.
-
-          Both paths are permitted anonymously in SecurityConfig, deliberately
-          and narrowly: the description of an endpoint is not a credential for
-          it. Every operation the document lists still answers 401 without one.
+          OpenAPI 3.1 plus the Swagger UI. SecurityConfig permits both paths
+          anonymously; every operation they describe still answers 401 without credentials.
         -->
         <dependency>
             <groupId>org.springdoc</groupId>
@@ -221,11 +157,8 @@
         </dependency>
 
         <!--
-          Schema is owned by Flyway on PostgreSQL; Hibernate only validates it.
-          Boot 4 made every technology's auto-configuration a separate module, so
-          this is the starter rather than bare flyway-core - the starter is what
-          carries FlywayAutoConfiguration. The postgresql dialect module is still
-          a direct dependency because Flyway 10 split the databases out of core.
+          Flyway owns the PostgreSQL schema; Hibernate only validates it. The starter
+          carries FlywayAutoConfiguration, and Flyway 10 ships each database as its own module.
         -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -259,11 +192,8 @@
             <scope>test</scope>
         </dependency>
         <!--
-          Boot 4 split the test slices out of spring-boot-starter-test the same
-          way it split the auto-configurations: @WebMvcTest now lives in the
-          webmvc-test starter and @DataJpaTest plus TestEntityManager in the
-          data-jpa-test starter. Without these two the slice tests do not
-          compile - the annotations are gone, not deprecated.
+          Boot 4 moved @WebMvcTest and @DataJpaTest (with TestEntityManager) into these
+          two starters; without them the slice tests do not compile.
         -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -285,12 +215,7 @@
             <artifactId>spring-boot-testcontainers</artifactId>
             <scope>test</scope>
         </dependency>
-        <!--
-          Testcontainers 2.x renamed every module: org.testcontainers:postgresql
-          became testcontainers-postgresql, and junit-jupiter became
-          testcontainers-junit-jupiter. The old coordinates are simply not
-          published any more, so this is a rename and not a preference.
-        -->
+        <!-- Testcontainers 2.x module names; the 1.x coordinates are no longer published. -->
         <dependency>
             <groupId>org.testcontainers</groupId>
             <artifactId>testcontainers-postgresql</artifactId>
@@ -312,17 +237,8 @@
     <build>
         <plugins>
             <!--
-              build-info writes META-INF/build-info.properties into the jar, and
-              without it two things that look configured are empty: /actuator/info
-              returns {} although `info` is in the exposure list, and the OpenAPI
-              document falls back to a hard-coded version in OpenApiConfig that
-              nothing updates on a release. CONTRIBUTING.md asks a bug reporter
-              for the version from /actuator/info, so an empty response there is
-              a documented instruction that does not work.
-
-              It is an execution rather than a property because the goal is not
-              in the plugin's default lifecycle binding. The generated file is a
-              build artefact, never committed.
+              build-info writes META-INF/build-info.properties. Without it /actuator/info
+              returns {} and the OpenAPI document falls back to a hard-coded version.
             -->
             <plugin>
                 <groupId>org.springframework.boot</groupId>
@@ -338,20 +254,10 @@
             </plugin>
 
             <!--
-              The toolchain gate. Java 17 is what `java -version` prints on the
-              machine this was written on, and a 17 build of a 21 source tree
-              fails somewhere in the middle of compilation with a message about a
-              language feature rather than about the JDK. This turns that into one
-              line at the top of the build naming the version it wanted.
-
-              requireUpperBoundDeps is the dependency rule that survived. The
-              stricter dependencyConvergence flags every artifact where two
-              transitive paths name different versions, which under Boot's BOM
-              plus the AWS SDK is dozens of managed artifacts that the BOM has
-              already resolved deliberately - a rule that needs twenty exclusions
-              teaches nothing. requireUpperBoundDeps only flags the case that is
-              actually a bug: a dependency resolved DOWN from what something in
-              the tree asked for.
+              The toolchain gate: a JDK 17 build of this tree fails mid-compilation on a
+              language feature, so this names the version first. requireUpperBoundDeps flags a
+              dependency resolved below what something in the tree asked for; the stricter
+              dependencyConvergence would flag dozens of versions the BOMs already settle.
             -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -366,7 +272,7 @@
                             <rules>
                                 <requireJavaVersion>
                                     <version>[21,22)</version>
-                                    <message>This build needs JDK 21. On this Mac: export JAVA_HOME=/opt/homebrew/opt/openjdk@21</message>
+                                    <message>This build needs JDK 21. Point JAVA_HOME at a JDK 21 (with Homebrew on macOS: export JAVA_HOME=/opt/homebrew/opt/openjdk@21).</message>
                                 </requireJavaVersion>
                                 <requireMavenVersion>
                                     <version>[3.9.0,)</version>
@@ -381,27 +287,19 @@
             </plugin>
 
             <!--
-              Coverage. The agent is attached by prepare-agent, which sets the
-              argLine property Surefire picks up, so no Surefire configuration is
-              needed under Boot's parent.
+              Coverage. prepare-agent sets the argLine property; the Surefire plugin below
+              keeps it with @{argLine}.
 
-              The thresholds are measured, not aspirational. On the machine this
-              was set on - no Docker, so the five Testcontainers tests in
-              BookingIntegrationTest skip - the numbers were line 0.840 and
-              branch 0.617. The gate sits below both with room: a gate set at the
-              measurement fails the next honest refactor, and a gate nobody can
-              pass gets deleted. CI runs the Testcontainers tests too, so CI can
-              only measure higher than this.
+              The thresholds are measured. When they were set, with no Docker and the five
+              Testcontainers tests in BookingIntegrationTest skipped, the numbers were line
+              0.840 and branch 0.617. The gate sits below both with room, and CI runs the
+              Testcontainers tests, so it can only measure higher. Measured again on 1.1.0
+              with no Docker, eight tests skipped (five in BookingIntegrationTest, three in
+              OutboxPrunePostgresTest): line 0.895 and branch 0.692.
 
-              BUNDLE rather than CLASS on purpose. A per-class rule turns every
-              new exception class with an unused constructor into a build
-              failure, which teaches people to write tests for constructors
-              rather than for behaviour.
-
-              The one exclusion is the class with main() in it: two of its three
-              lines are SpringApplication.run and an implicit constructor, and
-              covering them means asserting that Spring starts, which every
-              @SpringBootTest already does.
+              BUNDLE, because a per-class rule fails the build over an unused constructor on
+              an exception class. The one exclusion is the main() class, which every
+              @SpringBootTest already starts.
             -->
             <plugin>
                 <groupId>org.jacoco</groupId>
@@ -450,13 +348,21 @@
             </plugin>
 
             <!--
-              A software bill of materials, target/bom.json, in CycloneDX format.
-              The point is not the file: it is that "which version of that library
-              is in the artifact we shipped" becomes a question with a written
-              answer rather than a git archaeology exercise, on the day an
-              advisory names a transitive dependency nobody chose directly.
+              The test JVM runs in Asia/Kolkata, not UTC, so a formatter that uses the
+              host zone fails BookingEventContractTest on a UTC CI runner too.
+              @{argLine} keeps the JaCoCo agent that prepare-agent adds.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <argLine>@{argLine} -Duser.timezone=Asia/Kolkata</argLine>
+                </configuration>
+            </plugin>
 
-              Test-scope is excluded because it is not in the artifact.
+            <!--
+              A CycloneDX software bill of materials, target/bom.json, so the versions in
+              the shipped artifact have a written answer. Test scope is not in the artifact.
             -->
             <plugin>
                 <groupId>org.cyclonedx</groupId>

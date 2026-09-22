@@ -8,33 +8,14 @@ import java.util.Set;
 /**
  * The event transport mode, bound from {@code app.events.publisher}.
  *
- * <p><b>Nothing injects this record, and that is deliberate.</b> The mode is
- * consumed by {@code @ConditionalOnProperty} on {@code LoggingEventPublisher}
- * and {@code SqsEventPublisher}, which is the right mechanism — it decides
- * whether a bean is <em>defined</em>, so an SQS client is never constructed on
- * a machine with no credentials. What that mechanism cannot do is reject a
- * value it does not recognise: a third value simply matches neither condition,
- * no {@code EventPublisher} bean is defined, and the application fails while
- * constructing {@code OutboxPublisher} with a message about an unsatisfied
- * dependency on an interface. The property that actually caused it is not in
- * that message, and the conditions report that would explain it only appears
- * with debug logging on.
+ * <p>{@code @ConditionalOnProperty} on {@code LoggingEventPublisher} and
+ * {@code SqsEventPublisher} picks the bean, so no SQS client is built without
+ * credentials. A third value matches neither condition, and the failure would be
+ * a missing {@code EventPublisher} bean. This record rejects it first, naming the
+ * property and the legal values; {@code OutboxPublisher} injects it for that reason.
  *
- * <p>That failure shipped. {@code compose.yaml} set {@code
- * APP_EVENTS_PUBLISHER=noop} — a value that had never existed — and the
- * documented {@code docker compose up} stack could not start. The typo was in
- * two documents as well, which is what a value nothing validates looks like
- * after a few weeks.
- *
- * <p>So this record exists to be bound, not to be read. Binding happens at
- * startup whether or not anything asks for the bean, and an unrecognised value
- * fails there instead, naming the property and listing what is legal.
- *
- * @param publisher {@code log} or {@code sqs}. The default is {@code log},
- *                  matching {@code matchIfMissing = true} on
- *                  {@code LoggingEventPublisher} — the two defaults have to
- *                  agree, or this class would reject a configuration that
- *                  actually works.
+ * @param publisher {@code log} or {@code sqs}. The default {@code log} has to agree
+ *                  with {@code matchIfMissing = true} on {@code LoggingEventPublisher}.
  */
 @ConfigurationProperties(prefix = "app.events")
 public record EventProperties(@DefaultValue("log") String publisher) {
