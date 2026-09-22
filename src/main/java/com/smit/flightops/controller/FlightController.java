@@ -4,8 +4,10 @@ import com.smit.flightops.dto.CreateFlightRequest;
 import com.smit.flightops.dto.ErrorResponse;
 import com.smit.flightops.dto.FlightDto;
 import com.smit.flightops.dto.StatusUpdate;
+import com.smit.flightops.dto.ValidationErrorResponse;
 import com.smit.flightops.service.FlightService;
 import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.headers.Header;
 import io.swagger.v3.oas.annotations.media.Content;
 import io.swagger.v3.oas.annotations.media.Schema;
 import io.swagger.v3.oas.annotations.responses.ApiResponse;
@@ -16,29 +18,31 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.util.UriComponentsBuilder;
 
 import java.net.URI;
+import java.util.Set;
 
 /**
- * HTTP adapter, nothing more: bind, delegate, map the status code. No
- * business rules, no repository access, no try/catch — errors travel to
+ * HTTP adapter for flights: bind, delegate, map the status. No business rules
+ * and no try/catch; errors go to
  * {@link com.smit.flightops.exception.GlobalExceptionHandler}.
+ *
+ * <p>JSON only. Without {@code produces}, {@code Accept: application/yaml} is
+ * served YAML with epoch-number timestamps; with it, the caller gets a 406.
  */
 @RestController
-@RequestMapping("/api/v1/flights")
+@RequestMapping(path = "/api/v1/flights", produces = MediaType.APPLICATION_JSON_VALUE)
 @Tag(name = "Flights",
      description = "Schedule and seat inventory. Status moves through a state machine; "
                    + "cancelling a flight is a soft delete that its bookings outlive.")
 public class FlightController {
 
-    /**
-     * What {@code ?sort=} may name on the search endpoint. {@code version} is
-     * absent: it is the optimistic-locking counter, it means nothing to a
-     * caller, and ordering by it leaks how often a row has been written.
-     */
-    private static final java.util.Set<String> SORTABLE = java.util.Set.of(
+    /** {@code version} is left out: ordering by it shows how often a row was written. */
+    private static final Set<String> SORTABLE = Set.of(
             "id", "flightNumber", "origin", "destination",
             "totalSeats", "availableSeats", "status", "departureTime");
 
@@ -48,24 +52,38 @@ public class FlightController {
         this.flightService = flightService;
     }
 
+    @Operation(summary = "Get a flight")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "The flight."),
+            @ApiResponse(responseCode = "401", description = "`UNAUTHENTICATED`",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(responseCode = "403", description = "`FORBIDDEN` — `flights:read` is required.",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(responseCode = "404", description = "`FLIGHT_NOT_FOUND`",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    })
     @GetMapping("/{flightNumber}")
     public FlightDto get(@PathVariable String flightNumber) {
         return flightService.findByNumber(flightNumber);
     }
 
     /**
-     * Paged, not a bare List: an unbounded collection endpoint is a load-bearing
-     * outage waiting for the table to grow.
-     *
-     * <p>{@code departureTime} is not unique — a codeshare pair leaves at the
-     * same minute — so {@link SortPolicy} appends {@code id} to make the paging
-     * stable. It also checks the property against {@link #SORTABLE} rather than
-     * leaving that to Spring Data. Spring Data would catch it here, because
-     * these are derived queries and it resolves the property to build them; it
-     * does not catch it on the bookings endpoint, and an endpoint's HTTP
-     * contract should not depend on which kind of query the repository happens
-     * to use this month.
+     * Paged, so the response is bounded however large the table grows.
+     * {@link SortPolicy} checks {@code sort} against {@link #SORTABLE} and adds
+     * {@code id} as a tiebreaker, since two flights can leave at the same minute.
      */
+    @Operation(summary = "Search flights by origin and destination")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "A page of flights, by departure time unless `sort` says otherwise."),
+            @ApiResponse(responseCode = "400", description = """
+                    `UNKNOWN_SORT_PROPERTY` — `sort` names a property this endpoint does not offer. \
+                    `MALFORMED_REQUEST` — `page` times `size` is larger than 2147483647.""",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(responseCode = "401", description = "`UNAUTHENTICATED`",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(responseCode = "403", description = "`FORBIDDEN` — `flights:read` is required.",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    })
     @GetMapping
     public Page<FlightDto> search(@RequestParam(required = false) String origin,
                                   @RequestParam(required = false) String destination,
@@ -74,37 +92,58 @@ public class FlightController {
     }
 
     /**
-     * 201 with a {@code Location} header pointing at
-     * {@code GET /api/v1/flights/{flightNumber}}. The number comes off the
-     * returned DTO, not off the request, because the service normalises it
-     * (trim + upper-case) — {@code Location} has to name the URL that actually
-     * resolves, not the one the client typed.
+     * {@code Location} is built from the returned DTO, not the request, because
+     * the service trims and upper-cases the number and only that form resolves.
+     * The number is expanded as a URI variable, so it is encoded, never spliced in.
      */
+    @Operation(summary = "Create a flight")
+    @ApiResponses({
+            @ApiResponse(responseCode = "201", description = "Created. The body is the new flight.",
+                    headers = @Header(name = "Location",
+                            description = "`/api/v1/flights/{flightNumber}`, with the number trimmed and upper-cased.",
+                            schema = @Schema(type = "string"))),
+            @ApiResponse(responseCode = "400", description = """
+                    `VALIDATION_FAILED` — a field is blank, out of range or has the wrong characters; \
+                    `fieldErrors` names each one. `MALFORMED_REQUEST` — the body is not valid JSON, or \
+                    `totalSeats` is missing or not a whole number; this one has the \
+                    `{code, message, timestamp}` shape.""",
+                    content = @Content(schema = @Schema(oneOf = {ValidationErrorResponse.class, ErrorResponse.class}))),
+            @ApiResponse(responseCode = "401", description = "`UNAUTHENTICATED`",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(responseCode = "403", description = "`FORBIDDEN` — `flights:write` is required.",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(responseCode = "409", description = """
+                    `DUPLICATE_FLIGHT` — a flight with this number exists. `DUPLICATE_REQUEST` — \
+                    another request created the same number at the same moment.""",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    })
     @PostMapping
     public ResponseEntity<FlightDto> create(@Valid @RequestBody CreateFlightRequest request) {
         FlightDto flight = flightService.create(request);
-        return ResponseEntity.created(URI.create("/api/v1/flights/" + flight.flightNumber()))
-                .body(flight);
+        URI location = UriComponentsBuilder.fromPath("/api/v1/flights/{flightNumber}")
+                .build(flight.flightNumber());
+        return ResponseEntity.created(location).body(flight);
     }
 
     /** PATCH, not PUT: this replaces one field, not the resource. */
     @Operation(
             summary = "Move a flight to another status",
             description = """
-                    `SCHEDULED → BOARDING → DEPARTED → ARRIVED`, with `CANCELLED` \
-                    reachable from anything not yet departed. `ARRIVED` and `CANCELLED` \
-                    are terminal, and the transition table is exhaustive rather than a \
-                    list of what is forbidden — the first version of this endpoint \
-                    accepted `CANCELLED → SCHEDULED`, after which a cancelled flight \
-                    sold seats again.
+                    `SCHEDULED → BOARDING → DEPARTED → ARRIVED`. Before `DEPARTED` a flight \
+                    can also move to `DELAYED` or `CANCELLED`, and it can depart without \
+                    `BOARDING` being recorded. A `DELAYED` flight goes on to `BOARDING`, \
+                    `DEPARTED` or `CANCELLED`. `ARRIVED` and `CANCELLED` are terminal. Any \
+                    other transition is 409 `ILLEGAL_STATUS_TRANSITION`.
 
-                    A transition to the status the flight already has is allowed, so a \
-                    retried PATCH is safe.""")
+                    Moving to the status the flight already has is allowed, so a retried \
+                    PATCH is safe.""")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "The flight, at its new status."),
-            @ApiResponse(responseCode = "400", description =
-                    "`MALFORMED_REQUEST` — the body names a status that does not exist.",
-                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(responseCode = "400", description = """
+                    `VALIDATION_FAILED` — `status` is missing. `MALFORMED_REQUEST` — the body \
+                    names a status that does not exist; this one has the \
+                    `{code, message, timestamp}` shape.""",
+                    content = @Content(schema = @Schema(oneOf = {ValidationErrorResponse.class, ErrorResponse.class}))),
             @ApiResponse(responseCode = "401", description = "`UNAUTHENTICATED`",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "403", description = "`FORBIDDEN` — `flights:write` is required.",
@@ -115,6 +154,10 @@ public class FlightController {
                     `ILLEGAL_STATUS_TRANSITION` — the flight cannot reach that status \
                     from the one it is in. `CONCURRENT_MODIFICATION` — another write \
                     landed first and `@Version` rejected this one.""",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(responseCode = "503", description = """
+                    `LOCK_TIMEOUT` — a booking or a booking cancellation held the flight row \
+                    past `lock_timeout`. Carries `Retry-After`.""",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     })
     @PatchMapping("/{flightNumber}/status")
@@ -123,7 +166,26 @@ public class FlightController {
         return flightService.updateStatus(flightNumber, update.status());
     }
 
-    /** Soft cancel — 204 with no body; the flight row survives for its bookings. */
+    /** Soft cancel: the flight row survives for its bookings. */
+    @Operation(summary = "Cancel a flight",
+               description = "Sets the status to `CANCELLED`. Cancelling a cancelled flight is a 204 no-op.")
+    @ApiResponses({
+            @ApiResponse(responseCode = "204", description = "Cancelled, or already cancelled."),
+            @ApiResponse(responseCode = "401", description = "`UNAUTHENTICATED`",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(responseCode = "403", description = "`FORBIDDEN` — `flights:write` is required.",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(responseCode = "404", description = "`FLIGHT_NOT_FOUND`",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(responseCode = "409", description = """
+                    `ILLEGAL_STATUS_TRANSITION` — the flight has departed or arrived. \
+                    `CONCURRENT_MODIFICATION` — another write landed first.""",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(responseCode = "503", description = """
+                    `LOCK_TIMEOUT` — a booking or a booking cancellation held the flight row \
+                    past `lock_timeout`. Carries `Retry-After`.""",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
+    })
     @DeleteMapping("/{flightNumber}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void cancel(@PathVariable String flightNumber) {

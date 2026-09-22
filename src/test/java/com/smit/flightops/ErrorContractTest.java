@@ -1,5 +1,6 @@
 package com.smit.flightops;
 
+import com.jayway.jsonpath.JsonPath;
 import com.smit.flightops.config.SecurityConfig;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -10,68 +11,41 @@ import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.time.Instant;
+import java.util.List;
+
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * The error contract, end to end, through the real stack.
+ * The error contract through the whole application: the real security chain,
+ * the real services, and H2 with the seeded demo flights. Most of these cases
+ * need a layer a slice would mock, such as the stored fingerprint behind a key
+ * conflict or the seat count behind a cancellation. PostgreSQL-only behaviour is
+ * in {@link BookingIntegrationTest} and {@link LockTimeoutTest}.
  *
- * <p>Every case here was previously either a 500 or a wrong success. They are
- * tested against the whole application rather than a {@code @WebMvcTest} slice
- * with a mocked service on purpose: each one is a bug in the seam <em>between</em>
- * layers, and mocking the layer underneath is mocking away the bug. The clearest
- * case is {@code ?sort=nonsense} — the exception comes from Spring Data
- * resolving the property against the entity, inside the repository proxy, which
- * a mocked service never reaches. A slice test could only assert that the advice
- * handles an exception somebody hand-constructed, which proves the advice works
- * and not that the endpoint does.
- *
- * <p>{@code @AutoConfigureMockMvc} is explicit here because Boot 4 no longer
- * implies it from {@code @SpringBootTest}. Without it, {@code MockMvc} simply
- * is not a bean and the context fails to start.
- *
- * <p>Its own H2 database, for the reason {@code SecurityRulesTest} has one.
- * {@code ddl-auto} is {@code create-drop} and the default URL is a single
- * JVM-wide in-memory database, so a second application context starting on it
- * drops and recreates the tables underneath the first — which is cached, not
- * closed. These tests create flights and bookings and count seats; sharing the
- * database made them pass on Surefire's class ordering rather than on their own
- * merits, and nothing would have failed loudly when that ordering changed.
- *
- * <p>Runs on H2 with the seeded demo flights, so no Docker and no PostgreSQL —
- * these assertions are about HTTP status and response shape, not about SQL
- * dialects. The two places where PostgreSQL genuinely behaves differently
- * (the {@code FOR UPDATE} contention and the {@code lock_timeout}) are covered
- * in {@link BookingIntegrationTest} and {@link LockTimeoutTest} respectively.
+ * <p>Its own database URL, because a second context on the shared in-memory
+ * database would drop and recreate the tables under this one. The caller holds
+ * both scopes, named by {@code SecurityConfig}'s constants so that renaming a
+ * scope breaks compilation instead of turning every case into a 403.
  */
 @SpringBootTest(properties = "spring.datasource.url=jdbc:h2:mem:errorcontract;DB_CLOSE_DELAY=-1")
 @AutoConfigureMockMvc
-/**
- * Authenticated as a caller holding both scopes, because these tests are about
- * the error contract rather than about who may call what. The filter chain is
- * fully in place — this is the real {@code SecurityConfig} — so without this
- * every assertion below would be made against a 401.
- *
- * <p>{@code @WithMockUser} puts an {@code Authentication} straight into the
- * {@code SecurityContext} rather than sending an {@code Authorization} header,
- * so it proves nothing about the credentials themselves; that is
- * {@code SecurityRulesTest}'s job. The authority strings are taken from
- * {@code SecurityConfig}'s constants rather than retyped, so renaming a scope
- * breaks compilation here instead of turning every one of these into a silent
- * 403.
- */
 @WithMockUser(authorities = {SecurityConfig.SCOPE_READ, SecurityConfig.SCOPE_WRITE})
 class ErrorContractTest {
 
     @Autowired private MockMvc mockMvc;
 
     // ------------------------------------------------------------------
-    // 400s that used to be 500s
+    // Sorting and paging
     // ------------------------------------------------------------------
 
     @Test
@@ -80,39 +54,30 @@ class ErrorContractTest {
         mockMvc.perform(get("/api/v1/flights").param("sort", "deptime"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("UNKNOWN_SORT_PROPERTY"))
-                // The property name is echoed because the client sent it. The
-                // rest of the exception's text is not: it names the entity
-                // class and lists its properties, which is a free schema dump.
+                // The name the caller sent comes back; the entity and its property list do not.
                 .andExpect(jsonPath("$.message").value(containsString("deptime")))
-                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.not(containsString("Flight"))));
+                .andExpect(jsonPath("$.message").value(not(containsString("Flight"))));
     }
 
     @Test
     @DisplayName("?sort=<unknown property> is 400 on the bookings list too, not 500")
     void unknownSortPropertyIsABadRequestOnBookingsAsWell() throws Exception {
-        // This was a 500 long after the flights endpoint was fixed. The two
-        // endpoints reach the sort by different routes: flights uses a derived
-        // query, so Spring Data resolved the property and raised
-        // PropertyReferenceException; bookings declares its own @Query for the
-        // JOIN FETCH, so the property went into the JPQL unresolved and
-        // Hibernate failed to parse it. One fix covered one of them.
+        // Bookings sorts inside a declared @Query, where an unchecked property
+        // would reach Hibernate's parser rather than Spring Data's property check.
         mockMvc.perform(get("/api/v1/bookings")
                         .param("flightNumber", "UA123")
                         .param("sort", "deptime"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("UNKNOWN_SORT_PROPERTY"))
                 .andExpect(jsonPath("$.message").value(containsString("deptime")))
-                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.not(containsString("Booking"))));
+                .andExpect(jsonPath("$.message").value(not(containsString("Booking"))));
     }
 
     @Test
     @DisplayName("a property the entity has but the endpoint does not offer is still 400")
     void idempotencyKeyIsNotSortable() throws Exception {
-        // idempotencyKey is a real column and a real entity property, so an
-        // entity-derived check would allow it. It is deliberately absent from
-        // BookingDto because a caller must not be able to read keys it did not
-        // create, and ?sort=idempotencyKey gives the same information back one
-        // comparison at a time.
+        // An entity property, so an entity-derived check would allow it, and
+        // sorting by it reads other callers' keys one comparison at a time.
         mockMvc.perform(get("/api/v1/bookings")
                         .param("flightNumber", "UA123")
                         .param("sort", "idempotencyKey"))
@@ -120,21 +85,91 @@ class ErrorContractTest {
                 .andExpect(jsonPath("$.code").value("UNKNOWN_SORT_PROPERTY"));
     }
 
+    /**
+     * Half a second apart, so the two orders disagree: as text {@code 08:00:00Z}
+     * sorts after {@code 08:00:00.500Z}, which is why the times are parsed.
+     */
     @Test
-    @DisplayName("a known sort property on bookings still sorts")
+    @DisplayName("sort=departureTime,desc returns the later departure first")
+    void knownSortPropertyStillSorts() throws Exception {
+        createFlight("ZZ200", "AMS", "CDG", "2031-03-01T08:00:00Z");
+        createFlight("ZZ201", "AMS", "CDG", "2031-03-01T08:00:00.500Z");
+
+        String json = mockMvc.perform(get("/api/v1/flights")
+                        .param("origin", "AMS")
+                        .param("destination", "CDG")
+                        .param("sort", "departureTime,desc"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+
+        List<String> departures = JsonPath.read(json, "$.content[*].departureTime");
+        assertThat(departures.stream().map(Instant::parse)).containsExactly(
+                Instant.parse("2031-03-01T08:00:00.500Z"),
+                Instant.parse("2031-03-01T08:00:00Z"));
+    }
+
+    /** Booked smallest first, so the default creation order is the opposite of the one asked for. */
+    @Test
+    @DisplayName("sort=seats,desc on a flight's bookings returns the largest booking first")
     void knownSortPropertyOnBookingsStillSorts() throws Exception {
-        mockMvc.perform(get("/api/v1/bookings")
-                        .param("flightNumber", "UA123")
+        createFlight("ZZ300", "AMS", "FRA", "2031-03-01T08:00:00Z");
+        book("ZZ300", "Ada Lovelace", 1, "contract-sort-1");
+        book("ZZ300", "Grace Hopper", 3, "contract-sort-2");
+
+        String json = mockMvc.perform(get("/api/v1/bookings")
+                        .param("flightNumber", "ZZ300")
                         .param("sort", "seats,desc"))
-                .andExpect(status().isOk());
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(JsonPath.<List<Integer>>read(json, "$.content[*].seats")).containsExactly(3, 1);
     }
 
     @Test
-    @DisplayName("a known sort property still works, so the fix did not just break sorting")
-    void knownSortPropertyStillSorts() throws Exception {
-        mockMvc.perform(get("/api/v1/flights").param("sort", "departureTime,desc"))
+    @DisplayName("the booking list is paged: two bookings at size=1 are two pages with different rows")
+    void bookingListIsPaged() throws Exception {
+        createFlight("ZZ301", "AMS", "MUC", "2031-03-01T08:00:00Z");
+        book("ZZ301", "Ada Lovelace", 1, "contract-page-1");
+        book("ZZ301", "Grace Hopper", 1, "contract-page-2");
+
+        String first = bookingsPage("ZZ301", 0);
+        String second = bookingsPage("ZZ301", 1);
+
+        assertThat(JsonPath.<List<Object>>read(first, "$.content")).hasSize(1);
+        assertThat(JsonPath.<Integer>read(first, "$.page.totalElements")).isEqualTo(2);
+        assertThat(JsonPath.<Integer>read(first, "$.page.totalPages")).isEqualTo(2);
+        assertThat(JsonPath.<Integer>read(second, "$.content[0].bookingId"))
+                .isNotEqualTo(JsonPath.<Integer>read(first, "$.content[0].bookingId"));
+    }
+
+    /**
+     * Spring Data computes the row offset as an {@code int}, which a page past
+     * {@code Integer.MAX_VALUE / size} overflows. At the default size of 20,
+     * page 107374182 is the last one that fits.
+     */
+    @Test
+    @DisplayName("a page whose offset overflows an int is 400 MALFORMED_REQUEST on both lists")
+    void pagePastTheLastAddressableRowIsABadRequest() throws Exception {
+        mockMvc.perform(get("/api/v1/flights")
+                        .param("page", "2147483647")
+                        .param("size", "100"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("MALFORMED_REQUEST"))
+                .andExpect(jsonPath("$.message").value(containsString("page * size")));
+
+        mockMvc.perform(get("/api/v1/bookings")
+                        .param("flightNumber", "UA123")
+                        .param("page", "2147483647"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("MALFORMED_REQUEST"));
+
+        mockMvc.perform(get("/api/v1/flights").param("page", "107374182"))
                 .andExpect(status().isOk());
     }
+
+    // ------------------------------------------------------------------
+    // Validation at the edge
+    // ------------------------------------------------------------------
 
     @Test
     @DisplayName("origin == destination is 400 with a field error, not a 409 from the database")
@@ -147,9 +182,8 @@ class ErrorContractTest {
                                 """))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
-                // A class-level constraint's violation has no field by default.
-                // The validator re-targets it at `destination` precisely so it
-                // lands in this map instead of an empty object.
+                // A class-level violation has no field; the validator puts it on
+                // destination so that it lands in this map.
                 .andExpect(jsonPath("$.fieldErrors.destination").exists());
     }
 
@@ -169,11 +203,8 @@ class ErrorContractTest {
     @Test
     @DisplayName("an idempotency key carrying a newline is refused at the edge, not logged")
     void idempotencyKeyCannotForgeALogLine() throws Exception {
-        // The key reaches a log line on every replay and every conflict. Before
-        // the @Pattern it was @NotBlank @Size only, so this body would have
-        // written the attacker's second line into the log at INFO — the exact
-        // attack SECURITY.md describes for X-Request-Id, on a field nobody had
-        // thought of as reaching a logger.
+        // The key is logged on every replay and every conflict, so a newline
+        // in it would write a forged second line.
         mockMvc.perform(post("/api/v1/bookings")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -186,7 +217,7 @@ class ErrorContractTest {
     }
 
     // ------------------------------------------------------------------
-    // 409s that used to be wrong successes
+    // Idempotency and flight status
     // ------------------------------------------------------------------
 
     @Test
@@ -203,9 +234,8 @@ class ErrorContractTest {
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.passengerName").value("Ada Lovelace"));
 
-        // Same key, different passenger. This used to return 201 and Ada's
-        // booking: no seats debited for the booking Grace thought she had made,
-        // no error, and a confirmation naming somebody else.
+        // Same key, different passenger. Replaying Ada's booking here would
+        // confirm a booking Grace never got.
         mockMvc.perform(post("/api/v1/bookings")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -214,10 +244,9 @@ class ErrorContractTest {
                                 """.formatted(key)))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("IDEMPOTENCY_KEY_REUSED"))
-                // The message must not describe the existing booking: a
-                // guessable key would otherwise read out other people's
-                // reservations.
-                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.not(containsString("Ada"))));
+                // Nothing about the existing booking, or a guessed key reads out
+                // someone else's reservation.
+                .andExpect(jsonPath("$.message").value(not(containsString("Ada"))));
     }
 
     @Test
@@ -238,7 +267,7 @@ class ErrorContractTest {
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
 
-        org.assertj.core.api.Assertions.assertThat(second).isEqualTo(first);
+        assertThat(second).isEqualTo(first);
     }
 
     @Test
@@ -252,9 +281,8 @@ class ErrorContractTest {
                                 """))
                 .andExpect(status().isCreated());
 
-        // Lower-case flight number, padded name. Both normalise to the same
-        // booking, so this is a retry and not a different request. Comparing
-        // the raw strings would have made this a 409 for an identical booking.
+        // Lower-case number and padded name normalise to the same booking, so
+        // this is a replay, not a conflict.
         mockMvc.perform(post("/api/v1/bookings")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -279,8 +307,7 @@ class ErrorContractTest {
         mockMvc.perform(delete("/api/v1/flights/ZZ100"))
                 .andExpect(status().isNoContent());
 
-        // The hole this closes: PATCH back to SCHEDULED made isBookable()
-        // answer true again and put a cancelled flight's seats back on sale.
+        // Back to SCHEDULED would make isBookable() true and put the seats on sale again.
         mockMvc.perform(patch("/api/v1/flights/ZZ100/status")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -306,7 +333,7 @@ class ErrorContractTest {
     }
 
     // ------------------------------------------------------------------
-    // Cancellation, which is what gives releaseSeats a caller
+    // Booking cancellation
     // ------------------------------------------------------------------
 
     @Test
@@ -325,19 +352,19 @@ class ErrorContractTest {
                 .andReturn().getResponse().getContentAsString();
 
         long bookingId = Long.parseLong(created.replaceAll(".*\"bookingId\":(\\d+).*", "$1"));
-        org.assertj.core.api.Assertions.assertThat(availableSeats("UA789")).isEqualTo(before - 3);
+        assertThat(availableSeats("UA789")).isEqualTo(before - 3);
 
         mockMvc.perform(delete("/api/v1/bookings/" + bookingId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.cancelledAt").exists());
-        org.assertj.core.api.Assertions.assertThat(availableSeats("UA789")).isEqualTo(before);
+        assertThat(availableSeats("UA789")).isEqualTo(before);
 
-        // The retry. Without Booking.cancel's boolean return this would credit
-        // three more seats - Flight.releaseSeats clamps at totalSeats, so the
-        // clamp would hide it on a full flight and not on this one.
+        // The retry must not credit the seats again. Flight.releaseSeats clamps
+        // at totalSeats, so a double credit only shows on a flight that is not
+        // full, like this one.
         mockMvc.perform(delete("/api/v1/bookings/" + bookingId))
                 .andExpect(status().isOk());
-        org.assertj.core.api.Assertions.assertThat(availableSeats("UA789")).isEqualTo(before);
+        assertThat(availableSeats("UA789")).isEqualTo(before);
     }
 
     @Test
@@ -356,38 +383,27 @@ class ErrorContractTest {
         mockMvc.perform(delete("/api/v1/bookings/" + bookingId)).andExpect(status().isOk());
         int afterCancel = availableSeats("UA789");
 
-        // This is why cancellation is a timestamp and not a DELETE: the row
-        // keeps the idempotency key, so the original request replays to the
-        // cancelled booking instead of quietly booking a second seat.
+        // Cancellation is a timestamp, not a DELETE, so the row keeps its key
+        // and the original request replays to it instead of booking again.
         mockMvc.perform(post("/api/v1/bookings")
                         .contentType(MediaType.APPLICATION_JSON).content(body))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.bookingId").value(bookingId))
                 .andExpect(jsonPath("$.cancelledAt").exists());
 
-        org.assertj.core.api.Assertions.assertThat(availableSeats("UA789")).isEqualTo(afterCancel);
+        assertThat(availableSeats("UA789")).isEqualTo(afterCancel);
     }
 
-    @Test
-    @DisplayName("the booking list is paged")
-    void bookingListIsPaged() throws Exception {
-        mockMvc.perform(get("/api/v1/bookings")
-                        .param("flightNumber", "UA123")
-                        .param("size", "1"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.page.size").value(1))
-                .andExpect(jsonPath("$.page.number").value(0));
-    }
+    // ------------------------------------------------------------------
+    // The envelope
+    // ------------------------------------------------------------------
 
     @Test
     @DisplayName("/error answers in the documented envelope, not Boot's default map")
     void theErrorPathUsesTheDocumentedEnvelope() throws Exception {
-        // Boot's BasicErrorController answers this with
-        //   500 {"timestamp":"...","status":999,"error":"None"}
-        // -- different keys, a status that is not an HTTP status, and a server
-        // fault announced for a client asking after a path that is not part of
-        // the API. Three documents promise {code, message, timestamp} on every
-        // error; this is the path that used not to keep that promise.
+        // Boot's own BasicErrorController would answer 500 with
+        // {"status":999,"error":"None"}: another shape, and a server fault for
+        // a path that is not part of the API.
         mockMvc.perform(get("/error"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("RESOURCE_NOT_FOUND"))
@@ -404,6 +420,55 @@ class ErrorContractTest {
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("RESOURCE_NOT_FOUND"))
                 .andExpect(jsonPath("$.timestamp").exists());
+    }
+
+    /**
+     * The handlers set the error's Content-Type themselves, so a 406 is still
+     * JSON. The YAML case matters because a YAML converter is registered:
+     * without {@code produces} on the controller it would serve the flight.
+     */
+    @Test
+    @DisplayName("an Accept header the API cannot serve is 406 REQUEST_REJECTED, in JSON")
+    void aNonJsonAcceptIsNotAcceptableInJson() throws Exception {
+        mockMvc.perform(get("/api/v1/flights/NOPE").accept(MediaType.APPLICATION_XML))
+                .andExpect(status().isNotAcceptable())
+                .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.code").value("REQUEST_REJECTED"));
+
+        mockMvc.perform(get("/api/v1/flights/UA123").accept(MediaType.APPLICATION_YAML))
+                .andExpect(status().isNotAcceptable())
+                .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.code").value("REQUEST_REJECTED"));
+    }
+
+    private void createFlight(String flightNumber, String origin, String destination,
+                              String departureTime) throws Exception {
+        mockMvc.perform(post("/api/v1/flights")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"flightNumber":"%s","origin":"%s","destination":"%s",
+                                 "totalSeats":50,"departureTime":"%s"}
+                                """.formatted(flightNumber, origin, destination, departureTime)))
+                .andExpect(status().isCreated());
+    }
+
+    private void book(String flightNumber, String passengerName, int seats, String key) throws Exception {
+        mockMvc.perform(post("/api/v1/bookings")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"flightNumber":"%s","passengerName":"%s","seats":%d,
+                                 "idempotencyKey":"%s"}
+                                """.formatted(flightNumber, passengerName, seats, key)))
+                .andExpect(status().isCreated());
+    }
+
+    private String bookingsPage(String flightNumber, int page) throws Exception {
+        return mockMvc.perform(get("/api/v1/bookings")
+                        .param("flightNumber", flightNumber)
+                        .param("size", "1")
+                        .param("page", Integer.toString(page)))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
     }
 
     private int availableSeats(String flightNumber) throws Exception {

@@ -3,6 +3,7 @@ package com.smit.flightops.controller;
 import com.smit.flightops.config.TimeConfig;
 import com.smit.flightops.support.MetricsTestConfig;
 import com.smit.flightops.dto.BookingDto;
+import com.smit.flightops.dto.BookingRequest;
 import com.smit.flightops.entity.FlightStatus;
 import com.smit.flightops.exception.BookingNotFoundException;
 import com.smit.flightops.exception.FlightNotBookableException;
@@ -10,67 +11,58 @@ import com.smit.flightops.exception.InsufficientSeatsException;
 import com.smit.flightops.service.BookingService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Import;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import tools.jackson.databind.ObjectMapper;
 
 import java.time.Instant;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.containsString;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 /**
- * {@code addFilters = false} — the security filter chain is deliberately out of
- * the way here, and the reason is worth stating because switching filters off
- * in a test usually is a smell.
- *
- * <p>A {@code @WebMvcTest} slice does not load {@code SecurityConfig}: it is a
- * {@code @Configuration} class, not a controller, so the slice filter excludes
- * it. What Boot puts there instead is its own default chain — every request
- * authenticated, CSRF on, form login available. Leaving the filters in place
- * would therefore have every test in this class authenticate against rules
- * that <em>are not the application's rules</em>, and pass. That is worse than
- * no coverage: it reads as though authorisation is tested and it tests a chain
- * that will never run in production.
- *
- * <p>So the split is explicit. This class tests one controller's HTTP contract
- * — status codes, headers, JSON bodies, error mapping. The real rules, against
- * the real {@code SecurityConfig}, with real credentials and the real 401/403
- * bodies, are {@code SecurityRulesTest}'s only job.
+ * The booking endpoints' HTTP contract with the service mocked. Filters are off,
+ * and {@code TimeConfig} imported, for the reasons {@link FlightControllerTest}
+ * gives.
  */
 @WebMvcTest(BookingController.class)
-// GlobalExceptionHandler is a @RestControllerAdvice, so the slice picks it
-// up, and it takes a Clock. A @WebMvcTest loads no @Configuration class of
-// its own, so TimeConfig has to be named here. Importing the real one rather
-// than stubbing a fixed clock keeps the slice honest: the error bodies these
-// tests assert on are built by the same clock the application uses.
 @Import({TimeConfig.class, MetricsTestConfig.class})
 @AutoConfigureMockMvc(addFilters = false)
 class BookingControllerTest {
 
     @Autowired private MockMvc mockMvc;
+    @Autowired private ObjectMapper objectMapper;
 
     @MockitoBean private BookingService bookingService;
 
     private static final String VALID_BODY = """
             {"flightNumber":"UA123","passengerName":"Smit Lakhani","seats":3,"idempotencyKey":"demo-1"}
             """;
+
+    private String body(String flightNumber, String passengerName, int seats) {
+        return objectMapper.writeValueAsString(
+                new BookingRequest(flightNumber, passengerName, seats, "demo-1"));
+    }
 
     private BookingDto dto() {
         return new BookingDto(1L, "UA123", "Smit Lakhani", 3,
@@ -114,7 +106,7 @@ class BookingControllerTest {
                         .content(VALID_BODY))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("INSUFFICIENT_SEATS"))
-                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("UA123")));
+                .andExpect(jsonPath("$.message").value(containsString("UA123")));
     }
 
     @Test
@@ -127,30 +119,21 @@ class BookingControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(VALID_BODY))
                 .andExpect(status().isConflict())
-                // A separate code on purpose: INSUFFICIENT_SEATS invites the
-                // client to retry with fewer seats, which can never succeed here.
+                // INSUFFICIENT_SEATS would invite a retry with fewer seats, which cannot work here.
                 .andExpect(jsonPath("$.code").value("FLIGHT_NOT_BOOKABLE"))
-                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("CANCELLED")));
+                .andExpect(jsonPath("$.message").value(containsString("CANCELLED")));
     }
 
+    /**
+     * Blank fields report {@code @NotBlank}'s message: the name and flight-number
+     * patterns accept an empty string, so they do not compete for the one message
+     * the handler keeps per field.
+     */
     @Test
-    @DisplayName("losing the unique-key race is 409 DUPLICATE_REQUEST, not 500")
-    void concurrentDuplicateKeyReturns409() throws Exception {
-        when(bookingService.book(any()))
-                .thenThrow(new DataIntegrityViolationException("uk_bookings_idempotency_key"));
-
-        mockMvc.perform(post("/api/v1/bookings")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(VALID_BODY))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.code").value("DUPLICATE_REQUEST"));
-    }
-
-    @Test
-    @DisplayName("seats must be at least 1 and the idempotency key is mandatory")
+    @DisplayName("blank fields and a zero seat count are 400, each named with its own message")
     void invalidBookingReturns400() throws Exception {
         String body = """
-                {"flightNumber":"UA123","passengerName":"Smit Lakhani","seats":0,"idempotencyKey":""}
+                {"flightNumber":"","passengerName":"","seats":0,"idempotencyKey":""}
                 """;
 
         mockMvc.perform(post("/api/v1/bookings")
@@ -158,17 +141,88 @@ class BookingControllerTest {
                         .content(body))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.fieldErrors.flightNumber").value("must not be blank"))
+                .andExpect(jsonPath("$.fieldErrors.passengerName").value("must not be blank"))
                 .andExpect(jsonPath("$.fieldErrors.seats").exists())
                 .andExpect(jsonPath("$.fieldErrors.idempotencyKey").exists());
     }
 
     /**
-     * The test that would have caught the defect this endpoint was added to fix:
-     * it does not assume the Location header is right, it follows it. For most of
-     * this project's life POST returned {@code Location: /api/v1/bookings/1}
-     * pointing at a URL that answered 404, and nothing failed — every existing
-     * test asserted the header's *string value* and stopped there.
+     * PostgreSQL refuses NUL in a text column, which would be a 500, and a
+     * newline forges a log line. The trailing newline checks that the pattern
+     * is matched against the whole value.
      */
+    @ParameterizedTest
+    @ValueSource(strings = {"A\u0000B", "Ada\nLovelace", "Ada\n"})
+    @DisplayName("a passenger name with a control character is refused at the edge")
+    void controlCharactersInANameAreRejected(String passengerName) throws Exception {
+        mockMvc.perform(post("/api/v1/bookings")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body("UA123", passengerName, 1)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.fieldErrors.passengerName").value("must not contain control characters"));
+
+        verify(bookingService, never()).book(any());
+    }
+
+    /**
+     * The fingerprint joins the fields with U+001F. If either field could carry
+     * it, these two different bookings would hash the same and the second would
+     * be replayed as the first.
+     */
+    @Test
+    @DisplayName("neither half of a fingerprint-separator collision gets past validation")
+    void theFingerprintSeparatorCannotEnterAField() throws Exception {
+        mockMvc.perform(post("/api/v1/bookings")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body("UA123", "X\u001f1", 2)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.fieldErrors.passengerName").exists());
+
+        mockMvc.perform(post("/api/v1/bookings")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body("UA123\u001fX", "1", 2)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.fieldErrors.flightNumber").value("must contain only letters and digits"));
+
+        verify(bookingService, never()).book(any());
+    }
+
+    /**
+     * {@code spring.jackson.deserialization.accept-float-as-int} is off, so 2.5
+     * is refused instead of booking two seats. A primitive {@code int} cannot be
+     * null, so a missing count fails in Jackson too, before Bean Validation.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"\"seats\":2.5,", "\"seats\":null,", ""})
+    @DisplayName("a fractional or missing seat count is 400 MALFORMED_REQUEST, never truncated")
+    void seatsMustBeAWholeNumber(String seats) throws Exception {
+        String body = """
+                {"flightNumber":"UA123","passengerName":"Smit Lakhani",%s"idempotencyKey":"demo-1"}
+                """.formatted(seats);
+
+        mockMvc.perform(post("/api/v1/bookings")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("MALFORMED_REQUEST"));
+
+        verify(bookingService, never()).book(any());
+    }
+
+    /** RFC 9110 lets a 415 say what it accepts, and Spring supplies that header. */
+    @Test
+    @DisplayName("an unsupported Content-Type is 415 with an Accept header naming JSON")
+    void unsupportedMediaTypeReturns415WithAccept() throws Exception {
+        mockMvc.perform(post("/api/v1/bookings")
+                        .contentType(MediaType.TEXT_PLAIN)
+                        .content(VALID_BODY))
+                .andExpect(status().isUnsupportedMediaType())
+                .andExpect(header().string("Accept", containsString(MediaType.APPLICATION_JSON_VALUE)))
+                .andExpect(jsonPath("$.code").value("UNSUPPORTED_MEDIA_TYPE"));
+    }
+
+    /** Follows the header rather than asserting its text, which is what shows it resolves. */
     @Test
     @DisplayName("the Location header from a POST actually resolves — followed, not just asserted")
     void locationHeaderResolves() throws Exception {
@@ -197,7 +251,7 @@ class BookingControllerTest {
                 // Its own code, not FLIGHT_NOT_FOUND: a client that gets 404 from
                 // a booking URL should not be told the flight is missing.
                 .andExpect(jsonPath("$.code").value("BOOKING_NOT_FOUND"))
-                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.containsString("999")));
+                .andExpect(jsonPath("$.message").value(containsString("999")));
     }
 
     @Test
@@ -216,10 +270,7 @@ class BookingControllerTest {
 
         mockMvc.perform(get("/api/v1/bookings").param("flightNumber", "UA123"))
                 .andExpect(status().isOk())
-                // PagedModel, because spring.data.web.pageable.serialization-mode
-                // is via-dto: a stable {content, page} envelope rather than
-                // PageImpl's own fields. Asserting the shape here is what would
-                // catch that setting being dropped.
+                // {content, page}, from serialization-mode: via-dto. This catches that setting being dropped.
                 .andExpect(jsonPath("$.content.length()").value(1))
                 .andExpect(jsonPath("$.content[0].bookingId").value(1))
                 .andExpect(jsonPath("$.page.totalElements").value(1));
@@ -233,10 +284,8 @@ class BookingControllerTest {
         when(bookingService.findByFlightNumber(eq("UA123"), any()))
                 .thenReturn(new PageImpl<>(List.of(dto()), Pageable.ofSize(20), 1));
 
-        // All three read paths, because the list is the one that matters most:
-        // it returns bookings the caller did not make, so a key echoed there is
-        // somebody else's key, and replaying against it is the whole point of
-        // the field.
+        // All three paths. The list matters most: it returns bookings the caller
+        // did not make, so a key echoed there is someone else's to replay.
         mockMvc.perform(post("/api/v1/bookings")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(VALID_BODY))
@@ -265,10 +314,8 @@ class BookingControllerTest {
                 .andExpect(status().isOk());
 
         verify(bookingService).findByFlightNumber(eq("UA123"), pageable.capture());
-        // Clamped, not rejected: Spring Data's resolver caps the value and the
-        // request still succeeds. Without spring.data.web.pageable.max-page-size
-        // this would be 2000 - the framework default, not unlimited, but two
-        // thousand rows is still one curl away.
+        // Clamped, not rejected, by spring.data.web.pageable.max-page-size.
+        // Without it Spring Data's own cap of 2000 would apply.
         assertThat(pageable.getValue().getPageSize()).isEqualTo(100);
     }
 

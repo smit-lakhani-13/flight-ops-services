@@ -7,29 +7,19 @@ import java.time.Instant;
 /**
  * What a caller gets back for a booking.
  *
- * <p>{@code idempotencyKey} is deliberately not here, although the request
- * carries one and the column stores it. It is the caller's own value: they
- * chose it, they already have it, and echoing it back adds nothing they can
- * use. What it does add is a way to read other people's keys — the list
- * endpoint returns every booking on a flight, so a reader with
- * {@code flights:read} could harvest the keys of bookings they did not make and
- * replay against them. Not returning it costs a caller nothing and closes that.
+ * <p>{@code idempotencyKey} is left out although the request carries it. The
+ * caller already has its own key, and the list endpoint returns every booking
+ * on a flight, so echoing keys would let a {@code flights:read} caller harvest
+ * other people's keys and replay against them.
+ *
+ * @param cancelledAt null while the booking is active. A timestamp rather than
+ *        a boolean, because the time is what a caller reconciling its own
+ *        records needs, and {@code cancelledAt != null} answers the boolean
  */
 public record BookingDto(Long bookingId, String flightNumber, String passengerName,
-                         int seats, Instant createdAt,
-                         /**
-                          * Null while the booking is active. Added rather than a
-                          * boolean {@code cancelled} because the time is the part
-                          * a caller reconciling against its own records needs, and
-                          * {@code cancelledAt != null} answers the boolean question
-                          * without a second field that could disagree with this one.
-                          */
-                         Instant cancelledAt) {
+                         int seats, Instant createdAt, Instant cancelledAt) {
 
-    /**
-     * Touches booking.getFlight(), which is a LAZY association — call this
-     * inside the transaction, or fetch the flight with a JOIN FETCH first.
-     */
+    /** Reads the LAZY {@code flight} association, so call it inside the transaction. */
     public static BookingDto from(Booking b) {
         return new BookingDto(b.getId(), b.getFlight().getFlightNumber(), b.getPassengerName(),
                               b.getSeats(), b.getCreatedAt(), b.getCancelledAt());

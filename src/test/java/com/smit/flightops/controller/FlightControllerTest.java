@@ -10,10 +10,14 @@ import com.smit.flightops.exception.FlightNotFoundException;
 import com.smit.flightops.service.FlightService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Import;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
@@ -22,43 +26,28 @@ import java.time.Duration;
 import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.allOf;
+import static org.hamcrest.Matchers.containsString;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 /**
- * Web layer only: the service is mocked, so these tests pin down the HTTP
- * contract — status codes, JSON shape, and which exception becomes which code.
- * That contract is what breaks clients, so it deserves its own tests.
- */
-/**
- * {@code addFilters = false} — the security filter chain is deliberately out of
- * the way here, and the reason is worth stating because switching filters off
- * in a test usually is a smell.
+ * The flight endpoints' HTTP contract with the service mocked: status codes,
+ * headers, JSON bodies and which exception becomes which code.
  *
- * <p>A {@code @WebMvcTest} slice does not load {@code SecurityConfig}: it is a
- * {@code @Configuration} class, not a controller, so the slice filter excludes
- * it. What Boot puts there instead is its own default chain — every request
- * authenticated, CSRF on, form login available. Leaving the filters in place
- * would therefore have every test in this class authenticate against rules
- * that <em>are not the application's rules</em>, and pass. That is worse than
- * no coverage: it reads as though authorisation is tested and it tests a chain
- * that will never run in production.
- *
- * <p>So the split is explicit. This class tests one controller's HTTP contract
- * — status codes, headers, JSON bodies, error mapping. The real rules, against
- * the real {@code SecurityConfig}, with real credentials and the real 401/403
- * bodies, are {@code SecurityRulesTest}'s only job.
+ * <p>{@code addFilters = false} because a {@code @WebMvcTest} slice does not load
+ * {@code SecurityConfig}, and leaving the filters on would test Boot's default
+ * chain instead of the application's. {@code SecurityRulesTest} tests the real
+ * rules. {@code TimeConfig} is imported because the advice needs a {@code Clock}
+ * and a slice loads no {@code @Configuration} of its own.
  */
 @WebMvcTest(FlightController.class)
-// GlobalExceptionHandler is a @RestControllerAdvice, so the slice picks it
-// up, and it takes a Clock. A @WebMvcTest loads no @Configuration class of
-// its own, so TimeConfig has to be named here. Importing the real one rather
-// than stubbing a fixed clock keeps the slice honest: the error bodies these
-// tests assert on are built by the same clock the application uses.
 @Import({TimeConfig.class, MetricsTestConfig.class})
 @AutoConfigureMockMvc(addFilters = false)
 class FlightControllerTest {
@@ -72,6 +61,11 @@ class FlightControllerTest {
 
     private FlightDto dto() {
         return new FlightDto("UA123", "EWR", "LHR", 180, 177, "SCHEDULED", DEPARTURE);
+    }
+
+    private String createBody(String flightNumber, String origin, String destination) {
+        return objectMapper.writeValueAsString(
+                new CreateFlightRequest(flightNumber, origin, destination, 100, DEPARTURE));
     }
 
     @Test
@@ -97,23 +91,19 @@ class FlightControllerTest {
     }
 
     /**
-     * The request says {@code " ua999 "}; the service normalises it to
-     * {@code UA999}. Location has to carry the normalised form, because that is
-     * the only one {@code GET /api/v1/flights/{flightNumber}} resolves — hence
-     * the header is built from the returned DTO, not from the request. The test
-     * follows the header rather than trusting it.
+     * The service normalises {@code " ua999 "} to {@code UA999}, and only that
+     * form resolves, so the test follows the header instead of trusting it.
      */
     @Test
     @DisplayName("create is 201 and its Location header resolves, carrying the normalised number")
     void createReturns201WithAResolvableLocation() throws Exception {
-        var request = new CreateFlightRequest(" ua999 ", "EWR", "SFO", 200, DEPARTURE);
         var created = new FlightDto("UA999", "EWR", "SFO", 200, 200, "SCHEDULED", DEPARTURE);
         when(flightService.create(any())).thenReturn(created);
         when(flightService.findByNumber("UA999")).thenReturn(created);
 
         String location = mockMvc.perform(post("/api/v1/flights")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content(objectMapper.writeValueAsString(request)))
+                        .content(createBody(" ua999 ", "EWR", "SFO")))
                 .andExpect(status().isCreated())
                 .andExpect(header().string("Location", "/api/v1/flights/UA999"))
                 .andExpect(jsonPath("$.flightNumber").value("UA999"))
@@ -124,6 +114,11 @@ class FlightControllerTest {
                 .andExpect(jsonPath("$.flightNumber").value("UA999"));
     }
 
+    /**
+     * A blank number must report {@code @NotBlank}'s message. The pattern's
+     * {@code *} quantifier is what keeps it from failing as well, since the
+     * handler keeps only one message per field.
+     */
     @Test
     @DisplayName("Bean Validation failures come back as 400 with per-field messages")
     void invalidBodyReturns400WithFieldErrors() throws Exception {
@@ -136,10 +131,58 @@ class FlightControllerTest {
                         .content(objectMapper.writeValueAsString(request)))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
-                .andExpect(jsonPath("$.fieldErrors.flightNumber").exists())
+                .andExpect(jsonPath("$.fieldErrors.flightNumber").value("must not be blank"))
                 .andExpect(jsonPath("$.fieldErrors.origin").exists())
                 .andExpect(jsonPath("$.fieldErrors.totalSeats").exists())
                 .andExpect(jsonPath("$.fieldErrors.departureTime").exists());
+    }
+
+    /**
+     * The number becomes a path segment, where a space, {@code /}, {@code ?} or
+     * {@code %} does not survive the round trip cleanly, and the newline would
+     * also split the "Created flight" log line.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"UA 12", "UA/12", "UA?9", "UA%41", "Q1\nFORGED"})
+    @DisplayName("a flight number that is not letters and digits is refused before anything is created")
+    void flightNumberMustBeLettersAndDigits(String flightNumber) throws Exception {
+        mockMvc.perform(post("/api/v1/flights")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(createBody(flightNumber, "EWR", "LHR")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.fieldErrors.flightNumber").value("must contain only letters and digits"));
+
+        verify(flightService, never()).create(any());
+    }
+
+    /** {@code @Size} counts the padding and the service trims it, so " JF" would be stored as JF. */
+    @Test
+    @DisplayName("an airport code must be three letters, not two padded to three")
+    void airportCodesMustBeLetters() throws Exception {
+        mockMvc.perform(post("/api/v1/flights")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(createBody("ZZ1", " JF", "1@#")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.fieldErrors.origin").value("must contain only letters"))
+                .andExpect(jsonPath("$.fieldErrors.destination").value("must contain only letters"));
+
+        verify(flightService, never()).create(any());
+    }
+
+    /** {@code existsByFlightNumber} cannot stop two concurrent creates, so the unique constraint does. */
+    @Test
+    @DisplayName("losing the flight-number race is 409 DUPLICATE_REQUEST, not 500")
+    void flightNumberRaceReturns409() throws Exception {
+        when(flightService.create(any()))
+                .thenThrow(new DataIntegrityViolationException("uk_flights_flight_number"));
+
+        mockMvc.perform(post("/api/v1/flights")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(createBody("UA999", "EWR", "SFO")))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("DUPLICATE_REQUEST"));
     }
 
     @Test
@@ -172,11 +215,47 @@ class FlightControllerTest {
         verify(flightService).cancel("UA123");
     }
 
+    /**
+     * Both writes update the flight row that a booking locks with
+     * {@code SELECT ... FOR UPDATE}, so they can time out behind one, and the
+     * OpenAPI document lists 503 for both.
+     */
     @Test
-    @DisplayName("wrong HTTP method is 405 — proof the catch-all does not swallow Spring's own errors")
+    @DisplayName("a status change or cancellation that times out on the row lock is 503 LOCK_TIMEOUT with Retry-After")
+    void flightWriteBehindARowLockReturns503() throws Exception {
+        var timeout = new PessimisticLockingFailureException("lock timeout");
+        when(flightService.updateStatus("UA123", FlightStatus.DELAYED)).thenThrow(timeout);
+        doThrow(timeout).when(flightService).cancel("UA456");
+
+        mockMvc.perform(patch("/api/v1/flights/UA123/status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"DELAYED\"}"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(header().string("Retry-After", "1"))
+                .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.code").value("LOCK_TIMEOUT"));
+
+        mockMvc.perform(delete("/api/v1/flights/UA456"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(header().string("Retry-After", "1"))
+                .andExpect(jsonPath("$.code").value("LOCK_TIMEOUT"));
+    }
+
+    /**
+     * POST, because security lets it through to MVC. PUT and OPTIONS never get
+     * this far in the real app: {@code denyAll()} answers them with 403, which
+     * {@code SecurityRulesTest#unhandledVerbsStayDenied} pins. RFC 9110 requires
+     * {@code Allow} on a 405, so the advice copies Spring's headers.
+     */
+    @Test
+    @DisplayName("a verb the path does not map is 405 METHOD_NOT_ALLOWED with an Allow header")
     void wrongMethodReturns405() throws Exception {
-        mockMvc.perform(put("/api/v1/flights/UA123"))
+        mockMvc.perform(post("/api/v1/flights/UA123")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}"))
                 .andExpect(status().isMethodNotAllowed())
+                .andExpect(header().string("Allow", allOf(containsString("GET"), containsString("DELETE"))))
+                .andExpect(content().contentType(MediaType.APPLICATION_JSON))
                 .andExpect(jsonPath("$.code").value("METHOD_NOT_ALLOWED"));
     }
 

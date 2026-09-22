@@ -3,17 +3,10 @@ package com.smit.flightops.exception;
 import com.smit.flightops.entity.FlightStatus;
 
 /**
- * A status change the flight lifecycle does not allow — un-cancelling a
- * cancelled flight, or sending an arrived one back to BOARDING.
- *
- * <p>409 rather than 400, and the distinction is the useful part: the request
- * is well formed and the target status is a real status, so nothing about the
- * payload is wrong. What is wrong is the state the flight is in right now,
- * which is precisely what 409 Conflict means. A 400 would tell the client to
- * fix its input, and there is no input to fix.
- *
- * <p>Carries both statuses so the message can name them. "Flight UA123 cannot
- * go from CANCELLED to SCHEDULED" is actionable; "invalid status" is not.
+ * A status change the flight lifecycle does not allow, such as un-cancelling a
+ * cancelled flight. 409 rather than 400: the payload is valid and the status is
+ * real; the flight's current state is what conflicts. Both statuses go into the
+ * message so the caller can act on it.
  */
 public class IllegalFlightTransitionException extends RuntimeException {
 

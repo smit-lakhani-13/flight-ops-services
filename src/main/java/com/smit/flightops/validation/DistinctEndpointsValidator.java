@@ -9,29 +9,14 @@ import java.util.Locale;
 /**
  * Implements {@link DistinctEndpoints}.
  *
- * <p>Two details here are the whole reason this class is worth reading.
+ * <p>The violation is re-targeted at {@code destination}. A class-level
+ * violation is otherwise a global error, which {@code GlobalExceptionHandler}
+ * can only key by the object name, not by a field a client can highlight.
  *
- * <p><b>It reports against the {@code destination} node.</b> A class-level
- * constraint's violation is by default a *global* error, not a field error, and
- * {@code GlobalExceptionHandler} builds its {@code fieldErrors} map from
- * {@code getFieldErrors()} — so the natural implementation produces a 400 whose
- * {@code fieldErrors} object is empty. The client is told the request is
- * invalid and nothing else. Re-targeting the violation at a property node with
- * {@code addPropertyNode} puts it back in the map where a client can attach it
- * to an input. (The handler also reports global errors now, as a backstop, but
- * a cross-field error pointed at the field the user should change is the better
- * answer.)
- *
- * <p><b>It normalises before comparing.</b> {@code FlightService} upper-cases
- * and trims both codes before persisting, so {@code ewr} and {@code EWR} are
- * the same airport by the time the row is written. Comparing the raw strings
- * would accept {@code origin=ewr, destination=EWR} here and then hit
- * {@code ck_flights_distinct_endpoints} in the database, turning a clean 400
- * into a 409 with a constraint name in it.
- *
- * <p>Nulls and blanks are passed as valid: {@code @NotBlank} on the fields owns
- * that failure, and a validator that also reported it would give the client two
- * messages for one mistake.
+ * <p>Both codes are trimmed and upper-cased first, as {@code FlightService}
+ * does, so {@code ewr}/{@code EWR} is a 400 here and not a 409 from
+ * {@code ck_flights_distinct_endpoints}. Nulls and blanks pass, because
+ * {@code @NotBlank} already reports them.
  */
 public class DistinctEndpointsValidator
         implements ConstraintValidator<DistinctEndpoints, CreateFlightRequest> {

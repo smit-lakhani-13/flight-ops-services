@@ -8,22 +8,29 @@ import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.Locale;
 
+/**
+ * The body of {@code POST /api/v1/bookings}.
+ *
+ * @param flightNumber matched against {@link CreateFlightRequest#FLIGHT_NUMBER}
+ * @param passengerName free text without control characters: PostgreSQL refuses
+ *        NUL in a text column, and {@code SEP} must not appear in any field
+ * @param seats one to nine
+ * @param idempotencyKey client-generated; the same key twice is the same
+ *        booking, never two. It is written to the log on every replay and
+ *        echoed in the 409 message, so it takes the character class
+ *        {@code RequestIdFilter} enforces on {@code X-Request-Id}
+ */
 public record BookingRequest(
-    @NotBlank @Size(max = 10)  String flightNumber,
-    @NotBlank @Size(max = 255) String passengerName,
-    @Min(1) @Max(9)            int seats,
-    /**
-     * Client-generated. Same key twice = the same booking, never two.
-     *
-     * <p>The character class is the same one {@code RequestIdFilter} enforces on
-     * {@code X-Request-Id}, and for the same reason: this value is written into
-     * a log line on every replay and every conflict, so a key containing a
-     * newline forges a log entry. Restricting it also keeps it printable, which
-     * matters because it is echoed back in the 409 message. A UUID, a ULID and
-     * every retry-token scheme a client is likely to use already fit; anything
-     * that does not is refused at the edge with a named field rather than
-     * reaching a logger.
-     */
+    @NotBlank @Size(max = 10)
+    @Pattern(regexp = CreateFlightRequest.FLIGHT_NUMBER, message = "must contain only letters and digits")
+    String flightNumber,
+
+    @NotBlank @Size(max = 255)
+    @Pattern(regexp = "^[^\\p{Cntrl}]*$", message = "must not contain control characters")
+    String passengerName,
+
+    @Min(1) @Max(9) int seats,
+
     @NotBlank @Size(max = 255)
     @Pattern(regexp = "^[A-Za-z0-9._:-]+$",
              message = "must contain only letters, digits and . _ : -")
@@ -31,40 +38,25 @@ public record BookingRequest(
 ) {
 
     /**
-     * Field separator for the fingerprint below. ASCII 31, the unit separator,
-     * chosen because it cannot appear in any of the three fields: a flight
-     * number, a passenger name and a seat count all arrive as JSON strings or
-     * numbers, and a control character does not survive a JSON encoder that
-     * anyone would use. A printable delimiter such as {@code |} would let
-     * {@code ("UA1", "23|BOB")} and {@code ("UA1|23", "BOB")} hash to the same
-     * value, which is a small but real collision.
+     * Field separator for the fingerprint. ASCII 31, the unit separator, chosen
+     * because validation keeps it out of all three fields: the flight number is
+     * letters and digits, the passenger name refuses control characters, and
+     * the seat count is an integer. JSON itself carries U+001F without complaint,
+     * so it is the validation, not the encoding, that makes this separator safe. A
+     * printable delimiter such as {@code |} would let {@code ("UA1", "23|BOB")}
+     * and {@code ("UA1|23", "BOB")} hash to the same value.
      */
     private static final String SEP = "\u001f";
 
     /**
-     * A stable hash of what this request actually asks for, excluding the
-     * idempotency key itself.
+     * SHA-256 of what this request asks for, excluding the key. Same key and
+     * same fingerprint is a retry; same key and a different fingerprint is
+     * {@code IdempotencyKeyConflictException}.
      *
-     * <p>This is what lets the replay path distinguish a genuine retry from key
-     * reuse. Two requests with the same key and the same fingerprint are the
-     * same request arriving twice, and the second gets the first one's booking.
-     * Same key, different fingerprint, and the client has reused a key for a
-     * different booking — 409, see {@code IdempotencyKeyConflictException}.
-     *
-     * <p>Normalisation matters here and is not cosmetic. The flight number is
-     * upper-cased because {@code BookingWriter} upper-cases it before looking
-     * the flight up, so {@code ua123} and {@code UA123} book the same seat and
-     * must therefore hash the same; without this, a client that changed the case
-     * of its own retry would get a 409 for an identical booking. The passenger
-     * name is trimmed for the same reason in miniature. Seats is an {@code int},
-     * so there is nothing to normalise.
-     *
-     * <p>SHA-256 truncated to nothing — the full 64 hex characters are stored,
-     * which is why {@code bookings.request_fingerprint} is {@code VARCHAR(64)}.
-     * This is not a security boundary and does not need to be: it is a
-     * same-or-different test on data the client just sent us. What it does need
-     * is to be collision-resistant enough that two genuinely different bookings
-     * never look identical, and SHA-256 is far past that bar.
+     * <p>The flight number is upper-cased because {@code BookingWriter} books the
+     * same seat for {@code ua123} and {@code UA123}, so a retry that changed
+     * case must hash the same; the name is trimmed for the same reason. All 64
+     * hex characters are stored, in {@code bookings.request_fingerprint VARCHAR(64)}.
      */
     public String fingerprint() {
         String canonical = String.join(SEP,
@@ -79,9 +71,7 @@ public record BookingRequest(
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
             return HexFormat.of().formatHex(digest.digest(value.getBytes(StandardCharsets.UTF_8)));
         } catch (NoSuchAlgorithmException e) {
-            // Every JVM is required by the platform specification to ship
-            // SHA-256. If this throws, the JVM is broken in a way that a
-            // booking service cannot sensibly degrade around.
+            // The platform specification requires every JVM to ship SHA-256.
             throw new IllegalStateException("SHA-256 unavailable on this JVM", e);
         }
     }

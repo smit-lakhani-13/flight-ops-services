@@ -9,7 +9,9 @@ import org.springframework.test.web.servlet.MockMvc;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic;
@@ -18,31 +20,35 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * The published API document, checked against the API it describes.
+ * The published API document, checked against the service it describes. The
+ * failure worth testing for is drift, a document that still renders but
+ * describes behaviour the API no longer has, so the page-shape test compares
+ * the schema with a real response.
  *
- * <p>Generated documentation has one failure mode worth testing for, and it is
- * not "the file is missing". It is that the document and the service drift
- * apart — the document keeps rendering, keeps looking authoritative, and
- * describes an endpoint that no longer behaves that way. So the load-bearing
- * test here is {@link #theDocumentedPageShapeIsTheShapeTheApiReturns()}, which
- * compares the schema against a real response rather than against an
- * expectation written by the same hand that wrote the schema.
- *
- * <p>The second thing worth pinning is the access rule. Publishing the document
- * anonymously is a deliberate decision and a reasonable one to disagree with;
- * publishing the <em>endpoints</em> anonymously would be a breach. Those two
- * live one line apart in {@code SecurityConfig}, so both are asserted here.
- *
- * <p>Through {@code MockMvc} on a full context with the real filter chain, for
- * the reason {@code SecurityRulesTest} gives: a slice would load Boot's default
- * security rules instead of this application's, and every assertion about who
- * can read what would be about the wrong rule set.
+ * <p>A full context with the real filter chain: the document is public and the
+ * endpoints are not, and a slice would apply Boot's default security rules.
  */
 @SpringBootTest(properties = "spring.datasource.url=jdbc:h2:mem:openapitest;DB_CLOSE_DELAY=-1")
 @AutoConfigureMockMvc
 class OpenApiTest {
 
     private static final ObjectMapper MAPPER = new ObjectMapper();
+
+    /**
+     * Each operation's documented status codes. Every endpoint needs credentials
+     * and a scope. Every write to an existing flight row can wait behind a
+     * booking's row lock, so each of them can answer 503.
+     */
+    private static final Map<String, List<String>> RESPONSES = Map.of(
+            "get /api/v1/flights", List.of("200", "400", "401", "403"),
+            "post /api/v1/flights", List.of("201", "400", "401", "403", "409"),
+            "get /api/v1/flights/{flightNumber}", List.of("200", "401", "403", "404"),
+            "delete /api/v1/flights/{flightNumber}", List.of("204", "401", "403", "404", "409", "503"),
+            "patch /api/v1/flights/{flightNumber}/status", List.of("200", "400", "401", "403", "404", "409", "503"),
+            "get /api/v1/bookings", List.of("200", "400", "401", "403"),
+            "post /api/v1/bookings", List.of("201", "400", "401", "403", "404", "409", "503"),
+            "get /api/v1/bookings/{bookingId}", List.of("200", "400", "401", "403", "404"),
+            "delete /api/v1/bookings/{bookingId}", List.of("200", "400", "401", "403", "404", "503"));
 
     @Autowired private MockMvc mockMvc;
 
@@ -71,24 +77,36 @@ class OpenApiTest {
     }
 
     @Test
-    @DisplayName("every endpoint is described, and every error a caller can provoke is listed")
+    @DisplayName("every operation is documented with the status codes it returns, 401 and 403 included")
     void theDocumentCoversTheApiAndItsFailures() throws Exception {
         JsonNode paths = document().get("paths");
 
-        assertThat(paths.propertyNames()).containsExactlyInAnyOrder(
-                "/api/v1/flights",
-                "/api/v1/flights/{flightNumber}",
-                "/api/v1/flights/{flightNumber}/status",
-                "/api/v1/bookings",
-                "/api/v1/bookings/{bookingId}");
+        Map<String, List<String>> documented = new HashMap<>();
+        for (String path : paths.propertyNames()) {
+            for (String method : paths.get(path).propertyNames()) {
+                documented.put(method + " " + path,
+                        List.copyOf(paths.get(path).get(method).get("responses").propertyNames()));
+            }
+        }
 
-        // Booking is the operation with the most ways to fail and the only one
-        // whose 409s mean different things - INSUFFICIENT_SEATS is worth a
-        // retry, FLIGHT_NOT_BOOKABLE never is. A client that cannot tell them
-        // apart from the document will retry forever.
-        JsonNode book = paths.get("/api/v1/bookings").get("post").get("responses");
-        assertThat(book.propertyNames())
-                .containsExactlyInAnyOrder("201", "400", "401", "403", "404", "409", "503");
+        assertThat(documented.keySet()).containsExactlyInAnyOrderElementsOf(RESPONSES.keySet());
+        RESPONSES.forEach((operation, codes) ->
+                assertThat(documented.get(operation)).as(operation).containsExactlyInAnyOrderElementsOf(codes));
+    }
+
+    /**
+     * Booking's 409s need telling apart: {@code INSUFFICIENT_SEATS} is worth a
+     * retry with fewer seats and {@code FLIGHT_NOT_BOOKABLE} never is.
+     */
+    @Test
+    @DisplayName("the booking operation names each error code a client has to tell apart")
+    void theBookingFailuresAreDescribedByCode() throws Exception {
+        JsonNode book = document().get("paths").get("/api/v1/bookings").get("post").get("responses");
+
+        assertThat(book.get("201").get("headers").has("Location")).isTrue();
+        assertThat(book.get("400").get("description").asString())
+                .contains("VALIDATION_FAILED")
+                .contains("MALFORMED_REQUEST");
         assertThat(book.get("409").get("description").asString())
                 .contains("INSUFFICIENT_SEATS")
                 .contains("FLIGHT_NOT_BOOKABLE")
@@ -96,16 +114,23 @@ class OpenApiTest {
         assertThat(book.get("503").get("description").asString()).contains("Retry-After");
     }
 
+    @Test
+    @DisplayName("creating a flight is documented as 201 with a Location header and the flight as its body")
+    void flightCreationIsDocumentedAsCreated() throws Exception {
+        JsonNode create = document().get("paths").get("/api/v1/flights").get("post").get("responses");
+
+        JsonNode created = create.get("201");
+        assertThat(created.get("headers").has("Location")).isTrue();
+        assertThat(created.get("content").get("application/json").get("schema").get("$ref").asString())
+                .endsWith("/FlightDto");
+        assertThat(create.get("409").get("description").asString())
+                .contains("DUPLICATE_FLIGHT")
+                .contains("DUPLICATE_REQUEST");
+    }
+
     /**
-     * The document says a list response is {@code {content, page}}. This asks
-     * the running service what it actually returns and compares the two, which
-     * is the only version of this test that keeps being true.
-     *
-     * <p>Spring Data's page serialisation has changed shape across versions —
-     * the older form spread {@code pageable}, {@code totalElements},
-     * {@code last} and {@code first} across the top level — so a schema written
-     * by hand, or generated once and trusted, describes whichever shape was
-     * current when somebody last looked.
+     * Compared with a live response, not a written expectation, because Spring
+     * Data's page shape has changed between versions.
      */
     @Test
     @DisplayName("the documented page shape is the shape the API returns")
@@ -133,12 +158,9 @@ class OpenApiTest {
         assertThat(schemes.propertyNames()).containsExactly("basicAuth");
         assertThat(schemes.get("basicAuth").get("scheme").asString()).isEqualTo("basic");
 
-        // Declared at the document level rather than per operation, so an
-        // endpoint added tomorrow is documented as requiring credentials
-        // without anyone remembering to say so. Bearer tokens are deliberately
-        // absent: that half only activates when an issuer is configured, and
-        // advertising an authentication method the running instance rejects is
-        // worse than advertising none.
+        // Declared once for the document, so a new endpoint is documented as
+        // needing credentials. Bearer is absent: it works only when an issuer
+        // is configured, and this instance would reject it.
         assertThat(document.get("security").get(0).propertyNames()).containsExactly("basicAuth");
         assertThat(schemes.propertyNames()).doesNotContain("bearerAuth");
     }
