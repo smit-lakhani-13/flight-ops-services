@@ -32,13 +32,15 @@ let it come up and fail on the first request.
 | `DB_PASSWORD` | *(none)* | **required.** Startup fails without it, by design — see `application.yml` |
 | `API_PASSWORD` | `{noop}dev-secret` | the `api` account. **Must carry an `{id}` prefix**, e.g. `{bcrypt}$2y$10$…` |
 | `OPS_PASSWORD` | `{noop}dev-ops` | the `ops` account. Same prefix rule |
-| `APP_EVENTS_PUBLISHER` | `sqs` | `sqs` or `noop`. `noop` logs the event instead of sending it |
+| `APP_EVENTS_PUBLISHER` | **read only in `prod`**, where it defaults to `sqs` | `sqs` or `log`, and nothing else — `EventProperties` rejects a third value at startup. Outside `prod` the variable is **ignored**: the base document hard-codes `app.events.publisher: log`, with no placeholder, so a laptop or the compose stack cannot be talked into publishing to a real queue by an exported variable. `log` writes and drains the outbox without sending anything. In `prod` it is `${APP_EVENTS_PUBLISHER:sqs}`, which is why a pod with a blank `SQS_QUEUE_URL` fails every publish and a laptop never does |
 | `SQS_QUEUE_URL` | *(empty)* | required when the publisher is `sqs` |
 | `AWS_REGION` | `ap-south-1` | |
 | `OUTBOX_ENABLED` | `true` | `false` stops the drain. Rows still accumulate |
 | `OUTBOX_POLL_INTERVAL` | `1000` | milliseconds between drain attempts |
 | `OUTBOX_BATCH_SIZE` | `100` | rows claimed per pass. With the default interval, ~100 events/sec/replica |
 | `OUTBOX_MAX_ATTEMPTS` | `10` | after this many failures a row is dead and never claimed again |
+| `OUTBOX_RETRY_BACKOFF` | `2s` | how long the **first** retry of a failed row waits, doubling per attempt. Zero disables backoff and is a test-only setting |
+| `OUTBOX_MAX_RETRY_BACKOFF` | `5m` | the cap on that doubling. With the defaults, ten attempts span roughly 13 minutes rather than the ten seconds they took before the backoff existed |
 | `OUTBOX_RETENTION` | `7d` | how long published rows are kept before pruning |
 | `OUTBOX_PRUNE_INTERVAL` | `1h` | how often the pruner runs |
 | `OUTBOX_PRUNE_BATCH_SIZE` | `1000` | rows per DELETE, to keep the lock short |
@@ -88,15 +90,16 @@ database blip restarts every replica simultaneously.
 
 ## Metrics
 
-`/actuator/prometheus`, `ops` credentials required. Three domain counters and
-two gauges, on top of everything Micrometer provides:
+`/actuator/prometheus`, `ops` credentials required. Five domain counters and
+two gauges, on top of everything Micrometer provides — three about bookings,
+two about the outbox:
 
 | Metric | Type | Labels | Reading |
 |---|---|---|---|
 | `bookings_booked_total` | counter | `outcome=created\|replayed` | a high `replayed` share means clients are retrying — fine, and worth knowing |
 | `bookings_cancelled_total` | counter | `outcome=cancelled\|already_cancelled` | `already_cancelled` is a no-op replay, not an error |
 | `bookings_lock_timeout_total` | counter | — | seat-lock contention gave up after 3s. **Non-zero means users are seeing 503s** |
-| `outbox_pending` | gauge | — | rows waiting to publish and still within the attempt ceiling |
+| `outbox_pending` | gauge | — | rows waiting to publish and still within the attempt ceiling. **Includes rows the retry backoff is deliberately holding back**, so a transport outage shows as a plateau here for as long as ten attempts take — roughly 13 minutes with the defaults — rather than as an instant move to `outbox_dead` |
 | `outbox_dead` | gauge | — | rows that exhausted `OUTBOX_MAX_ATTEMPTS`. **Should always be 0** |
 | `outbox_publish_total` | counter | `result=success\|failure\|exhausted` | |
 | `outbox_pruned_total` | counter | — | published rows deleted by retention |
@@ -208,18 +211,45 @@ Then, in order: is `SQS_QUEUE_URL` set and correct; does the pod have IRSA
 (`kubectl describe pod` should show `AWS_WEB_IDENTITY_TOKEN_FILE`); is
 `OUTBOX_ENABLED` still `true`.
 
+**Read `outbox_pending` together with `outbox_publish_total{result="failure"}`,
+not on its own.** The gauge counts every unpublished row still inside the
+attempt ceiling, and that includes rows the retry backoff is holding back, so
+these two situations produce the same climbing gauge:
+
+| | `outbox_pending` | `outbox_publish_total{result="failure"}` | What it is |
+|---|---|---|---|
+| Publishing faster than draining | climbing | flat | throughput. Raise `OUTBOX_BATCH_SIZE`, or lower `OUTBOX_POLL_INTERVAL` |
+| The transport is refusing | climbing | climbing | an outage or a misconfiguration. The rows are waiting out their backoff and will reach `outbox_dead` about 13 minutes after the first failure, with the defaults |
+
+To see what a row is actually waiting for, ask the table rather than the gauge —
+`next_attempt_at` in the future is a row that is deferred, not stuck:
+
+```sql
+SELECT id, attempts, next_attempt_at, last_error
+  FROM outbox_events
+ WHERE published_at IS NULL
+ ORDER BY id
+ LIMIT 20;
+```
+
 ### `outbox_dead > 0` — a poison row
 
 A row that failed `OUTBOX_MAX_ATTEMPTS` times is skipped by the claim query
-forever, which is what stops it blocking the queue head. Find it, fix the
-cause, then re-drive:
+forever, which is what stops it blocking the queue head. It takes roughly 13
+minutes of failures to get there with the default backoff, so `outbox_dead`
+rising is a *late* signal — the failure counter moved ten minutes earlier.
+
+Find it, fix the cause, then re-drive. The `next_attempt_at = NULL` in the
+`UPDATE` is not decoration: without it the row keeps the future timestamp its
+last failure set, and the claim query skips it for as long as five more minutes
+while the operator watches a re-drive that appears to do nothing.
 
 ```sql
 SELECT id, event_type, attempts, last_error, created_at
   FROM outbox_events
  WHERE published_at IS NULL AND attempts >= 10;
 
-UPDATE outbox_events SET attempts = 0 WHERE id = 42;
+UPDATE outbox_events SET attempts = 0, next_attempt_at = NULL WHERE id = 42;
 ```
 
 The next poll picks it up. Resetting without fixing the cause just burns ten

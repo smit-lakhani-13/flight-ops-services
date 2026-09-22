@@ -241,11 +241,12 @@ forecast, not today's total.
 ./deploy/aws/down.sh
 ```
 
-Type `delete`. About 20 minutes. Then thirteen checks run — load balancers both
+Type `delete`. About 20 minutes. Then fourteen checks run — load balancers both
 kinds, clusters, instances, NAT gateways, volumes, Elastic IPs, RDS instances
 and snapshots, stacks, log groups, secrets, ECR, and a catch-all query for
 anything tagged `Project=flight-ops` — and **the script exits non-zero if any of
-them finds something.** That exit code is the answer to "is it gone"; the
+them finds something.** (Thirteen with `--keep-foundation`, which skips the ECR
+check because it deliberately leaves the repository behind.) That exit code is the answer to "is it gone"; the
 deletes themselves are not, because a CloudFormation stack can delete
 successfully while leaving a load balancer behind.
 

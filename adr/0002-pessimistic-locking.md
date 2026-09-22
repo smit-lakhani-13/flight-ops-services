@@ -1,7 +1,7 @@
 # 2. Pessimistic row locks for seat inventory, with a bounded wait
 
 Status: accepted (recorded 2026-09-22, decision taken in commit `4a9a5b9`,
-bounded by `SET LOCAL lock_timeout` in `eac8cc4`)
+bounded by a session `lock_timeout` in `eac8cc4`)
 
 ## Context
 
@@ -19,10 +19,19 @@ Pessimistic. `FlightRepository#findByFlightNumberForUpdate` takes
 booking and cancellation alike — takes that lock **first** and the booking row
 second.
 
-The wait is bounded per transaction with `SET LOCAL lock_timeout`, applied in
-`src/main/java/com/smit/flightops/service/BookingWriter.java#insertNewBooking`.
+The wait is bounded with `SET lock_timeout = '3s'`, issued once per connection
+as HikariCP's `connection-init-sql` in `src/main/resources/application.yml`.
 A request that cannot acquire the lock inside that window fails with
 `503 LOCK_TIMEOUT`.
+
+Session-level rather than per-transaction, and not by preference: a JPA
+`@QueryHint` carrying `jakarta.persistence.lock.timeout` is accepted by the API
+and then discarded by the PostgreSQL dialect, which has no way to express it —
+so the bound looked configured and was not. `SET LOCAL` inside the transaction
+would work, but needs a statement executed on the same connection before the
+lock is taken, which means either a native query at the top of every write path
+or an `AOP` interceptor around them. The connection-level setting costs one line
+of configuration and cannot be forgotten on a path added later.
 
 ## Consequences
 

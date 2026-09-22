@@ -7,6 +7,12 @@ vulnerability** on this repository. That opens a private advisory visible only
 to the maintainer, which is the right channel — a public issue tells everyone
 at once.
 
+If that button is not there, the setting is off and the fallback is a public
+issue containing **one sentence and no detail** — "I have a security finding,
+please open a private channel" — and nothing more. Do not put the finding in
+it. A reporter who has to choose between full disclosure and silence usually
+chooses silence, so the fallback exists to keep a third option open.
+
 Please include what you did, what happened, and what you expected. A proof of
 concept helps; a working exploit is not required.
 
@@ -14,8 +20,11 @@ Supported: `main`. There is no support branch for older tags.
 
 ## What this is
 
-A demonstration service. It runs on a personal AWS account for days at a time,
-holds seeded data, and has never processed a real booking. Several decisions
+A demonstration service. It holds seeded data and has never processed a real
+booking — or, at the time of writing, run anywhere but a laptop and CI: the AWS
+path is authored and lint-verified, and the deploy job is gated off
+([DEPLOYMENT.md](DEPLOYMENT.md) opens with an `Executed on:` line that carries
+the date if that ever changes). Several decisions
 below are correct for that and would be wrong for a system with real users;
 each one says so rather than being quietly presented as a best practice.
 
@@ -27,13 +36,42 @@ set, and the startup log says which mode is active. Both funnel into the same
 `authorizeHttpRequests` block, so there is exactly one place where a rule can
 be wrong — see [adr/0005](adr/0005-one-rule-set-for-basic-and-jwt.md).
 
+**If you enable JWT, set the audience too.** `issuer-uri` on its own validates
+the signature, the issuer and the lifetime, and that is not enough: an issuer
+mints tokens for every application registered with it, so a token issued to a
+different client of the same tenant arrives correctly signed by the right
+issuer and is accepted. The audience claim is the only field that says which
+API the token was for.
+
+```yaml
+spring.security.oauth2.resourceserver.jwt.issuer-uri: https://your-idp.example.com/
+spring.security.oauth2.resourceserver.jwt.audiences: [flight-ops-service]
+```
+
+Both properties are Boot's, not this repository's — `audiences` installs a
+claim validator inside the decoder, so the check cannot be lost in a later
+refactor of `config/SecurityConfig`. Neither is set today, no `JwtDecoder` bean
+exists, and the service logs `No JwtDecoder configured` at startup: the two
+callers are machine identities that do not need an authorisation server. The
+same block is repeated, with the reasoning, in
+`src/main/resources/application.yml`.
+
 | Path | Who |
 |---|---|
 | `/actuator/health`, `/liveness`, `/readiness` | anyone. The kubelet has no credentials |
 | `/actuator/**` (everything else) | `ROLE_OPS` |
 | `/v3/api-docs/**`, `/swagger-ui/**` | anyone — see below |
+| `/error` | anyone. It is the container's own forward target, not a route |
 | `/api/v1/**` | `flights:read` / `flights:write` authorities |
 | everything else | denied |
+
+`/error` is permitted for a reason that is easy to get wrong. Tomcat forwards
+an unhandled status to it *after* the security filter chain has finished, and a
+denied `/error` turns every 404 into a 403 and every 500 into a bodyless
+response. It is served by `exception/ApiErrorController`, which returns the
+same `ErrorResponse` envelope as everything else and a deliberately generic
+message — the container's own error text can name the internal path or the
+exception class, and neither belongs in a response.
 
 **401 and 403 are different answers.** No credentials, or credentials that do
 not verify, is `401 UNAUTHENTICATED`. Valid credentials without the authority
@@ -98,7 +136,12 @@ reverse, and the ADR is where to start.
 
 ## Transport
 
-The deployed Ingress listens on **port 80 with no TLS**, so Basic credentials
+Nothing is deployed, so nothing is on the internet today — see the opening
+paragraph. What this section describes is what `k8s/components/ingress` would
+create the day somebody applies it, because a transport decision is worth
+reading before it is taken rather than after.
+
+That Ingress listens on **port 80 with no TLS**, so Basic credentials would
 cross the internet base64-encoded, which is encoding and not encryption.
 
 That is acceptable for a short-lived demonstration with generated throwaway
@@ -159,7 +202,7 @@ missing is a domain, not the work.
 | Upper-bound dependency check | `maven-enforcer` `requireUpperBoundDeps` — a transitive downgrade fails the build |
 | Coverage floor | JaCoCo, build fails under 80% line / 50% branch |
 | Architecture rules | ArchUnit, 9 rules, failing the build not a report |
-| Vulnerability and secret scanning | Trivy filesystem scan on every run, and the image before it is pushed; findings filed in the Security tab |
+| Vulnerability and secret scanning | Trivy filesystem scan on every run, and the image before it is pushed. Both fail the build on a fixable CRITICAL (the filesystem scan on HIGH too). Only the filesystem scan uploads SARIF, and only on a push — a pull request from a fork has a read-only token, so the upload would fail on permissions rather than on anything real. The image scan reports in the job log; ECR's own scan-on-push covers the image in the registry |
 | Static analysis | CodeQL `security-extended`, on every push and pull request and weekly |
 | Pinned actions | every `uses:` is a full commit SHA, not a tag — a tag is a mutable pointer in somebody else's repository |
 

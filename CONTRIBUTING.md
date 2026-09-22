@@ -28,15 +28,17 @@ own dependency tree:
 `verify` is the gate, not `test`: it is what runs JaCoCo's threshold check, the
 enforcer rules and the CycloneDX SBOM.
 
-### `Skipped: 5` is correct
+### `Skipped: 7` is correct
 
-Five tests are `@EnabledIfSystemProperty`/Testcontainers tests that need Docker.
-Without Docker they skip; the build is still green and still correct. In CI they
-run, which is where the Flyway migrations are actually exercised against
+Seven tests sit in two classes annotated
+`@Testcontainers(disabledWithoutDocker = true)` — `BookingIntegrationTest` and
+`service/OutboxPrunePostgresTest`. Without a container runtime they skip; the
+build is still green and still correct. In CI they run, which is where the
+Flyway migrations and the outbox's native SQL are actually exercised against
 PostgreSQL. **A new migration is not accepted until CI has gone green on it** —
-the local H2 profile never sees it.
+the local H2 profile never sees it, and neither does a laptop with no Docker.
 
-Expected today: 179 declared / 174 executed in the service, 20 in the Lambda.
+Expected today: 204 declared / 197 executed in the service, 23 in the Lambda.
 Do not hand-edit those numbers anywhere:
 
 ```bash
@@ -63,9 +65,20 @@ the resulting failure blames the property.
 
 ## What CI enforces
 
-Five jobs run on every push and every pull request, in parallel, so a red
-square names what broke before you open the log. The sixth, `deploy`, is gated
-off and reports as skipped.
+Six jobs are defined in `.github/workflows/build-and-deploy.yml`, and they do
+not all run on every event. They run in parallel, so a red square names what
+broke before you open the log.
+
+| Job | Runs on |
+|---|---|
+| `build` | every push and every pull request |
+| `infra-lint` | every push and every pull request |
+| `trivy-fs` | every push and every pull request |
+| `docs-check` | every push and every pull request |
+| `dependency-review` | **pull requests only** — it diffs what the PR adds against the base, and a push has no base to diff against |
+| `deploy` | gated off: push to `main` **and** `vars.DEPLOY_ENABLED == 'true'`, which is unset, so it reports as skipped |
+
+A separate `codeql.yml` runs on push, on pull requests and weekly.
 
 | Job | Gate | Fails when |
 |---|---|---|
@@ -76,12 +89,12 @@ off and reports as skipped.
 | `infra-lint` | `cfn-lint`, `sam validate` | a CloudFormation or SAM template is malformed |
 | `infra-lint` | `shellcheck` v0.11.0, `bash -n` | any tracked `*.sh` has a lint finding or a syntax error |
 | `trivy-fs` | Trivy | a CRITICAL/HIGH vulnerability **with a fix available**, or a committed secret |
-| `dependency-review` | dependency-review | the pull request *adds* a dependency with a high-severity advisory. Needs the repository's dependency graph; the job warns and passes if it is switched off, rather than going red over a setting |
+| `dependency-review` | dependency-review | the pull request *adds* a dependency with a high-severity advisory. Needs the repository's dependency graph; if that is switched off the job writes a job summary naming the setting and passes, rather than going red over a repository setting nobody can fix in a commit. A probe answering anything other than 403 or 404 — an outage, a token problem — fails the job instead, because "the API had a bad minute" and "the feature is off" must not look the same |
 | `docs-check` | `scripts/refcheck.py` | a backticked `path` or `path#symbol` in any Markdown file does not resolve |
 | `docs-check` | `scripts/linkcheck.py` | a relative link or heading anchor is broken |
 | `docs-check` | `scripts/sweeps.sh` | a co-author trailer, a generated-with signature, or a reference to the private sibling directory, in a file **or a commit message** |
 
-A separate `codeql` workflow analyses both modules on push, on pull requests and
+The `codeql` workflow analyses both modules on push, on pull requests and
 weekly. It is scheduled as well as triggered because CodeQL ships new queries —
 code that was clean when it merged can be found vulnerable months later without
 a line of it changing.
@@ -133,7 +146,14 @@ Documentation is part of the change, not a follow-up:
   alternatives, and what it costs — an ADR that only lists benefits is a
   brochure.
 - Numbers come from `scripts/numbers.sh`.
-- No emoji in documentation. British spelling.
+- British spelling.
+- No emoji in prose, with exactly one exception: the three-symbol legend in the
+  README's Project status table. There, the symbol *is* the content — a reader
+  scanning the table needs to see at a glance which rows are executed, which are
+  only reviewed, and which are absent, and three words in a narrow column do
+  that worse than three symbols. Anywhere else an emoji is decoration, and
+  decoration in a document that makes checkable claims reads as a substitute for
+  one.
 
 ## Commits and pull requests
 

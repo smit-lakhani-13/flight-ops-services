@@ -36,13 +36,13 @@ the first real run; until it does, that field reads `—`.
    └───────┼───────────────────┼──────────────────────┘
            ▼                   ▼
       RDS Postgres        SQS booking-events ──► Lambda ──► DynamoDB
-      db.t4g.micro             │                            bookings-projection
+      db.t4g.micro             │                          flight-status-events
       private, no public IP    └─► DLQ after 3 attempts
 ```
 
 The application half is the same code that runs on a laptop with
 `./mvnw spring-boot:run`. What changes is where the database is, and that
-`APP_EVENTS_PUBLISHER` is `sqs` rather than `noop`.
+`APP_EVENTS_PUBLISHER` is `sqs` rather than `log`.
 
 ## What it costs
 
@@ -169,9 +169,11 @@ not today's total.
 ./deploy/aws/down.sh
 ```
 
-Type `delete` to confirm. About 20 minutes. Then it runs a sweep — thirteen
+Type `delete` to confirm. About 20 minutes. Then it runs a sweep — fourteen
 checks for the things that bill, by name and by tag — and **exits non-zero if
-any of them still exists**. That exit code is the answer to "is it definitely
+any of them still exists**. A check that cannot reach AWS fails rather than
+passing: an empty result and a failed call look identical on stdout, so every
+query is wrapped to turn a non-zero exit into loud output. That exit code is the answer to "is it definitely
 gone?"; the deletes themselves are not, because a CloudFormation delete can
 report success while leaving a load balancer behind.
 

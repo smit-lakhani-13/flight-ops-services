@@ -50,8 +50,8 @@ Controller, which is published as a chart, and not for the application.
 * **The real cost is state.** Terraform's state file is what makes `terraform
   destroy` reliable: it knows exactly what it created. Here that job is done by
   resource tags (`Project=flight-ops` on everything) and by `down.sh`'s closing
-  sweep, which queries thirteen services by name and by tag and exits non-zero
-  if anything survives. That is a weaker guarantee than state and a stronger one
+  sweep, which runs fourteen checks by name and by tag and exits non-zero if
+  anything survives, or if a check could not be answered. That is a weaker guarantee than state and a stronger one
   than a runbook, and it is checkable from a fresh shell with no local file.
 * **No plan step.** `terraform plan` is genuinely valuable and is given up here.
   The mitigation is that `up.sh` is idempotent, prints the cost before the first

@@ -19,13 +19,31 @@ both are the kind that only hurt in production:
 ## Decision
 
 Bound both, in `src/main/java/com/smit/flightops/config/OutboxProperties.java`:
-`max-attempts` (10), `retention` (7 days), `prune-interval` (1 hour) and
-`prune-batch-size` (1000), each validated at binding time.
+`max-attempts` (10), `retry-backoff` (2s), `max-retry-backoff` (5m),
+`retention` (7 days), `prune-interval` (1 hour) and `prune-batch-size` (1000),
+each validated at binding time.
 
 The claim query carries `AND attempts < :maxAttempts`. A row that exhausts them
 drops out of the claim, `outbox.dead` goes above zero, and the log names the
 event id and the booking. Bringing it back is deliberate and manual:
-`UPDATE outbox_events SET attempts = 0 WHERE id = ?`.
+`UPDATE outbox_events SET attempts = 0, next_attempt_at = NULL WHERE id = ?`.
+
+**A ceiling without a backoff is a ceiling measured in seconds**, and that was
+the first version of this decision. The poller runs every second, so a
+transport error that fails fast — a wrong queue URL, an expired credential, a
+DNS failure — burned all ten attempts on every row in about ten seconds and
+dead-lettered the whole backlog before any alert could fire. Worse, the signal
+pointed the wrong way: rows that have gone dead leave `outbox_pending`, so the
+gauge an operator watches *fell* to zero while the service was losing every
+event.
+
+So a failed row also gets a `next_attempt_at`
+(`src/main/resources/db/migration/V7__outbox_next_attempt_at.sql`), set to
+`retry-backoff` doubled once per attempt and capped at `max-retry-backoff`, and
+the claim query skips a row whose time has not come. Ten attempts now span
+about thirteen minutes. The doubling is written as a bounded loop rather than a
+shift, because a shift is silently wrong at attempt 64 and the loop stops at
+the cap.
 
 Retention is enforced by
 `src/main/java/com/smit/flightops/service/OutboxPruner.java`, a batched delete
@@ -62,4 +80,6 @@ transaction.
   counts it.
 * **Unlimited retries with exponential backoff.** Backoff spreads the damage
   out; it does not stop a permanently poisoned row from being claimed first
-  forever.
+  forever. The decision above takes the backoff and keeps the ceiling: the
+  backoff makes the ceiling reachable on a human timescale, and the ceiling is
+  what stops the poisoned row. Either alone is the wrong half.

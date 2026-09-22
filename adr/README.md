@@ -5,11 +5,14 @@ that forced the choice, what was chosen, what it costs, and what was rejected �
 because the rejected option is the part that gets re-proposed a year later by
 somebody who was not in the room.
 
-These are written **retrospectively** for decisions 1–8: the decisions were
-made in the commits named in each file, and the records were written afterwards
-against the code as it actually is. That is stated rather than disguised. The
-alternative — backdating them and implying a process that did not happen — is
-the kind of small dishonesty that makes a reader discount everything else.
+**Every record here was written after the decision it records**, and the "Taken
+in" column names the commit in which the decision actually landed. For 0001–0008
+the gap is months; for 0009–0014 it is the same commit, because the record and
+the code were written together but the record still followed the design rather
+than preceding it. None of them was an RFC that a team approved before any code
+existed, and saying so costs nothing — backdating them, and implying a process
+that did not happen, is the kind of small dishonesty that makes a reader
+discount everything else in the repository.
 
 Records are immutable once accepted. A decision that changes gets a new record
 that supersedes the old one; the old one stays, because the reasoning that was

@@ -44,14 +44,19 @@ flowchart LR
     ddb[("DynamoDB<br/>flight-status-events")]
     prom["Prometheus scrape<br/>/actuator/prometheus"]
 
-    client -->|HTTPS| controller --> svc --> repo --> db
-    svc -->|"same transaction"| db
-    repo -.->|"poller claims rows"| sqs
+    client -->|HTTPS| controller --> svc --> repo
+    repo -->|"booking and outbox row,<br/>one transaction"| db
+    svc -.->|"OutboxPublisher claims<br/>a batch and sends it"| sqs
     sqs --> lambda --> ddb
     service -.-> prom
 ```
 
-The dotted line from the repository to SQS is the only asynchronous edge, and
+The dotted line is drawn from `service/` and not from `repository/`, which is
+not a drafting detail: `OutboxPublisher` is a scheduled component in `service/`,
+and `repository/` has no dependency on any transport at all. An ArchUnit rule
+fails the build if one appears, so the picture and the code cannot drift.
+
+That dotted line is the only asynchronous edge, and
 it is deliberately the only one. Everything a caller is told in a response has
 already committed to PostgreSQL; nothing a caller is told depends on SQS being
 up. That property is what the outbox buys, and it is the single most important
@@ -145,7 +150,7 @@ two questions: has that key committed, and is this the same request.
 |---|---|---|---|---|
 | No | — | Insert, debit seats, write the event | `201` | `BookingWriter#insertNewBooking` |
 | Yes, committed | Yes | Return the original booking, debit nothing | `201` | `BookingService#book` |
-| Yes, committed | No | Refuse — the key means something else already | `409 IDEMPOTENCY_KEY_CONFLICT` | `BookingService#book` |
+| Yes, committed | No | Refuse — the key means something else already | `409 IDEMPOTENCY_KEY_REUSED` | `BookingService#book` |
 | Yes, in flight elsewhere | Yes | Lose the unique-index race, then read the winner | `201` | `BookingWriter#recoverReplay` |
 | Yes, in flight elsewhere | No | Lose the race, then fail the fingerprint check | `409` | `BookingWriter#recoverReplay` |
 
@@ -182,11 +187,15 @@ them instead. See [ADR 0002](adr/0002-pessimistic-locking.md).
 
 Three properties keep that from becoming an outage:
 
-- **A bounded wait.** `SET LOCAL lock_timeout` is applied per transaction
-  (`src/main/java/com/smit/flightops/service/BookingWriter.java#insertNewBooking`),
-  so a request that cannot get the lock fails in seconds with
-  `503 LOCK_TIMEOUT` rather than holding a connection until the pool is empty.
-  `LockTimeoutTest` proves the timeout and the status code.
+- **A bounded wait.** `SET lock_timeout = '3s'` runs once per connection, as
+  HikariCP's `connection-init-sql` in the `postgres` and `prod` profiles of
+  `src/main/resources/application.yml` — a session setting, not a statement
+  inside the transaction. No Java code issues it: a JPA `@QueryHint` for a lock
+  timeout is silently discarded by the PostgreSQL dialect, which is how the
+  session-level form was arrived at. A request that cannot get the lock fails in
+  seconds with `503 LOCK_TIMEOUT` rather than holding a connection until the
+  pool is empty. `LockTimeoutTest` proves the timeout and the status code; H2
+  gets the same bound spelled `SET LOCK_TIMEOUT 3000`.
 - **One lock order everywhere.** Booking and cancellation both take the flight
   row first and the booking row second
   (`src/main/java/com/smit/flightops/service/BookingWriter.java#cancelBooking`).
@@ -241,7 +250,7 @@ Five decisions are worth naming, each with the failure it prevents:
    row the transport structurally rejects is retried *first* on every tick and
    starves live events behind it. The ceiling drops it out of the claim,
    `outbox.dead` rises, and a human redrives it with
-   `UPDATE outbox_events SET attempts = 0 WHERE id = ?`.
+   `UPDATE outbox_events SET attempts = 0, next_attempt_at = NULL WHERE id = ?`.
 3. **The trace is captured by the writer.** The poller runs minutes later on a
    scheduler thread with no relationship to the request, so a traceparent read
    there would be meaningless. It is injected at booking time
@@ -301,7 +310,7 @@ rather than an inherited policy nobody chose.
 
 ## Data model
 
-Three tables, six migrations. Flyway owns the PostgreSQL schema and
+Three tables, eight migrations. Flyway owns the PostgreSQL schema and
 `ddl-auto: validate` checks the entity mapping against it, so a mapping that
 drifts from the migrations fails at startup rather than at the first query.
 
@@ -340,6 +349,7 @@ erDiagram
         integer attempts
         varchar last_error
         varchar traceparent "V6, W3C, nullable"
+        timestamptz next_attempt_at "V7, NULL means eligible now"
     }
 ```
 
@@ -348,9 +358,11 @@ erDiagram
 | `V1__init.sql` | `flights`, `bookings` | — |
 | `V2__seat_and_route_invariants.sql` | Seat and route CHECK constraints | The invariants the application enforces, restated where they cannot be bypassed |
 | `V3__booking_request_fingerprint.sql` | `request_fingerprint` | Nullable on purpose: rows written before V3 have no fingerprint, and backfilling a hash of a request nobody kept is not possible |
-| `V4__booking_cancellation.sql` | `cancelled_at` + a partial index on active bookings | Cancellation is a soft delete, so the row remains addressable and a repeated DELETE is safe |
+| `V4__booking_cancellation.sql` | `cancelled_at`, and a partial index on active bookings that V8 removes | Cancellation is a soft delete, so the row remains addressable and a repeated DELETE is safe |
 | `V5__outbox.sql` | `outbox_events` + a partial index on unpublished rows | The poller's claim only ever reads unpublished rows, so the index only covers them |
 | `V6__outbox_traceparent.sql` | `traceparent` | Diagnostics, nullable, and deliberately without an index |
+| `V7__outbox_next_attempt_at.sql` | `next_attempt_at` | A failed send waits before it is retried; without it the ten-attempt ceiling was burned in ten seconds at a one-second poll |
+| `V8__drop_unused_active_booking_index.sql` | Drops `idx_bookings_active` | A partial index is only chosen when the query repeats its predicate, and no query here filters on `cancelled_at` — so it was write cost with no reader |
 
 `version` on `flights` is JPA's optimistic-locking column. It is kept even
 though the write path locks pessimistically: it costs one integer and catches

@@ -7,8 +7,15 @@ One file per event, and the file is the contract.
 module, so nothing about that agreement is checked by a compiler — the
 producer could rename `flightNumber` to `flight_number` and both
 projects would build, both test suites would stay green, and the break
-would surface in production as a Lambda that writes rows with a null
-partition key.
+would surface only in production — as every message failing its write and
+draining into the dead-letter queue after three receives.
+
+The one mercy is that the failure is loud rather than silent. A renamed field
+deserialises to `null`, the `PutItem` carries an `AttributeValue` with no `S`
+member for the partition key, and DynamoDB answers `ValidationException: one or
+more parameter values were invalid` — before anything is stored. The projection
+stops; it does not fill with unusable items. What it costs instead is every
+booking event on the floor until somebody reads the DLQ.
 
 The two modules could have shared a JAR, and deliberately do not. A
 shared event library means the consumer has to be rebuilt and redeployed

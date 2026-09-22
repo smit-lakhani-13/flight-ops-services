@@ -22,7 +22,7 @@ Store a SHA-256 of the normalised request alongside the key
 compare it on every replay:
 
 * same key, same fingerprint → replay the original response, `201`
-* same key, different fingerprint → `409 IDEMPOTENCY_KEY_CONFLICT`
+* same key, different fingerprint → `409 IDEMPOTENCY_KEY_REUSED`
 
 The fingerprint is computed in
 `src/main/java/com/smit/flightops/dto/BookingRequest.java#fingerprint` and

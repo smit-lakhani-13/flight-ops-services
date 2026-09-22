@@ -19,8 +19,14 @@ The airline domain is deliberate. Seat inventory is a genuinely hard consistency
 ## Documentation
 
 This README is the tour. These are the depth, and each one is checked on every
-CI run — `scripts/refcheck.py` resolves every file and symbol they cite,
-`scripts/linkcheck.py` every link and heading anchor.
+CI run by the `docs-check` job: `scripts/refcheck.py` resolves every file and
+symbol they cite, `scripts/linkcheck.py` every link and heading anchor, and
+`scripts/sweeps.sh` looks for an attribution trailer or a reference to the
+private directory beside this repository — in the files **and in the commit
+messages**. `scripts/numbers.sh` is the fourth script and is deliberately not a
+gate: it recomputes every count these documents claim, and it is run by hand
+before editing one, because a script that rewrote the prose would be doing the
+author's job rather than checking it.
 
 | Document | What it answers |
 |---|---|
@@ -30,6 +36,7 @@ CI run — `scripts/refcheck.py` resolves every file and symbol they cite,
 | [OPERATIONS.md](OPERATIONS.md) | Every environment variable, the metrics and what they mean, how to follow one booking across the queue, what to alert on, nine playbooks — and what is honestly not wired up |
 | [SECURITY.md](SECURITY.md) | The auth model, what is exposed and what is not, how secrets are handled, and six known limitations |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | The JDK trap, both build commands, what `Skipped: 5` means, and what CI enforces |
+| [CHANGELOG.md](CHANGELOG.md) | What changed in each release, the one change in this one that can break a consumer, and why it is 1.1.0 and not 2.0.0 |
 | [contracts/README.md](contracts/README.md) | The event contract between the two modules, how it is enforced from both sides, and how to change it without breaking a deployed consumer |
 | [deploy/aws/README.md](deploy/aws/README.md) | What each script and template creates, who owns what between the scripts and CI, and the failure table |
 
@@ -75,7 +82,7 @@ Eight acts over real HTTP: the paged API and the normalised `Location` header; i
 replay; the deliberate error codes including the cancelled-flight refusal; **ten concurrent
 callers racing on one idempotency key**, twice — once with the same payload, where all ten
 get the same booking, and once with ten different payloads, where nine are told the key is
-taken; the flight-status state machine refusing `BOARDING → ARRIVED`; cancel-and-refund;
+taken; the flight-status state machine refusing `BOARDING → ARRIVED`;
 the 401/403 split; and the actuator surface Kubernetes probes. It preflights that the app is
 up *and* that the credentials work, and falls back to `python3 -m json.tool` if `jq` is
 absent. State is in-memory — restart the app to reset it.
@@ -123,9 +130,18 @@ curl -s -u api:dev-secret localhost:8080/api/v1/flights/UA456           # availa
 
 ```bash
 docker run --name pg -e POSTGRES_PASSWORD=pass -e POSTGRES_DB=flightops \
-  -p 5432:5432 -d postgres:16-alpine
-./mvnw spring-boot:run -Dspring-boot.run.profiles=postgres
+  -p 5432:5432 -d postgres:17-alpine
+DB_PASSWORD=pass ./mvnw spring-boot:run -Dspring-boot.run.profiles=postgres
 ```
+
+`DB_PASSWORD` is not optional and has no default — `spring.datasource.password`
+in the `postgres` profile is `${DB_PASSWORD}` with nothing after the colon, on
+purpose, because a working password committed to a public repository is the one
+thing every secret scanner is right to flag. Leave it out and the placeholder
+binds unresolved, Hikari presents the literal `${DB_PASSWORD}` to PostgreSQL,
+and the boot fails with `FATAL: password authentication failed` — which names
+the wrong cause. `docker compose up --build` needs none of this: `compose.yaml`
+sets it.
 
 The `postgres` profile switches the schema owner: **Flyway** applies `V1__init.sql` and Hibernate runs `ddl-auto: validate`, so entity drift fails the boot instead of silently altering tables. H2 keeps `create-drop`, because for a throwaway in-memory database migrations buy nothing.
 
@@ -137,8 +153,8 @@ What has been executed, and what has not. This table is the contract for every c
 
 | | What |
 |---|---|
-| ✅ **Built, tested, and exercised over HTTP** | The whole app module. Every endpoint hit with `curl` against a running instance; every status code in the tables below observed, not inferred, including the 401 and 403 bodies. The Lambda handler's logic, via 20 unit tests. |
-| ✅ **Verified against real PostgreSQL in CI** | All 199 tests, including the 5 Testcontainers integration tests: the Flyway migrations applied to an empty database, `ddl-auto: validate` checked against the schema those migrations produced, `SELECT … FOR UPDATE` under 20 threads competing for 5 seats, and the same idempotency key replayed by 20 threads at once. The runners have Docker, so these execute there and skip on a laptop without one. |
+| ✅ **Built, tested, and exercised over HTTP** | The whole app module. Every endpoint hit with `curl` against a running instance; every status code in the tables below observed, not inferred, including the 401 and 403 bodies. The Lambda handler's logic, via 23 tests. |
+| ✅ **Verified against real PostgreSQL in CI** | All 227 tests, including the 7 Testcontainers integration tests: the Flyway migrations applied to an empty database, `ddl-auto: validate` checked against the schema those migrations produced, `SELECT … FOR UPDATE` under 20 threads competing for 5 seats, and the same idempotency key replayed by 20 threads at once. The runners have Docker, so these execute there and skip on a laptop without one. |
 | ⚠️ **Authored and reviewed, never executed** | The container image. `sam build`, `sam local invoke`, `sam deploy`. Every `kubectl` and `eksctl` step. The deploy half of the GitHub Actions workflow — gated off deliberately, see below. |
 | ❌ **Not implemented** | A Solace binding. Trace **export** — ids are generated and logged, but there is no collector to send spans to. Rate limiting. |
 
@@ -215,7 +231,7 @@ The same picture with the method names on it — plus the booking sequence, the 
 ## Repository layout
 
 ```
-├── src/main/java/com/smit/flightops/       51 files, 4,422 lines
+├── src/main/java/com/smit/flightops/       56 files, 4,991 lines
 │   ├── controller/     HTTP only — bind, validate, map to DTO, choose status code
 │   ├── service/        orchestration, the transaction boundaries, the outbox drain
 │   │                   and its retention pruner, EventPublisher + 2 impls
@@ -223,24 +239,28 @@ The same picture with the method names on it — plus the booking sequence, the 
 │   ├── repository/     Spring Data JPA: the SELECT … FOR UPDATE query and the
 │   │                   FOR UPDATE SKIP LOCKED outbox claim
 │   ├── dto/            8 records: request/response types + BookingCreatedEvent (the wire contract)
-│   ├── exception/      7 domain exceptions + the single @RestControllerAdvice
+│   ├── exception/      9 domain exceptions, the single @RestControllerAdvice, and
+│   │                   ApiErrorController for the container's own /error forward
 │   ├── security/       the 401 and 403 writers — Spring Security rejects before the
 │   │                   DispatcherServlet, so @RestControllerAdvice never sees those two
 │   ├── observability/  RequestIdFilter (X-Request-Id on every response, MDC, ahead of
-│   │                   Spring Security), BookingMetrics (the three counters HTTP
-│   │                   metrics cannot express) and OutboxMetrics (backlog and dead rows)
+│   │                   Spring Security), BookingMetrics (the three booking counters
+│   │                   HTTP metrics cannot express) and OutboxMetrics (two counters,
+│   │                   and gauges for the backlog and the dead rows)
 │   ├── validation/     @DistinctEndpoints — a custom class-level Bean Validation constraint
-│   └── config/         SecurityConfig, OpenApiConfig, AwsConfig, three
-│                       @ConfigurationProperties records, TimeConfig (an injected
-│                       Clock), DataSeeder
+│   └── config/         SecurityConfig, OpenApiConfig, AwsConfig, four
+│                       @ConfigurationProperties records (api security, AWS,
+│                       events, outbox), TimeConfig (an injected Clock), DataSeeder
 ├── src/main/resources/
 │   ├── application.yml            profiles: default (H2), postgres, prod
-│   └── db/migration/              Flyway, V1–V6 — owns the PostgreSQL schema
-├── src/test/java/                 25 test classes, layered — see Tests (27 with the Lambda's)
+│   └── db/migration/              Flyway, V1–V8 — owns the PostgreSQL schema
+├── src/test/java/                 28 test classes, layered — see Tests (30 with the Lambda's)
 ├── ARCHITECTURE.md                the diagrams and the method-by-method request path
 ├── DEPLOYMENT.md                  three shapes, the runbook, the cost of each, the teardown
+├── CHANGELOG.md                   1.0.0 and 1.1.0, and the one breaking change in it
 ├── adr/                           14 decision records, 0001–0014
-├── scripts/                       refcheck / linkcheck / numbers — the docs gates
+├── scripts/                       refcheck / linkcheck / sweeps are the docs-check gates;
+│                                   numbers.sh is the tool that keeps the counts honest
 ├── contracts/                     the event schema both modules test against
 ├── lambda/                        separate parentless Maven module: SQS → DynamoDB consumer
 ├── k8s/                           kustomize: base + aws overlay + the Ingress component
@@ -254,7 +274,8 @@ The same picture with the method names on it — plus the booking sequence, the 
 ├── template.yaml                  SAM template for the Lambda
 ├── compose.yaml                   PostgreSQL + the app, for the container path locally
 ├── Dockerfile                     multi-stage: JDK + Maven build → JRE runtime
-└── .github/workflows/             six gates in `build-and-deploy.yml`, plus CodeQL
+└── .github/workflows/             `build-and-deploy.yml`: five gates + the gated
+                                   deploy, plus CodeQL in its own workflow
 ```
 
 The package boundaries are the point of the layout: a DTO never reaches the repository, an entity never reaches a controller, and the only code that knows about HTTP lives in `controller/` and `exception/GlobalExceptionHandler`.
@@ -276,6 +297,7 @@ The two meet on purpose. Spring's default `JwtGrantedAuthoritiesConverter` maps 
 | `GET /api/**` | `SCOPE_flights:read` |
 | `POST`, `PATCH`, `DELETE /api/**` | `SCOPE_flights:write` |
 | `GET`/`HEAD` on `/v3/api-docs**` and `/swagger-ui/**` | everyone — see [OpenAPI](#openapi) |
+| `/error` | everyone — the container forwards to it *after* the filter chain has finished, so denying it turns every 404 into a 403 and every 500 into an empty body. It is served by `exception/ApiErrorController`, which answers in the same `{code, message, timestamp}` envelope and with a deliberately generic message, because the container's own error text can name the internal path or the exception class |
 | anything else | `denyAll()` |
 
 `anyRequest().denyAll()` rather than `permitAll()` or `authenticated()` is the one line worth arguing about. It means a controller added later is *unreachable* until somebody writes a rule for it. That is annoying exactly once, and the alternative is a new endpoint that is silently public on the day it ships.
@@ -464,7 +486,9 @@ Five decisions in that query and the loop around it, each of which is a bug if t
 - **Publish, *then* mark published** — at-least-once, not at-most-once. Marking first and crashing before the send loses the event permanently; sending first and crashing before the mark sends it twice. The consumer's conditional DynamoDB write already absorbs a duplicate, so the recoverable failure is the one to choose.
 - **`@Transactional(propagation = MANDATORY)` on the writer.** Without it, calling `recordBookingCreated` outside a transaction would work perfectly — and silently discard the entire atomicity guarantee this exists for. `MANDATORY` turns that mistake into a startup-shaped failure instead of a correctness one nobody notices.
 - **A `try`/`catch` per row, not around the loop.** Letting one failure propagate would roll back the `markPublished` on rows whose payloads had *already left the process*, turning one bad event into N duplicates on the next drain.
-- **`AND attempts < :maxAttempts`** is an availability bound, not tidiness. The claim is `ORDER BY id`, so an event the transport structurally rejects is retried **first** on every tick and spends the whole batch failing while live events queue behind it: one malformed row is a total publishing outage that waiting never resolves. After ten attempts the row drops out of the claim, `outbox_dead` goes above zero, and a WARN names the id and the booking. Bringing it back is deliberate and manual — `UPDATE outbox_events SET attempts = 0 WHERE id = ?` — which is the statement `OutboxPoisonRowTest` runs, so the sentence an operator will paste is the one that is tested.
+- **`AND attempts < :maxAttempts`** is an availability bound, not tidiness. The claim is `ORDER BY id`, so an event the transport structurally rejects is retried **first** on every tick and spends the whole batch failing while live events queue behind it: one malformed row is a total publishing outage that waiting never resolves. After ten attempts the row drops out of the claim, `outbox_dead` goes above zero, and a WARN names the id and the booking. Bringing it back is deliberate and manual — `UPDATE outbox_events SET attempts = 0, next_attempt_at = NULL WHERE id = ?` — which is the statement `OutboxPoisonRowTest` runs, so the sentence an operator will paste is the one that is tested.
+
+- **The ceiling needs a backoff, or it is a ceiling measured in seconds.** The poller runs every second, so before `next_attempt_at` existed (`V7__outbox_next_attempt_at.sql`) a transport error that fails *fast* — a wrong queue URL, an expired credential, a DNS failure — burned all ten attempts on every row in about ten seconds and dead-lettered the whole backlog before an alert could fire. The signal pointed the wrong way too: a dead row leaves `outbox_pending`, so the gauge an operator watches **fell to zero** while the service was losing every event. A failed row now waits `app.outbox.retry-backoff` (2s), doubling per attempt to a `max-retry-backoff` cap (5m), and the claim query skips a row whose time has not come — ten attempts span about thirteen minutes. The doubling is a bounded loop, not `base << (attempt - 1)`, because a shift is one character shorter and silently wrong at attempt 64.
 
 `fixedDelay`, not `fixedRate`: `fixedRate` measures from the previous *start*, so a drain slower than the interval queues invocations behind itself. `fixedDelay` measures from the previous finish.
 
@@ -556,26 +580,26 @@ The `prod` profile sets `logging.structured.format.console: ecs` — one JSON ob
 ## Tests
 
 ```bash
-./mvnw clean verify                       # 179 tests: 174 run, 5 skipped, 0 failures
-./mvnw -f lambda/pom.xml clean verify     # 20 tests, 0 failures
+./mvnw clean verify                       # 204 tests: 197 run, 7 skipped, 0 failures
+./mvnw -f lambda/pom.xml clean verify     # 23 tests, 0 failures
 ```
 
 | Layer | Tests | Tooling |
 |---|---|---|
 | Domain entity | 12 | plain JUnit — no Spring, no database. A domain rule should be provable without either. |
-| Service | 24 | `@ExtendWith(MockitoExtension.class)`, `@Mock`, `@InjectMocks`, `@Captor` — split across `BookingServiceTest` (orchestration), `BookingWriterTest` (the write path), `FlightServiceTest`, and `SqsEventPublisherTest` for what actually goes on the wire |
+| Service | 34 | `@ExtendWith(MockitoExtension.class)`, `@Mock`, `@InjectMocks`, `@Captor` — split across `BookingServiceTest` (orchestration), `BookingWriterTest` (the write path), `FlightServiceTest`, and `SqsEventPublisherTest` for what actually goes on the wire |
 | Web slice | 25 | `@WebMvcTest` + `@MockitoBean` — status codes, `Location` headers, error JSON |
 | Repository slice | 13 | `@DataJpaTest` + `TestEntityManager` — derived queries, JPQL, `JOIN FETCH`, constraints |
-| Full context (H2) | 63 | `@SpringBootTest` — the idempotency guarantee end to end (two 10-thread races on one key), the authorisation rules against the real filter chain, the outbox including its trace capture, the attempt ceiling and the retention pruner against a real database, the published OpenAPI document compared against a real response, the lock timeout, the error contract, and a lazy-loading regression with no mocking anywhere in the chain |
+| Full context (H2) | 73 | `@SpringBootTest` — the idempotency guarantee end to end (two 10-thread races on one key), the authorisation rules against the real filter chain, the outbox including its trace capture, the attempt ceiling and the retention pruner against a real database, the published OpenAPI document compared against a real response, the lock timeout, the error contract, and a lazy-loading regression with no mocking anywhere in the chain |
 | Event contract | 11 | one producer-side class and one consumer-side class, both asserting against `contracts/booking-created-v1.json` |
-| Lambda handler | 14 | separate module — batch parsing, partial batch failure, the conditional write, and the producer's trace context surviving the queue |
-| Configuration binding | 15 | plain JUnit driving a standalone Jakarta `Validator` and Boot's `Binder` — proves an unresolved `${...}` placeholder is rejected at startup rather than binding as a literal, and that every outbox bound is enforced and every default is actually wired |
+| Lambda handler | 17 | separate module — batch parsing, partial batch failure, the conditional write, and the producer's trace context surviving the queue |
+| Configuration binding | 18 | plain JUnit driving a standalone Jakarta `Validator` and Boot's `Binder` — proves an unresolved `${...}` placeholder is rejected at startup rather than binding as a literal, and that every outbox bound is enforced and every default is actually wired |
 | Architecture | 9 | ArchUnit over `target/classes` — the layering, no field injection, no `@Transactional` outside `service/`, no wall-clock reads outside `entity/`. Each rule was checked against a deliberate violation before being committed |
 | Observability | 8 | the request-id filter against a hostile inbound header, and the meters scraped through a real `PrometheusMeterRegistry` rather than a `SimpleMeterRegistry` that would accept any name |
-| **Run** | **194** | **0 failures** (12 + 24 + 25 + 13 + 63 + 11 + 14 + 15 + 9 + 8) |
-| PostgreSQL integration | 5 | `@Testcontainers(disabledWithoutDocker = true)` — skipped without a container runtime |
+| **Run** | **220** | **0 failures** (12 + 34 + 25 + 13 + 73 + 11 + 17 + 18 + 9 + 8) |
+| PostgreSQL integration | 7 | `@Testcontainers(disabledWithoutDocker = true)` — `BookingIntegrationTest` and `service/OutboxPrunePostgresTest`, skipped without a container runtime |
 
-199 tests exist across the two modules; 194 run without Docker, 5 skip. CI runs all 199 and they pass — the runner has Docker, so it is the only place the real PostgreSQL path (Flyway + `ddl-auto=validate` + `SELECT FOR UPDATE` under 20-way contention, and a 20-thread idempotency-key race) gets exercised. The surefire summary there reads `Tests run: 179, Failures: 0, Errors: 0, Skipped: 0` for this module and `Tests run: 20 … Skipped: 0` for the Lambda. `Skipped: 0` rather than `Skipped: 5` is the part worth reading: it is the difference between the integration tests passing and the integration tests quietly opting out, and a green build alone does not distinguish the two.
+227 tests exist across the two modules; 220 run without Docker, 7 skip. CI runs all 227 and they pass — the runner has Docker, so it is the only place the real PostgreSQL path (Flyway + `ddl-auto=validate` + `SELECT FOR UPDATE` under 20-way contention, a 20-thread idempotency-key race, and the outbox's native `DELETE … FOR UPDATE SKIP LOCKED` under two competing pruners) gets exercised. The surefire summary there reads `Tests run: 204, Failures: 0, Errors: 0, Skipped: 0` for this module and `Tests run: 23 … Skipped: 0` for the Lambda. `Skipped: 0` rather than `Skipped: 7` is the part worth reading: it is the difference between the integration tests passing and the integration tests quietly opting out, and a green build alone does not distinguish the two.
 
 **The `@WebMvcTest` slices run with `addFilters = false`, and that is deliberate.** A slice does not load `SecurityConfig` — it is a `@Configuration` class, not a controller, so the slice filter excludes it — and what Boot substitutes is its *own* default chain. Leaving the filters on would therefore have every controller test authenticate against rules that are not this application's rules, and pass. That is worse than no coverage: it reads as though authorisation is tested. The real rules are tested once, properly, against the real `SecurityConfig` with real credentials and the real 401/403 bodies, in `SecurityRulesTest`.
 
@@ -658,7 +682,7 @@ Separate Maven module, separate lifecycle, deployed by SAM. Consumes `booking-ev
 - **The producer's trace, logged rather than regenerated.** The booking request's `traceparent` rides on the SQS message as an attribute and goes into the log line, so a trace id taken from an API response finds the projection of that booking in a different process on the far side of a queue. It is read null-safely at three levels — no attribute map, no `traceparent` key, a `traceparent` sent as binary — and matched against the W3C shape before it is logged, because a message attribute is attacker-influenced input and a newline in one forges a CloudWatch entry that reads like a real record. A missing or malformed trace never fails a projection. No tracing SDK was added to do it: that would mean an exporter and an endpoint to export to, on a function chosen for a 34 KB dependency tree. `events/sqs-with-trace.json` carries one message with a trace and one without.
 - **`DynamoDbClient` behind an initialization-on-demand holder**, so the SDK client is created once per execution environment and reused across warm invocations rather than per request.
 - **No framework.** A plain `RequestHandler`, not Spring Cloud Function — the handler does one thing, and a container to start is a container to start on every cold invocation.
-- **20 tests, 6 of them the consumer half of the contract.** The producer and consumer never share a jar — that would make them deploy together, which is the coupling a queue exists to remove — so both read `contracts/booking-created-v1.json` and assert against it independently. See [Tests](#tests).
+- **23 tests, 6 of them the consumer half of the contract.** The producer and consumer never share a jar — that would make them deploy together, which is the coupling a queue exists to remove — so both read `contracts/booking-created-v1.json` and assert against it independently. See [Tests](#tests).
 
 ### The deployment package
 
@@ -681,7 +705,7 @@ Belt and braces: exactly one provider is on the classpath *and* the holder names
 
 ## Container and Kubernetes
 
-> ⚠️ **Nothing in this section has been executed** — see [Project status](#project-status). The manifests and the Dockerfile are reviewed, not applied.
+> **Nothing in this section has been executed** — see [Project status](#project-status). The manifests and the Dockerfile are reviewed, not applied.
 
 ```bash
 docker compose up --build                       # the whole stack, locally
@@ -742,11 +766,13 @@ The whole stack, in `ap-south-1`, on-demand:
 1. **`deploy/aws/up.sh` creates two budgets** — $60/month at 50/80/100%, $12/day at 80% — and they send e-mail. E-mail is not a brake. Set a calendar reminder for the teardown date before creating anything.
 2. **One region.** Pinned to `ap-south-1` in `deploy/aws/lib.sh` and exported, so no script depends on the caller's profile. A teardown run against the wrong default region reports a clean sweep because it is looking somewhere empty.
 3. **Delete the Ingress before the cluster.** Deleting the cluster first orphans the ALB the Ingress created, and an orphaned ALB bills at $19/month with nothing in the console obviously pointing at it. `deploy/aws/down.sh` does this in the right order.
-4. **Everything is tagged `Project=flight-ops`**, which is what makes the teardown checkable:
+4. **Everything this repository creates asks for the tag `Project=flight-ops`** — `cluster.yaml` applies it to everything eksctl creates, and both CloudFormation templates tag each resource — which makes one catch-all check possible:
 
    ```bash
    aws resourcegroupstaggingapi get-resources --tag-filters Key=Project,Values=flight-ops
    ```
+
+   That query is the fourteenth check in `deploy/aws/down.sh`, not the only one, and deliberately so: not every AWS resource type accepts tags, a few that do are created indirectly by a controller rather than by this repository, and the Resource Groups Tagging API does not cover every service. The other thirteen enumerate resource types by name — load balancers, EBS volumes, Elastic IPs, NAT gateways, RDS instances and snapshots, log groups, stacks — so a stray that never carried the tag is still found.
 5. **The Kubernetes version is a cost control.** A version in *extended* support bills **$0.60/cluster-hour** instead of $0.10 — 6× — and extended support is **enabled by default**, so an aged-out version does not fail, it just costs. `cluster.yaml` pins `1.36`, and `up.sh` sets the upgrade policy to `STANDARD` immediately after creation so the cluster refuses to enter extended support rather than quietly billing for it. Verified 22 Sep 2026: standard = 1.36 / 1.35 / 1.34, extended = 1.33 and older. Re-check with:
 
    ```bash
@@ -756,13 +782,13 @@ The whole stack, in `ap-south-1`, on-demand:
    ```
 
    The filter field is `status`, **not** `clusterVersionStatus` — the latter returns an empty list, which reads like "no supported versions" rather than "your query is wrong".
-6. **Verify the teardown with a command that exits non-zero.** "I ran `eksctl delete cluster`" is not verification — eksctl can report success while a load balancer, an EBS volume or a NAT gateway survives. `deploy/aws/down.sh` finishes with thirteen checks across ELBv2, ELB, EKS, EC2, NAT gateways, volumes, Elastic IPs, RDS, snapshots, CloudFormation, log groups, Secrets Manager and ECR, plus a catch-all tag query, and **fails the script if any of them finds something**.
+6. **Verify the teardown with a command that exits non-zero.** "I ran `eksctl delete cluster`" is not verification — eksctl can report success while a load balancer, an EBS volume or a NAT gateway survives. `deploy/aws/down.sh` finishes with fourteen checks — ELBv2, ELB, EKS, EC2, NAT gateways, volumes, Elastic IPs, RDS, snapshots, CloudFormation, log groups, Secrets Manager, ECR, and a catch-all tag query — and **fails the script if any of them finds something**. It also fails if a query itself fails, because an expired token returns the same empty string as a clean account and the wrong one of those reads as success.
 
 **No AWS account ID is hardcoded anywhere in this repository.** `events/*.json` use the placeholder `123456789012`; the GitHub Actions workflow reads `${{ secrets.AWS_ACCOUNT_ID }}`.
 
 **Credentials.** There are none in the repo and none needed for the default profile. In AWS, `DefaultCredentialsProvider` is the whole story: the same code picks up `~/.aws` locally and a projected service-account token under IRSA in-cluster, so there is no environment-specific credential branch to get wrong. The CI pipeline uses GitHub's OIDC provider and short-lived STS credentials rather than a stored access key — the workflow documents the trust-policy condition that has to pin the `sub` claim, because a wildcard there is an account compromise waiting to happen.
 
-**Region.** Everything targets `ap-south-1` and agrees on it: `cluster.yaml`, `deploy/aws/lib.sh`, `k8s/overlays/aws/configmap-aws.yaml`, `template.yaml`, the workflow, and `application.yml`. Cross-region drift surfaces as an IRSA authentication error or an ECR image-pull failure rather than as an obvious region mismatch, so set the CLI default to match instead of relying on whatever it happens to be:
+**Region.** Everything targets `ap-south-1` and agrees on it. The list is the output of `git grep -n 'ap-south-1' -- cluster.yaml k8s .github deploy src`, not a memory: `cluster.yaml` (the source of truth), `deploy/aws/lib.sh` (which exports it so no script inherits your CLI default), `k8s/base/configmap.yaml` (`AWS_REGION`, which the SDK reads), `k8s/overlays/aws/kustomization.yaml` (the **ECR registry host**, the one that fails as an `ImagePullBackOff` rather than as a region error), `.github/workflows/build-and-deploy.yml`, and `application.yml`. Cross-region drift surfaces as an IRSA authentication error or an ECR image-pull failure rather than as an obvious region mismatch, so set the CLI default to match instead of relying on whatever it happens to be:
 
 ```bash
 aws configure set region ap-south-1
@@ -832,7 +858,7 @@ forever. Each one now has a test that fails without the fix, like every row abov
 |---|---|
 | **Nothing tied a log line to a request.** A 500 in a three-replica deployment meant grepping by timestamp and hoping. The README called this the largest operability gap and it had been open the longest | `RequestIdFilter` puts a request id in the MDC ahead of Spring Security and echoes it on *every* response including 401 and 403, `traceId`/`spanId` sit beside it, and the prod profile emits ECS JSON so all four are queryable fields rather than substrings. See [Observability](#observability) |
 | **Published outbox rows were kept forever.** Nothing breaks for months, which is the problem: the partial index only covers unpublished rows, so the poller keeps performing perfectly while the heap underneath it grows, and the first symptom is a backup window or a disk alert on a Sunday | `OutboxPruner` deletes published rows past a 7-day retention, in bounded batches with a per-run ceiling. `OutboxPrunerTest` proves the statement against a real database — including that an unpublished row is never deleted however old it is, which is the failure that would be both silent and permanent |
-| **A poisoned event was retried first, forever.** `ORDER BY id` puts the oldest failing row at the head of every batch, so one payload the transport structurally rejects consumes the batch on every tick while live events queue behind it — one bad row, total publishing outage, and waiting is what it is already doing | The claim carries `AND attempts < :maxAttempts`, the row drops out after ten failures, `outbox_dead` rises and a WARN names the id and the booking. The documented re-drive, `UPDATE outbox_events SET attempts = 0 WHERE id = ?`, is run verbatim by a test so the sentence an operator will paste is a tested one |
+| **A poisoned event was retried first, forever.** `ORDER BY id` puts the oldest failing row at the head of every batch, so one payload the transport structurally rejects consumes the batch on every tick while live events queue behind it — one bad row, total publishing outage, and waiting is what it is already doing | The claim carries `AND attempts < :maxAttempts`, the row drops out after ten failures, `outbox_dead` rises and a WARN names the id and the booking. The documented re-drive, `UPDATE outbox_events SET attempts = 0, next_attempt_at = NULL WHERE id = ?`, is run verbatim by a test so the sentence an operator will paste is a tested one |
 
 ### Still open
 
