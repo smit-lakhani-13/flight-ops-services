@@ -190,12 +190,14 @@ class BookingControllerTest {
 
     /**
      * {@code spring.jackson.deserialization.accept-float-as-int} is off, so 2.5
-     * is refused instead of booking two seats. A primitive {@code int} cannot be
-     * null, so a missing count fails in Jackson too, before Bean Validation.
+     * is refused instead of booking two seats, and
+     * {@code spring.jackson.mapper.allow-coercion-of-scalars} is off, so a count
+     * sent as a string is refused too. A primitive {@code int} cannot be null, so
+     * a missing count fails in Jackson as well, before Bean Validation.
      */
     @ParameterizedTest
-    @ValueSource(strings = {"\"seats\":2.5,", "\"seats\":null,", ""})
-    @DisplayName("a fractional or missing seat count is 400 MALFORMED_REQUEST, never truncated")
+    @ValueSource(strings = {"\"seats\":2.5,", "\"seats\":\"2\",", "\"seats\":null,", ""})
+    @DisplayName("a fractional, string or missing seat count is 400 MALFORMED_REQUEST, never coerced")
     void seatsMustBeAWholeNumber(String seats) throws Exception {
         String body = """
                 {"flightNumber":"UA123","passengerName":"Smit Lakhani",%s"idempotencyKey":"demo-1"}

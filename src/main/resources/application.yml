@@ -36,6 +36,9 @@ spring:
     deserialization:
       # A fractional seat count is a client bug, not a request for fewer seats.
       accept-float-as-int: false
+    mapper:
+      # So is a count sent as a string. The schema says integer; "2" is refused too.
+      allow-coercion-of-scalars: false
 
   data:
     web:
