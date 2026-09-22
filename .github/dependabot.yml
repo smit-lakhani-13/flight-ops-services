@@ -17,10 +17,15 @@
 #    has already made and documented, so the bump has to be a human's call:
 #      - the JDK: pom.xml sets <java.version>21</java.version>, and a major base
 #        image bump moves the runtime out from under that
-#      - Spring Boot: staying on 3.5.x is a documented choice, and Boot 4 is not a
-#        drop-in (see README)
-#      - JUnit: lambda/pom.xml pins the 5.x line so both modules share one JUnit
-#        major; the comment above <junit.version> gives the reason
+#      - Spring Boot: a major is never a drop-in. The 3.5 -> 4.1 upgrade in this
+#        repository moved package names in four places, split three starters out
+#        of spring-boot-starter-test, renamed spring-boot-starter-web and moved
+#        the whole project from Jackson 2 to Jackson 3. None of that is a merge
+#        button, and the same will be true of 5.x
+#      - JUnit: lambda/pom.xml has no parent, so its major is whatever this file
+#        lets through, while the service module's is whatever Boot's BOM says.
+#        The pin exists to keep those two the same number; the comment above
+#        <junit.version> gives the reason it matters
 #    A major upgrade of any of the four is a deliberate piece of work, not a
 #    merge. Everything else — minors, patches, and every dependency not named
 #    here — still flows automatically.
@@ -65,26 +70,37 @@ updates:
       test:
         patterns: ["org.junit*:*", "org.mockito:*"]
     ignore:
-      # The JUnit 5.x pin is a documented decision — see the comment above
-      # <junit.version> in lambda/pom.xml. The app module gets JUnit 5.12.2 from
-      # the Boot 3.5.16 BOM, so a major here means two JUnit majors in one
-      # repository. Minors and patches on the 5.x line still flow. Without this,
-      # the same 6.x bump keeps reopening (it has already come back twice).
+      # Still ignored, for a reason that survived the upgrade even though the
+      # version in it did not. Both modules are on JUnit 6.0.3 now: the service
+      # gets it from the Boot 4.1.1 BOM, and lambda/pom.xml was moved to match.
+      # The rule is not "stay on 5.x", it is "do not let Dependabot move one
+      # module's major on its own" - whichever side moves first splits the
+      # repository across two JUnit majors, and last time that was this module.
+      # Minors and patches on the 6.x line still flow, and a major is a
+      # two-line change plus a test run, done deliberately on the day Boot's BOM
+      # moves too.
       - dependency-name: "org.junit:junit-bom"
         update-types: ["version-update:semver-major"]
 
-  # The workflow pins actions to major tags rather than commit SHAs, which is the
-  # common trade-off: you get patches for free but the tag is mutable, so you are
-  # trusting the publisher. Dependabot at least surfaces the major bumps, and this
-  # group has already delivered one. SHA pinning is the next hardening step, at
-  # the cost of a PR for every patch release.
+  # The workflow now pins every action to a full commit SHA rather than a major
+  # tag, so this ecosystem changed character. A tag is a mutable pointer in
+  # somebody else's repository; a SHA is not, and the rationale sits in the
+  # workflow itself above the first `uses:`.
+  #
+  # What that costs is PR volume, and it is the reason this entry matters more
+  # than it used to: with a tag, patch releases arrived silently and Dependabot
+  # only ever spoke up for a major. With a SHA, *every* release is a PR, and
+  # without one this repository would simply freeze on whatever commits were
+  # current the day the pins went in - which is the failure mode that makes
+  # people give up on SHA pinning and go back to tags. Dependabot understands
+  # the pin: it rewrites both the SHA and the trailing version comment.
   #
   # No version numbers in this comment on purpose — the last one said "@v4" and
   # went stale the day the group's first PR merged.
   #
-  # Grouped into a single PR: an action major bump is usually a one-line change
-  # and reviewing five of them separately is five times the ceremony for the same
-  # decision.
+  # Grouped into a single PR: an action bump is a one-line change and reviewing
+  # five of them separately is five times the ceremony for the same decision.
+  # The limit stays at 1 so a month of patch releases is one PR, not five.
   - package-ecosystem: github-actions
     directory: "/"
     schedule:

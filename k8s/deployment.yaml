@@ -45,16 +45,45 @@ spec:
       #
       # CREATE THIS BEFORE APPLYING THIS FILE, or pods stay Pending with
       # `error looking up service account flight-ops/flight-ops-sa`:
+      #   cat > /tmp/flight-ops-policy.json <<'JSON'
+      #   {
+      #     "Version": "2012-10-17",
+      #     "Statement": [
+      #       {
+      #         "Sid": "PublishBookingEvents",
+      #         "Effect": "Allow",
+      #         "Action": ["sqs:SendMessage", "sqs:GetQueueAttributes"],
+      #         "Resource": "arn:aws:sqs:ap-south-1:<ACCOUNT_ID>:booking-events"
+      #       }
+      #     ]
+      #   }
+      #   JSON
+      #   aws iam create-policy --policy-name flight-ops-service \
+      #     --policy-document file:///tmp/flight-ops-policy.json
       #   eksctl create iamserviceaccount \
       #     --name flight-ops-sa --namespace flight-ops \
       #     --cluster flight-ops-cluster \
-      #     --attach-policy-arn arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess \
-      #     --attach-policy-arn arn:aws:iam::aws:policy/AmazonSQSFullAccess \
+      #     --attach-policy-arn arn:aws:iam::<ACCOUNT_ID>:policy/flight-ops-service \
       #     --approve
       #
-      # (Those two managed policies are far too broad for production — the real
-      # version is an inline policy scoped to this one table and one queue ARN.
-      # They are used here because the lab is torn down the same day.)
+      # An inline policy scoped to one queue ARN, not AmazonSQSFullAccess. The
+      # two managed policies that used to be here were the lazy version and
+      # they were wrong in a specific, checkable way:
+      #
+      #   - AmazonSQSFullAccess grants sqs:* on Resource "*", which includes
+      #     DeleteQueue and PurgeQueue on every queue in the account. A bug in
+      #     this service - or anything that achieves code execution in this pod
+      #     - could empty a queue belonging to a different team entirely.
+      #   - AmazonDynamoDBFullAccess was granted and never used. This service
+      #     does not talk to DynamoDB at all; the Lambda does, under its own
+      #     role in template.yaml. Handing a workload permissions it makes no
+      #     calls with is pure blast radius.
+      #
+      # Two actions and one ARN is the whole requirement: SendMessage to
+      # publish, GetQueueAttributes because the SDK reads them on first use.
+      # "The lab is torn down the same day" was the justification for the old
+      # version and it is not one - a least-privilege policy took eleven lines
+      # to write, and IAM is the part of a review nobody lets slide.
       serviceAccountName: flight-ops-sa
 
       # Pod-level security context: applies to every container.
@@ -124,15 +153,32 @@ spec:
           # Container-level context, layered on the pod-level one above.
           securityContext:
             allowPrivilegeEscalation: false
-            # false because the JVM writes to /tmp (Tomcat work dir, and
-            # perf/hsperfdata). The hardened version sets this to true and mounts
-            # an emptyDir at /tmp — worth mentioning, not done here because a
-            # broken demo teaches nothing.
-            readOnlyRootFilesystem: false
+            # true, with an emptyDir mounted at /tmp below.
+            #
+            # This was false, on the grounds that the JVM writes to /tmp - which
+            # is true, and is not a reason to leave the whole filesystem
+            # writable. Embedded Tomcat unpacks its work directory there and the
+            # JVM writes hsperfdata for jcmd and jstack; both want /tmp and
+            # neither wants anything else. Mounting one small tmpfs at the one
+            # path that needs writing is a three-line change, and it means an
+            # attacker who reaches code execution in this container cannot drop
+            # a binary on disk, cannot overwrite the application jar, and cannot
+            # edit anything that survives a restart. It is also what turns
+            # "immutable infrastructure" from a slogan into something the kernel
+            # enforces.
+            #
+            # If a future dependency needs to write elsewhere the pod will
+            # CrashLoopBackOff with a clear EROFS in the logs, which is the
+            # correct way to find out.
+            readOnlyRootFilesystem: true
             capabilities:
               # This process binds a port above 1024 and does nothing else
               # privileged. It needs no Linux capabilities at all.
               drop: ["ALL"]
+
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
 
           resources:
             # requests = what the scheduler reserves. Too low and pods get packed
@@ -219,3 +265,15 @@ spec:
             preStop:
               exec:
                 command: ["sleep", "5"]
+
+      volumes:
+        # emptyDir, not hostPath: it lives and dies with the pod, so nothing
+        # written here survives a restart and nothing is shared with the node or
+        # with another pod. medium: Memory makes it a tmpfs, which keeps
+        # Tomcat's work directory off the node's disk entirely - and counts
+        # against the container's memory limit, which is why sizeLimit is set
+        # rather than left to default to half the node's RAM.
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi
