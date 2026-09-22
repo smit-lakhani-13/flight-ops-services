@@ -43,7 +43,7 @@
 
     <groupId>com.smit</groupId>
     <artifactId>booking-event-handler</artifactId>
-    <version>1.0.0</version>
+    <version>1.1.0</version>
     <packaging>jar</packaging>
     <name>booking-event-handler</name>
     <description>SQS-triggered Lambda that projects booking events into DynamoDB</description>
@@ -99,6 +99,11 @@
           jackson-databind for you — the SDK shades its own copy internally. Rely
           on a transitive Jackson and a future SDK bump can silently change the
           serialisation behaviour of this handler.
+
+          Same version as <jackson-2-bom.version> in the root pom.xml, so the
+          producer and this consumer read and write the event contract with one
+          Jackson. Move them together; CONTRIBUTING.md says so next to the same
+          rule for the AWS SDK BOM.
         -->
         <jackson.version>2.22.2</jackson.version>
 
@@ -391,9 +396,14 @@
               deployed file has no dependency list of its own to read. This is
               that list.
 
-              No JaCoCo here on purpose. Eighteen Mockito tests cover a handler
-              with two branches; a coverage gate on that is ceremony, and the
-              service module is where the coverage question is real.
+              No JaCoCo here on purpose. This module is one handler class, and
+              its tests are written against the behaviours that can actually go
+              wrong (duplicate suppression, partial batch failure, sort-key
+              stability, a malformed or incomplete payload) rather than
+              against a percentage. A coverage gate here would measure the same
+              file twice; the service module is where the coverage question is
+              real. scripts/numbers.sh prints the count, so it is not repeated
+              in prose that would go stale on the next test added.
             -->
             <plugin>
                 <groupId>org.cyclonedx</groupId>

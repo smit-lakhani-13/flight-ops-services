@@ -34,6 +34,12 @@ public interface OutboxEventRepository extends JpaRepository<OutboxEvent, Long> 
      * replica out of the table completely — the failure mode {@code SKIP
      * LOCKED} was added to prevent, reintroduced by the missing bound.
      *
+     * <p>{@code next_attempt_at} is the retry clock, and it is what stops the
+     * attempt ceiling being a ten-second fuse on the whole table — see
+     * {@code V7__outbox_next_attempt_at.sql}. NULL means "claimable now", which
+     * is every row that has never failed, so the predicate costs nothing on the
+     * path that matters.
+     *
      * <p>The ordering is by {@code id}, which is insertion order, so events are
      * published in roughly the order they occurred. Only roughly: two replicas
      * draining disjoint batches concurrently can interleave, so this is
@@ -45,12 +51,14 @@ public interface OutboxEventRepository extends JpaRepository<OutboxEvent, Long> 
             SELECT * FROM outbox_events
              WHERE published_at IS NULL
                AND attempts < :maxAttempts
+               AND (next_attempt_at IS NULL OR next_attempt_at <= :now)
              ORDER BY id
              LIMIT :batchSize
                FOR UPDATE SKIP LOCKED
             """, nativeQuery = true)
     List<OutboxEvent> claimUnpublished(@Param("batchSize") int batchSize,
-                                       @Param("maxAttempts") int maxAttempts);
+                                       @Param("maxAttempts") int maxAttempts,
+                                       @Param("now") Instant now);
 
     /** Unpublished and still retryable: the poller's backlog. */
     long countByPublishedAtIsNullAndAttemptsLessThan(int maxAttempts);
@@ -61,7 +69,7 @@ public interface OutboxEventRepository extends JpaRepository<OutboxEvent, Long> 
      * one, and it is the gauge worth alerting on.
      *
      * <p>Re-driving one, once the cause is fixed, is a single statement:
-     * {@code UPDATE outbox_events SET attempts = 0 WHERE id = ?}.
+     * {@code UPDATE outbox_events SET attempts = 0, next_attempt_at = NULL WHERE id = ?}.
      */
     long countByPublishedAtIsNullAndAttemptsGreaterThanEqual(int maxAttempts);
 

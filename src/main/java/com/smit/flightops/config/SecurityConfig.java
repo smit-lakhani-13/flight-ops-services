@@ -214,6 +214,20 @@ public class SecurityConfig {
         // ifAvailable rather than getIfAvailable() != null: identical effect,
         // but it keeps the JWT wiring inside the branch that proved a decoder
         // exists, so there is no path on which a null decoder reaches the DSL.
+        //
+        // Customizer.withDefaults() takes the decoder as configured, which is
+        // the point: whoever turns bearer tokens on must set BOTH
+        // spring.security.oauth2.resourceserver.jwt.issuer-uri and .audiences.
+        // issuer-uri alone checks the signature, the issuer and the lifetime,
+        // and an issuer mints tokens for every client registered with it - so
+        // a token minted for a different application in the same tenant is
+        // correctly signed by the right issuer and would be accepted here.
+        // The audience claim is the only field that names the intended API.
+        // Boot's `audiences` property installs that validator inside the
+        // decoder, which is why it is configuration rather than code: a
+        // validator built here could be dropped in a refactor of this method
+        // without any test noticing. application.yml and SECURITY.md carry the
+        // same warning where an operator will actually read it.
         jwtDecoder.ifAvailable(decoder -> {
             try {
                 // The two handlers are passed in again here, and leaving them
@@ -249,7 +263,8 @@ public class SecurityConfig {
         });
         if (jwtDecoder.getIfAvailable() == null) {
             log.info("No JwtDecoder configured — HTTP Basic only. "
-                    + "Set spring.security.oauth2.resourceserver.jwt.issuer-uri to accept bearer tokens.");
+                    + "Set spring.security.oauth2.resourceserver.jwt.issuer-uri "
+                    + "and .audiences to accept bearer tokens.");
         }
 
         return http.build();

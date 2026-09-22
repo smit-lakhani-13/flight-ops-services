@@ -171,9 +171,54 @@ app:
     #   curl -u ops:dev-ops     ...   # /actuator/metrics, /actuator/prometheus
     api-password: "${API_PASSWORD:{noop}dev-secret}"
     ops-password: "${OPS_PASSWORD:{noop}dev-ops}"
+
+# ---------------------------------------------------------------------------
+# Bearer tokens: off, and the two properties that turn them on.
+# ---------------------------------------------------------------------------
+# SecurityConfig wires an OAuth2 resource server only when a JwtDecoder bean
+# exists, and one exists only when an issuer is configured. Nothing here sets
+# one, so this service authenticates with HTTP Basic and logs "No JwtDecoder
+# configured" at startup. That is the default on purpose: the callers are two
+# machine identities, and an authorisation server is a dependency they do not
+# need.
+#
+# To accept bearer tokens, set BOTH of these. Not one:
+#
+#   spring:
+#     security:
+#       oauth2:
+#         resourceserver:
+#           jwt:
+#             issuer-uri: https://your-idp.example.com/
+#             audiences: [flight-ops-service]
+#
+# issuer-uri alone validates the signature, the issuer, the expiry and the
+# not-before, and that is NOT enough. An issuer typically mints tokens for
+# every application registered with it, so a token issued to a completely
+# different client of the same tenant carries a valid signature from the right
+# issuer -- and without an audience check this service accepts it and grants
+# whatever the scope claim asks for. The audience claim is the only thing in a
+# JWT that says which API the token was meant for.
+#
+# `audiences` is a Boot property rather than code here (Boot 3.4 and later add
+# a JwtClaimValidator for it), so the check cannot be lost in a refactor of
+# SecurityConfig. See SECURITY.md.
   events:
-    # log | sqs  -- which EventPublisher implementation gets wired in.
-    publisher: log
+    # log | sqs -- which EventPublisher implementation gets wired in.
+    #
+    # This used to be a bare `log`, with no placeholder, and that made the
+    # SAM-only recipe in DEPLOYMENT.md impossible to follow: it tells you to
+    # run `APP_EVENTS_PUBLISHER=sqs ./mvnw spring-boot:run` and watch the
+    # messages arrive, and the variable was silently ignored because the
+    # default profile hard-coded the value. The service published nothing, to
+    # nowhere, and said so nowhere.
+    #
+    # Turning it into a placeholder does not weaken the guard that the bare
+    # value was providing. Choosing `sqs` without a queue URL still fails at
+    # startup -- SqsEventPublisher requires app.aws.sqs-queue-url -- so a
+    # laptop cannot drift into publishing by accident; it can only do it on
+    # purpose, with a queue URL in hand, which is exactly the documented case.
+    publisher: ${APP_EVENTS_PUBLISHER:log}
   outbox:
     # The poller runs on every replica; SKIP LOCKED in claimUnpublished is what
     # makes that safe without a leader. Set false only to hand draining to a
@@ -193,8 +238,20 @@ app:
     # waiting never fixes. Ten covers every transient cause (a throttle, a DNS
     # blip, a redeploy) and stops short of the ones that are not transient.
     # The row then shows up in the outbox.dead gauge, and bringing it back is
-    # deliberate: UPDATE outbox_events SET attempts = 0 WHERE id = ?
+    # deliberate: UPDATE outbox_events SET attempts = 0, next_attempt_at = NULL WHERE id = ?
     max-attempts: ${OUTBOX_MAX_ATTEMPTS:10}
+    # An attempt has to cost time, not just a tick, or max-attempts is a fuse
+    # on the whole table: the poller runs every second, so ten attempts used to
+    # take ten seconds and a brief SQS outage dead-lettered every pending event
+    # -- none of them defective -- while outbox.pending fell to ZERO, because a
+    # dead row is not a pending row. The alert cleared as the damage completed.
+    #
+    # Two seconds doubling to a five-minute ceiling spans about twenty minutes
+    # over ten attempts. An outage now has to outlast a deployment before
+    # anything is given up on; a genuinely poison row still drops out after the
+    # same ten attempts. Zero disables the wait, and only a test wants that.
+    retry-backoff: ${OUTBOX_RETRY_BACKOFF:2s}
+    max-retry-backoff: ${OUTBOX_MAX_RETRY_BACKOFF:5m}
     # How long a PUBLISHED row is kept before OutboxPruner may delete it.
     # Seven days is the window in which somebody still asks "did that booking
     # publish?" and can be answered from this table. Unpublished rows are never
@@ -273,7 +330,7 @@ logging:
 # -----------------------------------------------------------------------------
 # postgres -- real database on localhost, Flyway owns the schema.
 #   docker run --name pg -e POSTGRES_PASSWORD=pass -e POSTGRES_DB=flightops \
-#     -p 5432:5432 -d postgres:16-alpine
+#     -p 5432:5432 -d postgres:17-alpine
 #   DB_PASSWORD=pass ./mvnw spring-boot:run -Dspring-boot.run.profiles=postgres
 # -----------------------------------------------------------------------------
 spring:
@@ -285,12 +342,26 @@ spring:
     username: ${DB_USER:postgres}
     # No default for the password, which is why the command above sets it.
     # This line used to read ${DB_PASSWORD:pass}. It was only ever a localhost
-    # convenience, but a literal password in a committed file is the thing
-    # every secret scanner flags and every reviewer stops reading at, and the
-    # convenience it bought was one environment variable on one command. A
-    # missing value now fails at startup with the property name in the message,
-    # which is a better outcome than silently trying "pass" against a real
-    # database and getting an authentication error nobody can place.
+    # convenience, but a literal password in a committed file is the thing every
+    # secret scanner flags and every reviewer stops reading at, and the
+    # convenience it bought was one environment variable on one command.
+    #
+    # What an unset DB_PASSWORD actually does, because it is not what a reader
+    # would assume: relaxed binding leaves the placeholder unresolved rather
+    # than failing, so Hikari is handed the eleven-character string
+    # "${DB_PASSWORD}" and presents it to PostgreSQL. Startup fails during
+    # Flyway's first connection with
+    #
+    #   FATAL: password authentication failed for user "postgres"
+    #
+    # -- loud, immediate, and naming the wrong cause. An unset DB_URL is worse
+    # still: it fails with 'url' must start with "jdbc", which reads like a
+    # typo in this file. Both are startup failures rather than a service that
+    # runs against the wrong database, which is the property that matters; the
+    # message is the price. app.security's passwords do name themselves, because
+    # ApiSecurityProperties is @Validated and the unresolved literal fails its
+    # @Pattern -- see that class for the trick, which needs a bound record and
+    # is not available to a Hikari property.
     password: ${DB_PASSWORD}
     hikari:
       # Bounds how long a statement will wait for a row lock before giving up.
@@ -334,7 +405,13 @@ spring:
     locations: classpath:db/migration
 logging:
   level:
-    org.hibernate.SQL: DEBUG
+    # DEBUG by default here -- the point of running against real PostgreSQL
+    # locally is usually to read the SQL. Still a placeholder, because a literal
+    # silently wins over the ${SQL_LOG_LEVEL:WARN} in the unconditional document
+    # above (a profile document that is activated and later in the file takes
+    # the key outright), and the knob OPERATIONS.md documents was therefore
+    # inert on the one profile anybody would use it on.
+    org.hibernate.SQL: ${SQL_LOG_LEVEL:DEBUG}
 
 ---
 # -----------------------------------------------------------------------------
@@ -350,10 +427,18 @@ spring:
     password: ${DB_PASSWORD}
     hikari:
       # Same bound as the postgres profile, which is where the reasoning is
-      # written out. Repeated rather than inherited because Spring's profile
-      # merging would not bring it across: the postgres and prod documents are
-      # siblings, not parent and child, so prod would silently have had no lock
-      # timeout at all - the one environment where it matters.
+      # written out. Repeated because it has to be, and not for the reason this
+      # comment used to give.
+      #
+      # Profile documents do not inherit from each other -- postgres and prod
+      # are siblings, and activating prod contributes nothing from postgres.
+      # They DO inherit from the unconditional document at the top of this file,
+      # which is contributed on every profile. So without this line prod would
+      # not have "no lock timeout": it would have the H2 spelling from line 22,
+      # SET LOCK_TIMEOUT 3000, executed against PostgreSQL on every new
+      # connection. That is a syntax error, Hikari fails pool initialisation,
+      # and the pod never passes its readiness probe. Loud rather than silent,
+      # but still an outage, and the fix is the same line either way.
       connection-init-sql: SET lock_timeout = '3s'
   jpa:
     hibernate:
@@ -363,10 +448,12 @@ spring:
     locations: classpath:db/migration
 app:
   security:
-    # No defaults, on purpose. Same reasoning as the datasource password in the
-    # postgres profile: a missing value fails at startup naming the property,
-    # which is a better outcome than booting with a credential anyone who has
-    # read the repository already knows.
+    # No defaults, on purpose: booting with a credential anyone who has read the
+    # repository already knows is worse than not booting. Unlike the datasource
+    # password above, a missing value here really does name itself --
+    # ApiSecurityProperties is @Validated, the unresolved ${API_PASSWORD}
+    # literal fails its {bcrypt} @Pattern, and the bind error carries the
+    # property name.
     api-password: ${API_PASSWORD}
     ops-password: ${OPS_PASSWORD}
   events:

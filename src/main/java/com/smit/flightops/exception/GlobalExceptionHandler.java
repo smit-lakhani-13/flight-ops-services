@@ -170,23 +170,38 @@ public class GlobalExceptionHandler {
     }
 
     /**
-     * {@code ?sort=<something that is not a property>}.
+     * {@code ?sort=<something the endpoint does not offer>}, caught in the
+     * controller by {@code SortPolicy} before the query is built.
      *
-     * <p>This was a 500. Spring Data resolves the sort property against the
-     * entity when the query is built, which happens deep inside the repository
-     * proxy — long after any controller validation and nowhere near Bean
-     * Validation, so nothing else could have caught it. A caller typing
-     * {@code ?sort=deptime} instead of {@code departureTime} got a server
-     * error, which says "we are broken" about a request that is simply wrong.
+     * <p>The property name is echoed back deliberately, and it is safe to: it
+     * is a string the client just sent. Nothing else about the entity is —
+     * naming the class or listing its real properties would be a free schema
+     * dump for anyone probing the API.
+     */
+    @ExceptionHandler(UnknownSortPropertyException.class)
+    public ResponseEntity<ErrorResponse> handleUnknownSortProperty(UnknownSortPropertyException e) {
+        log.warn("Unknown sort property: {}", e.getPropertyName());
+        return ResponseEntity.badRequest()
+                .body(ErrorResponse.of("UNKNOWN_SORT_PROPERTY", e.getMessage(), clock.instant()));
+    }
+
+    /**
+     * The same 400, for the same mistake reaching the same place by a different
+     * route — Spring Data resolving a sort property against the entity while it
+     * builds a derived query, deep inside the repository proxy.
      *
-     * <p>{@code e.getPropertyName()} is echoed back deliberately, and it is
-     * safe to: it is a string the client just sent. The rest of the exception's
-     * text is not echoed — it names the entity class and lists its properties,
-     * which is a free schema dump for anyone probing the API.
+     * <p>This handler was the whole fix once, and it was not enough: it only
+     * fires for a query Spring Data builds. The bookings list declares its own
+     * {@code @Query} for the {@code JOIN FETCH}, so the sort was appended to
+     * the JPQL unresolved and {@code ?sort=deptime} came back 500 there long
+     * after it was 400 on flights. The check moved into the controller;
+     * this stays as the backstop for any repository call that sorts without
+     * going through {@code SortPolicy}, because the alternative is that adding
+     * one re-opens a closed bug silently.
      */
     @ExceptionHandler(PropertyReferenceException.class)
-    public ResponseEntity<ErrorResponse> handleUnknownSortProperty(PropertyReferenceException e) {
-        log.warn("Unknown sort property: {}", e.getPropertyName());
+    public ResponseEntity<ErrorResponse> handleUnresolvedSortProperty(PropertyReferenceException e) {
+        log.warn("Unknown sort property (unresolved by Spring Data): {}", e.getPropertyName());
         return ResponseEntity.badRequest()
                 .body(ErrorResponse.of("UNKNOWN_SORT_PROPERTY",
                                        "'%s' is not a sortable property.".formatted(e.getPropertyName()),

@@ -6,6 +6,7 @@ import com.smit.flightops.entity.Booking;
 import com.smit.flightops.entity.Flight;
 import com.smit.flightops.exception.BookingNotFoundException;
 import com.smit.flightops.exception.FlightNotFoundException;
+import com.smit.flightops.exception.LostIdempotencyRaceException;
 import com.smit.flightops.observability.BookingMetrics;
 import com.smit.flightops.repository.BookingRepository;
 import org.junit.jupiter.api.DisplayName;
@@ -97,6 +98,27 @@ class BookingServiceTest {
     }
 
     @Test
+    @DisplayName("REGRESSION: the writer's own lost-race signal recovers the winner too, not just the constraint")
+    void theWritersLostRaceSignalAlsoRecovers() {
+        // Same outcome as the constraint path above, reached the other way: the
+        // writer's re-read under the flight lock saw the winner before the
+        // insert could be attempted. Both routes must answer 201 with the
+        // winner's booking, or the two halves of one fix disagree.
+        when(bookingRepository.findByIdempotencyKey("raced-key")).thenReturn(Optional.empty());
+        when(bookingWriter.insertNewBooking(any()))
+                .thenThrow(new LostIdempotencyRaceException("raced-key"));
+        BookingDto winner = new BookingDto(7L, "UA123", "Smit Lakhani", 3, Instant.now(), null);
+        when(bookingWriter.recoverReplay(eq("raced-key"), any())).thenReturn(winner);
+
+        BookingDto dto = bookingService.book(request(3, "raced-key"));
+
+        assertThat(dto).isEqualTo(winner);
+        verify(bookingWriter).recoverReplay(eq("raced-key"), any());
+        verify(metrics).bookingReplayed();
+        verify(metrics, never()).bookingCreated();
+    }
+
+    @Test
     @DisplayName("a non-constraint failure from the writer propagates, not recovered")
     void unknownFlightPropagatesWithoutRecovery() {
         when(bookingRepository.findByIdempotencyKey("demo-4")).thenReturn(Optional.empty());
@@ -130,5 +152,36 @@ class BookingServiceTest {
         assertThatThrownBy(() -> bookingService.findById(999L))
                 .isInstanceOf(BookingNotFoundException.class)
                 .hasMessageContaining("999");
+    }
+
+    @Test
+    @DisplayName("a cancellation that released seats is counted as one, outside the writer's transaction")
+    void cancellationIsCountedOnceItHasCommitted() {
+        BookingDto cancelled = new BookingDto(1L, "UA123", "Smit Lakhani", 3, Instant.now(), Instant.now());
+        when(bookingWriter.cancelBooking(1L))
+                .thenReturn(new BookingWriter.Cancellation(cancelled, true));
+
+        assertThat(bookingService.cancel(1L)).isEqualTo(cancelled);
+
+        verify(metrics).bookingCancelled();
+        verify(metrics, never()).cancellationWasANoOp();
+    }
+
+    @Test
+    @DisplayName("a retried cancellation is counted as a no-op, not as a second cancellation")
+    void retriedCancellationIsCountedAsANoOp() {
+        // The counters used to be incremented inside BookingWriter's
+        // transaction, which meant a commit that later failed on Flight's
+        // @Version still moved the graph. They are here now, and the boolean
+        // is the only way this layer can tell the two outcomes apart: both
+        // return a booking carrying a cancelledAt.
+        BookingDto alreadyCancelled = new BookingDto(1L, "UA123", "Smit Lakhani", 3, Instant.now(), Instant.now());
+        when(bookingWriter.cancelBooking(1L))
+                .thenReturn(new BookingWriter.Cancellation(alreadyCancelled, false));
+
+        bookingService.cancel(1L);
+
+        verify(metrics).cancellationWasANoOp();
+        verify(metrics, never()).bookingCancelled();
     }
 }

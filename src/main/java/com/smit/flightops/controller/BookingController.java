@@ -28,6 +28,19 @@ import java.net.URI;
                    + "cancelling one is idempotent on the booking\u0027s own state.")
 public class BookingController {
 
+    /**
+     * What {@code ?sort=} may name on the list endpoint.
+     *
+     * <p>{@code idempotencyKey} is absent on purpose. It is already kept out of
+     * {@link BookingDto} so a caller cannot read the keys of bookings it did not
+     * make, and a sortable-but-invisible column gives the same information back
+     * a comparison at a time. {@code flight} is absent because sorting by an
+     * association sorts by its primary key, which is a number the API never
+     * shows and nobody meant to ask for.
+     */
+    private static final java.util.Set<String> SORTABLE =
+            java.util.Set.of("id", "createdAt", "passengerName", "seats", "cancelledAt");
+
     private final BookingService bookingService;
 
     public BookingController(BookingService bookingService) {
@@ -113,13 +126,22 @@ public class BookingController {
      * can then overlap or skip rows entirely. The ordering used to be baked
      * into the repository query; moving to {@code Pageable} took it out, so it
      * is declared here instead of being silently lost.
+     *
+     * <p>{@code createdAt} alone did not finish the job, which is the second
+     * half of the same bug: it is not unique, and twenty bookings made in the
+     * same second have no order between them, so the overlap this Javadoc
+     * claims to prevent came back at a smaller scale. {@link SortPolicy} adds
+     * {@code id} as a tiebreaker and rejects a property this endpoint does not
+     * offer — without it, {@code ?sort=nonsense} was a 500, because the
+     * repository method declares its own {@code @Query} and Spring Data
+     * therefore never resolved the property to complain about it.
      */
     @GetMapping
     public Page<BookingDto> byFlight(
             @RequestParam String flightNumber,
             @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.ASC)
             Pageable pageable) {
-        return bookingService.findByFlightNumber(flightNumber, pageable);
+        return bookingService.findByFlightNumber(flightNumber, SortPolicy.stable(pageable, SORTABLE));
     }
 
     /**

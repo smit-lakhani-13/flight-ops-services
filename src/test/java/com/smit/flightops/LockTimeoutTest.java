@@ -1,6 +1,9 @@
 package com.smit.flightops;
 
 import com.smit.flightops.config.SecurityConfig;
+import com.smit.flightops.observability.BookingMetrics;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import com.smit.flightops.repository.FlightRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -85,12 +88,19 @@ class LockTimeoutTest {
     @Autowired private MockMvc mockMvc;
     @Autowired private PlatformTransactionManager transactionManager;
     @Autowired private FlightRepository flightRepository;
+    @Autowired private MeterRegistry meterRegistry;
+
+    private double lockTimeoutCount() {
+        Counter counter = meterRegistry.find(BookingMetrics.LOCK_TIMEOUT).counter();
+        return counter == null ? 0d : counter.count();
+    }
 
     @Test
     @DisplayName("a booking that cannot get the flight row lock is 503 with Retry-After, not 500")
     void contendedFlightRowGives503() throws Exception {
         CountDownLatch lockHeld = new CountDownLatch(1);
         CountDownLatch releaseLock = new CountDownLatch(1);
+        double timeoutsBefore = lockTimeoutCount();
 
         // The inner try/finally is not redundant, and getting it wrong cost
         // this test thirty seconds per run. Java 21 made ExecutorService
@@ -129,6 +139,18 @@ class LockTimeoutTest {
                         .andExpect(status().isServiceUnavailable())
                         .andExpect(header().string("Retry-After", "1"))
                         .andExpect(jsonPath("$.code").value("LOCK_TIMEOUT"));
+
+                // The status code is the client's contract; this counter is the
+                // operator's. OPERATIONS.md names
+                // rate(bookings_lock_timeout_total[5m]) as the leading indicator
+                // for contention -- the alert that fires before the 503s become
+                // a customer's problem -- and until now nothing asserted that
+                // the meter is incremented at all. A refactor that moved the
+                // increment off the 503 path would have left the alert
+                // permanently silent with every test still green.
+                assertThat(lockTimeoutCount())
+                        .as("the 503 must also move bookings.lock_timeout")
+                        .isEqualTo(timeoutsBefore + 1);
             } finally {
                 releaseLock.countDown();
             }
@@ -138,6 +160,8 @@ class LockTimeoutTest {
     @Test
     @DisplayName("with nothing holding the lock the same request succeeds, so the timeout is not just rejecting everything")
     void uncontendedBookingStillSucceeds() throws Exception {
+        double timeoutsBefore = lockTimeoutCount();
+
         mockMvc.perform(post("/api/v1/bookings")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -145,5 +169,12 @@ class LockTimeoutTest {
                                  "idempotencyKey":"lock-timeout-control-1"}
                                 """))
                 .andExpect(status().isCreated());
+
+        // The other half of the meter's contract: it counts contention, not
+        // bookings. A counter that also moved on the happy path would make the
+        // alert fire on ordinary traffic and get muted within a week.
+        assertThat(lockTimeoutCount())
+                .as("a successful booking must not move bookings.lock_timeout")
+                .isEqualTo(timeoutsBefore);
     }
 }

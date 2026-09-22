@@ -1,5 +1,6 @@
 package com.smit.flightops;
 
+import com.smit.flightops.config.DataSeeder;
 import com.smit.flightops.dto.BookingRequest;
 import com.smit.flightops.dto.CreateFlightRequest;
 import com.smit.flightops.entity.Flight;
@@ -11,6 +12,7 @@ import com.smit.flightops.service.FlightService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.DefaultApplicationArguments;
 import org.springframework.data.domain.Pageable;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
@@ -24,6 +26,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -68,16 +71,25 @@ class BookingIntegrationTest {
      * {@code @ServiceConnection} beats the profile's hard-coded localhost URL:
      * it contributes a JdbcConnectionDetails bean, and bean-based connection
      * details take priority over {@code spring.datasource.*} properties.
+     *
+     * <p>{@code 17-alpine}, and the major version is the load-bearing part.
+     * This container is the only place the Flyway migrations are ever executed
+     * against real PostgreSQL, so it is what decides whether a migration is
+     * accepted. {@code compose.yaml} and {@code deploy/aws/data.yaml} are both
+     * on 17; this was on 16, which meant CI was clearing migrations against a
+     * major version nothing runs. A migration that passes on one major and
+     * fails on another is a class of bug that costs one word to remove.
      */
     @Container
     @ServiceConnection
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:16-alpine");
+    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>("postgres:17-alpine");
 
     @Autowired private BookingService bookingService;
     @Autowired private FlightService flightService;
     @Autowired private FlightRepository flightRepository;
     @Autowired private BookingRepository bookingRepository;
     @Autowired private JdbcTemplate jdbcTemplate;
+    @Autowired private DataSeeder seeder;
 
     private static final int SEATS_ON_SALE = 5;
     private static final int CONTENDERS = 20;
@@ -94,8 +106,25 @@ class BookingIntegrationTest {
         return flightNumber;
     }
 
-    /** Runs every task at once and reports how many completed without throwing. */
-    private static int countSuccesses(List<Callable<Void>> tasks) throws Exception {
+    /**
+     * Runs every task at once and reports how many completed without throwing.
+     *
+     * <p>{@code allowedFailure} is the load-bearing argument. This method used
+     * to swallow bare {@code Exception}, which made the two race tests below
+     * assert far less than they appear to: a contender that failed because the
+     * pool starved, because {@code lock_timeout} fired, or because the entity
+     * manager was in a broken state was counted as a correctly-losing racer.
+     * The oversell test would then still pass on a build where the row lock had
+     * stopped working, provided the number of wrong failures happened to land
+     * on {@code SEATS_ON_SALE}.
+     *
+     * <p>So exactly one cause is tolerated, named by the caller, and anything
+     * else is rethrown and fails the test with the real stack trace. The cause
+     * is unwrapped because {@code Future.get} wraps everything in an
+     * {@code ExecutionException}.
+     */
+    private static int countSuccesses(List<Callable<Void>> tasks,
+                                      Class<? extends Throwable> allowedFailure) throws Exception {
         AtomicInteger succeeded = new AtomicInteger();
         try (ExecutorService pool = Executors.newFixedThreadPool(tasks.size())) {
             List<Future<Void>> futures = pool.invokeAll(tasks, 60, TimeUnit.SECONDS);
@@ -103,7 +132,16 @@ class BookingIntegrationTest {
                 try {
                     future.get();
                     succeeded.incrementAndGet();
-                } catch (Exception expectedForLosers) {
+                } catch (ExecutionException e) {
+                    Throwable cause = e.getCause();
+                    if (allowedFailure == null || !allowedFailure.isInstance(cause)) {
+                        throw new AssertionError(
+                                "a contender failed for the wrong reason: expected "
+                                        + (allowedFailure == null ? "no failure at all"
+                                                                  : allowedFailure.getSimpleName())
+                                        + ", got " + (cause == null ? "null" : cause.getClass().getName()),
+                                cause);
+                    }
                     // Losing the seat race is the correct outcome, not a failure.
                 }
             }
@@ -126,12 +164,37 @@ class BookingIntegrationTest {
                 .isEqualTo(1);
     }
 
+    /**
+     * The name promised idempotency and the body only proved the seeder had run
+     * once, which is a different claim and a much weaker one. Deleting the
+     * existence guard from {@code DataSeeder} left this test green.
+     *
+     * <p>So the seeder is invoked a second time, by hand, exactly as a second
+     * application start would invoke it, and the row count is asserted on both
+     * sides. This matters on PostgreSQL and not on H2: H2 is
+     * {@code create-drop}, so a second start never meets the first start's
+     * rows. On PostgreSQL with {@code ddl-auto: validate} a duplicate insert
+     * makes {@code findByFlightNumber} — which returns an {@code Optional} —
+     * throw {@code IncorrectResultSizeDataAccessException} on every lookup of
+     * that flight, and the README's own demo curls stop working.
+     */
     @Test
-    @DisplayName("the seeder is idempotent against a persistent database")
+    @DisplayName("running the seeder twice inserts nothing the second time")
     void seedRanOnPostgres() {
         assertThat(flightRepository.existsByFlightNumber("UA123")).isTrue();
         assertThat(flightRepository.existsByFlightNumber("UA456")).isTrue();
         assertThat(flightRepository.existsByFlightNumber("UA789")).isTrue();
+
+        long before = flightRepository.count();
+
+        seeder.run(new DefaultApplicationArguments());
+
+        assertThat(flightRepository.count())
+                .as("a second seeder run must insert nothing")
+                .isEqualTo(before);
+        // And the consequence of a duplicate, stated as the assertion an
+        // operator would actually notice: Optional-returning lookups still work.
+        assertThat(flightRepository.findByFlightNumber("UA123")).isPresent();
     }
 
     @Test
@@ -147,7 +210,10 @@ class BookingIntegrationTest {
                 })
                 .toList();
 
-        int booked = countSuccesses(attempts);
+        // InsufficientSeatsException and nothing else: a contender that lost
+        // the seat race is expected, a contender that fell over for any other
+        // reason is a bug this test now reports instead of absorbing.
+        int booked = countSuccesses(attempts, InsufficientSeatsException.class);
 
         assertThat(booked).as("the row lock lets exactly the seat count through").isEqualTo(SEATS_ON_SALE);
         assertThat(availableSeats(flightNumber)).isZero();
@@ -174,7 +240,9 @@ class BookingIntegrationTest {
         // a 409. countSuccesses would previously report ~1 success and
         // (CONTENDERS - 1) caught exceptions for this same test; it now reports
         // CONTENDERS, which is the whole point of the fix.
-        int booked = countSuccesses(attempts);
+        // null: no failure is legitimate here at all, so any exception at all
+        // fails the test rather than quietly lowering the count.
+        int booked = countSuccesses(attempts, null);
 
         assertThat(booked).as("no caller should see an exception on a raced replay")
                 .isEqualTo(CONTENDERS);

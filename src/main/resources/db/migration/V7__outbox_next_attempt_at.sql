@@ -1,0 +1,56 @@
+-- Puts a retry on a clock instead of on a tick.
+--
+-- THE BUG THIS CLOSES. The attempt ceiling (V5 plus app.outbox.max-attempts)
+-- was designed for one failure: a row whose payload the transport will never
+-- accept. It bounds that correctly. What it did not distinguish is the other
+-- failure, which is far more likely and far worse -- the transport itself
+-- being briefly unavailable.
+--
+-- The poller runs every second. Attempts were counted per tick and nothing
+-- else, so ten attempts took ten seconds: an SQS blip lasting a quarter of a
+-- minute permanently dead-lettered every pending event, and every event
+-- written during it, without a single one of them being defective. The gauge
+-- that is supposed to catch a queue outage, outbox.pending, would have fallen
+-- to ZERO while it happened, because a dead row is not a pending row. The
+-- alert would have cleared at the exact moment the damage completed.
+--
+-- The fix is that an attempt now costs wall-clock time. markFailed sets this
+-- column to now() + backoff(attempts) -- doubling, capped by
+-- app.outbox.max-retry-backoff -- and the claim query skips rows whose time
+-- has not come. Ten attempts therefore span roughly twenty minutes at the
+-- shipped defaults rather than ten seconds, so an outage has to outlast a
+-- deployment before anything is abandoned, while a genuinely poison row still
+-- drops out after the same ten attempts and still shows up in outbox.dead.
+--
+-- NULLABLE, and NULL means "eligible now". That is what makes this migration
+-- safe to apply to a table with rows already in it: every existing row, failed
+-- or not, is claimable on the next tick exactly as it was before. A NOT NULL
+-- DEFAULT now() would have delayed nothing and said nothing, but it would have
+-- made the column's meaning depend on when the migration ran.
+--
+-- TIMESTAMPTZ, matching created_at and published_at. A naive timestamp here
+-- would compare a UTC instant against a server-local clock, and the error is
+-- invisible until the first deployment in a region that is not UTC.
+ALTER TABLE outbox_events ADD COLUMN next_attempt_at TIMESTAMPTZ;
+
+-- No index, and this one is worth arguing rather than asserting.
+--
+-- The claim query reads:
+--
+--   WHERE published_at IS NULL AND attempts < :max
+--     AND (next_attempt_at IS NULL OR next_attempt_at <= :now)
+--   ORDER BY id LIMIT :batch
+--
+-- and it is served by idx_outbox_unpublished, the partial index on (id) WHERE
+-- published_at IS NULL from V5. That index contains only unpublished rows --
+-- normally a handful -- so walking it in id order and filtering the other two
+-- predicates on the heap examines a handful of rows. An index carrying
+-- next_attempt_at would be maintained on every insert on the booking
+-- transaction's hot path to save work that is already negligible.
+--
+-- The honest caveat, which V5's comment does not make and OPERATIONS.md now
+-- does: "a handful" is the number of UNPUBLISHED rows, and dead rows are
+-- unpublished forever. Rows abandoned at the ceiling stay in this index until
+-- an operator re-drives or deletes them. That is deliberate -- an event nobody
+-- can deliver is data, and this service will not quietly delete it -- but it
+-- means outbox.dead is a gauge somebody has to act on, not merely watch.

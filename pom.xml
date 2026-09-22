@@ -13,7 +13,7 @@
 
     <groupId>com.smit</groupId>
     <artifactId>flight-ops-service</artifactId>
-    <version>1.0.0</version>
+    <version>1.1.0</version>
     <packaging>jar</packaging>
 
     <name>flight-ops-service</name>
@@ -80,8 +80,15 @@
           upgraded. It touches Jackson 2 only; Jackson 3 stays on Boot's version
           and remains what this application actually serialises with. Delete this
           the day springdoc's swagger-core lands on Boot's Jackson 2 version.
+
+          Kept in step with <jackson.version> in lambda/pom.xml. The two modules
+          are separate builds, so nothing enforces that; what it buys is that
+          the producer and the consumer serialise the event contract with the
+          same Jackson, which is the one place a difference between them would
+          be expensive. 2.22.1 is the floor swagger-core needs, so this can move
+          up with the Lambda's pin and not down.
         -->
-        <jackson-2-bom.version>2.22.1</jackson-2-bom.version>
+        <jackson-2-bom.version>2.22.2</jackson-2-bom.version>
 
         <!--
           Build-gate plugin versions. These are pinned here rather than inherited
@@ -304,9 +311,30 @@
 
     <build>
         <plugins>
+            <!--
+              build-info writes META-INF/build-info.properties into the jar, and
+              without it two things that look configured are empty: /actuator/info
+              returns {} although `info` is in the exposure list, and the OpenAPI
+              document falls back to a hard-coded version in OpenApiConfig that
+              nothing updates on a release. CONTRIBUTING.md asks a bug reporter
+              for the version from /actuator/info, so an empty response there is
+              a documented instruction that does not work.
+
+              It is an execution rather than a property because the goal is not
+              in the plugin's default lifecycle binding. The generated file is a
+              build artefact, never committed.
+            -->
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>build-info</id>
+                        <goals>
+                            <goal>build-info</goal>
+                        </goals>
+                    </execution>
+                </executions>
             </plugin>
 
             <!--

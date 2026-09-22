@@ -33,6 +33,15 @@ import java.net.URI;
                    + "cancelling a flight is a soft delete that its bookings outlive.")
 public class FlightController {
 
+    /**
+     * What {@code ?sort=} may name on the search endpoint. {@code version} is
+     * absent: it is the optimistic-locking counter, it means nothing to a
+     * caller, and ordering by it leaks how often a row has been written.
+     */
+    private static final java.util.Set<String> SORTABLE = java.util.Set.of(
+            "id", "flightNumber", "origin", "destination",
+            "totalSeats", "availableSeats", "status", "departureTime");
+
     private final FlightService flightService;
 
     public FlightController(FlightService flightService) {
@@ -47,12 +56,21 @@ public class FlightController {
     /**
      * Paged, not a bare List: an unbounded collection endpoint is a load-bearing
      * outage waiting for the table to grow.
+     *
+     * <p>{@code departureTime} is not unique — a codeshare pair leaves at the
+     * same minute — so {@link SortPolicy} appends {@code id} to make the paging
+     * stable. It also checks the property against {@link #SORTABLE} rather than
+     * leaving that to Spring Data. Spring Data would catch it here, because
+     * these are derived queries and it resolves the property to build them; it
+     * does not catch it on the bookings endpoint, and an endpoint's HTTP
+     * contract should not depend on which kind of query the repository happens
+     * to use this month.
      */
     @GetMapping
     public Page<FlightDto> search(@RequestParam(required = false) String origin,
                                   @RequestParam(required = false) String destination,
                                   @PageableDefault(size = 20, sort = "departureTime") Pageable pageable) {
-        return flightService.search(origin, destination, pageable);
+        return flightService.search(origin, destination, SortPolicy.stable(pageable, SORTABLE));
     }
 
     /**

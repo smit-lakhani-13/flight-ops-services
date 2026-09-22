@@ -25,6 +25,7 @@
         }
       },
       "md5OfBody": "3f2a1b9c8d7e6f504132a5b6c7d8e9f0",
+      "md5OfMessageAttributes": "5d41402abc4b2a76b9719d911017c592",
       "eventSource": "aws:sqs",
       "eventSourceARN": "arn:aws:sqs:ap-south-1:123456789012:booking-events",
       "awsRegion": "ap-south-1"
@@ -48,6 +49,7 @@
         }
       },
       "md5OfBody": "9a8b7c6d5e4f30291827364554637281",
+      "md5OfMessageAttributes": "7d793037a0760186574b0282f2f435e7",
       "eventSource": "aws:sqs",
       "eventSourceARN": "arn:aws:sqs:ap-south-1:123456789012:booking-events",
       "awsRegion": "ap-south-1"

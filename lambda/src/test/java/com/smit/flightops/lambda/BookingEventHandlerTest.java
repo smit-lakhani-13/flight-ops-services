@@ -301,6 +301,66 @@ class BookingEventHandlerTest {
     }
 
     @Test
+    @DisplayName("REGRESSION: a missing seats field is a failure, not a booking for nought seats")
+    void anAbsentSeatsFieldIsNotWritten() {
+        // This used to be the worst failure shape available here. Jackson's
+        // record deserialiser passes null for an absent creator parameter and
+        // Java unboxes it to 0, so the item was written with seats = 0, the
+        // conditional write succeeded, and nothing retried or alerted. A
+        // projection that quietly reads zero is worse than one missing a row.
+        String body = """
+                      {"bookingId":"1001","flightNumber":"UA2402",
+                       "timestamp":"2026-09-15T09:41:12.481923Z"}
+                      """;
+
+        SQSBatchResponse response = handler.handleRequest(event(body), contextWithLogger());
+
+        assertThat(response.getBatchItemFailures())
+                .extracting(SQSBatchResponse.BatchItemFailure::getItemIdentifier)
+                .containsExactly("msg-0");
+        verifyNoInteractions(dynamoDb);
+    }
+
+    @Test
+    @DisplayName("an explicitly null seats field fails the same way an absent one does")
+    void anExplicitNullSeatsFieldIsNotWritten() {
+        // The two shapes take different paths through Jackson and only one
+        // feature covers both, so they are pinned separately.
+        String body = """
+                      {"bookingId":"1001","flightNumber":"UA2402","seats":null,
+                       "timestamp":"2026-09-15T09:41:12.481923Z"}
+                      """;
+
+        SQSBatchResponse response = handler.handleRequest(event(body), contextWithLogger());
+
+        assertThat(response.getBatchItemFailures())
+                .extracting(SQSBatchResponse.BatchItemFailure::getItemIdentifier)
+                .containsExactly("msg-0");
+        verifyNoInteractions(dynamoDb);
+    }
+
+    @Test
+    @DisplayName("a renamed key field is reported with the field name, not as a DynamoDB error")
+    void aMissingKeyFieldNamesItself() {
+        // The realistic cause is the producer renaming flight_number. Nothing
+        // in Jackson catches a missing String: it binds null,
+        // AttributeValue.fromS(null) returns an AttributeValue with no
+        // datatype rather than throwing, and the failure used to arrive from
+        // DynamoDB three receives later naming nothing.
+        String body = """
+                      {"bookingId":"1001","seats":2,
+                       "timestamp":"2026-09-15T09:41:12.481923Z"}
+                      """;
+
+        SQSBatchResponse response = handler.handleRequest(event(body), contextWithLogger());
+
+        assertThat(response.getBatchItemFailures())
+                .extracting(SQSBatchResponse.BatchItemFailure::getItemIdentifier)
+                .containsExactly("msg-0");
+        verifyNoInteractions(dynamoDb);
+    }
+
+    @Test
     @DisplayName("an empty batch is a no-op, not a crash")
     void emptyBatchIsANoOp() {
         SQSEvent empty = new SQSEvent();

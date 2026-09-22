@@ -45,6 +45,10 @@ import static org.mockito.Mockito.verify;
         properties = {
                 "spring.datasource.url=jdbc:h2:mem:outboxpoison;DB_CLOSE_DELAY=-1",
                 "app.outbox.poll-interval=3600000",
+                // Two drains, back to back, with no clock moved between
+                // them. The retry backoff (V7) would make the second one claim
+                // nothing, so it is off here; OutboxRetryBackoffTest pins it.
+                "app.outbox.retry-backoff=0",
                 "app.outbox.max-attempts=2"
         })
 class OutboxPoisonRowTest {
@@ -128,7 +132,9 @@ class OutboxPoisonRowTest {
         assertThat(gauge("outbox.dead")).isEqualTo(1);
 
         doNothing().when(eventPublisher).publish(anyString(), anyString(), anyMap());
-        jdbcTemplate.update("UPDATE outbox_events SET attempts = 0 WHERE id = ?", poisoned.getId());
+        jdbcTemplate.update(
+                "UPDATE outbox_events SET attempts = 0, next_attempt_at = NULL WHERE id = ?",
+                poisoned.getId());
 
         outboxPublisher.drainOutbox();
 

@@ -62,6 +62,13 @@ import static org.mockito.Mockito.verifyNoInteractions;
         properties = {
                 "spring.datasource.url=jdbc:h2:mem:outboxtest;DB_CLOSE_DELAY=-1",
                 "app.outbox.poll-interval=3600000",
+                // These tests drain twice in a row with no clock in
+                // between, so the retry backoff — which is what stops a brief
+                // outage from dead-lettering the table, see V7 — would make
+                // the second drain claim nothing. Zero is the documented way
+                // to switch it off, and OutboxRetryBackoffTest is where the
+                // backoff itself is pinned.
+                "app.outbox.retry-backoff=0",
                 // Sampling is 0.1 in production, which would make the trace
                 // assertions below pass nine times in ten. Every span here is
                 // sampled so that "no traceparent" can only mean the code did

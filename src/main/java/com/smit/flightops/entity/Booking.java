@@ -65,11 +65,14 @@ public class Booking {
      * 180-seat flight with 100 sold would still invent two seats out of
      * nothing. {@link #cancel()} refuses the second call instead.
      *
-     * <p>No partial index on the entity to match {@code idx_bookings_active}:
-     * JPA's {@code @Index} cannot express a {@code WHERE} clause, so that one
-     * lives only in V4 and only on PostgreSQL. H2 gets the plain
-     * {@code idx_bookings_flight_id} equivalent, which is correct if slightly
-     * larger, and no test depends on the difference.
+     * <p>No index on this column, on either database, and that is now the
+     * considered answer rather than a gap. V4 created a partial
+     * {@code idx_bookings_active} on {@code (flight_id) WHERE cancelled_at IS
+     * NULL}; V8 drops it. PostgreSQL will only choose a partial index when the
+     * query repeats its predicate, and no query here does — the bookings list
+     * deliberately returns cancelled rows too, because a cancelled booking
+     * keeps its idempotency key and has to be replayable. An index nothing
+     * reads is write cost on every insert and a line in every VACUUM.
      */
     @Column private Instant cancelledAt;
 

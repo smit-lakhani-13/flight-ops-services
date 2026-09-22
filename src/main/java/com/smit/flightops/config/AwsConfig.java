@@ -50,10 +50,21 @@ public class AwsConfig {
      * <p>Two timeouts, because they mean different things:
      * {@code apiCallAttemptTimeout} bounds one HTTP attempt and lets the
      * retry policy try again, which is what you want for a dropped packet;
-     * {@code apiCallTimeout} bounds the whole call including every retry, and
-     * is the one that actually bounds the drain. Setting only the attempt
-     * timeout is a common and subtle mistake — three retries of a 2-second
-     * attempt is a 6-second call, and the number you thought you had set was 2.
+     * {@code apiCallTimeout} bounds the whole call including every retry.
+     * Setting only the attempt timeout is a common and subtle mistake — three
+     * retries of a 2-second attempt is a 6-second call, and the number you
+     * thought you had set was 2.
+     *
+     * <p><b>It bounds one send, not the drain.</b> That distinction is worth
+     * stating precisely, because this comment used to get it wrong.
+     * {@code OutboxPublisher} sends the claimed rows one at a time, so a tick
+     * is bounded at {@code app.outbox.batch-size} × this value — 100 × 5s,
+     * eight and a bit minutes, if every send times out. That is the intended
+     * trade rather than an oversight: the rows are locked {@code FOR UPDATE
+     * SKIP LOCKED}, so the other replicas step straight past them and keep
+     * draining, and every one of those sends is an attempt that has to be made
+     * before the queue can be declared unreachable. Shrinking the batch size
+     * shortens the worst case directly, at the cost of more claims per second.
      *
      * <p>A send that times out is not a lost event. {@code OutboxPublisher}
      * catches it, increments {@code attempts}, records the message on the row

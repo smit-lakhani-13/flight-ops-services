@@ -47,6 +47,20 @@ import java.time.Duration;
  *                       small enough to be invisible.
  * @param pruneBatchSize rows deleted per statement. See {@code OutboxPruner}
  *                       for why this is batched at all rather than one DELETE.
+ * @param retryBackoff   how long the FIRST retry waits, doubling per attempt.
+ *                       This is what makes {@code maxAttempts} a bound on time
+ *                       rather than on ticks. Without it the two were the same
+ *                       thing at the poll rate: ten attempts, one second apart,
+ *                       meant a ten-second queue outage permanently abandoned
+ *                       every pending event — none of them defective, and the
+ *                       {@code outbox.pending} gauge falling to zero as it
+ *                       happened. Zero disables backoff, which only the tests
+ *                       that drain twice in a row have any use for.
+ * @param maxRetryBackoff the cap on the doubling. Two seconds doubling to a
+ *                       five-minute ceiling spans about twenty minutes over ten
+ *                       attempts, so an outage has to outlast a deployment
+ *                       before anything is given up on, and a genuinely poison
+ *                       row still drops out after the same ten attempts.
  */
 @ConfigurationProperties(prefix = "app.outbox")
 public record OutboxProperties(boolean enabled,
@@ -55,7 +69,9 @@ public record OutboxProperties(boolean enabled,
                                @DefaultValue("10") int maxAttempts,
                                @DefaultValue("7d") Duration retention,
                                @DefaultValue("1h") Duration pruneInterval,
-                               @DefaultValue("1000") int pruneBatchSize) {
+                               @DefaultValue("1000") int pruneBatchSize,
+                               @DefaultValue("2s") Duration retryBackoff,
+                               @DefaultValue("5m") Duration maxRetryBackoff) {
 
     /**
      * The shortest retention this will accept. Below an hour, a pruner running
@@ -85,6 +101,15 @@ public record OutboxProperties(boolean enabled,
         }
         if (pruneBatchSize <= 0) {
             throw new IllegalArgumentException("app.outbox.prune-batch-size must be positive");
+        }
+        if (retryBackoff == null || retryBackoff.isNegative()) {
+            throw new IllegalArgumentException(
+                    "app.outbox.retry-backoff must not be negative (zero disables backoff)");
+        }
+        if (maxRetryBackoff == null || maxRetryBackoff.compareTo(retryBackoff) < 0) {
+            throw new IllegalArgumentException(
+                    "app.outbox.max-retry-backoff must be at least app.outbox.retry-backoff, "
+                    + "or the cap would shorten the first retry instead of bounding the last");
         }
     }
 }

@@ -35,13 +35,21 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * implies it from {@code @SpringBootTest}. Without it, {@code MockMvc} simply
  * is not a bean and the context fails to start.
  *
+ * <p>Its own H2 database, for the reason {@code SecurityRulesTest} has one.
+ * {@code ddl-auto} is {@code create-drop} and the default URL is a single
+ * JVM-wide in-memory database, so a second application context starting on it
+ * drops and recreates the tables underneath the first — which is cached, not
+ * closed. These tests create flights and bookings and count seats; sharing the
+ * database made them pass on Surefire's class ordering rather than on their own
+ * merits, and nothing would have failed loudly when that ordering changed.
+ *
  * <p>Runs on H2 with the seeded demo flights, so no Docker and no PostgreSQL —
  * these assertions are about HTTP status and response shape, not about SQL
  * dialects. The two places where PostgreSQL genuinely behaves differently
  * (the {@code FOR UPDATE} contention and the {@code lock_timeout}) are covered
  * in {@link BookingIntegrationTest} and {@link LockTimeoutTest} respectively.
  */
-@SpringBootTest
+@SpringBootTest(properties = "spring.datasource.url=jdbc:h2:mem:errorcontract;DB_CLOSE_DELAY=-1")
 @AutoConfigureMockMvc
 /**
  * Authenticated as a caller holding both scopes, because these tests are about
@@ -80,6 +88,48 @@ class ErrorContractTest {
     }
 
     @Test
+    @DisplayName("?sort=<unknown property> is 400 on the bookings list too, not 500")
+    void unknownSortPropertyIsABadRequestOnBookingsAsWell() throws Exception {
+        // This was a 500 long after the flights endpoint was fixed. The two
+        // endpoints reach the sort by different routes: flights uses a derived
+        // query, so Spring Data resolved the property and raised
+        // PropertyReferenceException; bookings declares its own @Query for the
+        // JOIN FETCH, so the property went into the JPQL unresolved and
+        // Hibernate failed to parse it. One fix covered one of them.
+        mockMvc.perform(get("/api/v1/bookings")
+                        .param("flightNumber", "UA123")
+                        .param("sort", "deptime"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("UNKNOWN_SORT_PROPERTY"))
+                .andExpect(jsonPath("$.message").value(containsString("deptime")))
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.not(containsString("Booking"))));
+    }
+
+    @Test
+    @DisplayName("a property the entity has but the endpoint does not offer is still 400")
+    void idempotencyKeyIsNotSortable() throws Exception {
+        // idempotencyKey is a real column and a real entity property, so an
+        // entity-derived check would allow it. It is deliberately absent from
+        // BookingDto because a caller must not be able to read keys it did not
+        // create, and ?sort=idempotencyKey gives the same information back one
+        // comparison at a time.
+        mockMvc.perform(get("/api/v1/bookings")
+                        .param("flightNumber", "UA123")
+                        .param("sort", "idempotencyKey"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("UNKNOWN_SORT_PROPERTY"));
+    }
+
+    @Test
+    @DisplayName("a known sort property on bookings still sorts")
+    void knownSortPropertyOnBookingsStillSorts() throws Exception {
+        mockMvc.perform(get("/api/v1/bookings")
+                        .param("flightNumber", "UA123")
+                        .param("sort", "seats,desc"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
     @DisplayName("a known sort property still works, so the fix did not just break sorting")
     void knownSortPropertyStillSorts() throws Exception {
         mockMvc.perform(get("/api/v1/flights").param("sort", "departureTime,desc"))
@@ -114,6 +164,25 @@ class ErrorContractTest {
                                 """))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.fieldErrors.destination").exists());
+    }
+
+    @Test
+    @DisplayName("an idempotency key carrying a newline is refused at the edge, not logged")
+    void idempotencyKeyCannotForgeALogLine() throws Exception {
+        // The key reaches a log line on every replay and every conflict. Before
+        // the @Pattern it was @NotBlank @Size only, so this body would have
+        // written the attacker's second line into the log at INFO — the exact
+        // attack SECURITY.md describes for X-Request-Id, on a field nobody had
+        // thought of as reaching a logger.
+        mockMvc.perform(post("/api/v1/bookings")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"flightNumber":"UA123","passengerName":"Mallory","seats":1,
+                                 "idempotencyKey":"ok-1\\n2026-01-01 INFO Booked 400 seats"}
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.fieldErrors.idempotencyKey").exists());
     }
 
     // ------------------------------------------------------------------
@@ -308,6 +377,33 @@ class ErrorContractTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.page.size").value(1))
                 .andExpect(jsonPath("$.page.number").value(0));
+    }
+
+    @Test
+    @DisplayName("/error answers in the documented envelope, not Boot's default map")
+    void theErrorPathUsesTheDocumentedEnvelope() throws Exception {
+        // Boot's BasicErrorController answers this with
+        //   500 {"timestamp":"...","status":999,"error":"None"}
+        // -- different keys, a status that is not an HTTP status, and a server
+        // fault announced for a client asking after a path that is not part of
+        // the API. Three documents promise {code, message, timestamp} on every
+        // error; this is the path that used not to keep that promise.
+        mockMvc.perform(get("/error"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("RESOURCE_NOT_FOUND"))
+                .andExpect(jsonPath("$.message").exists())
+                .andExpect(jsonPath("$.timestamp").exists())
+                .andExpect(jsonPath("$.status").doesNotExist())
+                .andExpect(jsonPath("$.error").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("an unmapped path under the API is a 404 in the same envelope")
+    void anUnmappedPathIsNotFound() throws Exception {
+        mockMvc.perform(get("/api/v1/does-not-exist"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("RESOURCE_NOT_FOUND"))
+                .andExpect(jsonPath("$.timestamp").exists());
     }
 
     private int availableSeats(String flightNumber) throws Exception {

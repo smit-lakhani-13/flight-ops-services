@@ -7,6 +7,8 @@ import com.amazonaws.services.lambda.runtime.events.SQSBatchResponse;
 import com.amazonaws.services.lambda.runtime.events.SQSEvent;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import software.amazon.awssdk.core.client.config.ClientOverrideConfiguration;
+import software.amazon.awssdk.core.retry.RetryMode;
 import software.amazon.awssdk.http.urlconnection.UrlConnectionHttpClient;
 import software.amazon.awssdk.services.dynamodb.DynamoDbClient;
 import software.amazon.awssdk.services.dynamodb.model.AttributeValue;
@@ -14,6 +16,7 @@ import software.amazon.awssdk.services.dynamodb.model.ConditionalCheckFailedExce
 import software.amazon.awssdk.services.dynamodb.model.PutItemRequest;
 
 import java.time.DateTimeException;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -74,11 +77,26 @@ public class BookingEventHandler implements RequestHandler<SQSEvent, SQSBatchRes
      * every message in flight and fills the DLQ. Additive schema changes have to
      * be non-events for the consumer.
      *
+     * <p>Tolerating a <em>missing</em> field is a different matter, and the
+     * opposite decision: {@code FAIL_ON_NULL_FOR_PRIMITIVES} is switched on.
+     * Jackson's record deserialiser passes null for a creator parameter that was
+     * not present, and Java then unboxes null to {@code 0} for an {@code int}.
+     * So a message whose {@code seats} field was absent, or explicitly
+     * {@code null}, deserialised cleanly to {@code seats = 0}, passed the
+     * conditional write, and was stored in DynamoDB as a booking for nought
+     * seats — a success, permanently, with no retry and nothing in the DLQ.
+     * A projection that silently reads zero is worse than one that is missing a
+     * row, because nothing ever goes looking for it. With the feature enabled
+     * both shapes throw {@code MismatchedInputException}, the message is
+     * reported as a batch item failure, and it lands in the DLQ where somebody
+     * can look at it.
+     *
      * <p>ObjectMapper is thread-safe once configured, which is what makes sharing
      * one static instance safe.
      */
     private static final ObjectMapper MAPPER = new ObjectMapper()
-            .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
+            .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+            .enable(DeserializationFeature.FAIL_ON_NULL_FOR_PRIMITIVES);
 
     /**
      * Initialisation-on-demand holder.
@@ -114,10 +132,49 @@ public class BookingEventHandler implements RequestHandler<SQSEvent, SQSBatchRes
      *
      * <p>Region and credentials are deliberately left to the default chain, which
      * Lambda populates from {@code AWS_REGION} and the execution role.
+     *
+     * <p><b>The timeouts are the other load-bearing part, and they are arithmetic
+     * rather than taste.</b> The SDK's default {@code apiCallTimeout} is no
+     * timeout at all, and its default DynamoDB retry policy is {@code LEGACY} —
+     * nine attempts with up to 20 seconds of backoff. With neither bounded, one
+     * degraded {@code PutItem} can consume the function's entire 30-second
+     * {@code Timeout}, and when Lambda kills the invocation nothing returns:
+     * the {@link SQSBatchResponse} that names the messages which actually
+     * failed never leaves the function, so the whole batch of ten is redelivered
+     * — including the ones already written. That defeats the partial-batch-
+     * failure design the handler is built around and turns a slow dependency
+     * into a redelivery storm.
+     *
+     * <p>So the budget is divided by the batch size: {@code template.yaml} sets
+     * {@code BatchSize: 10} and {@code Timeout: 30}, which leaves 3 seconds per
+     * message. {@code apiCallTimeout} is 2.5s, so ten fully-timed-out messages
+     * cost 25s and the handler still returns its failure list inside the budget.
+     * {@code apiCallAttemptTimeout} is 1s, leaving room for two attempts and the
+     * backoff between them.
+     *
+     * <p>The HTTP client's own timeouts are set here too, and not for symmetry:
+     * the SDK's default connection timeout is 2 seconds, which is longer than
+     * the 1-second attempt timeout above. Left at the default, a cold-start
+     * attempt could be aborted in the middle of its TLS handshake and every
+     * retry would meet the same wall — a self-inflicted failure on the first
+     * message of every cold invocation. 500ms is generous for DynamoDB from a
+     * function that is deliberately not in a VPC.
+     *
+     * <p>{@code STANDARD} retry mode rather than {@code LEGACY}, matching
+     * {@code AwsConfig} in the service: three attempts, and a retry-token bucket
+     * so a dependency failing for everyone stops being retried rather than
+     * having the retries pile on.
      */
     private static final class Holder {
         static final DynamoDbClient CLIENT = DynamoDbClient.builder()
-                .httpClientBuilder(UrlConnectionHttpClient.builder())
+                .httpClientBuilder(UrlConnectionHttpClient.builder()
+                        .connectionTimeout(Duration.ofMillis(500))
+                        .socketTimeout(Duration.ofSeconds(1)))
+                .overrideConfiguration(ClientOverrideConfiguration.builder()
+                        .apiCallTimeout(Duration.ofMillis(2500))
+                        .apiCallAttemptTimeout(Duration.ofSeconds(1))
+                        .retryStrategy(RetryMode.STANDARD)
+                        .build())
                 .build();
     }
 
@@ -304,9 +361,10 @@ public class BookingEventHandler implements RequestHandler<SQSEvent, SQSBatchRes
      * fixes a second bug that the previous version of this comment actively
      * denied.</b> It claimed sorting was unaffected because "the timestamp is
      * ISO-8601, which sorts lexicographically". ISO-8601 sorts lexicographically
-     * only at a fixed width, and {@code Instant.toString()} — which is what the
-     * producer sends — is not fixed width: it prints the shortest form that
-     * round-trips, so a whole second comes out as
+     * only at a fixed width, and {@code Instant.toString()} — the JDK default,
+     * and what this producer sent before {@code BookingCreatedEvent} was given
+     * a formatter of its own — is not fixed width: it prints the shortest form
+     * that round-trips, so a whole second comes out as
      * {@code 2026-09-22T10:00:00Z} with no fractional part at all, while the
      * next microsecond comes out as {@code 2026-09-22T10:00:00.000001Z}. Compare
      * those as strings and the nineteenth character is {@code Z} (0x5A) against
@@ -317,10 +375,15 @@ public class BookingEventHandler implements RequestHandler<SQSEvent, SQSBatchRes
      * precision PostgreSQL stores and {@code Booking.createdAt} truncates to —
      * makes every key the same length and the claim true.
      *
-     * <p>Re-formatting here rather than trusting the producer is deliberate:
-     * this consumer owns its own key format. It stays stable across
-     * redeliveries because parsing and formatting are deterministic, so the
-     * same message always yields the same key.
+     * <p>Re-formatting here rather than trusting the producer is deliberate, and
+     * it stays deliberate now that the producer pads too:
+     * {@code BookingCreatedEvent.WIRE_TIME} uses the same pattern, so today the
+     * two agree and this line is a no-op. That is the point — this consumer owns
+     * its own key format, so a second producer on the contract, or a DLQ redrive
+     * of a message written before that change, cannot corrupt the ordering of a
+     * partition. It stays stable across redeliveries because parsing and
+     * formatting are deterministic, so the same message always yields the same
+     * key.
      *
      * <p>{@code begins_with(eventTime, "2026-09-15")} still works, and
      * {@code Query(flightNumber = "UA123")} now genuinely does return events in
@@ -381,5 +444,34 @@ public class BookingEventHandler implements RequestHandler<SQSEvent, SQSBatchRes
      * the service. That is the substitute for the type system across a queue,
      * and it fails in the producer's own build rather than in this one.
      */
-    public record BookingEvent(String bookingId, String flightNumber, int seats, String timestamp) {}
+    public record BookingEvent(String bookingId, String flightNumber, int seats, String timestamp) {
+
+        /**
+         * The three string fields are checked here because Jackson cannot check
+         * them: {@code FAIL_ON_NULL_FOR_PRIMITIVES} covers {@code seats} and
+         * nothing covers a missing {@code String}, which binds to null.
+         *
+         * <p>Null reaches {@code AttributeValue.fromS(null)}, which does not
+         * throw — it returns an {@code AttributeValue} carrying no datatype at
+         * all, and {@code Map.of} accepts it. DynamoDB rejects the request,
+         * so nothing wrong is written; but the failure arrives as a
+         * {@code ValidationException} about a serialised request, three
+         * receives later, in the DLQ, naming no field. Failing here names the
+         * field in the first log line. A renamed field on the producer side is
+         * the realistic way this happens, and it is precisely what
+         * {@code contracts/booking-created-v1.json} exists to catch earlier.
+         */
+        public BookingEvent {
+            requirePresent(bookingId, "bookingId");
+            requirePresent(flightNumber, "flightNumber");
+            requirePresent(timestamp, "timestamp");
+        }
+
+        private static void requirePresent(String value, String field) {
+            if (value == null || value.isBlank()) {
+                throw new IllegalArgumentException(
+                        "booking event is missing a value for '" + field + "'");
+            }
+        }
+    }
 }

@@ -12,6 +12,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
+import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 
@@ -44,7 +45,7 @@ import java.util.Map;
  * waiting resolves. With it, the row drops out of the claim, {@code
  * outbox.dead} goes above zero, and the log names the id and the booking.
  * Bringing it back is deliberate and manual:
- * {@code UPDATE outbox_events SET attempts = 0 WHERE id = ?}.
+ * {@code UPDATE outbox_events SET attempts = 0, next_attempt_at = NULL WHERE id = ?}.
  *
  * <h2>Safe on every replica</h2>
  * No leader election, no distributed lock, no designated drainer pod. {@code
@@ -107,8 +108,9 @@ public class OutboxPublisher {
     @Scheduled(fixedDelayString = "${app.outbox.poll-interval}")
     @Transactional
     public void drainOutbox() {
+        Instant now = clock.instant();
         List<OutboxEvent> batch = outboxEventRepository.claimUnpublished(
-                properties.batchSize(), properties.maxAttempts());
+                properties.batchSize(), properties.maxAttempts(), now);
         if (batch.isEmpty()) {
             return;
         }
@@ -117,7 +119,7 @@ public class OutboxPublisher {
         for (OutboxEvent event : batch) {
             try {
                 eventPublisher.publish(event.getEventType(), event.getPayload(), headersFor(event));
-                event.markPublished(clock.instant());
+                event.markPublished(now);
                 metrics.publishSucceeded();
                 published++;
             } catch (RuntimeException e) {
@@ -126,14 +128,14 @@ public class OutboxPublisher {
                 // successful sends beside it - and those payloads are already
                 // on the queue, so the next tick would send them again. One bad
                 // row must not turn into N duplicates.
-                event.markFailed(e.toString());
+                event.markFailed(e.toString(), nextAttemptAt(now, event.getAttempts() + 1));
                 metrics.publishFailed();
 
                 if (event.getAttempts() >= properties.maxAttempts()) {
                     // The claim query will not return this row again. Said at
                     // WARN with the id in it because the row is now invisible
                     // to the poller and only a human can bring it back:
-                    //   UPDATE outbox_events SET attempts = 0 WHERE id = ?
+                    //   UPDATE outbox_events SET attempts = 0, next_attempt_at = NULL WHERE id = ?
                     metrics.attemptsExhausted();
                     log.warn("Outbox event {} ({}) exhausted {} attempts and will not be retried. "
                              + "Booking {} has no published event. Last error: {}",
@@ -154,6 +156,33 @@ public class OutboxPublisher {
         } else if (log.isDebugEnabled()) {
             log.debug("Outbox drain published {} event(s)", published);
         }
+    }
+
+    /**
+     * When a row that just failed its {@code attempt}-th attempt may be claimed
+     * again: {@code retry-backoff} doubled once per attempt, capped at
+     * {@code max-retry-backoff}.
+     *
+     * <p>Returns null — "claimable on the next tick" — when backoff is
+     * configured to zero. That is not a production setting; it exists so a test
+     * can drain twice in a row without moving a clock.
+     *
+     * <p>The doubling is written as a bounded loop rather than
+     * {@code base << (attempt - 1)} on purpose: the loop stops at the cap, so
+     * there is no attempt count and no configured base that can overflow it.
+     * A shift is one character shorter and silently wrong at attempt 64.
+     */
+    private Instant nextAttemptAt(Instant now, int attempt) {
+        long baseMillis = properties.retryBackoff().toMillis();
+        if (baseMillis <= 0) {
+            return null;
+        }
+        long capMillis = properties.maxRetryBackoff().toMillis();
+        long delayMillis = baseMillis;
+        for (int i = 1; i < attempt && delayMillis < capMillis; i++) {
+            delayMillis <<= 1;
+        }
+        return now.plusMillis(Math.min(delayMillis, capMillis));
     }
 
     /**

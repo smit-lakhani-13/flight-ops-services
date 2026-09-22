@@ -63,13 +63,15 @@ class OutboxPropertiesTest {
     @DisplayName("a retention shorter than an hour is refused, with a reason")
     void tooShortARetentionIsRefused() {
         assertThatThrownBy(() -> new OutboxProperties(true, 1000, 100, 10,
-                Duration.ofMinutes(30), Duration.ofHours(1), 1000))
+                Duration.ofMinutes(30), Duration.ofHours(1), 1000,
+                Duration.ofSeconds(2), Duration.ofMinutes(5)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("app.outbox.retention")
                 .hasMessageContaining("auditable");
 
         assertThatCode(() -> new OutboxProperties(true, 1000, 100, 10,
-                Duration.ofHours(1), Duration.ofHours(1), 1000))
+                Duration.ofHours(1), Duration.ofHours(1), 1000,
+                Duration.ofSeconds(2), Duration.ofMinutes(5)))
                 .as("exactly the floor is allowed; the message says 'at least'")
                 .doesNotThrowAnyException();
     }
@@ -78,26 +80,43 @@ class OutboxPropertiesTest {
     @DisplayName("every bound names the property it rejected")
     void eachBoundIsEnforcedAndNamed() {
         assertThatThrownBy(() -> new OutboxProperties(true, 0, 100, 10,
-                Duration.ofDays(7), Duration.ofHours(1), 1000))
+                Duration.ofDays(7), Duration.ofHours(1), 1000,
+                Duration.ofSeconds(2), Duration.ofMinutes(5)))
                 .hasMessageContaining("app.outbox.poll-interval");
 
         assertThatThrownBy(() -> new OutboxProperties(true, 1000, 0, 10,
-                Duration.ofDays(7), Duration.ofHours(1), 1000))
+                Duration.ofDays(7), Duration.ofHours(1), 1000,
+                Duration.ofSeconds(2), Duration.ofMinutes(5)))
                 .hasMessageContaining("app.outbox.batch-size");
 
         assertThatThrownBy(() -> new OutboxProperties(true, 1000, 100, 0,
-                Duration.ofDays(7), Duration.ofHours(1), 1000))
+                Duration.ofDays(7), Duration.ofHours(1), 1000,
+                Duration.ofSeconds(2), Duration.ofMinutes(5)))
                 .as("zero attempts means no row is ever claimed, and the poller looks idle")
                 .hasMessageContaining("app.outbox.max-attempts");
 
         assertThatThrownBy(() -> new OutboxProperties(true, 1000, 100, 10,
-                Duration.ofDays(7), Duration.ZERO, 1000))
+                Duration.ofDays(7), Duration.ZERO, 1000,
+                Duration.ofSeconds(2), Duration.ofMinutes(5)))
                 .hasMessageContaining("app.outbox.prune-interval");
 
         assertThatThrownBy(() -> new OutboxProperties(true, 1000, 100, 10,
-                Duration.ofDays(7), Duration.ofHours(1), 0))
+                Duration.ofDays(7), Duration.ofHours(1), 0,
+                Duration.ofSeconds(2), Duration.ofMinutes(5)))
                 .as("a zero batch size would make the pruner loop fifty times deleting nothing")
                 .hasMessageContaining("app.outbox.prune-batch-size");
+
+        assertThatThrownBy(() -> new OutboxProperties(true, 1000, 100, 10,
+                Duration.ofDays(7), Duration.ofHours(1), 1000,
+                Duration.ofSeconds(-1), Duration.ofMinutes(5)))
+                .as("a negative wait would put the next attempt in the past")
+                .hasMessageContaining("app.outbox.retry-backoff");
+
+        assertThatThrownBy(() -> new OutboxProperties(true, 1000, 100, 10,
+                Duration.ofDays(7), Duration.ofHours(1), 1000,
+                Duration.ofMinutes(5), Duration.ofSeconds(2)))
+                .as("a cap below the base shortens the first retry instead of bounding the last")
+                .hasMessageContaining("app.outbox.max-retry-backoff");
     }
 
     /**
@@ -116,6 +135,8 @@ class OutboxPropertiesTest {
         assertThat(properties.retention()).isEqualTo(Duration.ofDays(7));
         assertThat(properties.pruneInterval()).isEqualTo(Duration.ofHours(1));
         assertThat(properties.pruneBatchSize()).isEqualTo(1000);
+        assertThat(properties.retryBackoff()).isEqualTo(Duration.ofSeconds(2));
+        assertThat(properties.maxRetryBackoff()).isEqualTo(Duration.ofMinutes(5));
     }
 
     /**

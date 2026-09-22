@@ -23,7 +23,7 @@ import org.springframework.stereotype.Component;
  *       will never claim again. <b>This is the gauge to alert on at
  *       {@code > 0}</b>: unlike pending, it does not recover on its own and it
  *       means a booking has no event and never will until somebody runs
- *       {@code UPDATE outbox_events SET attempts = 0 WHERE id = ?}.</li>
+ *       {@code UPDATE outbox_events SET attempts = 0, next_attempt_at = NULL WHERE id = ?}.</li>
  *   <li>{@code outbox.publish{result}} — sends attempted, by outcome. The ratio
  *       is the transport's health; the absolute {@code failure} rate is what
  *       shows a partial outage that {@code pending} hides while the backlog is

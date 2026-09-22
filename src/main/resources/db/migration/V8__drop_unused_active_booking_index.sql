@@ -1,0 +1,28 @@
+-- Drops idx_bookings_active, which never had a reader.
+--
+-- V4 created it with the comment "every query that cares about this column asks
+-- for the active bookings". No query does. Four @Query methods on
+-- BookingRepository and not one of them mentions cancelled_at, and the omission
+-- is deliberate rather than an oversight: findByFlightNumber deliberately
+-- returns cancelled bookings too, because the row is the record that the seats
+-- were once sold, and replaying a cancelled booking's idempotency key has to
+-- find it.
+--
+-- PostgreSQL can only choose a partial index when the query carries the index's
+-- predicate. Without `WHERE cancelled_at IS NULL` in the SQL, the planner will
+-- not use this one however selective it is, so it has been pure write cost on
+-- every INSERT, UPDATE and DELETE against bookings since V4 -- and a second
+-- entry in every VACUUM. idx_bookings_flight_id from V1 covers the same column
+-- in full and serves the one query that filters by flight.
+--
+-- Contrast idx_outbox_unpublished from V5, whose `WHERE published_at IS NULL`
+-- is matched verbatim by the claim query in OutboxEventRepository. That one is
+-- a partial index with a reader, which is what this one was supposed to be.
+--
+-- Kept as a migration rather than an edit to V4: V4 has run on every database
+-- this schema has ever existed on, and Flyway validates its checksum. Editing
+-- an applied migration makes the next startup fail validation, which is the
+-- behaviour you want -- so the correction goes forward, not backward.
+--
+-- IF EXISTS because a database created from a future baseline may not have it.
+DROP INDEX IF EXISTS idx_bookings_active;

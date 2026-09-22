@@ -5,6 +5,7 @@ import com.smit.flightops.dto.BookingRequest;
 import com.smit.flightops.entity.Booking;
 import com.smit.flightops.exception.BookingNotFoundException;
 import com.smit.flightops.exception.IdempotencyKeyConflictException;
+import com.smit.flightops.exception.LostIdempotencyRaceException;
 import com.smit.flightops.observability.BookingMetrics;
 import com.smit.flightops.repository.BookingRepository;
 import org.slf4j.Logger;
@@ -99,14 +100,28 @@ public class BookingService {
             // sold which were never sold.
             metrics.bookingCreated();
             return dto;
-        } catch (DataIntegrityViolationException e) {
-            // 3. Lost the race: uk_bookings_idempotency_key fired. The winner
-            //    is guaranteed committed by now (Postgres blocks the loser's
-            //    INSERT on the unique index until the winner resolves), so
-            //    recover its row in a fresh transaction and hand back the
-            //    SAME answer the winner got — 201, not an error. Without this
-            //    recovery step, the loser of a genuine race would get 409 for
-            //    a request that, from the client's point of view, succeeded.
+        } catch (LostIdempotencyRaceException | DataIntegrityViolationException e) {
+            // 3. Lost the race, detected one of two ways and answered the same
+            //    way by both.
+            //
+            //    LostIdempotencyRaceException is insertNewBooking's own re-read
+            //    under the flight row lock. It is what catches the case the
+            //    constraint cannot: a replay that arrives when the winner has
+            //    taken the last seats, which used to fail on seat availability
+            //    before it ever reached the insert.
+            //
+            //    DataIntegrityViolationException is uk_bookings_idempotency_key
+            //    firing, which still covers the same key sent for a different
+            //    flight — two requests that lock different rows and therefore
+            //    never queue behind each other.
+            //
+            //    Either way the winner is committed (Postgres blocks the
+            //    loser's INSERT on the unique index until the winner resolves;
+            //    the lock does the same for the re-read), so recover its row in
+            //    a fresh transaction and hand back the SAME answer the winner
+            //    got — 201, not an error. Without this recovery step, the
+            //    loser of a genuine race would get 409 for a request that, from
+            //    the client's point of view, succeeded.
             log.info("Lost an idempotency-key race on {} — recovering the winner's booking",
                      request.idempotencyKey());
             BookingDto winner = bookingWriter.recoverReplay(request.idempotencyKey(), fingerprint);
@@ -130,7 +145,16 @@ public class BookingService {
      * truthful to return instead of a second 204 that implies it did something.
      */
     public BookingDto cancel(Long bookingId) {
-        return bookingWriter.cancelBooking(bookingId);
+        // Counted here rather than inside the writer's transaction, for the
+        // reason BookingWriter.cancelBooking's Javadoc gives: a meter records
+        // what happened, and inside the transaction nothing has happened yet.
+        BookingWriter.Cancellation result = bookingWriter.cancelBooking(bookingId);
+        if (result.seatsReleased()) {
+            metrics.bookingCancelled();
+        } else {
+            metrics.cancellationWasANoOp();
+        }
+        return result.booking();
     }
 
     /**

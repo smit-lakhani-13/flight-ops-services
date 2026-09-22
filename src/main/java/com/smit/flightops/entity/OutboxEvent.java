@@ -90,6 +90,17 @@ public class OutboxEvent {
     private String lastError;
 
     /**
+     * When this row becomes claimable again, or null for "now".
+     *
+     * <p>The reason retries are spaced at all is in
+     * {@code V7__outbox_next_attempt_at.sql}: without it the attempt ceiling
+     * was burned at the poll rate, so a ten-second queue outage abandoned every
+     * pending event permanently.
+     */
+    @Column(name = "next_attempt_at")
+    private Instant nextAttemptAt;
+
+    /**
      * The W3C trace context of the request that produced this event, or null.
      *
      * <p>Null is normal, not exceptional: rows written before {@code V6}, and
@@ -145,11 +156,20 @@ public class OutboxEvent {
      * most needs its failure recorded would be the one row that never records
      * it, and the counter would stay at zero while the event retried forever.
      */
-    public void markFailed(String error) {
+    public void markFailed(String error, Instant nextAttemptAt) {
         this.attempts++;
         this.lastError = error == null ? null
                 : error.length() <= 500 ? error
                 : error.substring(0, 497) + "...";
+        // Null is legal and means "claimable on the next tick". The caller
+        // passes null when backoff is switched off, which is what the tests
+        // that drain twice in a row rely on.
+        this.nextAttemptAt = nextAttemptAt;
+    }
+
+    /** When this row may be claimed again; null means immediately. */
+    public Instant getNextAttemptAt() {
+        return nextAttemptAt;
     }
 
     /** Null when the booking was not made inside a traced request. */

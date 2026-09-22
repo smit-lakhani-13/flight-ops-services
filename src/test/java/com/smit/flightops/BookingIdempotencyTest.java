@@ -273,4 +273,61 @@ class BookingIdempotencyTest {
             pool.awaitTermination(10, TimeUnit.SECONDS);
         }
     }
+
+    /**
+     * The race the 50-seat fixtures above could never produce: the replay that
+     * takes the LAST seat.
+     *
+     * <p>{@link #racingTenCallersOnTheSameKeyAllGetTheSameBooking} books one
+     * seat out of fifty, so every loser reached the unique constraint with
+     * seats still to spare and the recovery path worked. Give the flight
+     * exactly one seat and the losers arrive after the winner has emptied it —
+     * and until this was fixed, {@code insertNewBooking} debited seats before
+     * it inserted, so they got {@code InsufficientSeatsException} and a 409
+     * naming the wrong reason. The booking had been made. The client retrying
+     * it was told the flight was full.
+     *
+     * <p>That is not a corner: the last seat is the one people retry over. The
+     * fix is the second {@code findByIdempotencyKey} inside the flight row
+     * lock, and this is the test that would have caught the bug. Capacity is
+     * therefore 1 on purpose — a fixture with room to spare passes either way,
+     * which is exactly how this survived two review passes.
+     */
+    @Test
+    @Order(9)
+    @DisplayName("REGRESSION: 10 concurrent callers racing for the LAST seat on one key -> one booking, all ten get it, no 409")
+    void racingCallersOnTheLastSeatAllGetTheSameBooking() throws Exception {
+        flightService.create(new CreateFlightRequest("ua005", "ewr", "sfo", 1,
+                Instant.now().plus(Duration.ofHours(6))));
+
+        int callers = 10;
+        ExecutorService pool = Executors.newFixedThreadPool(callers);
+        try {
+            List<Callable<BookingDto>> attempts = IntStream.range(0, callers)
+                    .<Callable<BookingDto>>mapToObj(i -> () ->
+                            bookingService.book(new BookingRequest("ua005", "Smit Lakhani", 1, "race-last-seat")))
+                    .toList();
+
+            List<BookingDto> results = pool.invokeAll(attempts).stream().map(f -> {
+                try {
+                    return f.get();
+                } catch (Exception e) {
+                    throw new AssertionError(
+                            "a replay of a booking that succeeded must not fail, least of all "
+                            + "with INSUFFICIENT_SEATS", e);
+                }
+            }).collect(Collectors.toList());
+
+            assertThat(results.stream().map(BookingDto::bookingId).distinct())
+                    .as("every caller gets back the SAME booking id")
+                    .hasSize(1);
+            assertThat(availableSeats("UA005"))
+                    .as("the one seat is debited once")
+                    .isZero();
+            assertThat(bookingRepository.findByFlightNumber("UA005", Pageable.unpaged())).hasSize(1);
+        } finally {
+            pool.shutdown();
+            pool.awaitTermination(10, TimeUnit.SECONDS);
+        }
+    }
 }

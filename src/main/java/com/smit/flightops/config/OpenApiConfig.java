@@ -44,16 +44,24 @@ public class OpenApiConfig {
      * The version comes from {@code BuildProperties} when it is there and falls
      * back when it is not.
      *
-     * <p>{@code BuildProperties} exists only if the {@code build-info} goal ran,
-     * and it is absent in a {@code @WebMvcTest} slice, which does not load
+     * <p>{@code BuildProperties} exists only if the {@code build-info} goal ran.
+     * It does, from {@code generate-resources} onwards, so a packaged jar and a
+     * full {@code @SpringBootTest} both report the real {@code pom.xml} version.
+     * It is absent in a {@code @WebMvcTest} slice, which does not load
      * {@code ProjectInfoAutoConfiguration} at all. Injecting it directly would
      * make this class an unsatisfied dependency in exactly the contexts that
      * have nothing to do with it, so it is asked for rather than required.
+     *
+     * <p>The fallback is {@code unknown} rather than a version number on
+     * purpose. A hard-coded {@code 1.0.0} here was wrong the moment the project
+     * became 1.1.0, and it was wrong silently: the document still read like a
+     * version claim. A value that is obviously not a release cannot be mistaken
+     * for one.
      */
     @Bean
     public OpenAPI flightOpsOpenApi(ObjectProvider<BuildProperties> buildProperties) {
         String version = buildProperties.getIfAvailable() == null
-                ? "1.0.0"
+                ? "unknown"
                 : buildProperties.getObject().getVersion();
 
         return new OpenAPI()
@@ -67,8 +75,16 @@ public class OpenApiConfig {
 
                                 Every endpoint below requires HTTP Basic credentials. \
                                 Reads need the `flights:read` scope and writes need \
-                                `flights:write`; this document and the Swagger UI are the \
-                                only unauthenticated paths in the service.
+                                `flights:write`.
+
+                                Nothing under `/api/v1` is reachable without \
+                                credentials. Four things outside it are, and all four \
+                                have a caller that cannot present any: this document and \
+                                the Swagger UI, `/actuator/health` and its liveness and \
+                                readiness groups, which a kubelet probes, and `/error`, \
+                                which is Spring's internal error dispatch and would turn \
+                                every error into a 401 about the error if it were \
+                                secured. The rest of `/actuator` needs the `ops` role.
 
                                 `POST /api/v1/bookings` is idempotent on `idempotencyKey`: \
                                 a repeated request returns the original booking, and the \

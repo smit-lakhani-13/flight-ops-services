@@ -7,7 +7,7 @@ import com.smit.flightops.entity.Flight;
 import com.smit.flightops.exception.BookingNotFoundException;
 import com.smit.flightops.exception.FlightNotFoundException;
 import com.smit.flightops.exception.IdempotencyKeyConflictException;
-import com.smit.flightops.observability.BookingMetrics;
+import com.smit.flightops.exception.LostIdempotencyRaceException;
 import com.smit.flightops.repository.BookingRepository;
 import com.smit.flightops.repository.FlightRepository;
 import org.slf4j.Logger;
@@ -42,18 +42,18 @@ public class BookingWriter {
     private final FlightRepository flightRepository;
     private final BookingRepository bookingRepository;
     private final OutboxWriter outboxWriter;
-    private final BookingMetrics metrics;
     private final Clock clock;
 
+    // No BookingMetrics here, and its absence is the point: everything this
+    // class does happens inside a transaction that can still roll back, so
+    // there is nothing here worth counting yet. BookingService owns the meters.
     public BookingWriter(FlightRepository flightRepository,
                           BookingRepository bookingRepository,
                           OutboxWriter outboxWriter,
-                          BookingMetrics metrics,
                           Clock clock) {
         this.flightRepository = flightRepository;
         this.bookingRepository = bookingRepository;
         this.outboxWriter = outboxWriter;
-        this.metrics = metrics;
         this.clock = clock;
     }
 
@@ -73,6 +73,33 @@ public class BookingWriter {
         String flightNumber = request.flightNumber().trim().toUpperCase(Locale.ROOT);
         Flight flight = flightRepository.findByFlightNumberForUpdate(flightNumber)
                 .orElseThrow(() -> new FlightNotFoundException(request.flightNumber()));
+
+        // The idempotency key, checked a second time — and this is the only
+        // place in the request where the answer can be trusted.
+        //
+        // BookingService.book checked it before calling, outside any lock, and
+        // could not see a concurrent request that had not committed yet. Here
+        // the flight row is locked, so a competing booking on this flight has
+        // either committed or has not started: if it committed, its key is
+        // visible to this read.
+        //
+        // Without this the race was still resolved — by
+        // uk_bookings_idempotency_key, a few lines further down — but only
+        // when there were seats left to debit first. When the winner took the
+        // LAST seats, reserveSeats threw InsufficientSeatsException before the
+        // insert ever ran, and the loser got 409 for a booking that had in fact
+        // been made. A client retrying a request that succeeded was told the
+        // flight was full, and the race on the last seat is exactly the request
+        // somebody retries.
+        //
+        // The constraint stays as the backstop, because this read cannot cover
+        // everything: the same key used for a DIFFERENT flight locks a
+        // different row, so those two requests never queue behind each other.
+        // That case reaches the insert, fails the constraint, and recoverReplay
+        // answers it with the 409 it deserves — same key, different request.
+        if (bookingRepository.findByIdempotencyKey(request.idempotencyKey()).isPresent()) {
+            throw new LostIdempotencyRaceException(request.idempotencyKey());
+        }
 
         flight.reserveSeats(request.seats());
 
@@ -175,6 +202,15 @@ public class BookingWriter {
      * preventing: on a 180-seat flight with 100 sold, a double cancel of a
      * 2-seat booking would still invent 2 seats.
      *
+     * <p>The counters are <em>not</em> incremented here, which is the rule the
+     * booking counter already follows: a meter records an outcome, not an
+     * attempt. This method is {@code @Transactional}, so everything in it can
+     * still be undone after the last statement runs — {@code Flight} carries an
+     * {@code @Version}, and a concurrent write makes the commit itself throw.
+     * A counter incremented before that commit counts a cancellation that never
+     * happened, and the graph then disagrees with the table it is supposed to
+     * describe. {@code BookingService.cancel} increments it once this returns.
+     *
      * <p>No {@code BookingCancelled} event, and that is a deliberate omission
      * rather than an oversight. Publishing one means a second event type on the
      * queue, a second branch in the Lambda and a decision about what a
@@ -182,8 +218,20 @@ public class BookingWriter {
      * work, and none of it needed to make cancellation correct here. The
      * limitation is written down rather than papered over.
      */
+    /**
+     * What a cancellation did, so the caller can count it after the commit.
+     *
+     * <p>The outcome is not recoverable from the returned {@link BookingDto}: a
+     * booking cancelled a moment ago and one cancelled an hour ago both carry a
+     * {@code cancelledAt}, and only this transaction knows which of the two it
+     * just wrote. Returning the flag is the alternative to incrementing a
+     * counter inside a transaction that can still roll back.
+     */
+    public record Cancellation(BookingDto booking, boolean seatsReleased) {
+    }
+
     @Transactional
-    public BookingDto cancelBooking(Long bookingId) {
+    public Cancellation cancelBooking(Long bookingId) {
         String flightNumber = bookingRepository.findFlightNumberById(bookingId)
                 .orElseThrow(() -> new BookingNotFoundException(bookingId));
 
@@ -193,16 +241,15 @@ public class BookingWriter {
         Booking booking = bookingRepository.findByIdForUpdate(bookingId)
                 .orElseThrow(() -> new BookingNotFoundException(bookingId));
 
-        if (booking.cancel(clock.instant())) {
+        boolean released = booking.cancel(clock.instant());
+        if (released) {
             flight.releaseSeats(booking.getSeats());
-            metrics.bookingCancelled();
             log.info("Cancelled booking {} on {} ({} seat(s) released, {} now available)",
                      bookingId, flightNumber, booking.getSeats(), flight.getAvailableSeats());
         } else {
-            metrics.cancellationWasANoOp();
             log.info("Booking {} was already cancelled at {} — no seats released",
                      bookingId, booking.getCancelledAt());
         }
-        return BookingDto.from(booking);
+        return new Cancellation(BookingDto.from(booking), released);
     }
 }

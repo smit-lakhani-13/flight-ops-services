@@ -12,8 +12,22 @@ public record BookingRequest(
     @NotBlank @Size(max = 10)  String flightNumber,
     @NotBlank @Size(max = 255) String passengerName,
     @Min(1) @Max(9)            int seats,
-    /** Client-generated. Same key twice = the same booking, never two. */
-    @NotBlank @Size(max = 255) String idempotencyKey
+    /**
+     * Client-generated. Same key twice = the same booking, never two.
+     *
+     * <p>The character class is the same one {@code RequestIdFilter} enforces on
+     * {@code X-Request-Id}, and for the same reason: this value is written into
+     * a log line on every replay and every conflict, so a key containing a
+     * newline forges a log entry. Restricting it also keeps it printable, which
+     * matters because it is echoed back in the 409 message. A UUID, a ULID and
+     * every retry-token scheme a client is likely to use already fit; anything
+     * that does not is refused at the edge with a named field rather than
+     * reaching a logger.
+     */
+    @NotBlank @Size(max = 255)
+    @Pattern(regexp = "^[A-Za-z0-9._:-]+$",
+             message = "must contain only letters, digits and . _ : -")
+    String idempotencyKey
 ) {
 
     /**

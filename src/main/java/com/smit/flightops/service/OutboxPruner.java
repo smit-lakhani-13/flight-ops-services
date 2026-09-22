@@ -98,11 +98,20 @@ public class OutboxPruner {
                     outboxEventRepository.deletePublishedBefore(cutoff, properties.pruneBatchSize()));
             int n = deleted == null ? 0 : deleted;
             total += n;
+            // Counted per batch, not per run, and that is the whole difference
+            // between a counter and a summary. Each batch is its own committed
+            // transaction, so rows deleted by batch three are gone whatever
+            // batch four does. Incrementing once at the end meant an exception
+            // in any later batch discarded the count of every batch that had
+            // already succeeded — and outbox.pruned flat at zero is documented
+            // as meaning "the pruner is not running", which would then be the
+            // opposite of what happened. Counters are additive, so per-batch
+            // and per-run agree on the happy path.
+            metrics.pruned(n);
 
             // Short batch means the eligible rows ran out. Asking again would
             // cost a query to be told the same thing.
             if (n < properties.pruneBatchSize()) {
-                metrics.pruned(total);
                 if (total > 0) {
                     log.info("Pruned {} outbox event(s) published before {}", total, cutoff);
                 }
@@ -110,7 +119,6 @@ public class OutboxPruner {
             }
         }
 
-        metrics.pruned(total);
         // Reaching the ceiling is not an error, but it is worth saying out
         // loud: it means there is still a backlog, and if this line repeats
         // every hour the retention window or the batch size is wrong.
