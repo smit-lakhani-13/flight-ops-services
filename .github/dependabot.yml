@@ -73,10 +73,14 @@ updates:
       - dependency-name: "org.junit:junit-bom"
         update-types: ["version-update:semver-major"]
 
-  # The workflow pins actions to major tags (@v4), which is the common trade-off:
-  # you get patches for free but the tag is mutable, so you are trusting the
-  # publisher. Dependabot at least surfaces the major bumps; SHA pinning would be
-  # the next hardening step, at the cost of a PR for every patch release.
+  # The workflow pins actions to major tags rather than commit SHAs, which is the
+  # common trade-off: you get patches for free but the tag is mutable, so you are
+  # trusting the publisher. Dependabot at least surfaces the major bumps, and this
+  # group has already delivered one. SHA pinning is the next hardening step, at
+  # the cost of a PR for every patch release.
+  #
+  # No version numbers in this comment on purpose — the last one said "@v4" and
+  # went stale the day the group's first PR merged.
   #
   # Grouped into a single PR: an action major bump is usually a one-line change
   # and reviewing five of them separately is five times the ceremony for the same
