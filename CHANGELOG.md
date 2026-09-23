@@ -67,6 +67,10 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
 
 ### Changed
 
+- **Version.** Both poms say `1.2.0-SNAPSHOT` until the next tag, so a build
+  from `main` no longer reports itself as 1.1.0 in `/actuator/info` and the
+  OpenAPI document.
+
 - **Stricter request fields.** A value that breaks one of these rules gets a
   400 `VALIDATION_FAILED` whose body maps the field to the message shown.
   `flightNumber` on `CreateFlightRequest` and `BookingRequest` matches
