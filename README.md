@@ -28,7 +28,7 @@ On every CI run, the `docs-check` job runs `scripts/refcheck.py`, which resolves
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Three ways to run it, the runbook for each, what each costs for 7, 10 and 15 days, what breaks first under load, and how to tear it all down with proof |
 | [OPERATIONS.md](OPERATIONS.md) | Every environment variable, the metrics and what they mean, how to follow one booking across the queue, what to alert on, the playbooks, and what is not wired up |
 | [SECURITY.md](SECURITY.md) | The auth model, what is exposed and what is not, how secrets are handled, and the known limitations |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | The JDK trap, both build commands, what `Skipped: 7` means, and what CI enforces |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | The JDK trap, both build commands, what `Skipped: 8` means, and what CI enforces |
 | [CHANGELOG.md](CHANGELOG.md) | What changed in each release, the one change in this one that can break a consumer, and why it is 1.1.0 and not 2.0.0 |
 | [contracts/README.md](contracts/README.md) | The event contract between the two modules, how both sides enforce it, and how to change it without breaking a deployed consumer |
 | [deploy/aws/README.md](deploy/aws/README.md) | What each script and template creates, who owns what between the scripts and CI, and the failure table |
@@ -44,7 +44,7 @@ java -version          # must report 21
 
 It runs on in-memory H2 with a schema Hibernate creates, and seeds three demo flights: `UA123` EWR→LHR 180 seats, `UA456` ORD→SFO 150 and `UA789` EWR→SFO 200. It boots in under 4s (2.83s, 2.57s and 3.63s across three local runs), with the security filter chain and the outbox scheduler both starting.
 
-Every call under `/api/` needs credentials. The default profile ships two throwaway accounts: `api` / `dev-secret` for the API and `ops` / `dev-ops` for the actuator endpoints other than health. They are stored as `{noop}dev-secret` and `{noop}dev-ops`, and `{noop}` marks a value as unhashed and so not secret. The `prod` profile has no defaults, and `ApiSecurityProperties` rejects any value without an `{id}` prefix, so a deployment that forgets `API_PASSWORD` fails at startup. Without that check, `@ConfigurationProperties` would bind the literal string `${API_PASSWORD}`, and the pod would go Ready and then fail every request.
+Every call under `/api/` needs credentials. The default profile ships two throwaway accounts: `api` / `dev-secret` for the API and `ops` / `dev-ops` for the actuator endpoints other than health. They are stored as `{noop}dev-secret` and `{noop}dev-ops`, and `{noop}` marks a value as unhashed and so not secret. The `prod` profile has no defaults, and `ApiSecurityProperties` rejects any value without an `{id}` prefix, so a deployment that forgets `API_PASSWORD` fails at startup. `SecurityConfig` then asks the encoder to verify each value once, so an id it does not know, such as `{foo}`, also stops startup, and so does `{argon2}`, because the build has no BouncyCastle. Neither check prints the value. Without them, `@ConfigurationProperties` would bind the literal string `${API_PASSWORD}` as the password, and the pod would go Ready and then fail every authenticated request.
 
 > **macOS: set JAVA_HOME yourself.** `/usr/libexec/java_home -v 21` only finds JDKs registered with macOS, and Homebrew's are not. With an Oracle JDK 17 also installed, it exits 0 and returns 17. The enforcer then stops the build at once with `This build needs JDK 21`, where the compiler would have failed later on `release version 21 not supported`. Use `export JAVA_HOME=/opt/homebrew/opt/openjdk@21` on Apple Silicon or `/usr/local/opt/openjdk@21` on Intel.
 
@@ -119,7 +119,7 @@ DB_PASSWORD=pass ./mvnw spring-boot:run -Dspring-boot.run.profiles=postgres
 
 `DB_PASSWORD` has no default: in the `postgres` profile, `spring.datasource.password` is `${DB_PASSWORD}` with nothing after the colon, because a scanner is right to flag a working password in a public repository. Leave it out and Hikari sends the literal `${DB_PASSWORD}`, and the boot fails with `FATAL: password authentication failed`, which names the wrong cause. `docker compose up --build` needs none of this, because `compose.yaml` sets it.
 
-The `postgres` profile switches the schema owner. Flyway applies the migrations in `db/migration` (`V1__init.sql` through `V8__drop_unused_active_booking_index.sql`), and Hibernate runs `ddl-auto: validate`, so entity drift fails the boot instead of altering tables.
+The `postgres` profile switches the schema owner. Flyway applies the migrations in `db/migration` (`V1__init.sql` through `V8__drop_unused_active_booking_index.sql`), and Hibernate runs `ddl-auto: validate`, so an entity that no longer matches the tables, columns or column types fails the boot instead of altering them. It does not compare check constraints or indexes.
 
 ## Project status
 
@@ -127,12 +127,12 @@ This table bounds every claim in this README.
 
 | Status | What |
 |---|---|
-| **Built, tested, and exercised over HTTP** | The whole app module. Every endpoint hit with `curl` against a running instance. Every status code in the tables below observed over HTTP or in a test, including the 401 and 403 bodies, except the 503 on cancel, which shares the booking path's lock. The Lambda handler's logic, via 23 tests. |
-| **Verified against real PostgreSQL in CI** | All 227 tests, including the 7 Testcontainers integration tests: the Flyway migrations applied to an empty database, `ddl-auto: validate` checked against the schema those migrations produced, `SELECT … FOR UPDATE` under 20 threads competing for 5 seats, and the same idempotency key replayed by 20 threads at once. The runners have Docker, so these execute there and skip on a laptop without one. |
-| **Authored and reviewed, never executed** | The container image. `sam build`, `sam local invoke`, `sam deploy`. Every `kubectl` and `eksctl` step. The deploy half of the GitHub Actions workflow, which is gated off (see below). |
+| **Built, tested, and exercised over HTTP** | The whole app module. Every endpoint hit with `curl` against a running instance. Every status code in the tables below observed over HTTP or in a test, including the 401 and 403 bodies, except the 503 on a booking cancellation. `LockTimeoutTest` holds the flight row and gets the booking's 503 end to end. The flight status change and cancellation get theirs only in a slice test with a mocked service (`FlightControllerTest#flightWriteBehindARowLockReturns503`). The Lambda handler's logic, via 25 tests. |
+| **Verified against real PostgreSQL in CI** | All 260 tests, including the 8 Testcontainers integration tests: 5 in `BookingIntegrationTest` and 3 in `service/OutboxPrunePostgresTest`. They apply the Flyway migrations to an empty database and check `ddl-auto: validate` against the schema those migrations produced. They run `SELECT … FOR UPDATE` under 20 threads competing for 5 seats, and replay the same idempotency key from 20 threads at once. The runners have Docker, so these execute there and skip on a laptop without one, and the `build` job fails if either class is skipped or missing. |
+| **Authored and reviewed, never executed** | The container image. `sam deploy` and `sam local invoke`; there is no `sam build`, because Maven builds the jar that `template.yaml` names. Every `kubectl` and `eksctl` step. The deploy half of the GitHub Actions workflow, which is gated off (see below). |
 | **Not implemented** | A Solace binding. Trace **export**: ids are generated and logged, but there is no collector to send spans to. Rate limiting. |
 
-**Nothing here has ever been deployed, and merging to `main` does not deploy it.**
+**Warning.** Nothing here has ever been deployed, and merging to `main` does not deploy it.
 
 The deploy job is gated on a `DEPLOY_ENABLED` repository variable that has never been set. A gate on the branch alone would make the first push to a fresh clone assume an IAM role built from an unset `AWS_ACCOUNT_ID` secret, and go red for a reason unrelated to the code. So `build`, `infra-lint`, `trivy-fs` and `docs-check` run on every push to `main` and every pull request, with `dependency-review` on pull requests only. The deploy job reports as skipped until someone provisions the role and sets the variable. Read the green badge as "it builds and the tests pass".
 
@@ -195,12 +195,12 @@ What the repository does not claim:
 
 The same picture with method names, plus the booking sequence, the idempotency decision table, the lock order, the outbox drain, the `FlightStatus` state machine and the ER diagram, is in [ARCHITECTURE.md](ARCHITECTURE.md). Each decision has its own file in [adr/](adr/README.md).
 
-`app.events.publisher: log | sqs` picks the implementation with `@ConditionalOnProperty`, and `log` is the default, so nothing tries to reach AWS on a laptop. `@Primary` and `@Qualifier` only choose which bean is injected, and still build every candidate, including an SQS client on a machine with no credentials. `@ConditionalOnProperty` decides whether the bean exists at all. A comment on `EventPublisher` names Solace as a transport the interface could take, and there is no Solace implementation.
+`app.events.publisher: log | sqs` picks the implementation with `@ConditionalOnProperty`, and `log` is the default, so nothing tries to reach AWS on a laptop. `EventProperties` refuses any other value at startup and names the property. `@Primary` and `@Qualifier` only choose which bean is injected, and still build every candidate, including an SQS client on a machine with no credentials. `@ConditionalOnProperty` decides whether the bean exists at all. A comment on `EventPublisher` names Solace as a transport the interface could take, and there is no Solace implementation.
 
 ## Repository layout
 
 ```
-├── src/main/java/com/smit/flightops/       56 files, 4,991 lines
+├── src/main/java/com/smit/flightops/       56 files, 3,816 lines
 │   ├── controller/     HTTP only: bind, validate, map to DTO, choose the status code
 │   ├── service/        orchestration, transaction boundaries, the outbox drain and pruner
 │   ├── entity/         Flight, Booking, FlightStatus, OutboxEvent: the invariants
@@ -215,7 +215,7 @@ The same picture with method names, plus the booking sequence, the idempotency d
 ├── src/main/resources/
 │   ├── application.yml            profiles: default (H2), postgres, prod
 │   └── db/migration/              Flyway V1–V8, which owns the PostgreSQL schema
-├── src/test/java/                 28 test classes (30 with the Lambda's)
+├── src/test/java/                 31 test classes (33 with the Lambda's)
 ├── NOTES.md                       the bugs I found and fixed
 ├── ARCHITECTURE.md                the diagrams and the method-by-method request path
 ├── DEPLOYMENT.md                  three shapes, the runbook, the cost of each, the teardown
@@ -229,15 +229,17 @@ The same picture with method names, plus the booking sequence, the idempotency d
 │   ├── base/                      6 manifests true in any environment
 │   ├── overlays/aws/              image, IRSA annotation, queue URL, database URL
 │   └── components/ingress/        separate, because applying it provisions a billed ALB
-├── deploy/aws/                    up / down / cost-check / render, two CloudFormation
+├── deploy/aws/                    up / down / cost-check / render, a selftest against
+│                                  stubbed tools, two helpers, two CloudFormation
 │                                  templates, and the runbook that orders them
 ├── events/                        SQS fixtures for sam local invoke
 ├── cluster.yaml                   eksctl cluster definition, version pinned
 ├── template.yaml                  SAM template for the Lambda
 ├── compose.yaml                   PostgreSQL + the app, for the container path locally
 ├── Dockerfile                     multi-stage: JDK + Maven build → JRE runtime
-└── .github/workflows/             build-and-deploy.yml (five gates and the gated
-                                   deploy), codeql.yml
+└── .github/workflows/             build-and-deploy.yml (build, infra-lint, trivy-fs
+                                   and docs-check on every trigger, dependency-review
+                                   on pull requests, the gated deploy), codeql.yml
 ```
 
 A DTO never reaches the repository, and an entity never reaches a controller. Nothing in `service/`, `entity/` or `repository/` knows about HTTP. That stays in the web edge (`controller/`, `exception/`, `security/`, `observability/RequestIdFilter`, `config/SecurityConfig`), and ArchUnit fails the build if it leaks inward.
@@ -248,7 +250,7 @@ Callers use HTTP Basic or a bearer token. The two in-memory accounts are `api`, 
 
 | Path | Who gets in |
 |---|---|
-| `/actuator/health`, `/health/liveness`, `/health/readiness` | everyone: the kubelet has no credentials, and a probe that needed them would fail the pod on a password rotation |
+| `/actuator/health`, `/health/liveness`, `/health/readiness` | everyone: the kubelet has no credentials, and a probe that needed them would fail the pod on a password rotation. Only `ops` sees the components behind the status (`management.endpoint.health.roles: OPS`) |
 | every other `/actuator/**` | `ROLE_OPS` |
 | `GET`/`HEAD` `/api/**` | `SCOPE_flights:read` |
 | `POST`, `PATCH`, `DELETE /api/**` | `SCOPE_flights:write` |
@@ -267,8 +269,8 @@ The in-memory users stand in for an identity provider, and [SECURITY.md](SECURIT
 | `GET` | `/api/v1/flights/{flightNumber}` | `flights:read` | 200 | 404 |
 | `GET` | `/api/v1/flights?origin=&destination=&page=&size=&sort=` | `flights:read` | 200 (paginated) | 400 |
 | `POST` | `/api/v1/flights` | `flights:write` | 201 + `Location` | 400, 409 |
-| `PATCH` | `/api/v1/flights/{flightNumber}/status` | `flights:write` | 200 | 400, 404, 409 |
-| `DELETE` | `/api/v1/flights/{flightNumber}` | `flights:write` | 204 | 404, 409 |
+| `PATCH` | `/api/v1/flights/{flightNumber}/status` | `flights:write` | 200 | 400, 404, 409, 503 |
+| `DELETE` | `/api/v1/flights/{flightNumber}` | `flights:write` | 204 | 404, 409, 503 |
 | `POST` | `/api/v1/bookings` | `flights:write` | 201 + `Location` | 400, 404, 409, 503 |
 | `GET` | `/api/v1/bookings/{bookingId}` | `flights:read` | 200 | 400, 404 |
 | `GET` | `/api/v1/bookings?flightNumber=&page=&size=` | `flights:read` | 200 (paginated) | 400 |
@@ -276,9 +278,9 @@ The in-memory users stand in for an identity provider, and [SECURITY.md](SECURIT
 | `GET` | `/actuator/health`, `/actuator/health/liveness`, `/actuator/health/readiness` | none | 200 | 401 on a wrong password |
 | `GET` | `/actuator/metrics`, `/actuator/prometheus` | `ROLE_OPS` | 200 | 401, 403 |
 
-Every `/api/**` row also answers 401 without valid credentials, a wrong password included, and 403 to an authenticated caller who lacks the authority. The health rows need no credentials.
+Every `/api/**` row also answers 401 without valid credentials, a wrong password included, and 403 to an authenticated caller who lacks the authority. Both controllers produce JSON only, so an `Accept` header of `application/xml` gets 406. The health rows need no credentials.
 
-Every error the application produces has one JSON shape, `{code, message, timestamp}` or `{code, fieldErrors, timestamp}`, from `GlobalExceptionHandler`, `ErrorResponseWriter` (401 and 403) and `ApiErrorController` (`/error`). No controller contains a `try`/`catch`. Tomcat refuses some requests before Spring sees them: `%2F`, `%5C`, `%00` or `%zz` in the path, a raw `|`, or a 20KB header. Those get Tomcat's own HTML 400 page with no `X-Request-Id`, and unknown actuator sub-paths return an empty 404.
+Every error the application produces has one JSON shape, `{code, message, timestamp}` or `{code, fieldErrors, timestamp}`, from `GlobalExceptionHandler`, `ErrorResponseWriter` (401 and 403) and `ApiErrorController` (`/error`). Each sets `Content-Type: application/json` itself, whatever the `Accept` header asked for. No controller contains a `try`/`catch`. Tomcat refuses some requests before Spring sees them: `%2F`, `%5C`, `%00` or `%zz` in the path, a raw `|`, or a 20KB header. Those get Tomcat's own HTML 400 page with no `X-Request-Id`, and unknown actuator sub-paths return an empty 404.
 
 Jackson and Hibernate exception text names internal classes, tables and columns, so the client gets a fixed string and the detail goes to the log at WARN. I wrote the project's own exception messages for clients, and those pass through: `FlightNotFoundException`, `BookingNotFoundException`, `InsufficientSeatsException`, `FlightNotBookableException`, `DuplicateFlightException`, `IllegalFlightTransitionException`, `IdempotencyKeyConflictException` and `UnknownSortPropertyException`. So does Spring MVC's own `ErrorResponse` detail, such as `Method 'POST' is not supported.`, which names only the request. A stray `IllegalArgumentException` gets the fixed `The request contained an invalid value.`
 
@@ -295,16 +297,16 @@ Jackson and Hibernate exception text names internal classes, tables and columns,
 | `DUPLICATE_REQUEST` | 409 | two flight-creation requests raced on `flight_number` and the constraint chose one; a raced booking recovers instead |
 | `IDEMPOTENCY_KEY_REUSED` | 409 | the key was first used for a different request. That is a client bug; a true replay returns the original booking |
 | `ILLEGAL_STATUS_TRANSITION` | 409 | the flight cannot go from its status to the requested one (`BOARDING → ARRIVED`, anything out of `ARRIVED`) |
-| `LOCK_TIMEOUT` | 503 + `Retry-After` | the `SELECT … FOR UPDATE` waited out the 3s `lock_timeout`. The request was valid and the row was busy, so retry after `Retry-After` |
+| `LOCK_TIMEOUT` | 503 + `Retry-After` | a write waited out the 3s `lock_timeout` on the flight row: a booking or a booking cancellation on its `SELECT … FOR UPDATE`, or a status change or flight cancellation queued behind one. The request was valid and the row was busy, so retry after `Retry-After` |
 | `UNKNOWN_SORT_PROPERTY` | 400 | the sort property is not on the endpoint's published list (`SortPolicy`) |
 | `UNAUTHENTICATED` | 401 | no credentials, or credentials that do not verify; written by `JsonAuthenticationEntryPoint` |
 | `FORBIDDEN` | 403 | authenticated, without the authority this path needs; written by `JsonAccessDeniedHandler` |
-| `VALIDATION_FAILED` | 400 | Bean Validation, per field, including `@DistinctEndpoints`, which refuses a flight from EWR to EWR |
-| `MALFORMED_REQUEST` | 400 | unreadable body, unknown enum constant, bad path variable, missing query parameter |
+| `VALIDATION_FAILED` | 400 | Bean Validation, per field, including `@DistinctEndpoints`, which refuses a flight from EWR to EWR. A flight number with a space, `/` or `%` inside gets `must contain only letters and digits`. An airport code with a digit, symbol or padding gets `must contain only letters`. A passenger name with a control character gets `must not contain control characters` |
+| `MALFORMED_REQUEST` | 400 | unreadable body, unknown enum constant, a `seats` or `totalSeats` that is fractional or missing, bad path variable, missing query parameter, or `page * size` above 2147483647 on either list endpoint |
 | `RESOURCE_NOT_FOUND` | 404 | unmapped path |
-| `METHOD_NOT_ALLOWED` | 405 | a verb the security rules allow on a path that does not map it, such as `POST` on `/api/v1/flights/UA123` (and `TRACE`); `PUT` and `OPTIONS` get 403 from `anyRequest().denyAll()` |
-| `UNSUPPORTED_MEDIA_TYPE` | 415 | wrong `Content-Type` |
-| `REQUEST_REJECTED` | 4xx | any other Spring MVC client error |
+| `METHOD_NOT_ALLOWED` | 405 | a verb the security rules allow on a path that does not map it, such as `POST` on `/api/v1/flights/UA123` (and `TRACE`); the `Allow` header lists the mapped verbs. `PUT` and `OPTIONS` get 403 from `anyRequest().denyAll()` |
+| `UNSUPPORTED_MEDIA_TYPE` | 415 | wrong `Content-Type`; the `Accept` header names JSON |
+| `REQUEST_REJECTED` | 4xx | any other Spring MVC client error, such as the 406 for a non-JSON `Accept` |
 | `BAD_REQUEST` | 4xx | any other client error the container forwards to `/error`; written by `ApiErrorController` in the same envelope |
 | `INTERNAL_ERROR` | 500 | last resort; the stack trace is logged and never returned |
 
@@ -335,26 +337,26 @@ UPDATE outbox_events SET attempts = 0, next_attempt_at = NULL WHERE id = ?
 ## Tests
 
 ```bash
-./mvnw clean verify                       # 204 tests: 197 run, 7 skipped, 0 failures
-./mvnw -f lambda/pom.xml clean verify     # 23 tests, 0 failures
+./mvnw clean verify                       # 235 tests: 227 run, 8 skipped, 0 failures
+./mvnw -f lambda/pom.xml clean verify     # 25 tests, 0 failures
 ```
 
 | Layer | Tests | Tooling |
 |---|---|---|
 | Domain entity | 12 | plain JUnit, with no Spring and no database |
-| Service | 34 | `@ExtendWith(MockitoExtension.class)`, `@Mock`, `@InjectMocks`, `@Captor`, split across `BookingServiceTest` (orchestration), `BookingWriterTest` (the write path), `FlightServiceTest` and `SqsEventPublisherTest` (what goes on the wire) |
-| Web slice | 25 | `@WebMvcTest` + `@MockitoBean`: status codes, `Location` headers, error JSON |
+| Service | 35 | `@ExtendWith(MockitoExtension.class)`, `@Mock`, `@InjectMocks`, `@Captor`, split across `BookingServiceTest` (orchestration, including a failed insert with no winning booking to recover), `BookingWriterTest` (the write path), `FlightServiceTest` and `SqsEventPublisherTest` (what goes on the wire) |
+| Web slice | 42 | `@WebMvcTest` + `@MockitoBean` in the two controller tests: status codes, `Location` headers, error JSON, `Allow` on a 405 and `Accept` on a 415, and the flight-number, airport-code, passenger-name and whole-number rules. The other 2 are `exception/ApiErrorControllerTest`, with no Spring context. One calls `ApiErrorController` directly and one drives it through a standalone MockMvc, because a full MockMvc never forwards to `/error` |
 | Repository slice | 13 | `@DataJpaTest` + `TestEntityManager`: derived queries, JPQL, `JOIN FETCH`, constraints |
-| Full context (H2) | 73 | `@SpringBootTest`: the idempotency guarantee end to end (three 10-thread races on one key: same request, different payloads, and the last seat), the authorisation rules against the real filter chain, the outbox with its trace capture, the attempt ceiling and the retention pruner against an embedded database, the OpenAPI document compared with a real response, the lock timeout, the error contract, and a lazy-loading regression with no mocking anywhere in the chain |
-| Event contract | 11 | one producer-side class and one consumer-side class, both asserting against `contracts/booking-created-v1.json` |
-| Lambda handler | 17 | separate module: batch parsing, partial batch failure, the conditional write, and the producer's trace context surviving the queue |
-| Configuration binding | 18 | plain JUnit with a standalone Jakarta `Validator` and Boot's `Binder`: an unresolved `${...}` placeholder is rejected at startup, every outbox bound is enforced and every default is wired |
-| Architecture | 9 | ArchUnit over `target/classes`: the layering, no field injection, no `@Transactional` outside `service/`, no wall-clock reads outside `entity/`. I checked each rule against a planted violation before committing it |
+| Full context (H2) | 81 | `@SpringBootTest`. The idempotency guarantee end to end, with four 10-caller races on one key: same request, different payloads, the last seat, and one key across two flights. The authorisation rules against the real filter chain, with the Basic and Bearer challenges and who sees health components. The outbox with its trace capture, the attempt ceiling and the retention pruner against an embedded database. The OpenAPI document's status codes per operation and its comparison with a real response. The lock timeout, the error contract with the 406 and the page overflow, and a lazy-loading regression with no mocking anywhere in the chain |
+| Event contract | 11 | one producer-side class and one consumer-side class, both asserting against `contracts/booking-created-v1.json`; the consumer side parses through the handler's own mapper |
+| Lambda handler | 19 | separate module: batch parsing, partial batch failure and the conditional write. `seats` is refused with no coercion when it is missing, below 1, a string or fractional. Body values are logged on one line and capped at 1,000 characters, and the producer's trace context survives the queue |
+| Configuration and startup checks | 22 | Boot's `Binder` over plain maps: an unresolved `${...}` placeholder is rejected at startup, every outbox bound is enforced and every default is wired. `EventPropertiesTest` also starts the whole application to see a bad `app.events.publisher` named, and `PasswordVerifiabilityTest` runs `SecurityConfig` in a `WebApplicationContextRunner` to see an unverifiable password stop startup |
+| Architecture | 9 | ArchUnit over `target/classes`: the layering, no field injection, no `@Transactional` outside `service/`, no wall-clock reads outside `Booking`, whose `createdAt` is the one read. I checked each rule against a planted violation before committing it |
 | Observability | 8 | the request-id filter against a hostile inbound header, and the meters scraped through a real `PrometheusMeterRegistry`, since a `SimpleMeterRegistry` would accept any name |
-| Run | 220 | 0 failures (12 + 34 + 25 + 13 + 73 + 11 + 17 + 18 + 9 + 8) |
-| PostgreSQL integration | 7 | `@Testcontainers(disabledWithoutDocker = true)`: `BookingIntegrationTest` and `service/OutboxPrunePostgresTest`, skipped without a container runtime |
+| Run | 252 | 0 failures (12 + 35 + 42 + 13 + 81 + 11 + 19 + 22 + 9 + 8) |
+| PostgreSQL integration | 8 | `@Testcontainers(disabledWithoutDocker = true)`: 5 in `BookingIntegrationTest` and 3 in `service/OutboxPrunePostgresTest`, skipped without a container runtime |
 
-227 tests exist across the two modules: 220 run without Docker and 7 skip. CI runs all 227 on runners with Docker, and it is the only place the PostgreSQL paths run. Those are Flyway with `ddl-auto=validate`, `SELECT FOR UPDATE` under 20-way contention, a 20-thread key race, and the native `DELETE … FOR UPDATE SKIP LOCKED` under two pruners. See [CONTRIBUTING.md](CONTRIBUTING.md) for what the skipped count means.
+260 tests exist across the two modules: 252 run without Docker and 8 skip. CI runs all 260 on runners with Docker, and it is the only place the PostgreSQL paths run. Those are Flyway with `ddl-auto=validate`, `SELECT FOR UPDATE` under 20-way contention, a 20-thread key race, the native `DELETE … FOR UPDATE SKIP LOCKED` under two pruners, and the outbox claim under two competing pollers. The `build` job's "The PostgreSQL tests ran" step fails the run if either class skipped a test or left no report. See [CONTRIBUTING.md](CONTRIBUTING.md) for what the skipped count means.
 
 ## Deployment and cost
 
@@ -366,6 +368,10 @@ kubectl kustomize k8s/overlays/aws               # what would be applied to EKS
 ```
 
 The image is built on an amd64 CI runner for amd64 nodes, so the pipeline needs no `--platform` flag. A plain `docker build` on Apple Silicon produces arm64, and the pod crash-loops with `exec /bin/sh: exec format error`, so build locally with `--platform linux/amd64`. The Lambda runs on arm64, so this applies to the service image only.
+
+The `Dockerfile` sets `SPRING_PROFILES_ACTIVE=prod`, so a bare `docker run` with no database stops at startup with `'url' must start with "jdbc"`. Without that default it would serve in-memory H2 with the `{noop}` dev passwords. `compose.yaml` selects `postgres`, and the ConfigMap selects `prod`.
+
+The Lambda's SQS event in `template.yaml` caps the consumer at five concurrent invocations with `ScalingConfig.MaximumConcurrency: 5` (valid from 2 to 1000). It reserves nothing from the account's concurrency pool and limits only the poller.
 
 The EKS control plane bills about $0.10 an hour (about $73 a month) with no worker nodes, until it is deleted. On demand in `ap-south-1` the whole stack costs $7.72 a day: $54 for 7 days, $116 for 15 and $232 for 30, or $64, $137 and $273 with the 18% GST AWS India invoices. See [DEPLOYMENT.md](DEPLOYMENT.md) for the breakdown, three cheaper shapes (one is a single EC2 instance at $0.80 a day) and the runbook. `deploy/aws/down.sh` ends with fourteen checks and fails if any finds something or if a query itself fails.
 
@@ -409,7 +415,9 @@ I reproduced most of these against a running instance before fixing them. The te
 
 - [A teardown that could pass on an error](NOTES.md#a-teardown-that-could-pass-on-an-error). An expired token made every check in `deploy/aws/down.sh` print PASS.
 
-- [Three review passes](NOTES.md#first-review-pass) over my own code found the rest, from a readiness probe that ignored the database to `@Lob` on PostgreSQL.
+- [Three review passes](NOTES.md#first-review-pass) over my own code found more, from a readiness probe that ignored the database to `@Lob` on PostgreSQL.
+
+- [A fourth review pass](NOTES.md#fourth-review-pass) audited every file. It found a fractional seat count accepted as a whole one, a flight number with a slash that broke the `Location` header, and a page number that overflowed to a 500. Among the rest were a publisher setting whose check never ran and a Lambda template that `sam build` could not build.
 
 ## Versions
 
