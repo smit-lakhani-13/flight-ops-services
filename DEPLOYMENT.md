@@ -313,7 +313,8 @@ Prices are for `ap-south-1`, on-demand, from the AWS price list on 22 September
 | Application Load Balancer | $0.0239/hr + LCU | $0.62 |
 | RDS db.t4g.micro + 20 GB gp3 | $0.021/hr | $0.50 |
 | EBS (2 × 20 GB gp3), public IPv4 | | $0.62 |
-| SQS, Lambda, DynamoDB, ECR, X-Ray | free tier at this volume | $0.00 |
+| SQS, Lambda, DynamoDB, X-Ray | free tier at this volume | $0.00 |
+| ECR, under 1 GB of images | $0.10/GB-month after any free tier | $0.00 |
 | | | **$7.72** |
 
 The figures assume 1.5 GB/day through the NAT gateway, about 0.25 LCU on the
@@ -462,8 +463,9 @@ runs fourteen checks and exits non-zero if any of them finds something. They
 cover both kinds of load balancer, clusters, instances, NAT gateways, volumes,
 Elastic IPs, RDS instances and snapshots, stacks, log groups, secrets and ECR,
 plus a catch-all query for anything tagged `Project=flight-ops`. The
-catch-all leaves out the GitHub OIDC provider in both modes, because the
-foundation stack keeps it. With
+catch-all runs in ap-south-1, and AWS reports IAM resources from us-east-1, so
+it sees no IAM role or OIDC provider. IAM bills nothing, and the stacks check
+still catches an eksctl stack that failed to delete, IRSA roles and all. With
 `--keep-foundation` there are thirteen, because that flag leaves the ECR
 repository behind and skips its check. It also leaves the foundation stack and
 its own resources out of the stacks check and the tag catch-all. Any other

@@ -179,7 +179,7 @@ require_jdk21() {
 # self-managed, and a re-run would then try to create them a second time.
 require_eksctl() {
     local version minor
-    version=$(eksctl version 2>/dev/null | head -1)
+    version=$(eksctl version 2>/dev/null | head -1 || true)
     minor=$(printf '%s' "$version" | sed -n 's/^0\.\([0-9][0-9]*\)\..*/\1/p')
     case "$version" in
         0.*) [ -n "$minor" ] && [ "$minor" -ge 184 ] ;;

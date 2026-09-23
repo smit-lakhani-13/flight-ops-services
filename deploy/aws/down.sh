@@ -410,9 +410,13 @@ fi
 tagged=$(q resourcegroupstaggingapi get-resources \
     --tag-filters Key=Project,Values=flight-ops \
     --query 'ResourceTagMappingList[].ResourceARN' --output text)
-# foundation.yaml retains the GitHub OIDC provider, with its Project tag, so it
-# is never a leftover. --keep-foundation also keeps the foundation's own
-# resources. The ARNs are split once, so every pattern sees one ARN per line.
+# The query runs in ap-south-1, and AWS reports IAM resources from us-east-1,
+# so no IAM role or OIDC provider reaches this list. IAM bills nothing, and the
+# stacks check above still catches an eksctl stack that failed to delete. The
+# patterns drop the foundation's resources wherever the tagging API lists them:
+# the GitHub OIDC provider, which foundation.yaml retains, and with
+# --keep-foundation the rest of the foundation. The ARNs are split once, so
+# every pattern sees one ARN per line.
 retained_arns=':oidc-provider/token\.actions\.githubusercontent\.com$'
 if [ "$KEEP_FOUNDATION" = 1 ]; then
     retained_arns="$retained_arns|:stack/$FOUNDATION_STACK/|:repository/flight-ops-service\$|:role/github-actions-deploy\$"

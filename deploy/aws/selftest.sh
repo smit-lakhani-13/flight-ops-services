@@ -145,7 +145,8 @@ cat > "$tmp/bin/eksctl" <<'STUB'
 #!/usr/bin/env bash
 printf 'eksctl %s\n' "$*" >> "$STUB_LOG"
 case "$1" in
-    version) printf '%s\n' "${STUB_EKSCTL_VERSION-0.230.0}" ;;
+    version) [ "${STUB_EKSCTL_VERSION_FAILS:-0}" = 0 ] || exit 126
+             printf '%s\n' "${STUB_EKSCTL_VERSION-0.230.0}" ;;
     get)    [ "${STUB_CLUSTER_UP:-0}" = 1 ] ;;
     delete) [ "${STUB_EKSCTL_FAILS:-0}" = 0 ] ;;
     utils|create) [ "${STUB_EKSCTL_CREATE_FAILS:-0}" = 0 ] ;;
@@ -211,8 +212,10 @@ expect_calls() {
     [ "$n" = "$3" ] || { fail "$1" "$n call(s) matching '$2', expected $3"; return 1; }
 }
 
-# The foundation's own leftovers: its stack, the ECR repository and the shared
-# GitHub OIDC provider, as the tagging API lists them.
+# The foundation's own leftovers: its stack and the ECR repository, which the
+# regional query lists, and the retained GitHub OIDC provider. AWS reports IAM
+# from us-east-1, so the real query would not list that one, but the filter
+# drops it wherever it appears.
 FOUNDATION_ARNS='arn:aws:cloudformation:ap-south-1:123456789012:stack/flight-ops-foundation/0f1e\tarn:aws:ecr:ap-south-1:123456789012:repository/flight-ops-service\tarn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com'
 
 echo "down.sh"
@@ -225,10 +228,10 @@ expect_status "$name" 0 && expect_out "$name" 'PASS  CloudFormation stacks' \
 
 name="--keep-foundation still fails on a leftover that is not the foundation's"
 STUB_STACKS='' STUB_LIST_STACKS='flight-ops-foundation flight-ops-data' \
-    STUB_TAGGED="$FOUNDATION_ARNS\\tarn:aws:iam::123456789012:oidc-provider/oidc.eks.ap-south-1.amazonaws.com/id/AB12" \
+    STUB_TAGGED="$FOUNDATION_ARNS\\tarn:aws:sqs:ap-south-1:123456789012:booking-events" \
     run down.sh --keep-foundation
 expect_status "$name" 1 && expect_out "$name" 'FAIL  CloudFormation stacks: flight-ops-data' \
-    && expect_out "$name" 'oidc.eks.ap-south-1.amazonaws.com/id/AB12' \
+    && expect_out "$name" 'arn:aws:sqs:ap-south-1:123456789012:booking-events' \
     && reject_out "$name" 'oidc-provider/token.actions.githubusercontent.com' && pass "$name"
 
 name="a full teardown fails on the same foundation leftovers"
@@ -521,6 +524,12 @@ if expect_status "$name" 0; then
     fi
 fi
 
+# A broken install or a shim exits non-zero. Under set -e that must still
+# reach the message, not end up.sh with nothing on screen.
+name="require_eksctl names the problem when eksctl version itself fails"
+STUB_EKSCTL_VERSION_FAILS=1 run_lib require_eksctl
+expect_status "$name" 1 && expect_out "$name" "reports 'no version'" && pass "$name"
+
 EDIT=arn:aws:eks::aws:cluster-access-policy/AmazonEKSEditPolicy
 grant="grant_namespace_access arn:aws:iam::123456789012:role/github-actions-deploy $EDIT flight-ops"
 
@@ -571,12 +580,14 @@ missing_calls=''
 for call in 'require_jdk21 "$repo/mvnw"' 'require_eksctl' 'complete_cluster "$repo/cluster.yaml"' \
         'grant_namespace_access ' 'if stack_ready "$DATA_STACK"' \
         'require_jdbc_url "$DB_URL"' 'wait_for_deployment'; do
-    grep -qF -- "$call" "$here/up.sh" || missing_calls="$missing_calls [$call]"
+    # At the start of a command line, so a comment or a `:` in front does not count.
+    awk -v c="$call" '{ sub(/^[ \t]+/, "") } index($0, c) == 1 { f = 1 } END { exit !f }' "$here/up.sh" \
+        || missing_calls="$missing_calls [$call]"
 done
 if [ -z "$missing_calls" ]; then pass "$name"; else fail "$name" "no call to$missing_calls"; fi
 
-# Another local user can create a file at a fixed name in /tmp before up.sh
-# does, and step 8 turns the file it downloads into an IAM policy.
+# Another local user can leave a writable file or a symlink at a fixed name in
+# /tmp, and step 8 turns the file it downloads into an IAM policy.
 name="up.sh writes nothing to a fixed path in /tmp"
 if grep -n '/tmp/' "$here/up.sh" > "$OUT"; then fail "$name" "a fixed /tmp path"; else pass "$name"; fi
 

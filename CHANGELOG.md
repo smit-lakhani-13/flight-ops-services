@@ -137,6 +137,11 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
   required. The step logic lives in `deploy/aws/lib.sh`
   functions, which `deploy/aws/selftest.sh` checks against stubbed tools.
 
+- **`down.sh` catch-all.** It leaves the GitHub OIDC provider out in both
+  modes, since the foundation stack keeps it. The query runs in ap-south-1, and
+  AWS reports IAM resources from us-east-1, so it lists no IAM resource. A
+  leftover IAM role or OIDC provider passes the sweep, and IAM bills nothing.
+
 - **`demo.sh` dates.** It books flights departing 30 days ahead, computed with
   BSD or GNU `date`, where a fixed date would have expired. Act 8 names every
   anonymous path, and the H2 reset line prints only against localhost.
@@ -273,19 +278,12 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
   with `AWS credentials are not usable`. `down.sh` used to run every delete
   step and fail only at the sweep.
 
-- **Teardown sweep.** A full teardown failed its own sweep. The tag catch-all
-  counted the GitHub OIDC provider, which the foundation stack keeps. It now
-  leaves the provider out in both modes.
-
 - **An interrupted cluster create.** eksctl creates the control plane first,
   then the networking addons, the OIDC provider and the node group. A run that
   stopped in between found the cluster on its re-run and went on without them.
   Step 4 now creates whichever of those is missing, and waits for vpc-cni and
   the node group. Step 9 prints the commands to set a new database password
   when the run that created the data stack stopped before writing it.
-
-- **LB controller policy file.** Step 8 wrote it to a fixed path in `/tmp`.
-  It now downloads it to a private `mktemp` file and removes it afterwards.
 
 The other fixes are to documentation only, and change no behaviour.
 
@@ -332,6 +330,10 @@ The other fixes are to documentation only, and change no behaviour.
   and line-separator characters with `?`, and caps a value at 1,000 characters
   plus `...`. It guards the `bookingId` on the success line and the exception
   message on the `FAILED` line.
+
+- **LB controller policy file.** Step 8 downloaded the IAM policy to a fixed
+  path in `/tmp`, where another local user could plant a file first. It now
+  uses a private `mktemp` file and removes it afterwards.
 
 - **No password in the log.** `ApiSecurityProperties` checks the prefix in its
   constructor, so Boot's failure report no longer echoes a rejected value. The

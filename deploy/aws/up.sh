@@ -260,8 +260,9 @@ step "8/12  AWS Load Balancer Controller and metrics-server"
 # `kubectl get ingress` shows no ADDRESS, forever, with no error anywhere.
 LBC_POLICY_ARN="arn:aws:iam::${ACCOUNT_ID}:policy/AWSLoadBalancerControllerIAMPolicy"
 if ! aws iam get-policy --policy-arn "$LBC_POLICY_ARN" >/dev/null 2>&1; then
-    # mktemp, not a fixed shared name: another local user could create that
-    # file first, and what it held would become an account-wide IAM policy.
+    # mktemp, not a fixed name in /tmp. Another local user could leave a
+    # writable file or a symlink at that name. They could then rewrite it after
+    # curl and before create-policy, so the policy would carry their text.
     policy_file=$(mktemp)
     trap 'rm -f "$policy_file"' EXIT
     curl -fsSL -o "$policy_file" \
