@@ -130,6 +130,45 @@ class ErrorContractTest {
         assertThat(JsonPath.<List<Integer>>read(json, "$.content[*].seats")).containsExactly(3, 1);
     }
 
+    /**
+     * Spring Data accepts {@code ignorecase} on any property. The bookings query
+     * is a declared {@code @Query}, which wraps the column in {@code lower()}
+     * whatever its type, and Hibernate refused that for a number with a 500.
+     * The flights search builds a criteria query, which never had the problem;
+     * it is here so the two endpoints stay alike.
+     */
+    @Test
+    @DisplayName("ignorecase on a number or a time sorts normally; on a name it still applies")
+    void ignoreCaseOnANonTextPropertyIsDropped() throws Exception {
+        createFlight("ZZ302", "AMS", "BRU", "2031-03-01T08:00:00Z");
+        book("ZZ302", "ada Lovelace", 1, "contract-ic-1");
+        book("ZZ302", "Grace Hopper", 3, "contract-ic-2");
+
+        String bySeats = mockMvc.perform(get("/api/v1/bookings")
+                        .param("flightNumber", "ZZ302")
+                        .param("sort", "seats,desc,ignorecase"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        assertThat(JsonPath.<List<Integer>>read(bySeats, "$.content[*].seats")).containsExactly(3, 1);
+
+        // Case-sensitive, "G" sorts before "a". Ignoring case, "ada" comes first.
+        String byName = mockMvc.perform(get("/api/v1/bookings")
+                        .param("flightNumber", "ZZ302")
+                        .param("sort", "passengerName,asc,ignorecase"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        assertThat(JsonPath.<List<String>>read(byName, "$.content[*].passengerName"))
+                .containsExactly("ada Lovelace", "Grace Hopper");
+
+        mockMvc.perform(get("/api/v1/bookings")
+                        .param("flightNumber", "ZZ302")
+                        .param("sort", "createdAt,asc,ignorecase"))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/v1/flights")
+                        .param("sort", "departureTime,desc,ignorecase"))
+                .andExpect(status().isOk());
+    }
+
     @Test
     @DisplayName("the booking list is paged: two bookings at size=1 are two pages with different rows")
     void bookingListIsPaged() throws Exception {

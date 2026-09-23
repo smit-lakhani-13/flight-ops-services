@@ -7,6 +7,8 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.core.NestedRuntimeException;
+import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.dao.PessimisticLockingFailureException;
@@ -16,6 +18,7 @@ import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.util.StringUtils;
 import org.springframework.web.ErrorResponseException;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
@@ -173,6 +176,23 @@ public class GlobalExceptionHandler {
                 .header("Retry-After", "1")
                 .body(ErrorResponse.of("LOCK_TIMEOUT",
                                        "That flight is busy right now. Please retry.",
+                                       clock.instant()));
+    }
+
+    /**
+     * No connection: the pool stayed empty for its whole connection-timeout, or
+     * the database did not answer. 503 with {@code Retry-After} for the lock
+     * timeout's reason: the request was valid, and the same request later can
+     * succeed. As a 500 it also logged a stack trace per caller, at ERROR, for
+     * a condition that is not a bug in this code.
+     */
+    @ExceptionHandler({CannotCreateTransactionException.class, DataAccessResourceFailureException.class})
+    public ResponseEntity<ErrorResponse> handleDatabaseUnavailable(NestedRuntimeException e) {
+        log.warn("Database unavailable: {}", printable(e.getMostSpecificCause().getMessage()));
+        return json(HttpStatus.SERVICE_UNAVAILABLE)
+                .header("Retry-After", "1")
+                .body(ErrorResponse.of("DATABASE_UNAVAILABLE",
+                                       "The service cannot reach its database. Please retry.",
                                        clock.instant()));
     }
 

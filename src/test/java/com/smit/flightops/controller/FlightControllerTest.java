@@ -7,6 +7,7 @@ import com.smit.flightops.dto.CreateFlightRequest;
 import com.smit.flightops.dto.FlightDto;
 import com.smit.flightops.entity.Flight;
 import com.smit.flightops.entity.FlightStatus;
+import com.smit.flightops.exception.DuplicateFlightException;
 import com.smit.flightops.exception.FlightNotFoundException;
 import com.smit.flightops.service.FlightService;
 import org.junit.jupiter.api.DisplayName;
@@ -21,13 +22,16 @@ import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.data.core.PropertyReferenceException;
 import org.springframework.data.core.TypeInformation;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.transaction.CannotCreateTransactionException;
 
+import java.sql.SQLTransientConnectionException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
@@ -191,6 +195,19 @@ class FlightControllerTest {
                         .content(createBody("UA999", "EWR", "SFO")))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("DUPLICATE_REQUEST"));
+    }
+
+    /** The ordinary case, caught by {@code existsByFlightNumber} before the insert. */
+    @Test
+    @DisplayName("creating a flight number that already exists is 409 DUPLICATE_FLIGHT")
+    void existingFlightNumberReturns409() throws Exception {
+        when(flightService.create(any())).thenThrow(new DuplicateFlightException("UA999"));
+
+        mockMvc.perform(post("/api/v1/flights")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(createBody("UA999", "EWR", "SFO")))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("DUPLICATE_FLIGHT"));
     }
 
     /** Both writes accept JSON only, for the reason {@code BookingControllerTest#yamlBodyReturns415} gives. */
@@ -367,6 +384,26 @@ class FlightControllerTest {
         verify(flightService).create(argThat(r -> r.departureTime().equals(Instant.parse("2099-01-01T10:00:00Z"))));
     }
 
+    /**
+     * {@code Instant.parse} reads years up to a billion and {@code @Future} is
+     * happy with any of them. PostgreSQL stores nothing after 294276 AD, and the
+     * failed insert reached the client as a 409 that said to retry.
+     */
+    @Test
+    @DisplayName("a departure after the year 9999 is 400, not a database error")
+    void departureTimeAfterYear9999IsRejected() throws Exception {
+        mockMvc.perform(post("/api/v1/flights")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"flightNumber":"UA999","origin":"EWR","destination":"SFO","totalSeats":100,
+                                 "departureTime":"+300000-01-01T00:00:00Z"}
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("MALFORMED_REQUEST"));
+
+        verify(flightService, never()).create(any());
+    }
+
     @Test
     void deleteReturns204() throws Exception {
         mockMvc.perform(delete("/api/v1/flights/UA123"))
@@ -399,6 +436,48 @@ class FlightControllerTest {
                 .andExpect(status().isServiceUnavailable())
                 .andExpect(header().string("Retry-After", "1"))
                 .andExpect(jsonPath("$.code").value("LOCK_TIMEOUT"));
+    }
+
+    /**
+     * Both writes load the flight without the row lock, so a booking can commit
+     * between their read and their write. {@code @Version} rejects the stale
+     * write instead of letting it put back the seats the booking took.
+     */
+    @Test
+    @DisplayName("a stale status change or cancellation rejected by @Version is 409 CONCURRENT_MODIFICATION")
+    void staleFlightWriteReturns409() throws Exception {
+        var stale = new OptimisticLockingFailureException("stale");
+        when(flightService.updateStatus("UA123", FlightStatus.DELAYED)).thenThrow(stale);
+        doThrow(stale).when(flightService).cancel("UA456");
+
+        mockMvc.perform(patch("/api/v1/flights/UA123/status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"DELAYED\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("CONCURRENT_MODIFICATION"));
+
+        mockMvc.perform(delete("/api/v1/flights/UA456"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("CONCURRENT_MODIFICATION"));
+    }
+
+    /**
+     * What a full pool looks like to the controller: Hikari gives up after its
+     * connection-timeout and the transaction cannot begin. Any endpoint can hit
+     * it, reads included, so a GET stands in for all of them.
+     */
+    @Test
+    @DisplayName("no database connection is 503 DATABASE_UNAVAILABLE with Retry-After, not 500")
+    void noDatabaseConnectionReturns503() throws Exception {
+        when(flightService.findByNumber("UA123")).thenThrow(new CannotCreateTransactionException(
+                "Could not open JPA EntityManager for transaction",
+                new SQLTransientConnectionException("HikariPool-1 - Connection is not available")));
+
+        mockMvc.perform(get("/api/v1/flights/UA123"))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(header().string("Retry-After", "1"))
+                .andExpect(content().contentType(MediaType.APPLICATION_JSON))
+                .andExpect(jsonPath("$.code").value("DATABASE_UNAVAILABLE"));
     }
 
     /**
