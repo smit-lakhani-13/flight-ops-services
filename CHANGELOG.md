@@ -79,11 +79,13 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
 
 - **JSON only.** `FlightController` and `BookingController` declare
   `produces = application/json`, so an XML or YAML `Accept` gets 406
-  `REQUEST_REJECTED` in JSON. `/v3/api-docs.yaml` still returns 200.
+  `REQUEST_REJECTED` in JSON. The three writes also declare
+  `consumes = application/json` (see Fixed). `/v3/api-docs.yaml` still
+  returns 200.
 
 - **Complete OpenAPI responses.** Every operation has `@Operation` and
   `@ApiResponses`, 401 and 403 included, and the flight status change and
-  cancel document 503 `LOCK_TIMEOUT`.
+  cancel document 503 `LOCK_TIMEOUT`. Each write with a body documents 415.
   `OpenApiTest#theDocumentCoversTheApiAndItsFailures` pins each operation's
   documented codes.
 
@@ -135,6 +137,25 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
   `accept-float-as-int: false` under `spring.jackson.deserialization` now
   rejects a fractional value for any whole-number field in a JSON body. The
   response is a 400 `MALFORMED_REQUEST`.
+
+- **YAML bodies skipped the settings.** swagger-core puts a YAML reader on
+  the classpath, and no `spring.jackson` setting reaches it, so `seats: 2.5` in
+  an `application/yaml` body still booked two seats. The three writes declare
+  `consumes = application/json` and answer any other body with 415
+  `UNSUPPORTED_MEDIA_TYPE` (`BookingControllerTest#yamlBodyReturns415`,
+  `FlightControllerTest#yamlBodyReturns415`).
+
+- **Quoted numbers, numbered enums.** `allow-coercion-of-scalars: false`
+  under `spring.jackson.mapper` rejects `"seats": "2"`, and
+  `fail-on-numbers-for-enums: true` under `spring.jackson.datatype.enum`
+  rejects `"status": 4`, which used to cancel the flight. Both are 400
+  `MALFORMED_REQUEST` (`FlightControllerTest#statusAsANumberReturns400`).
+
+- **Epoch departure times.** `CreateFlightRequest.departureTime` reads through
+  `IsoInstantDeserializer`, which accepts only an ISO-8601 string. A number
+  used to be read as epoch seconds, so a value in milliseconds landed in the
+  year 58971 and passed `@Future`. An offset such as `+05:30` still works
+  (`FlightControllerTest#departureTimeMustBeAnIsoString`).
 
 - **Unencoded `Location` headers.** `FlightController#create` and
   `BookingController#book` now build `Location` with `UriComponentsBuilder`, so
