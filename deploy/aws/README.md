@@ -103,11 +103,11 @@ Variable  DB_URL           jdbc:postgresql://…:5432/flightops
 ```
 
 Put those in the GitHub repository settings and run the workflow. The script
-then waits for CI to create the deployment and for the rollout, creates the
-Ingress, waits for the load balancer, and finishes by running
-[`demo.sh`](../../demo.sh) against the public URL. The demo is eight acts over
-HTTP and never looks at the queue or the table. To see bookings arrive in
-DynamoDB through the queue:
+waits up to 30 minutes for CI to create the deployment, and up to 20 for the
+rollout. Then it creates the Ingress, waits for the load balancer, and finishes
+by running [`demo.sh`](../../demo.sh) against the public URL. The demo is eight
+acts over HTTP and never looks at the queue or the table. To see bookings
+arrive in DynamoDB through the queue:
 
 ```bash
 aws dynamodb scan --table-name flight-status-events --select COUNT
@@ -167,8 +167,8 @@ of them still exists. A check that cannot reach AWS fails: an empty result and
 a failed call look the same on stdout, so every query turns a non-zero exit
 into output the check reports. That exit code answers "is it gone?". A delete
 step's own message does not, because a CloudFormation delete can report
-success while leaving a load balancer behind; each step prints `✓` only when
-its wait confirms the delete.
+success while leaving a load balancer behind; each stack and the cluster print
+`✓` only when their wait confirms the delete.
 
 `down.sh` writes its own temporary kubeconfig for the cluster and checks that
 the API server answers. If it cannot reach the cluster, it says so, asks you to
@@ -177,11 +177,12 @@ context your shell had selected.
 
 Two orderings in that script matter:
 
-- **The Ingress is deleted first.** Delete the namespace with an Ingress still
-  in it, and the controller, deleted at the same moment, never receives the
-  event that would delete the ALB. The load balancer survives, attached to
-  nothing, and bills until someone finds it.
-- **The database is deleted before the cluster.** Its security group lives in
+- **Ingress first.** Delete the namespace with an Ingress still in it, and the
+  controller, deleted at the same moment, never receives the event that would
+  delete the ALB. The load balancer survives, attached to nothing, and bills
+  until someone finds it.
+
+- **Database before the cluster.** Its security group lives in
   eksctl's VPC, and the VPC delete blocks on it. eksctl then fails after twenty
   minutes with a message about a dependency it declines to name.
 
@@ -200,14 +201,14 @@ still billed at month end.
 | What you see | What it is |
 |---|---|
 | `kubectl get ingress` shows no ADDRESS, forever, no error | the load balancer controller is not running, or its IRSA role is missing. `kubectl logs -n kube-system deploy/aws-load-balancer-controller` |
-| Pods `CrashLoopBackOff`, log shows `APPLICATION FAILED TO START` on `app.security.apiPassword` | `API_PASSWORD` (or `OPS_PASSWORD`) is missing from the Secret, or has no `{id}` prefix. `kubectl get secret flight-ops-secret -n flight-ops -o jsonpath='{.data}'` should list `DB_PASSWORD`, `API_PASSWORD`, `OPS_PASSWORD` |
+| Pods `CrashLoopBackOff`, log shows `APPLICATION FAILED TO START` on `app.security.api-password (API_PASSWORD)` | `API_PASSWORD` (or `OPS_PASSWORD`) is missing from the Secret, or has no `{id}` prefix. The message never shows the value. `kubectl get secret flight-ops-secret -n flight-ops -o jsonpath='{.data}'` should list `DB_PASSWORD`, `API_PASSWORD`, `OPS_PASSWORD` |
 | Pods `CrashLoopBackOff`, Flyway reports `password authentication failed` | `DB_PASSWORD` in the Secret does not match the database |
-| Every API call returns 500 `INTERNAL_ERROR` | the password carries an algorithm id no encoder verifies, such as `{bcrpyt}`. The log names it: `There is no password encoder mapped for the id` |
+| Pods `CrashLoopBackOff`, log shows `app.security.api-password cannot be verified by the configured DelegatingPasswordEncoder` | the password carries an algorithm id no encoder verifies, such as `{bcrpyt}`, and the log adds `There is no password encoder mapped for the id`. An `{argon2}` or `{scrypt}` hash stops startup the same way, because the build leaves out BouncyCastle |
 | Every API call returns 401, log warns `Encoded password does not look like BCrypt` | the Secret still holds `{bcrypt}REPLACE_ME` from `k8s/secret.example.yaml`. Recreate it with a real hash |
 | `kubectl get hpa` shows `<unknown>/70%` | metrics-server is not installed. `aws eks describe-addon --cluster-name flight-ops-cluster --addon-name metrics-server` |
 | `up.sh` stops at step 1 on the JDK | the Maven wrapper does not see JDK 21. Point `JAVA_HOME` at `openjdk@21` |
 | `up.sh` stops at step 5: `has no AmazonEKSEditPolicy scoped to namespace/flight-ops` | the policy association was refused and is not there. The message prints the `list-associated-access-policies` command to check it |
-| `up.sh` stops at step 6 on the data stack's status | `ROLLBACK_COMPLETE` or `DELETE_FAILED` holds no database: delete the stack and re-run (the message prints both commands). A status ending `_IN_PROGRESS`: wait, then re-run |
+| `up.sh` stops at step 6 on the data stack's status | `ROLLBACK_COMPLETE` or `DELETE_FAILED` cannot be used: delete the stack and re-run (the message prints both commands). A status ending `_IN_PROGRESS`: wait, then re-run. A status read that fails for another reason also stops the run, so a throttled call is never taken for "no stack" |
 | `up.sh` waits 30 minutes at step 10, then stops | CI never created the deployment. Check the workflow run: the deploy job is skipped unless `DEPLOY_ENABLED` is `true` and the run is on `main` |
 | Pods run but nothing reaches SQS | IRSA is not attached. `kubectl describe pod` should show `AWS_WEB_IDENTITY_TOKEN_FILE` |
 | Connection timeouts to RDS | the security group admits the cluster SG and the shared node SG. Confirm with `aws ec2 describe-security-groups` that the ids in `data.yaml`'s parameters match the live cluster |
@@ -231,7 +232,7 @@ still billed at month end.
 
 `cluster.yaml` and `template.yaml` are at the repository root, where `eksctl`
 and `sam` expect to find them. `up.sh` builds the Lambda with
-`./mvnw -f lambda/pom.xml clean package` and deploys the jar with
+`./mvnw -B -q -f lambda/pom.xml clean package` and deploys the jar with
 `sam deploy --template-file template.yaml`, not `sam build`: SAM builds in a
 scratch copy of `lambda/`, where the tests cannot find `../events` and
 `../contracts`.

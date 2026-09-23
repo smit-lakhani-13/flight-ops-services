@@ -15,9 +15,13 @@
 ## Checks
 
 - [ ] `./mvnw -B clean verify` passes (and `-f lambda/pom.xml` if the Lambda changed)
+
 - [ ] `python3 scripts/refcheck.py && python3 scripts/linkcheck.py && scripts/sweeps.sh` pass
+
 - [ ] `deploy/aws/selftest.sh` passes if anything under `deploy/aws/` changed
-- [ ] Counts in the README match `scripts/numbers.sh`
+
+- [ ] Counts in the Markdown files match `scripts/numbers.sh`
+
 - [ ] A decision with a real trade-off has an ADR in `adr/`
 
 ## Anything to verify by hand

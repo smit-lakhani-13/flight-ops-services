@@ -35,10 +35,10 @@ Two tests, one on each side, both reading this same file:
 | Producer | `BookingEventContractTest` (app module)                   | What the service serialises has these field names, no more and no fewer, with these JSON types |
 | Consumer | `BookingEventContractTest` (`lambda/`)                     | The handler's own mapper parses this document into a fully populated `BookingEvent`, and still parses it when the producer adds a field it does not know about |
 
-Neither test imports the other side's code. The only thing they share is
-this file, so if the producer changes its record, the producer's test
-fails in its own build, and the author learns in the same commit that
-they are about to break a consumer.
+Neither test imports the other side's code, and the only thing they share
+is this file. If the producer changes its record, the producer's test fails
+in its own build, and the author learns in the same commit that they are
+about to break a consumer.
 
 ## What travels beside the body
 
@@ -51,21 +51,22 @@ time and carried on the outbox row until `SqsEventPublisher` sends it.
 holding a trace id from an API response can find that booking's projection
 in a different process on the far side of a queue.
 
-Neither attribute is in the contract file, and I left them out on purpose.
-The body is what the consumer's correctness depends on, so it is pinned
-field by field on both sides. Metadata is not: a booking made outside a
-traced request has no trace context, the service refuses to invent one,
-and the attribute is absent. A consumer that required it would reject
-good events. So the Lambda reads it null-safely at three levels (no
-attribute map at all, no `traceparent` key, a `traceparent` sent with a
-binary data type) and matches the value against the W3C shape before it
-goes near a log line. An attribute is input from whoever can send to the
-queue: a newline in it would put a fabricated line inside the log entry,
-and an unbounded one would be shipped to CloudWatch on every invocation.
-Values from the body come from the same senders, so the handler replaces
-their control characters with `?` and caps them at 1,000 characters
-before logging them. A missing or malformed trace never fails a
-projection. See `BookingEventHandlerTest#theProducersTraceReachesTheLog`
+I kept both attributes out of the contract file. The body is what the
+consumer's correctness depends on, so it is pinned field by field on both
+sides. Metadata is not: a booking made outside a traced request has no
+trace context, the service refuses to invent one, and the attribute is
+absent. A consumer that required it would reject good events. So the
+Lambda reads it null-safely, because there may be no attribute map at all,
+no `traceparent` key, or a `traceparent` sent with a binary data type. It
+matches the value against the W3C shape before it goes near a log line.
+
+An attribute is input from whoever can send to the queue. A newline in it
+would put a fabricated line inside the log entry, and an unbounded one
+would be shipped to CloudWatch on every invocation. Values from the body
+come from the same senders. Before the handler logs a booking id or an
+exception message, it replaces control, format and line-separator
+characters with `?` and caps the text at 1,000 characters. A missing or
+malformed trace never fails a projection. See `BookingEventHandlerTest#theProducersTraceReachesTheLog`
 and `#aHostileTraceparentIsIgnored`, and `events/sqs-with-trace.json`,
 which carries one message with a trace and one without.
 
