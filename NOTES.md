@@ -691,6 +691,33 @@ and the service is never called.
 null and a missing field and expects that 400 for each. The fix is `f67d245`,
 and the test followed in `ccad5b4`.
 
+### The whole-number rule had other ways round it
+
+`accept-float-as-int` reaches the JSON reader only. springdoc brings in
+swagger-core, which brings `jackson-dataformat-yaml`, and Spring MVC then
+registers a YAML reader that no `spring.jackson` setting configures. A booking
+sent as `application/yaml` with `seats: 2.5` still booked two seats. The three
+writes now declare `consumes = application/json`, so a YAML body gets
+`415 UNSUPPORTED_MEDIA_TYPE`. The fix is `dff5ef9`, pinned by
+`controller/BookingControllerTest.java#yamlBodyReturns415` and
+`controller/FlightControllerTest.java#yamlBodyReturns415`.
+
+The JSON reader had gaps of its own. `"seats": "2"` was read from text.
+`"status": 4` was read as the constant at index 4, which is `CANCELLED`. A
+`departureTime` of `1798797600000`, meant as milliseconds, was read as epoch
+seconds: a date in the year 58971, which passed `@Future`.
+`spring.jackson.mapper.allow-coercion-of-scalars: false` closes the first
+(`bdb6781`) and `spring.jackson.datatype.enum.fail-on-numbers-for-enums: true`
+the second (`f1ae45e`). For the third, `validation/IsoInstantDeserializer.java`
+accepts a departure time only as an ISO-8601 string. An offset such as
+`+05:30` still works and is stored in UTC (`f1ae45e`). Each case is
+`400 MALFORMED_REQUEST`. The tests are
+`controller/BookingControllerTest.java#seatsMustBeAWholeNumber`,
+`controller/FlightControllerTest.java#statusAsANumberReturns400`,
+`controller/FlightControllerTest.java#departureTimeMustBeAnIsoString` and
+`controller/FlightControllerTest.java#departureTimeWithAnOffsetIsRead`, and
+each failed before its fix.
+
 ### A flight number that broke its own Location header
 
 Creating a flight built `Location` by concatenation,

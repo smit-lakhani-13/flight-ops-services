@@ -225,6 +225,14 @@ written down. What is missing is a domain.
   separator inside the name could make two different requests hash the same.
   `BookingControllerTest` covers both.
 
+- The writes read JSON only. swagger-core puts a YAML reader on the classpath,
+  and none of the `spring.jackson` settings reach it, so each write declares
+  `consumes = application/json`. A body in any other format gets
+  `415 UNSUPPORTED_MEDIA_TYPE`. In JSON, a whole number sent as text, a status
+  sent as a number and a departure time that is not an ISO-8601 string are
+  each `400 MALFORMED_REQUEST`. None of them is converted into a value the
+  client did not write.
+
 - Error responses are `{code, message, timestamp}`, or
   `{code, fieldErrors, timestamp}` for a validation failure. They never carry
   stack traces, SQL or internal class names. The README lists the 21 codes.

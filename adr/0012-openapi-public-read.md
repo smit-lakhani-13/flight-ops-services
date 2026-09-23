@@ -97,7 +97,8 @@ read listed 401 or 403, which come from the security filter chain where
 springdoc cannot see them. The flight status change left out the 503 it
 returns behind a booking's row lock. A generated client learns its error cases
 from this document, so every operation now lists its success status, 401 and
-403, and the error codes its own logic returns (`ccad5b4`). Statuses that
-Spring MVC raises for any endpoint are not listed: 406 for an `Accept` header
-the API cannot serve, 415 for a body that is not JSON, and 500. The summaries
-stay one line, so the old concern about noise still shapes the text.
+403, and the error codes its own logic returns (`ccad5b4`). The three writes
+with a body also list 415, since they read JSON only and refuse a YAML body
+(`2fb66de`). Statuses that Spring MVC raises for any endpoint are not listed:
+406 for an `Accept` header the API cannot serve, and 500. The summaries stay
+one line, so the old concern about noise still shapes the text.

@@ -40,7 +40,7 @@ were changed in place, and each record's status line says so.
 | [0009](0009-eksctl-and-sam-over-terraform.md) | eksctl, SAM and kustomize rather than Terraform | accepted | `4a9a5b9`, `92922cd` |
 | [0010](0010-region-ap-south-1.md) | Everything in `ap-south-1` | accepted | `4a9a5b9`, `92922cd` |
 | [0011](0011-correlation-ids-and-metrics.md) | Correlation ids, domain counters, and no exporter | accepted | `d18f58b`, `a6efc1c` |
-| [0012](0012-openapi-public-read.md) | The OpenAPI document is public; the API it describes is not | accepted | `82ea9b4`, `ccad5b4` |
+| [0012](0012-openapi-public-read.md) | The OpenAPI document is public; the API it describes is not | accepted | `82ea9b4`, `ccad5b4`, `2fb66de` |
 | [0013](0013-outbox-ceiling-and-retention.md) | The outbox is bounded: an attempt ceiling and a retention window | accepted | `a6efc1c`, `50e8871` |
 | [0014](0014-quality-gates.md) | The build fails on architecture, coverage and dependency drift | accepted | `631f5f0`, `f8d2d4b` |
 
