@@ -80,7 +80,7 @@ public class BookingController {
             @ApiResponse(responseCode = "400", description = """
                     `VALIDATION_FAILED` — a field is blank, out of range or has the wrong characters; \
                     `fieldErrors` names each one. `MALFORMED_REQUEST` — the body is not valid JSON, or \
-                    `seats` is missing or not a whole number; this one has the \
+                    `seats` is missing, fractional or sent as a string; this one has the \
                     `{code, message, timestamp}` shape.""",
                     content = @Content(schema = @Schema(oneOf = {ValidationErrorResponse.class, ErrorResponse.class}))),
             @ApiResponse(responseCode = "401", description = "`UNAUTHENTICATED`",
@@ -89,6 +89,9 @@ public class BookingController {
                     "`FORBIDDEN` — authenticated, but without `flights:write`.",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "404", description = "`FLIGHT_NOT_FOUND`",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(responseCode = "415", description =
+                    "`UNSUPPORTED_MEDIA_TYPE` — the body is not `application/json`. YAML is refused too.",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "409", description = """
                     `INSUFFICIENT_SEATS` — fewer seats remain than requested, and a \

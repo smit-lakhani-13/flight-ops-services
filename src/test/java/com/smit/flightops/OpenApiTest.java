@@ -37,16 +37,17 @@ class OpenApiTest {
     /**
      * Each operation's documented status codes. Every endpoint needs credentials
      * and a scope. Every write to an existing flight row can wait behind a
-     * booking's row lock, so each of them can answer 503.
+     * booking's row lock, so each of them can answer 503. Every write with a body
+     * reads JSON only, so each of them can answer 415.
      */
     private static final Map<String, List<String>> RESPONSES = Map.of(
             "get /api/v1/flights", List.of("200", "400", "401", "403"),
-            "post /api/v1/flights", List.of("201", "400", "401", "403", "409"),
+            "post /api/v1/flights", List.of("201", "400", "401", "403", "409", "415"),
             "get /api/v1/flights/{flightNumber}", List.of("200", "401", "403", "404"),
             "delete /api/v1/flights/{flightNumber}", List.of("204", "401", "403", "404", "409", "503"),
-            "patch /api/v1/flights/{flightNumber}/status", List.of("200", "400", "401", "403", "404", "409", "503"),
+            "patch /api/v1/flights/{flightNumber}/status", List.of("200", "400", "401", "403", "404", "409", "415", "503"),
             "get /api/v1/bookings", List.of("200", "400", "401", "403"),
-            "post /api/v1/bookings", List.of("201", "400", "401", "403", "404", "409", "503"),
+            "post /api/v1/bookings", List.of("201", "400", "401", "403", "404", "409", "415", "503"),
             "get /api/v1/bookings/{bookingId}", List.of("200", "400", "401", "403", "404"),
             "delete /api/v1/bookings/{bookingId}", List.of("200", "400", "401", "403", "404", "503"));
 

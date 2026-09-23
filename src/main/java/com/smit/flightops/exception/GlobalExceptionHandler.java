@@ -192,8 +192,9 @@ public class GlobalExceptionHandler {
 
     /**
      * A body Jackson cannot bind, or a path variable that will not convert. That
-     * covers an unknown enum constant, a fractional or missing number where an
-     * {@code int} is declared, and malformed JSON, none of which reach Bean
+     * covers an unknown enum constant or one sent as a number, a fractional,
+     * quoted or missing number where an {@code int} is declared, a time that is
+     * not an ISO-8601 string, and malformed JSON, none of which reach Bean
      * Validation. The message is generic because Jackson's names internal
      * classes and echoes the payload.
      */

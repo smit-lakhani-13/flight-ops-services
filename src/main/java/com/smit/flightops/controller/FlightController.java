@@ -108,13 +108,16 @@ public class FlightController {
                             schema = @Schema(type = "string"))),
             @ApiResponse(responseCode = "400", description = """
                     `VALIDATION_FAILED` — a field is blank, out of range or has the wrong characters; \
-                    `fieldErrors` names each one. `MALFORMED_REQUEST` — the body is not valid JSON, or \
-                    `totalSeats` is missing or not a whole number; this one has the \
-                    `{code, message, timestamp}` shape.""",
+                    `fieldErrors` names each one. `MALFORMED_REQUEST` — the body is not valid JSON, \
+                    `totalSeats` is missing, fractional or sent as a string, or `departureTime` is \
+                    not an ISO-8601 string; this one has the `{code, message, timestamp}` shape.""",
                     content = @Content(schema = @Schema(oneOf = {ValidationErrorResponse.class, ErrorResponse.class}))),
             @ApiResponse(responseCode = "401", description = "`UNAUTHENTICATED`",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "403", description = "`FORBIDDEN` — `flights:write` is required.",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(responseCode = "415", description =
+                    "`UNSUPPORTED_MEDIA_TYPE` — the body is not `application/json`. YAML is refused too.",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "409", description = """
                     `DUPLICATE_FLIGHT` — a flight with this number exists. `DUPLICATE_REQUEST` — \
@@ -145,7 +148,7 @@ public class FlightController {
             @ApiResponse(responseCode = "200", description = "The flight, at its new status."),
             @ApiResponse(responseCode = "400", description = """
                     `VALIDATION_FAILED` — `status` is missing. `MALFORMED_REQUEST` — the body \
-                    names a status that does not exist; this one has the \
+                    names a status that does not exist, or sends it as a number; this one has the \
                     `{code, message, timestamp}` shape.""",
                     content = @Content(schema = @Schema(oneOf = {ValidationErrorResponse.class, ErrorResponse.class}))),
             @ApiResponse(responseCode = "401", description = "`UNAUTHENTICATED`",
@@ -153,6 +156,9 @@ public class FlightController {
             @ApiResponse(responseCode = "403", description = "`FORBIDDEN` — `flights:write` is required.",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "404", description = "`FLIGHT_NOT_FOUND`",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(responseCode = "415", description =
+                    "`UNSUPPORTED_MEDIA_TYPE` — the body is not `application/json`. YAML is refused too.",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "409", description = """
                     `ILLEGAL_STATUS_TRANSITION` — the flight cannot reach that status \
