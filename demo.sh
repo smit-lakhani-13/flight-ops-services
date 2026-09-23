@@ -313,8 +313,8 @@ say "'is this process wedged, restart it?' and 'can it take traffic right now?'"
 say "The db indicator sits in readiness only. A database outage should take the"
 say "pod out of the load balancer, not restart every replica in a loop."
 echo
-say "Anonymous sees status only. Locally, ops also sees components; in prod,"
-say "details are off for everyone."
+say "Anonymous and the api user see status only. Ops also sees the components,"
+say "in every profile."
 run "curl -s '$BASE/actuator/health' | jq_or_cat"
 run "curl -s $OPS_AUTH '$BASE/actuator/health' | jq_or_cat"
 

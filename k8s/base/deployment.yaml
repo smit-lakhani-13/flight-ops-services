@@ -105,9 +105,9 @@ spec:
               mountPath: /tmp
 
           resources:
-            # Over the CPU limit a container is throttled; over the memory limit
-            # it is OOMKilled. -XX:MaxRAMPercentage=75.0 in the Dockerfile sizes
-            # the heap from the limit. Worst case for the 768Mi:
+            # Over the memory limit a container is OOMKilled.
+            # -XX:MaxRAMPercentage=75.0 in the Dockerfile sizes the heap from
+            # the limit. Worst case for the 768Mi:
             #   576Mi  heap
             #    64Mi  the /tmp tmpfs, charged to this container if filled
             #   128Mi  metaspace, thread stacks, code cache, direct buffers, GC
@@ -116,8 +116,10 @@ spec:
             #   kubectl exec -n flight-ops deploy/flight-ops -- \
             #     jcmd 1 VM.native_memory summary
             requests:
-              # Equal to the limit, for Guaranteed QoS. Burstable pods are
-              # evicted first under node pressure.
+              # Memory request equals the limit, so the pod never uses more than
+              # it reserved. Under node pressure the kubelet evicts pods over
+              # their requests first. With no CPU limit the QoS class is
+              # Burstable, not Guaranteed.
               memory: "768Mi"
               cpu: "500m"
             limits:
