@@ -23,9 +23,9 @@ A record's decision does not change once it is accepted. A decision that
 changes gets a new record that supersedes the old one. The old one stays,
 because the reasoning that was true at the time explains the code someone is
 reading today. I correct wrong facts in place. Where a correction changes the
-reasoning, a dated note says what the record used to claim, as in 0002 and
-0004. The retry backoff in 0013 is the only change made to a decision in place,
-and its status line records it.
+reasoning, a dated note says what the record used to claim, as in 0002, 0004,
+0009 and 0012. The retry backoff in 0013 and the annotation scope in 0012
+were changed in place, and each record's status line says so.
 
 | # | Decision | Status | Taken in |
 |---|---|---|---|
@@ -40,7 +40,7 @@ and its status line records it.
 | [0009](0009-eksctl-and-sam-over-terraform.md) | eksctl, SAM and kustomize rather than Terraform | accepted | `4a9a5b9`, `92922cd` |
 | [0010](0010-region-ap-south-1.md) | Everything in `ap-south-1` | accepted | `4a9a5b9`, `92922cd` |
 | [0011](0011-correlation-ids-and-metrics.md) | Correlation ids, domain counters, and no exporter | accepted | `d18f58b`, `a6efc1c` |
-| [0012](0012-openapi-public-read.md) | The OpenAPI document is public; the API it describes is not | accepted | `82ea9b4` |
+| [0012](0012-openapi-public-read.md) | The OpenAPI document is public; the API it describes is not | accepted | `82ea9b4`, `ccad5b4` |
 | [0013](0013-outbox-ceiling-and-retention.md) | The outbox is bounded: an attempt ceiling and a retention window | accepted | `a6efc1c`, `50e8871` |
 | [0014](0014-quality-gates.md) | The build fails on architecture, coverage and dependency drift | accepted | `631f5f0`, `f8d2d4b` |
 
@@ -50,7 +50,7 @@ Copy the shape of an existing record; there is no template file. Give it a title
 that states the decision in the indicative and a `Status:` line naming the
 commit. Then write Context, Decision, Consequences and Alternatives considered.
 Number it next in sequence and link it from the table above. Cite code as
-`path` or `path#symbol`, so `scripts/refcheck.py` fails the build if the
+`path` or `path#symbol`, so `scripts/refcheck.py` fails CI if the
 citation stops being true.
 
 If you cannot write a real "Alternatives considered" for a record, it is

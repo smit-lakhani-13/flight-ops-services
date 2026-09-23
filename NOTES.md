@@ -3,8 +3,8 @@
 These are the defects I found in this service and how I fixed them. I
 reproduced most of them against a running instance before changing the code.
 Where I found one by reading the code or its documentation instead, the entry
-says so. Each entry says what I saw, why it happened, what I changed, the test that pins it
-where one exists, and the commit the fix landed in. The
+says so. Each entry says what I saw, why it happened, what I changed, the test
+that pins it where one exists, and the commit the fix landed in. The
 [README](README.md#what-i-found-in-review) has the short list.
 
 | Section | What broke |
@@ -21,6 +21,7 @@ where one exists, and the commit the fix landed in. The
 | [First review pass](#first-review-pass) | the rest of the first read-through |
 | [Second review pass](#second-review-pass) | failures that stay green on a laptop |
 | [Third review pass](#third-review-pass) | the gaps I had listed as open |
+| [Fourth review pass](#fourth-review-pass) | input that reached a URL, a log line or a count unchecked, startup checks that passed a bad password or blamed the wrong setting, and a deploy path that could not build |
 
 ---
 
@@ -140,8 +141,10 @@ That was one logical booking. The controller's Javadoc was the false one.
 
 The fix splits the write into two transactions on a second bean,
 `BookingWriter`, so the recovery step runs in a fresh transaction. This is the
-catch block as it stands today. The first version caught only the constraint
-violation and took only the key:
+catch block, cut down to the recovery call. The first version caught only the
+constraint violation and took only the key. Today's version also rethrows the
+original failure when no booking holds the key, because then there was no race
+to lose:
 
 ```java
 try {
@@ -565,10 +568,12 @@ authenticated request returned a bodyless 500.
 filter catches it. It is thrown before `DispatcherServlet`, so
 `@RestControllerAdvice` never sees it either.
 
-`ApiSecurityProperties` is now `@Validated`, with a `@Pattern` requiring an
-`{id}` algorithm prefix (`config/ApiSecurityProperties.java`). The context
-fails to start, with a message naming the variable. A pod that looks healthy
-and answers nothing is worse than one that refuses to boot.
+`ApiSecurityProperties` now requires an `{id}` algorithm prefix
+(`config/ApiSecurityProperties.java`). I first wrote that as `@Validated` with a
+`@Pattern`. Since `5cb8fa4` the check sits in the record's compact
+constructor, so Boot's bind report no longer prints the rejected value. The
+context fails to start, with a message naming the variable. A pod that looks
+healthy and answers nothing is worse than one that refuses to boot.
 `ApiSecurityPropertiesValidationTest.anUnresolvedPlaceholderIsRejected` pins
 it.
 
@@ -666,3 +671,99 @@ This is the [retention](#retention) story above. The pruner landed in
 
 This is the [poison row](#a-poison-row) story above. The ceiling landed in
 `a6efc1c`.
+
+## Fourth review pass
+
+This pass was a full audit of every tracked file. I reproduced each confirmed
+finding, or pinned it with a test that fails without the fix, before changing
+the code. The deploy path is the exception, and its entry says why.
+
+### A fractional seat count booked fewer seats
+
+A booking request with `"seats": 2.7` was accepted as a booking for two seats.
+Jackson's default coerces a float into an `int` field by truncating it, so
+Bean Validation only saw the 2 and `@Min(1)` passed.
+`spring.jackson.deserialization.accept-float-as-int: false` in
+`src/main/resources/application.yml` turns the coercion off, for `totalSeats`
+on a new flight as well. A fractional number is now `400 MALFORMED_REQUEST`,
+and the service is never called.
+`controller/BookingControllerTest.java#seatsMustBeAWholeNumber` sends 2.5, a
+null and a missing field and expects that 400 for each. The fix is `f67d245`,
+and the test followed in `ccad5b4`.
+
+### A flight number that broke its own Location header
+
+Creating a flight built `Location` by concatenation,
+`URI.create("/api/v1/flights/" + flight.flightNumber())`. A probe showed what
+that did with a flight number: `UA/12` became two path segments, `UA?9` became
+the path `/api/v1/flights/UA` with the query `9`, and `UA%41` decoded to `UAA`.
+`UA 12` made `URI.create` throw after the flight was saved, so the client got
+a 400 for a flight that now existed. Flight numbers are now letters and digits
+(`CreateFlightRequest.FLIGHT_NUMBER`, which `BookingRequest` shares), and both
+controllers build `Location` with `UriComponentsBuilder`.
+`controller/FlightControllerTest.java#flightNumberMustBeLettersAndDigits`
+refuses each of those numbers, and one with a newline in it, before anything
+is created. The fix is `ccad5b4`.
+
+### A page past the last row was a 500
+
+`GET /api/v1/flights?page=2147483647&size=100` failed with a 500. Spring Data
+computes the row offset as an `int`, and `page * size` overflowed it.
+`SortPolicy.stable` now refuses a page whose offset would pass
+`Integer.MAX_VALUE` with `400 MALFORMED_REQUEST` and the message
+`page * size must not exceed 2147483647.`
+`ErrorContractTest.java#pagePastTheLastAddressableRowIsABadRequest` checks both
+lists. It also checks that page 107374182 at the default size of 20, the last
+page that fits, is still a 200. The fix is `ccad5b4`.
+
+### A password the encoder could not verify
+
+A stored password with an unknown algorithm id, such as `{foo}bar` or a
+misspelt `{bcrpyt}`, passed the prefix check. The service started, and every
+login then got `500 INTERNAL_ERROR`. `DelegatingPasswordEncoder` reports
+`There is no password encoder mapped for the id` only when asked to match. An
+`{argon2}` hash also failed at the first login, because this build leaves out
+BouncyCastle. `SecurityConfig` now calls `encoder.matches` once per account at
+startup and turns any failure into an `IllegalStateException` naming the
+property. `PasswordVerifiabilityTest.java#anUnknownAlgorithmIdStopsStartup`,
+`PasswordVerifiabilityTest.java#argon2WithoutBouncyCastleStopsStartup` and
+`PasswordVerifiabilityTest.java#aPbkdf2HashStartsTheContext` cover both
+failures and a hash the old prefix pattern refused. The fix is `5cb8fa4`.
+
+### A typo in the publisher setting gave the wrong error
+
+`app.events.publisher=noop` stopped startup with a
+`NoSuchBeanDefinitionException` for `EventPublisher`, which does not name the
+property. `EventProperties` checks the value in its compact constructor, but no
+bean depended on it, so the context reached the missing publisher first.
+`OutboxPublisher` now takes `EventProperties` as its first constructor
+argument, and the failure reads
+`app.events.publisher must be one of [log, sqs], not "noop"`.
+`EventPropertiesTest.java#applicationStartupNamesTheProperty` starts the whole
+application with that value, and it failed before the fix. The fix is
+`db00444`.
+
+### The Lambda stored seat counts the service never sends
+
+The Lambda accepted `"2"`, `2.9` and `0` for `seats`. Jackson's defaults
+coerce a string or a float into an `int`, and nothing in Jackson rejects 0.
+The handler's mapper now refuses both coercions, and the `BookingEvent` record
+rejects a count below 1, which is the service's own `@Min(1)`. The same commit
+cleans body values before they reach the log, because a `bookingId` carrying
+`\r\n` could write a fake `Processed booking` line.
+`lambda/BookingEventHandlerTest.java#aSeatsValueThatIsNotAPositiveWholeNumberIsNotWritten`
+and `lambda/BookingEventHandlerTest.java#bodyValuesAreLoggedOnOneBoundedLine`
+pin both. The fix is `056eb61`.
+
+### The deploy path could not build the Lambda
+
+I found this by reading, because the deployment has never run against real
+AWS. `template.yaml` had `CodeUri: ./lambda` and `deploy/aws/up.sh` ran
+`sam build`, which builds in a scratch copy where the Lambda tests cannot find
+`../events` and `../contracts`. Maven now builds the jar, `CodeUri` names it,
+and step 3 runs `sam deploy --template-file template.yaml`. Step 10 had a
+second bug: `kubectl wait` ran before CI had created the deployment and exited
+at once with NotFound, so `deploy/aws/lib.sh#wait_for_deployment` now waits for
+it to appear first. `deploy/aws/selftest.sh` tests the scripts against stubbed
+tools in CI, and a `build` job step checks that `CodeUri` names a built jar
+holding the handler. The fix is `86b9e41`.

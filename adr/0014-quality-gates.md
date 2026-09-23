@@ -24,12 +24,13 @@ build emits:
 
 ## Consequences
 
-* **Thresholds below the measurement.** Measured coverage is roughly 90% line
-  and 70% branch, and I set the gates at 80 and 50. A threshold at the current
-  number turns every ordinary refactor into a red build. People learn to lower
-  it, and the gate becomes a coverage ratchet no one believes. The gate is
-  there to catch a *collapse*, and a single percentage point should not fail
-  it.
+* **Thresholds below the measurement.** I set the gates at 80% line and 50%
+  branch, well under what the build measures. Each `./mvnw verify` writes the
+  current figures to `target/site/jacoco/index.html`. A threshold at the
+  current number turns every ordinary refactor into a red build. People learn
+  to lower it, and the gate becomes a coverage ratchet no one believes. The
+  gate is there to catch a *collapse*, and a single percentage point should
+  not fail it.
 
 * `requireUpperBoundDeps` earned its place immediately. Adding springdoc pulled
   in swagger-core, which was compiled against a newer Jackson 2 than Boot
@@ -40,9 +41,10 @@ build emits:
 * **No ignore lists.** Once a gate acquires a list of exceptions, it documents
   what is broken and stops being a gate. Every exemption in the ArchUnit rules
   is part of the rule's scope, with its reason in the rule's Javadoc, and
-  there is no suppression file. The clock rule, for example, lets the `entity`
-  package read the wall clock, and today that means only
-  `src/main/java/com/smit/flightops/entity/Booking.java`.
+  there is no suppression file. The clock rule, for example, exempts one class
+  by its full name, `src/main/java/com/smit/flightops/entity/Booking.java`.
+  Hibernate constructs that entity too, so its `createdAt` initialiser has no
+  `Clock` to inject.
 
 * I checked each ArchUnit rule against a planted violation before committing
   it. A rule that has never failed is a rule no one has shown to work.

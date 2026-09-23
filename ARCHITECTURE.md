@@ -4,7 +4,7 @@ This document shows how the pieces fit, why they are arranged this way, and
 where in the source each claim can be checked. On every CI run,
 `scripts/refcheck.py` checks every path and `path#symbol` named here and
 `scripts/linkcheck.py` checks every heading link. A rename that leaves this
-document behind fails the build.
+document behind fails the `docs-check` job.
 
 Each decision where I weighed alternatives has its own file in
 [`adr/`](adr/README.md), with the options I rejected. This document is the map,
@@ -121,17 +121,17 @@ Reading it in the source, in order:
 |---|---|---|
 | Correlation | `src/main/java/com/smit/flightops/observability/RequestIdFilter.java#doFilterInternal` | Runs ahead of Spring Security, so a 401 also carries `X-Request-Id` |
 | Authorisation | `src/main/java/com/smit/flightops/config/SecurityConfig.java#apiSecurityFilterChain` | One rule set for Basic and JWT alike |
-| Binding and validation | `src/main/java/com/smit/flightops/dto/BookingRequest.java` | Bean Validation on the record components. Failures become 400 before any service code runs |
+| Binding and validation | `src/main/java/com/smit/flightops/dto/BookingRequest.java` | Bean Validation on the record components. The flight number is letters and digits, and the passenger name has no control characters. Failures become 400 before any service code runs. Jackson refuses a fractional `seats` because `accept-float-as-int` is off in `src/main/resources/application.yml`, and a missing one because a primitive `int` cannot be null. Both are `400 MALFORMED_REQUEST` |
 | Idempotency | `src/main/java/com/smit/flightops/service/BookingService.java#book` | Decides replay, conflict or insert. Holds no transaction of its own |
 | The write | `src/main/java/com/smit/flightops/service/BookingWriter.java#insertNewBooking` | The transaction, the row lock, the key re-check under the lock, the seat arithmetic and the outbox row |
 | The race loser | `src/main/java/com/smit/flightops/service/BookingWriter.java#recoverReplay` | Reads the winner in a fresh read-only transaction. `BookingService#book` holds no transaction, so the loser's has already rolled back. If `book` ever becomes transactional, `REQUIRES_NEW` still keeps the read in its own transaction |
 | The event | `src/main/java/com/smit/flightops/service/OutboxWriter.java#recordBookingCreated` | `Propagation.MANDATORY`: it refuses to run outside the booking's transaction |
-| The response | `src/main/java/com/smit/flightops/controller/BookingController.java#book` | 201 with a `Location` header, built from the id the database assigned |
+| The response | `src/main/java/com/smit/flightops/controller/BookingController.java#book` | 201 with a `Location` header. `UriComponentsBuilder` builds it from the id the database assigned |
 
 The path depends on details in that table that are easy to miss:
 
-- **`BookingService#book` is not transactional.** It cannot be. The race is
-  lost in one of two ways. Usually `insertNewBooking`, holding the flight row
+- **`BookingService#book` is not transactional.** It cannot be. Usually the
+  losing request fails inside `insertNewBooking`, which holds the flight row
   lock, finds the key already present and throws
   `LostIdempotencyRaceException`. When the same key is sent for a different
   flight, the two requests lock different rows. Then
@@ -144,11 +144,32 @@ The path depends on details in that table that are easy to miss:
   aborted. That is how the race loser used to get a 409. `REQUIRES_NEW` keeps
   the read out of that transaction.
 
+- **No winner to recover.** If `recoverReplay` finds no booking holding the
+  key, the insert failed for some other reason. `book` then rethrows the
+  original exception, with the `IllegalStateException` from `recoverReplay`
+  attached as suppressed. It logs a WARN that ends `not a lost race`. A
+  constraint violation on that path gets `409 DUPLICATE_REQUEST` from
+  `src/main/java/com/smit/flightops/exception/GlobalExceptionHandler.java#handleDataIntegrity`,
+  where it used to get a 500.
+  `src/test/java/com/smit/flightops/service/BookingServiceTest.java#aViolationWithNoWinnerIsRethrown`
+  pins it.
+
 - **`OutboxWriter#recordBookingCreated` is `MANDATORY`.** Called outside a
   transaction, it would still appear to work. Spring Data would open a
-  transaction for the save and the row would appear. The atomicity that
+  transaction for the save and the row would be written. The atomicity that
   justifies the whole outbox would be gone, with no error to say so.
   `MANDATORY` turns that mistake into an exception on the first call.
+
+- **Framework errors keep their status.** Most Spring MVC exceptions
+  implement `org.springframework.web.ErrorResponse` and carry the status
+  Spring chose.
+  `src/main/java/com/smit/flightops/exception/GlobalExceptionHandler.java#handleSpringWebError`
+  reads that status back, so a wrong HTTP verb stays a 405 with its `Allow`
+  header. A bare `@ExceptionHandler(Exception.class)` would turn it into a
+  500. `ErrorResponse` is an interface, so
+  `@ExceptionHandler(ErrorResponse.class)` does not compile. The handler
+  catches `ServletException` and `ErrorResponseException` and pattern-matches
+  with `instanceof`.
 
 ---
 
@@ -163,7 +184,10 @@ two questions: has that key committed, and is this the same request?
 | Yes, committed | Yes | Return the original booking, debit nothing | `201` | `BookingService#book` |
 | Yes, committed | No | Refuse, because the key already means something else | `409 IDEMPOTENCY_KEY_REUSED` | `BookingService#book` |
 | Yes, in flight elsewhere | Yes | Wait on the flight row lock, find the key on the re-read, then read the winner | `201` | `BookingWriter#insertNewBooking`, `BookingWriter#recoverReplay` |
-| Yes, in flight elsewhere | No | Lose the race (the re-read under the lock, or the unique index when the other request is for a different flight), then fail the fingerprint check | `409 IDEMPOTENCY_KEY_REUSED` | `BookingWriter#recoverReplay` |
+| Yes, in flight elsewhere | No | Lose the race (the re-read under the lock, or the unique index when the other request is for a different flight), then fail the fingerprint check | `409 IDEMPOTENCY_KEY_REUSED` | `BookingWriter#insertNewBooking`, `BookingWriter#recoverReplay` |
+
+The unique index on `idempotency_key` is the backstop for the one case the row
+lock cannot serialise: the same key sent for a different flight.
 
 "Same request" is a SHA-256 over the normalised request
 (`src/main/java/com/smit/flightops/dto/BookingRequest.java#fingerprint`),
@@ -173,8 +197,11 @@ one key for a different passenger gets `201` and someone else's booking back.
 No seats are debited for the booking it believes it just made. The unique
 constraint cannot catch that, because it is doing its job: one booking per key.
 
-`BookingIdempotencyTest` runs three 10-thread races, each on a single key: the
-same request, different payloads, and the last seat.
+`BookingIdempotencyTest` runs four 10-thread races, each on a single key: the
+same request, different payloads, the last seat, and one key sent for two
+flights. The last race reaches `uk_bookings_idempotency_key` on most runs. On
+the others the first lookup or the re-read under the lock settles it, and the
+assertions hold either way.
 
 ---
 
@@ -219,8 +246,8 @@ What keeps the lock from becoming an outage:
   `available_seats >= 0` a database constraint. Application code that gets the
   arithmetic wrong fails the write instead of overselling.
 
-The outbox poller takes no flight locks. It claims outbox rows with
-`FOR UPDATE SKIP LOCKED`
+Read paths take no lock, and the outbox poller takes no flight locks. It
+claims outbox rows with `FOR UPDATE SKIP LOCKED`
 (`src/main/java/com/smit/flightops/repository/OutboxEventRepository.java#claimUnpublished`),
 so N replicas drain disjoint batches with no leader election and no distributed
 lock.
@@ -261,16 +288,24 @@ Each of these choices prevents a specific failure:
    consumer's conditional write absorbs the duplicates.
 
 2. **A ceiling in the claim.** The claim is `ORDER BY id`, so a row the
-   transport structurally rejects is retried first on every tick. It starves
-   the live events behind it. `attempts < maxAttempts` drops it out of the
-   claim and `outbox.dead` rises. An operator then re-drives it with
+   transport structurally rejects is retried first each time its backoff
+   ends, ahead of the live events behind it. `attempts < maxAttempts` drops
+   it out of the claim and `outbox.dead` rises. An operator then re-drives it
+   with
    `UPDATE outbox_events SET attempts = 0, next_attempt_at = NULL WHERE id = ?`.
 
 3. **The writer captures the trace.** The poller runs later, sometimes minutes
    later, on a scheduler thread with no link to the request. A traceparent read
    there would be meaningless. The writer injects it at booking time
    (`src/main/java/com/smit/flightops/service/OutboxWriter.java#currentTraceparent`)
-   and stores it on the row (V6).
+   and stores it on the row (V6). Micrometer's `Propagator` formats it. With
+   no current span the writer stores no header, because a consumer cannot
+   tell a made-up id from a real one.
+   `OutboxTest.theDrainDoesNotOverwriteTheTrace` drains inside a different
+   span, so that regression stays covered. The sampled flag follows
+   `management.tracing.sampling.probability`, which Boot defaults to 0.1. Most
+   values on the queue are real ids marked not-sampled, so check that before
+   deciding a collector is dropping spans.
 
 4. **`fixedDelay`, not `fixedRate`.** Under strain, `fixedRate` queues
    scheduler invocations behind each other. `fixedDelay` slows the polling
@@ -281,11 +316,26 @@ Each of these choices prevents a specific failure:
    add a write to the booking transaction's hot path
    (`src/main/java/com/smit/flightops/repository/OutboxEventRepository.java#deletePublishedBefore`).
 
+The outbox costs a table, a poller, up to one poll interval of latency and a
+retention job. In return I get one recorded event per booking, at-least-once
+delivery and a backlog I can query:
+`SELECT count(*) FROM outbox_events WHERE published_at IS NULL` is both a lag
+metric and an alert.
+
 The transport itself is one interface,
 `src/main/java/com/smit/flightops/service/EventPublisher.java`, with two
 implementations: `LoggingEventPublisher` for local runs and
 `SqsEventPublisher` in AWS. Swapping transports takes one bean definition, and
 no business logic knows which one is wired.
+
+`app.events.publisher` picks the implementation, `log` or `sqs`.
+`OutboxPublisher` takes `EventProperties` as its first constructor argument,
+and Spring resolves arguments in order. An unknown value therefore stops
+startup with `app.events.publisher must be one of [log, sqs], not "<value>"`
+(`src/test/java/com/smit/flightops/EventPropertiesTest.java#applicationStartupNamesTheProperty`).
+Before this ordering, the context reported a missing `EventPublisher` bean,
+which does not name the property. The startup log names the transport in use,
+as in `Outbox publisher started with event transport 'sqs'`.
 
 ---
 
@@ -332,6 +382,10 @@ The schema is three tables and eight migrations. Flyway owns the PostgreSQL
 schema, and `ddl-auto: validate` checks the entity mapping against it. A
 mapping that drifts from the migrations fails at startup instead of at the
 first query.
+`src/test/java/com/smit/flightops/BookingIntegrationTest.java#migrationRanAndSchemaValidates`
+runs on PostgreSQL 17 in a container. It asserts that `flyway_schema_history`
+holds versions 1 to 8, and as many as there are migration files on the
+classpath, so a misnamed file that Flyway skips fails the test.
 
 ```mermaid
 erDiagram
@@ -425,7 +479,7 @@ flowchart TD
 | `no_java_util_logging`, `no_standard_streams` | Log lines that bypass the correlation pattern |
 | `repositories_are_interfaces` | Hand-written persistence sneaking in beside Spring Data |
 | `transactions_are_opened_only_in_the_service_layer` | A transaction opened in a controller, spanning the HTTP response |
-| `the_wall_clock_is_read_only_by_entities` | `Instant.now()` in testable code, where an injected `Clock` belongs |
+| `the_wall_clock_is_read_only_by_entities` | `Instant.now()`, `System.currentTimeMillis()` or the `LocalDate` family in testable code, where an injected `Clock` belongs. The one exemption is `Booking`, named by class, because Hibernate constructs it and its `createdAt` initialiser has no `Clock` |
 | `no_web_types_below_the_controller` | A service that cannot be called from a scheduler or a test |
 
 I checked each rule against a planted violation before committing it. A rule
@@ -441,36 +495,111 @@ remove that coupling.
 
 ```mermaid
 flowchart LR
-    q["SQS booking-events<br/>BatchSize 10"] --> h["BookingEventHandler#handleRequest"]
+    q["SQS booking-events<br/>BatchSize 10"] -->|"MaximumConcurrency 5"| h["BookingEventHandler#handleRequest"]
     h -->|"PutItem, attribute_not_exists(bookingId)"| d[("flight-status-events")]
     h -->|"failed ids only"| q
-    h -->|"exhausted"| dlq["booking-events-dlq"]
+    q -->|"redrive after 3 receives"| dlq["booking-events-dlq"]
 ```
+
+The handler never sends to the DLQ. A reported message goes back to the queue,
+and the queue's redrive policy in `template.yaml` (`maxReceiveCount: 3`) moves
+it to `booking-events-dlq` after the third failed receive.
 
 - The contract between them is a file, `contracts/booking-created-v1.json`.
   A test on each side asserts against it, and neither test imports the other
-  side's code.
+  side's code. The module has 25 tests, and 6 of them are the consumer half of
+  the contract.
 
-- Partial batch failure: the handler returns only the failed message ids. One
+- The handler is a plain `RequestHandler` with no framework. I did not use
+  Spring Cloud Function, because its application context would start on every
+  cold invocation. `DynamoDbClient` sits behind an initialisation-on-demand
+  holder, so each execution environment builds it once and reuses it across
+  warm invocations.
+
+- Partial batch failure: the handler returns only the failed message ids.
+  `FunctionResponseTypes: [ReportBatchItemFailures]` in `template.yaml` makes
+  Lambda read that list. Without it, Lambda treats the invocation as a success
+  and deletes every message in the batch, failures included. With it, one
   poison message does not redeliver the nine beside it that succeeded.
 
-- The sort key is `timestamp#bookingId`, with a fixed-width timestamp.
-  DynamoDB sorts range keys as bytes, and `Instant.toString()` is not fixed
-  width.
+- The write is conditional on `attribute_not_exists(bookingId)`. SQS delivers
+  at least once, so a redelivery of a message that already succeeded is a
+  no-op, logged as `Duplicate ignored`.
 
-- The producer's `traceparent` arrives as a message attribute. The handler
-  matches it against the W3C shape before logging it
+- `seats` must be a whole number of at least 1. The handler's `MAPPER` refuses
+  a string, a fraction, a null and a missing field, where Jackson's defaults
+  would store `"2"` and `2.9` as two seats. The `BookingEvent` record
+  rejects anything below 1 with
+  `booking event has <n> for 'seats'; expected at least 1`. Each case is
+  reported, so the message ends in the DLQ instead of DynamoDB
+  (`lambda/src/test/java/com/smit/flightops/lambda/BookingEventHandlerTest.java#aSeatsValueThatIsNotAPositiveWholeNumberIsNotWritten`).
+  The contract test parses with the same mapper.
+
+- The sort key is `timestamp#bookingId`. The `bookingId` keeps two bookings on
+  one flight in the same instant apart, and `events/sqs-same-instant.json`
+  covers that case. Both sides format the timestamp with
+  `uuuu-MM-dd'T'HH:mm:ss.SSSSSS'Z'`. DynamoDB sorts range keys as bytes, and
+  `Instant.toString()` prints 0, 3, 6 or 9 fractional digits. `…:00Z` would
+  then sort after `…:00.000001Z`, because `Z` is `0x5A` and `.` is `0x2E`. The
+  contract test asserts that the `#` lands at index 27, so a pattern changed on
+  one side only fails it.
+
+- The producer's `traceparent` arrives as a message attribute. A missing
+  attribute map, a missing `traceparent` key and a value sent as binary all
+  give no log prefix. The handler matches the value against the W3C shape
+  before logging it
   (`lambda/src/main/java/com/smit/flightops/lambda/BookingEventHandler.java#tracePrefix`).
+  A message attribute is input from anyone who can send to the queue. A
+  newline in it would put a fabricated line inside the log entry, and an
+  unbounded attribute would be shipped to CloudWatch. A missing or malformed
+  trace never fails a projection. `events/sqs-with-trace.json` carries one
+  message with a trace and one without.
 
-- The deployment package carries one HTTP client.
-  `software.amazon.awssdk:dynamodb` pulls in `apache-client`, `apache5-client`
-  and `netty-nio-client` transitively. `lambda/pom.xml` excludes all three and
-  adds `url-connection-client` (34 KB, no transitive dependencies), the client
-  AWS documents for Lambda. The jar went from about 18 MB to 10.3 MB. With one
-  sync provider on the classpath, and the client holder naming
-  `UrlConnectionHttpClient`, the choice does not depend on classpath order. The
-  cost is no HTTP/2, no tunable pool and synchronous calls only, which suits one
-  `PutItem` per message.
+- Values from the body come from the same senders, so they are cleaned before
+  they reach the log
+  (`lambda/src/main/java/com/smit/flightops/lambda/BookingEventHandler.java#printable`).
+  That covers the `bookingId` in `Processed booking` and the exception message
+  in the `FAILED` line, because Jackson and `java.time` quote the input they
+  rejected. Characters in the categories `Cc`, `Cf`, `Zl` and `Zp` become `?`.
+  A value over 1,000 characters is cut there and ends in `...`
+  (`lambda/src/test/java/com/smit/flightops/lambda/BookingEventHandlerTest.java#bodyValuesAreLoggedOnOneBoundedLine`).
+
+- `ScalingConfig.MaximumConcurrency: 5` on the SQS event caps a backlog at five
+  concurrent invocations. It takes nothing from the account pool, which
+  reserved concurrency would, so it deploys on a small quota. Messages over the
+  cap wait in the queue. Throttling would send them back with a raised receive
+  count, towards the DLQ. The value must be 2 to 1000, and it limits only the
+  poller, so an account pool that runs dry can still throttle.
+
+- The deployment package carries one HTTP client. At SDK 2.55.2,
+  `software.amazon.awssdk:dynamodb` pulls in `apache5-client` and
+  `netty-nio-client` transitively. `lambda/pom.xml` excludes both, and also
+  excludes `apache-client`, so an SDK bump that brings it back cannot slip in.
+  It adds `url-connection-client` (34 KB, no transitive dependencies), the
+  client that AWS documents for Lambda. The jar went from 16.6 MiB to 10.3 MiB.
+  The client holder names `UrlConnectionHttpClient`, because the SDK's own
+  discovery ranks Apache 5 first. A dependency that brought Apache 5 back would
+  otherwise take over. The cost is no HTTP/2, no tunable pool and synchronous
+  calls only, which suits one `PutItem` per message.
+
+- `joda-time` stays. It looks like 247 dead classes and 644 KB, and excluding
+  it fails the `EventLoader` tests with
+  `ClassNotFoundException: org.joda.time.DateTime`. `EventLoader` builds its
+  deserialiser through `LambdaEventSerializers`, which registers a Jackson
+  Joda module across the whole event model. A comment in `lambda/pom.xml` says
+  so.
+
+- SnapStart is off, and `template.yaml` says why. No cold start has been
+  measured on this function. The ranges in `lambda/pom.xml` and `template.yaml`
+  are published figures from elsewhere, labelled as such.
+
+- Maven builds the package. `deploy/aws/up.sh` step 3 runs
+  `./mvnw -B -q -f lambda/pom.xml clean package`, then
+  `sam deploy --template-file template.yaml`. `CodeUri` points at
+  `lambda/target/booking-event-handler.jar`, so there is no `sam build`. SAM
+  builds in a scratch copy of the `CodeUri` directory, where the Lambda tests
+  cannot find `../events` and `../contracts`. A step in CI's `build` job checks
+  that `CodeUri` names a built file and that the file holds the handler class.
 
 ---
 

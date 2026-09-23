@@ -41,13 +41,17 @@ Controller, which is published as a chart. The application has no chart.
   one file. The Terraform equivalent is the `terraform-aws-eks` module: roughly
   4,000 lines of someone else's HCL, plus a provider version matrix. The other
   route is a hand-written VPC, subnets, route tables, NAT gateway, node group,
-  launch template and OIDC provider. `cluster.yaml` is under 180 lines, and
-  three-quarters of them are comments.
+  launch template and OIDC provider. `cluster.yaml` is about 80 lines, and
+  fewer than half of them are comments.
 
-* **SAM understands Lambda's build.** `sam build` compiles the Java module and
-  packages it. `sam local invoke` runs the handler against a fixture before
-  anything is deployed. Terraform would need something else to build and
-  upload the artefact first, which means a second tool regardless.
+* **SAM understands Lambda's wiring.** Maven builds the shaded jar, and
+  `CodeUri` in `template.yaml` points at it.
+  `sam deploy --template-file template.yaml` uploads the jar and deploys the
+  stack. The `Events` shorthand and a policy template wire the queue, the event
+  source mapping and the IAM role in a few lines. `sam local invoke` runs the
+  handler against a fixture before anything is deployed. Terraform would need
+  each of those as a separate resource, and the jar would come from Maven
+  either way.
 
 * **CloudFormation for the rest.** The two remaining stacks are plain
   CloudFormation. That keeps the tool count at one for everything eksctl and
@@ -72,11 +76,20 @@ Controller, which is published as a chart. The application has no chart.
   plan step stop being overhead. They become the reason to use the tool.
   Terraform is the right answer for production and the wrong answer for this.
 
+**Correction (2026-09-23).** The second bullet used to say that `sam build`
+compiles the Java module and packages it. It could not produce the handler jar.
+SAM builds in a scratch copy of `lambda/`, where the Lambda tests cannot find
+`../events` and `../contracts`. The deploy path now builds with Maven
+(`deploy/aws/up.sh` step 3), and the bullet gives the reason that is left. The
+old bullet, and the Terraform entry below, also counted the build against
+Terraform. Both tools now take the jar from Maven, so neither does. The
+decision stands on the other reasons. Only the build reason was wrong.
+
 ## Alternatives considered
 
 * **Terraform for everything.** Correct for a long-lived estate. Here it is a
-  state backend to create, a module tree to pin, and a `terraform destroy` that
-  still leaves the Lambda artefact build to another tool.
+  state backend to create, a module tree to pin, and the Lambda's event source
+  mapping and IAM written out resource by resource.
 
 * **AWS CDK.** Real types and real tests over CloudFormation, in Java, which
   would match the repository. I rejected it because of bootstrap:

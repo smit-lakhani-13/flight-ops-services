@@ -38,19 +38,22 @@ returns only the ids that failed.
   cost.
 
 * `arm64` is cheaper per GB-second than x86, and the workload has no native
-  dependencies. It also means a local `docker build` on an Apple Silicon
-  machine matches the deployment target, while the *service* image does not.
-  The README documents that asymmetry.
+  dependencies. The jar is pure bytecode, with `url-connection-client` as its
+  HTTP client, so arm64 costs nothing to adopt. The *service* image is
+  different: it ships an OS and must be built for the nodes' amd64. The README
+  documents that asymmetry.
 
 * **One named HTTP client.** The SDK brings in two HTTP clients transitively,
   `netty-nio-client` and `apache5-client`. I exclude both in favour of
   `url-connection-client`. The pom also excludes `apache-client`, which is not
   transitive at 2.55.x, so an SDK bump that brings it back cannot slip in.
-  Naming the client explicitly matters in a shaded jar. If the SDK discovered
-  it through `META-INF/services` instead, jar ordering would decide.
+  The client holder also names `UrlConnectionHttpClient`. Left to discovery,
+  the SDK ranks Apache 5 above URLConnection, so a dependency that brought
+  Apache 5 back would take over.
 
-* A permanent failure (malformed JSON) is still reported, so it reaches the DLQ
-  and is not lost. Two retries are wasted, and an event is preserved. Splitting
+* A permanent failure (malformed JSON, or a `seats` value that is not a whole
+  number of at least 1) is still reported, so it reaches the DLQ and is not
+  lost. Two retries are wasted, and an event is preserved. Splitting
   parse failures onto a quarantine queue is the production refinement, and I
   have not done it here.
 
