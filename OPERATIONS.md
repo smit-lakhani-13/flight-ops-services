@@ -32,9 +32,9 @@ JVM.
 | `DB_URL` | `jdbc:postgresql://localhost:5432/flightops` in `postgres`. **None in `prod`** | JDBC URL. Unset in `prod`, startup fails with `'url' must start with "jdbc"`. The default profile uses H2 and does not read it |
 | `DB_USER` | `postgres` in `postgres`. None in `prod` | database user |
 | `DB_PASSWORD` | *(none)* | **Required** in `postgres` and `prod`. Unset, startup fails at Flyway's first connection with `password authentication failed`, which does not name the variable. See the `postgres` profile in `application.yml` |
-| `API_PASSWORD` | `{noop}dev-secret`. None in `prod` | the `api` account. **Must carry an `{id}` prefix**, such as `{bcrypt}$2y$10$…`. Unprefixed, or unset in `prod`, startup fails naming `app.security.apiPassword` |
-| `OPS_PASSWORD` | `{noop}dev-ops`. None in `prod` | the `ops` account. Same prefix rule |
-| `APP_EVENTS_PUBLISHER` | `log`; `sqs` in `prod` | `sqs` or `log`; any other value stops startup. Read in every profile: the base document is `${APP_EVENTS_PUBLISHER:log}` and `prod` is `${APP_EVENTS_PUBLISHER:sqs}`. `log` writes and drains the outbox without sending anything. Choosing `sqs` without `SQS_QUEUE_URL` fails at startup, because `SqsEventPublisher` requires `app.aws.sqs-queue-url`. A laptop publishes only when someone sets both |
+| `API_PASSWORD` | `{noop}dev-secret`. None in `prod` | the `api` account. **Must carry an `{id}` prefix** the encoder knows, such as `{bcrypt}$2y$10$…`. Unprefixed, or unset in `prod`, startup fails naming `app.security.api-password (API_PASSWORD)`. An unknown id stops startup too. See [the playbook](#pods-crash-loop-at-startup-and-the-log-names-appsecurityapi-password) |
+| `OPS_PASSWORD` | `{noop}dev-ops`. None in `prod` | the `ops` account. Same prefix rule, named `app.security.ops-password (OPS_PASSWORD)` |
+| `APP_EVENTS_PUBLISHER` | `log`; `sqs` in `prod` | `sqs` or `log`. Any other value stops startup with `app.events.publisher must be one of [log, sqs], not "<value>"`. Read in every profile: the base document is `${APP_EVENTS_PUBLISHER:log}` and `prod` is `${APP_EVENTS_PUBLISHER:sqs}`. `log` writes and drains the outbox without sending anything. Choosing `sqs` without `SQS_QUEUE_URL` stops startup with `app.events.publisher=sqs requires app.aws.sqs-queue-url (env SQS_QUEUE_URL)`. A laptop publishes only when someone sets both. The startup log names the choice: `Outbox publisher started with event transport 'log'` |
 | `SQS_QUEUE_URL` | *(empty)* | required when the publisher is `sqs` |
 | `AWS_REGION` | `ap-south-1` | |
 | `OUTBOX_ENABLED` | `true` | `false` stops the drain and the pruner. Rows still accumulate |
@@ -65,52 +65,59 @@ grep -oE '\$\{[A-Z_]+' src/main/resources/application.yml | sort -u
 | `postgres` | PostgreSQL, Flyway migrations, `SET lock_timeout` | `compose.yaml`, and local work against real SQL |
 | `prod` | PostgreSQL, everything from the environment | the cluster |
 
-The default profile is a laptop profile. A container started with no
-`SPRING_PROFILES_ACTIVE` gets it, and that fails open: the application starts,
-serves every endpoint, passes the demo and stores nothing. For that reason
-`compose.yaml` pins the profile directly, and `k8s/base/configmap.yaml` sets it
-for the cluster. The Deployment pulls the whole ConfigMap in with `envFrom`.
+The default profile is a laptop profile, and it fails open: the application
+starts, serves every endpoint, passes the demo and stores nothing.
+`./mvnw spring-boot:run` and a bare `java -jar` get it. The image does not: the
+Dockerfile sets `SPRING_PROFILES_ACTIVE=prod`, so a container started with no
+profile fails closed. With no `DB_URL`, a bare `docker run` stops with
+`'url' must start with "jdbc"`, and CI checks that in "The image will not start
+without a database". `compose.yaml` selects `postgres`, and
+`k8s/base/configmap.yaml` sets `prod` for the cluster. The Deployment pulls the
+whole ConfigMap in with `envFrom`.
 
 ## Health
 
 | Endpoint | Auth | Answers |
 |---|---|---|
-| `/actuator/health` | none | `UP`/`DOWN` and the probe group names, nothing else |
+| `/actuator/health` | none, or the `api` credential | `UP`/`DOWN` and the probe group names, nothing else |
 | `/actuator/health/liveness` | none | should the kubelet restart this container |
 | `/actuator/health/readiness` | none | should traffic come here |
-| `/actuator/health` | any valid credential, in every profile except `prod` | the same, plus components: `db`, `diskSpace`, `ssl`, … |
+| `/actuator/health` | `ops`, in every profile | the same, plus components: `db`, `diskSpace`, `ssl`, … |
 
 The probes are open to anonymous callers because the kubelet has no
 credentials and cannot be given any. An anonymous caller gets a status only,
 so it cannot find out which database this is.
 
-Component detail depends on the profile. The base configuration sets
-`show-details: when-authorized` with no role, so outside `prod` the `api` user
-sees the components as well as `ops`. That includes the absolute path
-`diskSpace` reports. The `prod` profile sets `show-details: never`, so on the
-cluster no one sees components, and `ops` reads `/actuator/metrics` instead.
+Component detail follows the role. `application.yml` sets
+`show-details: when-authorized` with `roles: OPS`, so only the `ops` user sees
+the components, `prod` included. The `api` user gets the same status and group
+names as an anonymous caller. That keeps the absolute path `diskSpace` reports
+away from the credential every client holds.
 
 The two probes ask different questions, and mixing them up is a classic
 outage. A readiness failure takes one pod out of the load balancer, and a
 liveness failure restarts it. Liveness checks only `livenessState`, and
-readiness adds `db`. Point liveness at the database and a database blip
-restarts every replica at once.
+readiness checks `readinessState` and `db`. Point liveness at the database and
+a database blip restarts every replica at once.
 
 ## Metrics
 
 `/actuator/prometheus` needs `ops` credentials. On top of everything
-Micrometer provides, the service adds five counters and two gauges. Three
-counters cover bookings; the outbox has two counters and both gauges.
+Micrometer provides, the service adds five counters and two gauges.
 
 | Metric | Type | Labels | Reading |
 |---|---|---|---|
 | `bookings_booked_total` | counter | `outcome=created\|replayed` | a high `replayed` share means clients are retrying. That is fine, and useful to know |
 | `bookings_cancelled_total` | counter | `outcome=cancelled\|already_cancelled` | `already_cancelled` is a replay that changed nothing. It is not an error |
-| `bookings_lock_timeout_total` | counter | | a booking gave up after 3s waiting for the seat lock. **Non-zero means users are seeing 503s** |
+| `bookings_lock_timeout_total` | counter | | a write gave up after 3s waiting for the flight row lock: a booking or a cancellation, or a flight status change or flight cancellation queued behind one. **Non-zero means users are seeing 503s** |
 | `outbox_pending` | gauge | | rows waiting to publish and still within the attempt ceiling. It includes rows the retry backoff is holding back. A transport outage therefore shows here as a plateau for as long as ten attempts take (about 13.5 minutes with the defaults), and only then moves to `outbox_dead` |
 | `outbox_dead` | gauge | | rows that exhausted `OUTBOX_MAX_ATTEMPTS`. **Should always be 0** |
 | `outbox_publish_total` | counter | `result=success\|failure\|exhausted` | |
 | `outbox_pruned_total` | counter | | published rows deleted by retention |
+
+The exporter prints one `# HELP` line per meter name, so both series of a
+meter share one description. `BookingMetrics` holds each shared description in
+a constant.
 
 HTTP metrics cannot express any of these. `http_server_requests` counts a 201
 for a new booking and a 201 for an idempotent replay the same way, because
@@ -126,7 +133,8 @@ outbox_pending
 # anything at all here is an incident
 outbox_dead > 0
 
-# contention: the share of bookings that timed out on the seat lock
+# contention: lock timeouts per successful booking. The counter also
+# counts cancellations and flight writes that timed out
 rate(bookings_lock_timeout_total[5m])
   / rate(bookings_booked_total[5m])
 
@@ -146,6 +154,33 @@ Every log line carries the application name, trace id, span id and request id:
 The last field is the `X-Request-Id`, which is on every response, including 401
 and 403. A user reporting "it said 403" can hand over one string that finds the
 request.
+
+`RequestIdFilter` runs at `HIGHEST_PRECEDENCE`, ahead of Spring Security. A 401
+comes from the security filter chain (`BasicAuthenticationFilter` or
+`ExceptionTranslationFilter`) before `DispatcherServlet` runs. A
+filter ordered after the security chain would leave the calls people report,
+such as "my credentials stopped working", with no id.
+`SecurityRulesTest#everyResponseCarriesARequestId` asserts the header on a 401,
+on a 403 and on an echoed inbound value.
+
+A caller can bring its own id:
+
+```bash
+curl -si -u api:dev-secret -H 'X-Request-Id: ticket-4471' \
+  -X POST localhost:8080/api/v1/bookings \
+  -H 'Content-Type: application/json' \
+  -d '{"flightNumber":"UA123","passengerName":"Smit","seats":2,"idempotencyKey":"k1"}' \
+  | grep -i x-request-id
+# X-Request-Id: ticket-4471
+```
+
+An inbound id reaches a log line and a response header. A `\r\n` in it could
+forge a second line or a second header. A megabyte of text would make every
+line for that request a megabyte long. The filter keeps a value that matches
+`^[A-Za-z0-9._:-]{1,128}$` and replaces anything else with a generated UUID. A
+malformed diagnostic header is no reason to fail a booking. The id stays out of
+the error body, because `ErrorResponse` is part of the API contract and the
+header already carries it.
 
 Following one booking across the queue is the interesting case. The outbox
 drain runs on a scheduler, so it has a *different* trace from the request that
@@ -169,9 +204,41 @@ aws logs filter-log-events \
 ```
 
 On the `prod` profile the same lines are ECS JSON, one object per line, with
-`trace.id` and `requestId` as fields. Both forms carry the same data. The
-human-readable form is the default because the demo cluster has nothing
-collecting logs.
+`traceId`, `spanId` and `requestId` as fields. `application.yml` sets
+`logging.structured.format.console: ecs` there, so in a log store `requestId`
+is a term query in place of a substring search. Both forms carry the same data.
+The other profiles keep the readable format for a laptop, and
+`LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs ./mvnw spring-boot:run` turns ECS on
+anywhere. The booking line in ECS, wrapped here and one line in the real
+output:
+
+```json
+{"@timestamp":"2026-09-22T23:48:23.969318Z","log":{"level":"INFO","logger":"com.smit.flightops.service.BookingWriter"},
+ "process":{"pid":59730,"thread":{"name":"tomcat-handler-1"}},"service":{"name":"flight-ops-service","version":"1.1.0","node":{}},
+ "message":"Booked 2 seat(s) on UA123 (booking 1, 178 seats left)",
+ "traceId":"d5c7f7f85e5ca15a94bb489678506d22","spanId":"e9cfbc31f3226cac","requestId":"ecs-check-1","ecs":{"version":"8.11"}}
+```
+
+### What a failure logs
+
+A 500 logs its stack trace at ERROR, with the request id. An exception inside
+Spring MVC reaches `GlobalExceptionHandler`, which logs `Unhandled exception`
+and answers `INTERNAL_ERROR` with `An unexpected error occurred`. An exception
+thrown outside MVC, in a filter for example, is forwarded to `/error`.
+`ApiErrorController` logs `Unhandled failure on <METHOD> <URI>` there.
+`RequestIdFilter` has already cleared the MDC by then, so the controller reads
+the id back from the response header
+(`ApiErrorControllerTest#aFailureThatEscapedTheChainIsLoggedWithTheRequestId`).
+That 500 body tells the caller to quote the id:
+`The request failed. The X-Request-Id header identifies it in the logs.` A 4xx
+forwarded to `/error` is a client mistake and is not logged.
+
+At the default level a 401 logs nothing. A 403 logs a WARN that names the
+method and the path, never the principal or a header:
+
+```
+WARN … [flight-ops-service,affe185c…,a72584ea…,put-1] c.s.f.security.JsonAccessDeniedHandler : Denied PUT /api/v1/flights/UA123 for an authenticated caller: no rule grants this method and path to its authorities
+```
 
 ## What to alert on
 
@@ -181,7 +248,7 @@ In the order they matter:
 |---|---|---|
 | 1 | `outbox_dead > 0` | an event will never be published, and nothing downstream will report it missing |
 | 2 | `outbox_pending` rising for 10 min | the drain is losing to the write rate, or SQS is rejecting |
-| 3 | `rate(bookings_lock_timeout_total[5m]) > 0` | users are getting 503s on seat contention |
+| 3 | `rate(bookings_lock_timeout_total[5m]) > 0` | users are getting 503s on flight row contention |
 | 4 | SQS `ApproximateNumberOfMessagesVisible` on the **DLQ** `> 0` | the Lambda failed three times on the same message |
 | 5 | readiness failing on any pod for 5 min | usually the database |
 | 6 | RDS `DatabaseConnections` above 50 | more than the service's own pools can open: 4 pods × 10, or 5 × 10 during a rollout surge. Something else is connecting, or `maxReplicas` went up without a bigger instance class (about 112 connections). See [DEPLOYMENT.md §7](DEPLOYMENT.md#7-what-breaks-first) |
@@ -208,7 +275,7 @@ first. An unset value does not name itself. Relaxed binding hands the literal
 password were wrong. The application has no default to fall back on, and
 `application.yml` explains why beside the property.
 
-If the log names `app.security.apiPassword` or `app.security.opsPassword`
+If the log names `app.security.api-password` or `app.security.ops-password`
 instead, see the next playbook.
 
 Either way, check the Secret. All three of `DB_PASSWORD`, `API_PASSWORD` and
@@ -218,38 +285,71 @@ Either way, check the Secret. All three of `DB_PASSWORD`, `API_PASSWORD` and
 kubectl get secret flight-ops-secret -n flight-ops -o jsonpath='{.data}' | tr ',' '\n'
 ```
 
-### Pods crash-loop at startup, and the log names `app.security.apiPassword`
+### Pods crash-loop at startup, and the log names `app.security.api-password`
+
+The same applies to `app.security.ops-password`. Either startup check stops
+the pod before it becomes Ready. The crashing pod's
+`--previous` log (see the playbook above) shows which one fired.
 
 `API_PASSWORD` (or `OPS_PASSWORD`) is unset or has no `{id}` prefix.
-`ApiSecurityProperties` rejects it when the properties are bound, so the pod
-never becomes Ready. The crashing pod's `--previous` log (see the playbook
-above) has this line, followed by the property and the reason:
+`ApiSecurityProperties` rejects it when the properties are bound, and the log
+has Spring Boot's failure report:
 
 ```
-Binding to target com.smit.flightops.config.ApiSecurityProperties failed
+APPLICATION FAILED TO START
+…
+Failed to bind properties under 'app.security' to com.smit.flightops.config.ApiSecurityProperties:
+
+    Reason: java.lang.IllegalArgumentException: app.security.api-password (API_PASSWORD) must be an encoded password with a {id} algorithm prefix, for example {bcrypt}$2a$10$...; the value is not shown
 ```
 
+When the variable is unset, the message ends with `API_PASSWORD is not set`.
 Prefix the hash:
 
 ```
 {bcrypt}$2y$10$…
 ```
 
-The failure report prints the rejected value on its `Value:` line. If someone
-set a plaintext password without the prefix, that password is now in the pod
-log, so rotate it (see
-[Rotating the API or ops password](#rotating-the-api-or-ops-password)).
+The value has a prefix the encoder cannot use. `SecurityConfig` asks the
+`DelegatingPasswordEncoder` to verify each password once at startup. An id it
+does not know, such as `{BCRYPT}` or `{bcyrpt}`, fails there. The last two
+`Caused by` lines of the stack trace are these:
 
-The check exists because Spring's delegating encoder throws on a value it
-cannot read, where a wrong password would simply fail to match. I checked this:
-an unprefixed bcrypt string raises `IllegalArgumentException` on the first
-login.
+```
+Caused by: java.lang.IllegalStateException: app.security.api-password cannot be verified by the configured DelegatingPasswordEncoder: java.lang.IllegalArgumentException: There is no password encoder mapped for the id 'BCRYPT'. Check your configuration to ensure it matches one of the registered encoders.
+…
+Caused by: java.lang.IllegalArgumentException: There is no password encoder mapped for the id 'BCRYPT'. Check your configuration to ensure it matches one of the registered encoders.
+```
 
-The check only requires some `{id}`. An id the encoder does not know, such as
-`{BCRYPT}` or `{bcyrpt}`, passes it. The pod then goes Ready, and every login
-as that user gets a 500 with the `INTERNAL_ERROR` body. The log has
-`There is no password encoder mapped for the id 'BCRYPT'`. The id is
-case-sensitive, so write `{bcrypt}`.
+The first of the two names the property, so read it to tell `api` from `ops`.
+The last is the encoder's own exception, and it names only the id.
+
+The id is case-sensitive, so write `{bcrypt}`. An `{argon2}` or `{scrypt}` hash
+fails the same check with a `NoClassDefFoundError`. Both encoders need
+BouncyCastle, and the build does not include it. Use `{bcrypt}` or `{pbkdf2}`.
+
+Neither message prints the password or the hash, so a failed start leaves no
+secret in the pod log.
+
+Both checks exist because Spring's delegating encoder throws on a value it
+cannot read, where a wrong password would simply fail to match. Without them
+the pod would go Ready and fail on the first login. I checked this: an
+unprefixed bcrypt string raises `IllegalArgumentException` on the first login.
+
+### Every login gets 401, and the log warns `Encoded password does not look like BCrypt`
+
+The value has the `{bcrypt}` prefix, but what follows is not a bcrypt hash.
+The usual cause is `{bcrypt}REPLACE_ME`, copied from `k8s/secret.example.yaml`
+without the real hash. Both startup checks pass it. `BCryptPasswordEncoder`
+logs a WARN and returns false in place of throwing, so the pod goes Ready and
+every login as that user gets a 401.
+
+The WARN comes from `o.s.s.c.bcrypt.BCryptPasswordEncoder`. The self-check
+logs it once at startup for each such value, and every login logs it again. A WARN at startup therefore
+means a stored value is not a bcrypt hash, before anyone has tried to log in.
+Set a real hash, as in
+[Rotating the API or ops password](#rotating-the-api-or-ops-password).
+[SECURITY.md](SECURITY.md#known-limitations) lists this as a known limit.
 
 ### Events stop arriving; `outbox_pending` climbs
 
@@ -314,6 +414,14 @@ attempts.
 aws sqs receive-message --queue-url <dlq-url> --max-number-of-messages 10
 ```
 
+A message reaches the DLQ after three receives that did not succeed
+(`maxReceiveCount: 3` in `template.yaml`). Usually the handler failed on it
+three times. `ScalingConfig.MaximumConcurrency: 5` caps the poller at five
+invocations, and messages over the cap wait in the queue with no receive
+counted. The cap reserves nothing from the account's concurrency pool. It limits
+only the poller, so an account pool that runs dry can still throttle a message
+into the DLQ. The value must be 2 to 1000.
+
 Read the body and fix the handler or the data. Then redrive with the console's
 "Start DLQ redrive", or re-send the messages to the main queue. Delete a
 message that is permanently malformed, and leave a note saying why. Left
@@ -322,8 +430,11 @@ alone, it expires after 14 days with no record.
 ### 503s with `Retry-After`: a lock timeout storm
 
 Concurrent bookings for the *same flight* queue behind `SELECT … FOR UPDATE`.
-That queueing is the oversell guarantee, and it is working as designed. Past
-`lock_timeout = 3s` the request gets a 503 with `Retry-After`. That is correct
+That queueing is the oversell guarantee, and it is working as designed.
+Cancellations, flight status changes and flight cancellations need the same
+row lock, so they queue too, and their timeouts count in
+`bookings_lock_timeout_total`. Past `lock_timeout = 3s` the request gets a 503
+with `Retry-After`. That is correct
 under contention, and a problem if it is sustained. Check whether one flight
 is hot (`bookings_lock_timeout_total` against the per-flight booking rate) and
 whether a transaction is stuck:
@@ -347,6 +458,21 @@ The database security group admits the cluster SG and the shared node SG on
 5432. `deploy/aws/data.yaml` sets both from the live eksctl stack outputs. If
 the cluster was recreated, those ids changed, and the data stack still points
 at the old ones.
+
+### `up.sh` stops, or CI stops before the deploy
+
+The table in
+[deploy/aws/README.md](deploy/aws/README.md#when-something-goes-wrong) maps
+each stop to its cause. It covers `up.sh` stopping at step 1 on the JDK, at
+step 5 on `AmazonEKSEditPolicy`, and at step 6 on the data stack's status. It
+also covers the 30-minute wait at step 10 for CI to create the Deployment, and
+CI stopping at "Is this commit already in ECR?". Once the Deployment exists,
+`up.sh` waits up to 20 more minutes for it to become available.
+
+`deploy/aws/selftest.sh` tests `up.sh`'s checks, `down.sh`'s sweep and the
+deploy job's ECR lookup against stubbed `aws`, `kubectl`, `helm`, `eksctl` and
+`mvnw` commands. It uses no credentials, takes a few seconds, and runs in CI's
+`infra-lint` job.
 
 ### Rotating the API or ops password
 
@@ -378,9 +504,16 @@ the property at startup either way.
   CloudWatch Logs Insights on the Lambda's log group on the other.
 
 - **No traces are exported.** Micrometer Tracing generates the ids and puts
-  them in the logs. OTLP export activates only when
+  them in the logs. They come from OpenTelemetry through
+  `spring-boot-starter-opentelemetry`. OTLP export activates only when
   `management.opentelemetry.tracing.export.otlp.endpoint` is set, and it is
   not. The log line is the trace.
+
+- **No metrics are pushed.** The same starter's metrics half is opt-out. It
+  brings `micrometer-registry-otlp`, a push registry that targets
+  `http://localhost:4318/v1/metrics` every 60 seconds, collector or not. This
+  service exposes its metrics for scraping, so `application.yml` sets
+  `management.otlp.metrics.export.enabled: ${OTLP_METRICS_ENABLED:false}`.
 
 - **No alerting.** The alert table above is a list. Nothing pages anyone.
 
