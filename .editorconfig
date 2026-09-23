@@ -19,7 +19,7 @@ indent_size = 2
 
 [*.md]
 # Two trailing spaces are a hard line break in Markdown, so trimming them
-# silently reflows paragraphs.
+# would reflow paragraphs with no warning.
 trim_trailing_whitespace = false
 
 [*.{sql,xml}]

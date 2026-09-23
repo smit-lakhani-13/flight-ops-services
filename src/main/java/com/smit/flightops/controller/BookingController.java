@@ -171,7 +171,7 @@ public class BookingController {
 
                     Cancelling an already-cancelled booking is a 200 no-op rather than an \
                     error: the caller asked for a state the system is already in, and the \
-                    seats are released exactly once. Nothing is deleted — the row keeps \
+                    seats are released only once. Nothing is deleted — the row keeps \
                     its `cancelledAt`, so the history survives.""")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description =

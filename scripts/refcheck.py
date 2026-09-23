@@ -38,7 +38,7 @@ BARE_FILES = ('Dockerfile', 'mvnw', 'LICENSE')
 # Paths the documentation names although they are not in the repository, each
 # with its reason. Every entry is a file someone creates or will create; keep
 # the list short.
-DELIBERATELY_ABSENT = {
+EXPECTED_ABSENT = {
     # Written by the reader from k8s/secret.example.yaml. The real one holds
     # the passwords.
     'k8s/secret.yaml': 'created by the reader, never committed',
@@ -118,7 +118,7 @@ def main():
                         path = path[2:]
                     where = f'{doc}:{number}'
 
-                    if path in DELIBERATELY_ABSENT:
+                    if path in EXPECTED_ABSENT:
                         checked += 1
                         continue
                     # Build outputs (an SBOM, a coverage report) are cited but
