@@ -215,7 +215,7 @@
             <artifactId>spring-boot-testcontainers</artifactId>
             <scope>test</scope>
         </dependency>
-        <!-- Testcontainers 2.x module names; the 1.x coordinates are no longer published. -->
+        <!-- Testcontainers 2.x publishes each module with a testcontainers- prefix; the 1.x artifact ids have no 2.x release. -->
         <dependency>
             <groupId>org.testcontainers</groupId>
             <artifactId>testcontainers-postgresql</artifactId>
@@ -290,12 +290,10 @@
               Coverage. prepare-agent sets the argLine property; the Surefire plugin below
               keeps it with @{argLine}.
 
-              The thresholds are measured. When they were set, with no Docker and the five
-              Testcontainers tests in BookingIntegrationTest skipped, the numbers were line
-              0.840 and branch 0.617. The gate sits below both with room, and CI runs the
-              Testcontainers tests, so it can only measure higher. Measured again on 1.1.0
-              with no Docker, eight tests skipped (five in BookingIntegrationTest, three in
-              OutboxPrunePostgresTest): line 0.895 and branch 0.692.
+              The thresholds sit below the measured coverage with room. With no Docker, eight
+              tests skip (five in BookingIntegrationTest, three in OutboxPrunePostgresTest),
+              and the bundle measures line 0.916 and branch 0.749. CI runs the Testcontainers
+              tests, so it can only measure higher.
 
               BUNDLE, because a per-class rule fails the build over an unused constructor on
               an exception class. The one exclusion is the main() class, which every

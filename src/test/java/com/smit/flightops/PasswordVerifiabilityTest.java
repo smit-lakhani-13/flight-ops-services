@@ -25,7 +25,11 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class PasswordVerifiabilityTest {
 
-    /** A pbkdf2 hash of "s3cret", with an id the old prefix pattern rejected. */
+    /**
+     * A pbkdf2 hash of "s3cret". Its id, {@code pbkdf2@SpringSecurity_v5_8}, is registered
+     * and holds {@code @} and {@code _}, so the prefix check in {@code ApiSecurityProperties}
+     * must accept more than letters and digits.
+     */
     private static final String PBKDF2 = "{pbkdf2@SpringSecurity_v5_8}"
             + "121d6e31e4311b8f86148a1f52ad230ba826a490b92480b597f5143ed5b3065f16244b86fea0666610927ed85357315d";
 

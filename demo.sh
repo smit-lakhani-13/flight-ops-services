@@ -156,8 +156,9 @@ HDRS=$(eval "$POST_BOOKING")
 printf '%s\n' "$HDRS" | head -4
 echo
 
-# Follows the Location the server sent, not an assumed /bookings/1. Bug 2 in
-# the README was a test that checked the header's text without following it.
+# The server's Location, not an assumed /bookings/1. A missing header stops the
+# demo here; one that does not resolve prints its error body when the act
+# follows it below.
 LOC=$(printf '%s\n' "$HDRS" | awk 'tolower($1)=="location:"{print $2}' | tr -d '\r')
 if [[ -z "$LOC" ]]; then
   echo "${red}No Location header on that 201, which is the bug this act is about.${off}"

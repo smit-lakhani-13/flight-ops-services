@@ -29,8 +29,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * The error contract through the whole application: the real security chain,
  * the real services, and H2 with the seeded demo flights. Most of these cases
  * need a layer a slice would mock, such as the stored fingerprint behind a key
- * conflict or the seat count behind a cancellation. PostgreSQL-only behaviour is
- * in {@link BookingIntegrationTest} and {@link LockTimeoutTest}.
+ * conflict or the seat count behind a cancellation. The {@code FOR UPDATE}
+ * contention runs on PostgreSQL in {@link BookingIntegrationTest}.
+ * {@link LockTimeoutTest} pins the lock-timeout-to-503 mapping on H2. No test
+ * exercises PostgreSQL's own {@code lock_timeout} firing.
  *
  * <p>Its own database URL, because a second context on the shared in-memory
  * database would drop and recreate the tables under this one. The caller holds
@@ -221,7 +223,7 @@ class ErrorContractTest {
     // ------------------------------------------------------------------
 
     @Test
-    @DisplayName("the same idempotency key with a different payload is 409, not somebody else's booking")
+    @DisplayName("the same idempotency key with a different payload is 409, not someone else's booking")
     void reusingAKeyForADifferentBookingIsAConflict() throws Exception {
         String key = "contract-reuse-1";
 
@@ -250,7 +252,7 @@ class ErrorContractTest {
     }
 
     @Test
-    @DisplayName("a genuine retry - same key, same payload - is still 201 with the same booking")
+    @DisplayName("a real retry - same key, same payload - is still 201 with the same booking")
     void identicalRetryIsStillAReplay() throws Exception {
         String body = """
                 {"flightNumber":"UA123","passengerName":"Alan Turing","seats":1,

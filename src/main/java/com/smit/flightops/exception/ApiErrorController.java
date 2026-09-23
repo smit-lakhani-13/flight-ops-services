@@ -96,9 +96,9 @@ public class ApiErrorController implements ErrorController {
     }
 
     /**
-     * Generic on purpose: the container's error message can carry an exception message,
-     * which may hold a SQL fragment or an internal path. The detail is in the log line
-     * that carries the same request id.
+     * The message is generic because the container's error message can carry an
+     * exception message, which may hold a SQL fragment or an internal path. The detail
+     * is in the log line that carries the same request id.
      */
     private String messageFor(HttpStatus status) {
         return status.is4xxClientError()

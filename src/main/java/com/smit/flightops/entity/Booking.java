@@ -25,7 +25,10 @@ public class Booking {
     @Column(nullable = false) private String passengerName;
     @Column(nullable = false) private int seats;
 
-    /** Exactly-once guarantee on a money path. */
+    /**
+     * Unique (uk_bookings_idempotency_key), so a retry with the same key gets this booking
+     * back instead of creating a second one.
+     */
     @Column(nullable = false, unique = true)
     private String idempotencyKey;
 

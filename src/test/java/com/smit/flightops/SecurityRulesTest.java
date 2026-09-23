@@ -286,7 +286,7 @@ class SecurityRulesTest {
 
     /**
      * Spring MVC serves HEAD for every GET mapping, and a GET rule does not cover it. The
-     * ops case keeps the fix from being "let HEAD through": read still has to mean read.
+     * ops case checks that HEAD is not simply permitted: it still needs the read scope.
      */
     @Test
     @DisplayName("HEAD follows the same rule as GET, in both directions")

@@ -381,8 +381,8 @@ check "RDS instances" "$(q rds describe-db-instances \
     --query "DBInstances[?contains(DBInstanceIdentifier, 'flight-ops')].DBInstanceIdentifier" --output text)"
 check "RDS snapshots" "$(q rds describe-db-snapshots --snapshot-type manual \
     --query "DBSnapshots[?contains(DBSnapshotIdentifier, 'flight-ops')].DBSnapshotIdentifier" --output text)"
-# --keep-foundation leaves the foundation stack and the resources it owns in
-# place on purpose, so neither this check nor the tag catch-all counts them.
+# --keep-foundation keeps the foundation stack and the resources it owns, so
+# neither this check nor the tag catch-all counts them.
 stack_query="StackSummaries[?contains(StackName, 'flight-ops')].StackName"
 if [ "$KEEP_FOUNDATION" = 1 ]; then
     stack_query="StackSummaries[?contains(StackName, 'flight-ops') && StackName!='$FOUNDATION_STACK'].StackName"

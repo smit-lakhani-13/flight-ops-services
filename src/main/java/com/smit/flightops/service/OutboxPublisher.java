@@ -43,8 +43,8 @@ public class OutboxPublisher {
     private final Clock clock;
 
     /**
-     * {@code events} comes first on purpose: Spring resolves constructor arguments
-     * in order, so an unknown {@code app.events.publisher} fails on its binding, which
+     * {@code events} is the first parameter because Spring resolves constructor arguments
+     * in order. An unknown {@code app.events.publisher} then fails on its binding, which
      * names the property, before the missing {@code EventPublisher} bean is reported.
      */
     public OutboxPublisher(EventProperties events,
