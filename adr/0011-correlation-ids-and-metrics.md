@@ -24,8 +24,8 @@ I added these, and stopped short of an exporter:
    `src/main/java/com/smit/flightops/observability/RequestIdFilter.java` runs
    at `HIGHEST_PRECEDENCE`, ahead of Spring Security. It accepts an inbound
    `X-Request-Id` matching `^[A-Za-z0-9._:-]{1,128}$` and mints a UUID
-   otherwise. It puts the id in the MDC and echoes it on every response, 401
-   and 403 included.
+   otherwise. It puts the id in the MDC and echoes it on every response the
+   application handles, 401 and 403 included.
 
 2. **Trace and span ids** in the log pattern, from
    `spring-boot-starter-opentelemetry`, so a log line reads

@@ -108,10 +108,11 @@ public class FlightController {
                             schema = @Schema(type = "string"))),
             @ApiResponse(responseCode = "400", description = """
                     `VALIDATION_FAILED` — a field is blank, out of range or has the wrong characters, \
-                    or `departureTime` is missing or null; `fieldErrors` names each one. \
-                    `MALFORMED_REQUEST` — the body is empty or not valid JSON, a field has the wrong \
-                    JSON type or is too large for its type, or `totalSeats` is missing, null, a string, \
-                    or written with a decimal point or an exponent (`2.0` included). The same code \
+                    `destination` equals `origin`, or `departureTime` is missing, null or not in the \
+                    future; `fieldErrors` names each one. `MALFORMED_REQUEST` — the body is empty, \
+                    not valid JSON or not a JSON object, a field has the wrong JSON type or is too \
+                    large for its type, or `totalSeats` is missing, null, a string, or written with \
+                    a decimal point or an exponent (`2.0` included). The same code \
                     answers a `departureTime` that is not an ISO-8601 instant with `Z` or an offset, \
                     such as `2026-09-23T10:00:00Z`. This one has the `{code, message, timestamp}` shape.""",
                     content = @Content(schema = @Schema(oneOf = {ValidationErrorResponse.class, ErrorResponse.class}))),
@@ -151,8 +152,9 @@ public class FlightController {
             @ApiResponse(responseCode = "200", description = "The flight, at its new status."),
             @ApiResponse(responseCode = "400", description = """
                     `VALIDATION_FAILED` — `status` is missing or null. `MALFORMED_REQUEST` — the \
-                    body is empty or not valid JSON, names a status that does not exist, or sends it \
-                    as a number. This one has the `{code, message, timestamp}` shape.""",
+                    body is empty, not valid JSON or not a JSON object, or `status` has the wrong \
+                    JSON type or names a status that does not exist. This one has the \
+                    `{code, message, timestamp}` shape.""",
                     content = @Content(schema = @Schema(oneOf = {ValidationErrorResponse.class, ErrorResponse.class}))),
             @ApiResponse(responseCode = "401", description = "`UNAUTHENTICATED`",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),

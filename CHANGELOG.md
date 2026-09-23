@@ -110,11 +110,16 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
 - **Seat counts required in the schema.** `seats` on `BookingRequest` and
   `totalSeats` on `CreateFlightRequest` are in the served OpenAPI document's
   `required` lists (`OpenApiTest#seatCountsAreRequired`). The 400, 415 and
-  `/error` descriptions now name every case the code answers.
+  `/error` descriptions name more of the cases the code answers, such as a body
+  that is not a JSON object, `destination` equal to `origin` and a missing
+  `Content-Type`.
 
 - **Wall-clock rule.** `Booking` takes `createdAt` from `BookingWriter`'s
   `Clock`, so `time_comes_from_the_clock` in `ArchitectureTest` has no
-  exemption. 1.1.0 exempted the whole `entity` package.
+  exemption. 1.1.0 exempted the whole `entity` package. The rule also matches
+  any `java.time` `now()` that takes no `Clock`, `new Date()` and
+  `Calendar.getInstance()`. It used to name the no-argument `now()` of five
+  types, so `LocalDate.now(ZoneOffset.UTC)` passed.
 
 - **Test builds.** Both poms pin the Surefire JVM to
   `-Duser.timezone=Asia/Kolkata`, so a test that leans on the system zone fails
@@ -160,18 +165,31 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
 - **Epoch departure times.** `CreateFlightRequest.departureTime` reads through
   `IsoInstantDeserializer`, which accepts only an ISO-8601 instant. A number
   used to be read as epoch seconds, so a value in milliseconds landed in the
-  year 58971 and passed `@Future`. An offset such as `+05:30` still works
-  (`FlightControllerTest#departureTimeMustBeAnIsoString`).
+  year 58971 and passed `@Future`
+  (`FlightControllerTest#departureTimeMustBeAnIsoString`). An offset such as
+  `+05:30` still works (`FlightControllerTest#departureTimeWithAnOffsetIsRead`).
 
 - **Departure times past the microsecond.** A `departureTime` of
   `.123456789Z` came back in full in the 201, and as the stored `.123457Z` in a
   later GET. `Flight` now truncates it to the microseconds the column keeps, so
   both return `.123456Z` (`FlightTest#departureTimeIsTruncatedToMicroseconds`).
 
-- **A missing `Content-Type` was named `'null'`.** A write with no
+- **A missing `Content-Type` was named `'null'`.** A `POST` or `PATCH` with no
   `Content-Type` got `Content-Type 'null' is not supported.` It now gets
   `The request has no Content-Type. Send application/json.`
   (`BookingControllerTest#missingContentTypeReturns415`).
+
+- **A multipart `Content-Type` was a 500.** `DispatcherServlet` parsed any
+  multipart body before routing, so one with no boundary got a 500
+  `INTERNAL_ERROR` and an ERROR stack trace on every path, `/actuator/health`
+  included. The API takes no uploads, so
+  `spring.servlet.multipart.enabled: false` turns the parser off
+  (`ErrorContractTest#multipartParsingIsOff`).
+
+- **`@Future` read the JVM clock.** Hibernate Validator judged `departureTime`
+  against `Clock.systemDefaultZone()`, not the `Clock` bean, so a pinned test
+  clock did not move it. `TimeConfig.validationClock` hands the validator the
+  bean (`ValidationClockTest`).
 
 - **Unencoded `Location` headers.** `FlightController#create` and
   `BookingController#book` now build `Location` with `UriComponentsBuilder`, so
@@ -206,11 +224,6 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
   with `booking event has <n> for 'seats'; expected at least 1`, and the mapper
   disables `ACCEPT_FLOAT_AS_INT` and `ALLOW_COERCION_OF_SCALARS`. A `"2"`,
   `2.9`, `0` or `-3` now becomes a batch item failure and reaches the DLQ.
-
-- **Lambda log lines.** `BookingEventHandler.printable` replaces control, format
-  and line-separator characters with `?`, and caps a value at 1,000 characters
-  plus `...`. It guards the `bookingId` on the success line and the exception
-  message on the `FAILED` line.
 
 - **Contract test mapper.** The Lambda's `BookingEventContractTest` now reads
   through `BookingEventHandler.MAPPER`, so the contract file runs against the
@@ -315,6 +328,11 @@ The other fixes are to documentation only, and change no behaviour.
   newline in a request cannot forge a WARN line
   (`FlightControllerTest#rejectedValueCannotForgeALogLine`).
 
+- **Lambda log lines.** `BookingEventHandler.printable` replaces control, format
+  and line-separator characters with `?`, and caps a value at 1,000 characters
+  plus `...`. It guards the `bookingId` on the success line and the exception
+  message on the `FAILED` line.
+
 - **No password in the log.** `ApiSecurityProperties` checks the prefix in its
   constructor, so Boot's failure report no longer echoes a rejected value. The
   message names the property and ends with `<VAR> is not set` (`API_PASSWORD`
@@ -360,7 +378,8 @@ what the API does. One change removes a field from a response (see Removed).
   ([adr/0008](adr/0008-standalone-lambda-consumer.md)).
 
 - **Correlation ids, metrics, structured logs.** `RequestIdFilter` puts an id
-  in the MDC and on every response as `X-Request-Id`, including 401 and 403.
+  in the MDC and returns it as `X-Request-Id` on every response the application
+  handles, including 401 and 403.
   `BookingMetrics` and `OutboxMetrics` publish counters and gauges that answer
   "is it working" without a log read, and the prod profile emits ECS JSON
   ([adr/0011](adr/0011-correlation-ids-and-metrics.md), `OPERATIONS.md`).
@@ -469,10 +488,6 @@ what the API does. One change removes a field from a response (see Removed).
   stored as a booking for nought seats. `FAIL_ON_NULL_FOR_PRIMITIVES` now makes
   it a batch item failure, so it lands in the DLQ.
 
-- **Log-safe idempotency keys.** `idempotencyKey` now accepts only
-  `[A-Za-z0-9._:-]`, the class `RequestIdFilter` enforces on `X-Request-Id`.
-  The key is echoed into log lines, and a newline in it could forge an entry.
-
 - **Unique-constraint loser got 409.** Two identical requests raced, and the
   loser caught the unique-constraint violation and reported a conflict. The
   correct answer is the winner's booking, with 201.
@@ -571,6 +586,10 @@ what the API does. One change removes a field from a response (see Removed).
 ### Security
 
 - The service no longer returns other callers' idempotency keys (see Removed).
+
+- **Log-safe idempotency keys.** `idempotencyKey` now accepts only
+  `[A-Za-z0-9._:-]`, the class `RequestIdFilter` enforces on `X-Request-Id`.
+  The key is echoed into log lines, and a newline in it could forge an entry.
 
 - `readOnlyRootFilesystem: true`, `runAsNonRoot`, all capabilities dropped, and
   `automountServiceAccountToken` left to IRSA's projected token.

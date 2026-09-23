@@ -226,9 +226,13 @@ written down. What is missing is a domain.
   `BookingControllerTest` covers both.
 
 - The writes read JSON only. swagger-core puts a YAML reader on the classpath,
-  and none of the `spring.jackson` settings reach it, so each write declares
-  `consumes = application/json`. A request with any other `Content-Type`, or
-  none, gets `415 UNSUPPORTED_MEDIA_TYPE`. In JSON, a whole number sent as
+  and none of the `spring.jackson` settings reach it, so each `POST` and `PATCH`
+  declares `consumes = application/json`. One sent with any other
+  `Content-Type`, or none, gets `415 UNSUPPORTED_MEDIA_TYPE`. A `DELETE` reads
+  no body, so its `Content-Type` is not checked. Multipart parsing is off,
+  because the API takes no uploads and the parser runs before routing. With it
+  on, a multipart `Content-Type` with no boundary was a 500 and an ERROR stack
+  trace on every path, the public ones included. In JSON, a whole number sent as
   text, a status sent as a number and a departure time that is not an ISO-8601
   instant are each `400 MALFORMED_REQUEST`. None of them is converted into a value the
   client did not write.

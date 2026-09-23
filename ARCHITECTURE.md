@@ -479,7 +479,7 @@ flowchart TD
 | `no_java_util_logging`, `no_standard_streams` | Log lines that bypass the correlation pattern |
 | `repositories_are_interfaces` | Hand-written persistence sneaking in beside Spring Data |
 | `transactions_are_opened_only_in_the_service_layer` | A transaction opened in a controller, spanning the HTTP response |
-| `time_comes_from_the_clock` | `Instant.now()`, `System.currentTimeMillis()` or another `java.time` type's `now()` in main code, where an injected `Clock` belongs. It has no exemption. `BookingWriter` passes `clock.instant()` to the `Booking` constructor |
+| `time_comes_from_the_clock` | Any `java.time` `now()` that takes no `Clock`, `System.currentTimeMillis()`, `new Date()` or `Calendar.getInstance()` in main code, where an injected `Clock` belongs. It has no exemption. `BookingWriter` passes `clock.instant()` to the `Booking` constructor |
 | `no_web_types_below_the_controller` | A service that cannot be called from a scheduler or a test |
 
 I checked each rule against a planted violation before committing it. A rule

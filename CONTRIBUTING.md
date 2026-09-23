@@ -49,7 +49,7 @@ without Docker the service line ends `Skipped: 8`.
 A new migration is not accepted until CI has gone green on it. The local H2
 profile never sees it, and neither does a laptop with no Docker.
 
-Today the service declares 254 tests and runs 246 of them without Docker, and
+Today the service declares 257 tests and runs 249 of them without Docker, and
 the Lambda runs 25. Do not edit those numbers by hand anywhere:
 
 ```bash
@@ -236,7 +236,8 @@ grouping.
 ## Reporting a bug
 
 Include the version (from `/actuator/info`), the `X-Request-Id` from the
-response, and what you expected. Every response carries the request id,
-including 401 and 403, and with it the request is one `grep` away.
+response, and what you expected. Every response the application handles
+carries the request id, 401 and 403 included, and with it the request is one
+`grep` away. Tomcat's own 400 page and a `TRACE` refusal carry none.
 
 Do not report a security issue in a public issue. See [SECURITY.md](SECURITY.md).

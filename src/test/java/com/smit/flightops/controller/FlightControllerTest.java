@@ -214,6 +214,21 @@ class FlightControllerTest {
     }
 
     @Test
+    @DisplayName("a flight write with no Content-Type is 415 with a message that says so")
+    void missingContentTypeReturns415() throws Exception {
+        mockMvc.perform(post("/api/v1/flights"))
+                .andExpect(status().isUnsupportedMediaType())
+                .andExpect(jsonPath("$.code").value("UNSUPPORTED_MEDIA_TYPE"))
+                .andExpect(jsonPath("$.message").value("The request has no Content-Type. Send application/json."));
+        mockMvc.perform(patch("/api/v1/flights/UA123/status").content("{\"status\":\"BOARDING\"}"))
+                .andExpect(status().isUnsupportedMediaType())
+                .andExpect(jsonPath("$.message").value("The request has no Content-Type. Send application/json."));
+
+        verify(flightService, never()).create(any());
+        verify(flightService, never()).updateStatus(any(), any());
+    }
+
+    @Test
     void patchStatusReturns200() throws Exception {
         when(flightService.updateStatus("UA123", FlightStatus.BOARDING)).thenReturn(dto());
 

@@ -552,6 +552,15 @@ did not hold. `BookingWriter` holds the `Clock` and calls the constructor, as
 constructor argument, and ArchUnit's `time_comes_from_the_clock` rule has no
 exemption.
 
+The rule itself was narrower than its name. It listed the no-argument `now()`
+of five types, and ArchUnit matches only that overload, so
+`LocalDate.now(ZoneOffset.UTC)`, `new Date()` and `Calendar.getInstance()`
+passed it. It now matches any `java.time` `now()` that takes no `Clock`, and I
+checked it against five planted calls. Bean Validation was the last reader of
+the JVM clock. Hibernate Validator judges `@Future` against
+`Clock.systemDefaultZone()`, so `TimeConfig.validationClock` now hands it the
+bean (`ValidationClockTest`).
+
 ## Second review pass
 
 I ran the second pass against the first, looking for failures that stay green

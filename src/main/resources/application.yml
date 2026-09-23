@@ -58,6 +58,12 @@ spring:
     virtual:
       enabled: true
 
+  servlet:
+    multipart:
+      # The API takes no uploads. With parsing on, DispatcherServlet reads any
+      # multipart Content-Type before routing, and a missing boundary is a 500.
+      enabled: false
+
   # Boot's default, pinned because k8s/base/deployment.yaml depends on it:
   #   5s preStop + 30s drain = 35s < terminationGracePeriodSeconds: 45.
   lifecycle:

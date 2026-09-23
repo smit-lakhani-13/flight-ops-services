@@ -79,10 +79,10 @@ public class BookingController {
                             schema = @Schema(type = "string"))),
             @ApiResponse(responseCode = "400", description = """
                     `VALIDATION_FAILED` — a field is blank, out of range or has the wrong characters; \
-                    `fieldErrors` names each one. `MALFORMED_REQUEST` — the body is empty or not valid \
-                    JSON, a field has the wrong JSON type or is too large for its type, or `seats` is \
-                    missing, null, a string, or written with a decimal point or an exponent (`2.0` \
-                    included). This one has the `{code, message, timestamp}` shape.""",
+                    `fieldErrors` names each one. `MALFORMED_REQUEST` — the body is empty, not valid \
+                    JSON or not a JSON object, a field has the wrong JSON type or is too large for its \
+                    type, or `seats` is missing, null, a string, or written with a decimal point or an \
+                    exponent (`2.0` included). This one has the `{code, message, timestamp}` shape.""",
                     content = @Content(schema = @Schema(oneOf = {ValidationErrorResponse.class, ErrorResponse.class}))),
             @ApiResponse(responseCode = "401", description = "`UNAUTHENTICATED`",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),

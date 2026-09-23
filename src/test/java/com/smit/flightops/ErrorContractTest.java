@@ -7,9 +7,11 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.context.ApplicationContext;
 import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.web.multipart.MultipartResolver;
 
 import java.time.Instant;
 import java.util.List;
@@ -45,6 +47,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class ErrorContractTest {
 
     @Autowired private MockMvc mockMvc;
+    @Autowired private ApplicationContext context;
 
     // ------------------------------------------------------------------
     // Sorting and paging
@@ -441,6 +444,18 @@ class ErrorContractTest {
                 .andExpect(status().isNotAcceptable())
                 .andExpect(content().contentType(MediaType.APPLICATION_JSON))
                 .andExpect(jsonPath("$.code").value("REQUEST_REJECTED"));
+    }
+
+    /**
+     * With a resolver present, {@code DispatcherServlet} parses any multipart
+     * Content-Type before routing, and one with no boundary is a 500 on every path,
+     * health included. MockMvc never parses a multipart body, so the missing
+     * resolver is what this pins.
+     */
+    @Test
+    @DisplayName("multipart parsing is off, so no request body reaches a multipart parser")
+    void multipartParsingIsOff() {
+        assertThat(context.getBeanNamesForType(MultipartResolver.class)).isEmpty();
     }
 
     private void createFlight(String flightNumber, String origin, String destination,

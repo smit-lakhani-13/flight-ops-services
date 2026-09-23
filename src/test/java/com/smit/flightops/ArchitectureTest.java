@@ -9,12 +9,16 @@ import com.tngtech.archunit.library.Architectures;
 import com.tngtech.archunit.library.GeneralCodingRules;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.time.Instant;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.OffsetDateTime;
-import java.time.ZonedDateTime;
+import java.time.Clock;
+import java.util.Calendar;
+import java.util.Date;
 
+import static com.tngtech.archunit.base.DescribedPredicate.not;
+import static com.tngtech.archunit.core.domain.JavaCall.Predicates.target;
+import static com.tngtech.archunit.core.domain.JavaClass.Predicates.resideInAPackage;
+import static com.tngtech.archunit.core.domain.properties.HasName.Predicates.name;
+import static com.tngtech.archunit.core.domain.properties.HasOwner.Predicates.With.owner;
+import static com.tngtech.archunit.core.domain.properties.HasParameterTypes.Predicates.rawParameterTypes;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noFields;
@@ -122,19 +126,21 @@ class ArchitectureTest {
                     .as("@Transactional appears only in the service package");
 
     /**
-     * One source of time: the {@link java.time.Clock} bean. {@code System.currentTimeMillis}
-     * and the other {@code java.time} types' {@code now()} are the accidental ways round
-     * the rule. {@code TimeConfig} builds the bean with {@code Clock.systemUTC()}, which
-     * the rule does not name.
+     * One source of time: the {@link Clock} bean. Any {@code java.time} {@code now()}
+     * that takes no Clock, {@code System.currentTimeMillis}, {@code new Date()} and
+     * {@code Calendar.getInstance()} are the accidental ways round it. The rule matches
+     * {@code now} by name, because naming a type and method matches only the overload
+     * with no arguments. {@code TimeConfig} builds the bean with {@code Clock.systemUTC()},
+     * which the rule does not name.
      */
     @ArchTest
     static final ArchRule time_comes_from_the_clock = noClasses()
-            .should().callMethod(Instant.class, "now")
-            .orShould().callMethod(LocalDate.class, "now")
-            .orShould().callMethod(LocalDateTime.class, "now")
-            .orShould().callMethod(OffsetDateTime.class, "now")
-            .orShould().callMethod(ZonedDateTime.class, "now")
+            .should().callMethodWhere(target(owner(resideInAPackage("java.time")))
+                    .and(target(name("now")))
+                    .and(not(target(rawParameterTypes(Clock.class)))))
             .orShould().callMethod(System.class, "currentTimeMillis")
+            .orShould().callConstructor(Date.class)
+            .orShould().callMethod(Calendar.class, "getInstance")
             .as("time comes from the injected Clock");
 
     /**
