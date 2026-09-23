@@ -128,7 +128,7 @@ This table bounds every claim in this README.
 | Status | What |
 |---|---|
 | **Built, tested, and exercised over HTTP** | The whole app module. Every endpoint hit with `curl` against a running instance. Every status code in the tables below observed over HTTP or in a test, including the 401 and 403 bodies, except the 503 on a booking cancellation. `LockTimeoutTest` holds the flight row and gets the booking's 503 end to end. The flight status change and cancellation get theirs only in a slice test with a mocked service (`FlightControllerTest#flightWriteBehindARowLockReturns503`). The Lambda handler's logic, via 25 tests. |
-| **Verified against real PostgreSQL in CI** | All 269 tests, including the 8 Testcontainers integration tests: 5 in `BookingIntegrationTest` and 3 in `service/OutboxPrunePostgresTest`. They apply the Flyway migrations to an empty database and check `ddl-auto: validate` against the schema those migrations produced. They run `SELECT … FOR UPDATE` under 20 threads competing for 5 seats, and replay the same idempotency key from 20 threads at once. The runners have Docker, so these execute there and skip on a laptop without one, and the `build` job fails if either class is skipped or missing. |
+| **Verified against real PostgreSQL in CI** | All 279 tests, including the 8 Testcontainers integration tests: 5 in `BookingIntegrationTest` and 3 in `service/OutboxPrunePostgresTest`. They apply the Flyway migrations to an empty database and check `ddl-auto: validate` against the schema those migrations produced. They run `SELECT … FOR UPDATE` under 20 threads competing for 5 seats, and replay the same idempotency key from 20 threads at once. The runners have Docker, so these execute there and skip on a laptop without one, and the `build` job fails if either class is skipped or missing. |
 | **Authored and reviewed, never executed** | The container image. `sam deploy` and `sam local invoke`; there is no `sam build`, because Maven builds the jar that `template.yaml` names. Every `kubectl` and `eksctl` step. The deploy half of the GitHub Actions workflow, which is gated off (see below). |
 | **Not implemented** | A Solace binding. Trace **export** from the service: ids are generated and logged, but there is no collector to send spans to. The Lambda's `Tracing: Active` has X-Ray record a sample of its invocations, and those traces do not carry the service's trace id. Rate limiting. |
 
@@ -200,7 +200,7 @@ The same picture with method names, plus the booking sequence, the idempotency d
 ## Repository layout
 
 ```
-├── src/main/java/com/smit/flightops/       57 files, 3,875 lines
+├── src/main/java/com/smit/flightops/       57 files, 3,917 lines
 │   ├── controller/     HTTP only: bind, validate, map to DTO, choose the status code
 │   ├── service/        orchestration, transaction boundaries, the outbox drain and pruner
 │   ├── entity/         Flight, Booking, FlightStatus, OutboxEvent: the invariants
@@ -210,7 +210,7 @@ The same picture with method names, plus the booking sequence, the idempotency d
 │   ├── security/       the JSON 401 and 403 writers
 │   ├── observability/  RequestIdFilter, BookingMetrics, OutboxMetrics
 │   ├── validation/     @DistinctEndpoints, a class-level Bean Validation constraint,
-│   │                   and IsoInstantDeserializer, which takes only an ISO-8601 time
+│   │                   and IsoInstantDeserializer, which takes only an ISO-8601 instant
 │   └── config/         SecurityConfig, OpenApiConfig, AwsConfig, four
 │                       @ConfigurationProperties records, TimeConfig, DataSeeder
 ├── src/main/resources/
@@ -283,7 +283,7 @@ Every `/api/**` row also answers 401 without valid credentials, a wrong password
 
 Every error the application produces has one JSON shape, `{code, message, timestamp}` or `{code, fieldErrors, timestamp}`, from `GlobalExceptionHandler`, `ErrorResponseWriter` (401 and 403) and `ApiErrorController` (`/error`). Each sets `Content-Type: application/json` itself, whatever the `Accept` header asked for. No controller contains a `try`/`catch`. Tomcat refuses some requests before Spring sees them: `%2F`, `%5C`, `%00` or `%zz` in the path, a raw `|`, or a 20KB header. Those get Tomcat's own HTML 400 page with no `X-Request-Id`, and an unknown path under an exposed actuator endpoint, such as `/actuator/metrics/nope`, returns an empty 404.
 
-Jackson and Hibernate exception text names internal classes, tables and columns, so the client gets a fixed string and the detail goes to the log at WARN. I wrote the project's own exception messages for clients, and those pass through: `FlightNotFoundException`, `BookingNotFoundException`, `InsufficientSeatsException`, `FlightNotBookableException`, `DuplicateFlightException`, `IllegalFlightTransitionException`, `IdempotencyKeyConflictException` and `UnknownSortPropertyException`. So does Spring MVC's own `ErrorResponse` detail, such as `Method 'POST' is not supported.`, which names only the request. A stray `IllegalArgumentException` gets the fixed `The request contained an invalid value.`
+Jackson and Hibernate exception text names internal classes, tables and columns, so the client gets a fixed string and the detail goes to the log at WARN. I wrote the project's own exception messages for clients, and those pass through: `FlightNotFoundException`, `BookingNotFoundException`, `InsufficientSeatsException`, `FlightNotBookableException`, `DuplicateFlightException`, `IllegalFlightTransitionException`, `IdempotencyKeyConflictException` and `UnknownSortPropertyException`. So does Spring MVC's own `ErrorResponse` detail, such as `Method 'POST' is not supported.`, which names only the request. A write with no `Content-Type` is the exception: Spring would say `Content-Type 'null' is not supported.`, so it gets `The request has no Content-Type. Send application/json.` A stray `IllegalArgumentException` gets the fixed `The request contained an invalid value.`
 
 ### Error codes
 
@@ -303,7 +303,7 @@ Jackson and Hibernate exception text names internal classes, tables and columns,
 | `UNAUTHENTICATED` | 401 | no credentials, or credentials that do not verify; written by `JsonAuthenticationEntryPoint` |
 | `FORBIDDEN` | 403 | authenticated, without the authority this path needs; written by `JsonAccessDeniedHandler` |
 | `VALIDATION_FAILED` | 400 | Bean Validation, per field, including `@DistinctEndpoints`, which refuses a flight from EWR to EWR. A flight number with a space, `/` or `%` inside gets `must contain only letters and digits`. An airport code with a digit, symbol or padding gets `must contain only letters`. A passenger name with a control character gets `must not contain control characters`. A missing or null `departureTime` gets `must not be null` |
-| `MALFORMED_REQUEST` | 400 | unreadable body, an unknown enum constant or one sent as a number, a `seats` or `totalSeats` that is missing, null, quoted, or written with a decimal point or an exponent (`2.0` included), a `departureTime` sent as anything but an ISO-8601 string (a missing or null one is `VALIDATION_FAILED`), bad path variable, missing query parameter, or `page * size` above 2147483647 on either list endpoint |
+| `MALFORMED_REQUEST` | 400 | unreadable body, an unknown enum constant or one sent as a number, a `seats` or `totalSeats` that is missing, null, quoted, or written with a decimal point or an exponent (`2.0` included), a `departureTime` that is not an ISO-8601 instant with `Z` or an offset (a missing or null one is `VALIDATION_FAILED`), bad path variable, missing query parameter, or `page * size` above 2147483647 on either list endpoint |
 | `RESOURCE_NOT_FOUND` | 404 | unmapped path |
 | `METHOD_NOT_ALLOWED` | 405 | a verb the security rules allow on a path that does not map it, such as `POST` on `/api/v1/flights/UA123`; the `Allow` header lists the mapped verbs. Tomcat refuses `TRACE` before any filter runs, so its 405 comes from `ApiErrorController`, with the servlet's full `Allow` list and no `X-Request-Id`. `PUT` and `OPTIONS` get 403 from `anyRequest().denyAll()`, or 401 without credentials |
 | `UNSUPPORTED_MEDIA_TYPE` | 415 | a `Content-Type` that is missing or is not `application/json`, YAML included; the `Accept` header names JSON |
@@ -338,26 +338,26 @@ UPDATE outbox_events SET attempts = 0, next_attempt_at = NULL WHERE id = ?
 ## Tests
 
 ```bash
-./mvnw clean verify                       # 244 tests: 236 run, 8 skipped, 0 failures
+./mvnw clean verify                       # 254 tests: 246 run, 8 skipped, 0 failures
 ./mvnw -f lambda/pom.xml clean verify     # 25 tests, 0 failures
 ```
 
 | Layer | Tests | Tooling |
 |---|---|---|
-| Domain entity | 12 | plain JUnit, with no Spring and no database |
-| Service | 35 | `@ExtendWith(MockitoExtension.class)`, `@Mock`, `@InjectMocks`, `@Captor`, split across `BookingServiceTest` (orchestration, including a failed insert with no winning booking to recover), `BookingWriterTest` (the write path), `FlightServiceTest` and `SqsEventPublisherTest` (what goes on the wire) |
-| Web slice | 51 | `@WebMvcTest` + `@MockitoBean` in the two controller tests: status codes, `Location` headers, error JSON, `Allow` on a 405 and `Accept` on a 415, a YAML body refused on each write, and the rules for flight numbers, airport codes, passenger names, seat counts, status values and departure times. The other 2 are `exception/ApiErrorControllerTest`, with no Spring context. One calls `ApiErrorController` directly and one drives it through a standalone MockMvc, because a full MockMvc never forwards to `/error` |
+| Domain entity | 13 | plain JUnit, with no Spring and no database |
+| Service | 36 | `@ExtendWith(MockitoExtension.class)`, `@Mock`, `@InjectMocks`, `@Captor`, split across `BookingServiceTest` (orchestration, including a failed insert with no winning booking to recover), `BookingWriterTest` (the write path), `FlightServiceTest` and `SqsEventPublisherTest` (what goes on the wire) |
+| Web slice | 58 | `@WebMvcTest` + `@MockitoBean` in the two controller tests: status codes, `Location` headers, error JSON, `Allow` on a 405 and `Accept` on a 415, a YAML body or a missing `Content-Type` refused on each write, and the rules for flight numbers, airport codes, passenger names, seat counts, status values and departure times. The other 2 are `exception/ApiErrorControllerTest`, with no Spring context. One calls `ApiErrorController` directly and one drives it through a standalone MockMvc, because a full MockMvc never forwards to `/error` |
 | Repository slice | 13 | `@DataJpaTest` + `TestEntityManager`: derived queries, JPQL, `JOIN FETCH`, constraints |
-| Full context (H2) | 81 | `@SpringBootTest`. The idempotency guarantee end to end, with four 10-caller races on one key: same request, different payloads, the last seat, and one key across two flights. The authorisation rules against the real filter chain, with the Basic and Bearer challenges and who sees health components. The outbox with its trace capture, the attempt ceiling and the retention pruner against an embedded database. The OpenAPI document's status codes per operation and its comparison with a real response. The lock timeout, the error contract with the 406 and the page overflow, and a lazy-loading regression with no mocking anywhere in the chain |
+| Full context (H2) | 82 | `@SpringBootTest`. The idempotency guarantee end to end, with four 10-caller races on one key: same request, different payloads, the last seat, and one key across two flights. The authorisation rules against the real filter chain, with the Basic and Bearer challenges and who sees health components. The outbox with its trace capture, the attempt ceiling and the retention pruner against an embedded database. The OpenAPI document's status codes per operation and its comparison with a real response. The lock timeout, the error contract with the 406 and the page overflow, and a lazy-loading regression with no mocking anywhere in the chain |
 | Event contract | 11 | one producer-side class and one consumer-side class, both asserting against `contracts/booking-created-v1.json`; the consumer side parses through the handler's own mapper |
 | Lambda handler | 19 | separate module: batch parsing, partial batch failure and the conditional write. `seats` is refused with no coercion when it is missing, below 1, a string or fractional. Body values are logged on one line and capped at 1,000 characters, and the producer's trace context survives the queue |
 | Configuration and startup checks | 22 | Boot's `Binder` over plain maps: an unresolved `${...}` placeholder is rejected at startup, every outbox bound is enforced and every default is wired. `EventPropertiesTest` also starts the whole application to see a bad `app.events.publisher` named, and `PasswordVerifiabilityTest` runs `SecurityConfig` in a `WebApplicationContextRunner` to see an unverifiable password stop startup |
 | Architecture | 9 | ArchUnit over `target/classes`: the layering, no field injection, no `@Transactional` outside `service/`, no wall-clock reads in main code. I checked each rule against a planted violation before committing it |
 | Observability | 8 | the request-id filter against a hostile inbound header, and the meters scraped through a real `PrometheusMeterRegistry`, since a `SimpleMeterRegistry` would accept any name |
-| Run | 261 | 0 failures (12 + 35 + 51 + 13 + 81 + 11 + 19 + 22 + 9 + 8) |
+| Run | 271 | 0 failures (13 + 36 + 58 + 13 + 82 + 11 + 19 + 22 + 9 + 8) |
 | PostgreSQL integration | 8 | `@Testcontainers(disabledWithoutDocker = true)`: 5 in `BookingIntegrationTest` and 3 in `service/OutboxPrunePostgresTest`, skipped without a container runtime |
 
-269 tests exist across the two modules: 261 run without Docker and 8 skip. CI runs all 269 on runners with Docker, and it is the only place the PostgreSQL paths run. Those are Flyway with `ddl-auto=validate`, `SELECT FOR UPDATE` under 20-way contention, a 20-thread key race, the native `DELETE … FOR UPDATE SKIP LOCKED` under two pruners, and the outbox claim under two competing pollers. The `build` job's "The PostgreSQL tests ran" step fails the run if either class skipped a test or left no report. See [CONTRIBUTING.md](CONTRIBUTING.md) for what the skipped count means.
+279 tests exist across the two modules: 271 run without Docker and 8 skip. CI runs all 279 on runners with Docker, and it is the only place the PostgreSQL paths run. Those are Flyway with `ddl-auto=validate`, `SELECT FOR UPDATE` under 20-way contention, a 20-thread key race, the native `DELETE … FOR UPDATE SKIP LOCKED` under two pruners, and the outbox claim under two competing pollers. The `build` job's "The PostgreSQL tests ran" step fails the run if either class skipped a test or left no report. See [CONTRIBUTING.md](CONTRIBUTING.md) for what the skipped count means.
 
 ## Deployment and cost
 

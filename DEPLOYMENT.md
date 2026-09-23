@@ -184,7 +184,19 @@ would rebuild the image and then fail at the push, because the repository's
 tags are immutable.
 
 Every step checks whether its resource exists before creating it. To resume an
-interrupted run, run the same command again.
+interrupted run, run the same command again. If eksctl stopped part way through
+step 4, the re-run finishes the cluster. It waits for the control plane, then
+creates whichever of the vpc-cni, kube-proxy and coredns addons, the cluster's
+IAM OIDC provider and the `ng-1` node group is missing. Step 1 asks for eksctl
+0.184.0 or later, because older releases install those addons self-managed and
+the re-run looks them up as EKS addons.
+
+Two cases still need a hand. A re-run in the first minutes of step 4, before
+EKS lists the cluster, calls `eksctl create cluster` a second time, and that
+most likely fails on the existing CloudFormation stack. Wait for the stack to
+settle, then re-run. The database password exists only in the shell from step 6
+until step 9 writes the Secret. A run that stops in between stops again at
+step 9, and the message says how to set a new password.
 
 ### The order, and why it is that order
 
@@ -449,7 +461,9 @@ Type `delete` when it asks. The deletes take about 20 minutes. Then the script
 runs fourteen checks and exits non-zero if any of them finds something. They
 cover both kinds of load balancer, clusters, instances, NAT gateways, volumes,
 Elastic IPs, RDS instances and snapshots, stacks, log groups, secrets and ECR,
-plus a catch-all query for anything tagged `Project=flight-ops`. With
+plus a catch-all query for anything tagged `Project=flight-ops`. The
+catch-all leaves out the GitHub OIDC provider in both modes, because the
+foundation stack keeps it. With
 `--keep-foundation` there are thirteen, because that flag leaves the ECR
 repository behind and skips its check. It also leaves the foundation stack and
 its own resources out of the stacks check and the tag catch-all. Any other

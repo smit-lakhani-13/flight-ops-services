@@ -227,10 +227,10 @@ written down. What is missing is a domain.
 
 - The writes read JSON only. swagger-core puts a YAML reader on the classpath,
   and none of the `spring.jackson` settings reach it, so each write declares
-  `consumes = application/json`. A request with any other `Content-Type`, or none, gets
-  `415 UNSUPPORTED_MEDIA_TYPE`. In JSON, a whole number sent as text, a status
-  sent as a number and a departure time sent as a number or as text that is not ISO-8601 are
-  each `400 MALFORMED_REQUEST`. None of them is converted into a value the
+  `consumes = application/json`. A request with any other `Content-Type`, or
+  none, gets `415 UNSUPPORTED_MEDIA_TYPE`. In JSON, a whole number sent as
+  text, a status sent as a number and a departure time that is not an ISO-8601
+  instant are each `400 MALFORMED_REQUEST`. None of them is converted into a value the
   client did not write.
 
 - Error responses are `{code, message, timestamp}`, or
@@ -256,6 +256,12 @@ written down. What is missing is a domain.
   characters become `?`, and the value is capped at 1,000 characters. Jackson
   quotes rejected input in full, so without the cap a hostile body would
   reach CloudWatch whole.
+
+- The service applies the same rule to what it logs from a rejected request.
+  `GlobalExceptionHandler.printable` cleans Jackson's message, an unknown sort
+  property and a constraint violation's database message before they reach the
+  WARN line. A newline in a request body cannot start a forged log line on the
+  plain-text console (`FlightControllerTest#rejectedValueCannotForgeALogLine`).
 
 ## Container and pod
 

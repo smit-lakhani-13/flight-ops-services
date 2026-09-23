@@ -89,7 +89,11 @@ About 50 minutes, nearly all of it waiting. Twelve numbered steps; step 1 prints
 the cost table and asks you to type `yes`, and nothing before that costs
 anything. Every step checks whether its resource already exists, so if a run
 fails halfway (a throttled API, a laptop that slept), run the same command
-again instead of unpicking it by hand.
+again instead of unpicking it by hand. If eksctl stopped part way through
+step 4, the re-run finishes the cluster, creating whichever of its networking
+addons, OIDC provider and node group is missing. A run that stops between
+steps 6 and 9 is different: the database password was only in that shell, and
+step 9 says how to set a new one.
 
 After step 1 it stops twice more. On a first run, step 9 prints the generated
 passwords and waits for `saved`. Step 10 prints four values and waits for
@@ -208,8 +212,14 @@ still billed at month end.
 | Every API call returns 401, log warns `Encoded password does not look like BCrypt` | the Secret still holds `{bcrypt}REPLACE_ME` from `k8s/secret.example.yaml`. Recreate it with a real hash |
 | `kubectl get hpa` shows `<unknown>/70%` | metrics-server is not installed. `aws eks describe-addon --cluster-name flight-ops-cluster --addon-name metrics-server` |
 | `up.sh` stops at step 1 on the JDK | the Maven wrapper does not see JDK 21. Point `JAVA_HOME` at `openjdk@21` |
+| `up.sh` stops at step 1: `up.sh needs eksctl 0.184.0 or later` | an older eksctl installs the cluster's networking addons self-managed, and step 4's re-run looks them up as EKS addons. `brew upgrade eksctl` |
+| `up.sh` stops at step 4: `cluster flight-ops-cluster is not ACTIVE` | the cluster is `FAILED` or `DELETING`, or still not `ACTIVE` after 20 minutes. The message prints the `describe-cluster` command to check it |
+| `up.sh` stops at step 4: `addon vpc-cni did not become ACTIVE` or `node group ng-1 did not become ACTIVE` | the addon is `CREATE_FAILED` or `DEGRADED`, or the node group is `CREATE_FAILED`, or the wait ran out (10 minutes for vpc-cni, 40 for the node group). The message prints the command that shows its health. A re-run does not replace a `CREATE_FAILED` node group: delete it with `eksctl delete nodegroup --cluster flight-ops-cluster --name ng-1 --region ap-south-1`, then re-run |
+| `up.sh` stops at step 4: `could not create addon <name>`, `could not associate an IAM OIDC provider` or `could not create node group ng-1` | EKS or eksctl refused the create. Its own error is printed just above |
+| `up.sh` stops at step 4: `could not read addon <name>`, `could not list the IAM OIDC providers` or `could not read node group ng-1` | a lookup failed for another reason than "not found", such as throttling or a missing permission. Nothing is created, so a failed call is never taken for a missing resource |
 | `up.sh` stops at step 5: `has no AmazonEKSEditPolicy scoped to namespace/flight-ops` | the policy association was refused and is not there. The message prints the `list-associated-access-policies` command to check it |
 | `up.sh` stops at step 6 on the data stack's status | `ROLLBACK_COMPLETE` or `DELETE_FAILED` cannot be used: delete the stack and re-run (the message prints both commands). A status ending `_IN_PROGRESS`: wait, then re-run. A status read that fails for another reason also stops the run, so a throttled call is never taken for "no stack" |
+| `up.sh` stops at step 9: `the data stack already existed, so the database password is not available here` | the run that created the data stack stopped before step 9 wrote the Secret. Delete the data stack and re-run, or set a new password with the `modify-db-instance` command the message prints and re-run from the same shell |
 | `up.sh` waits 30 minutes at step 10, then stops | CI never created the deployment. Check the workflow run: the deploy job is skipped unless `DEPLOY_ENABLED` is `true` and the run is on `main` |
 | Pods run but nothing reaches SQS | IRSA is not attached. `kubectl describe pod` should show `AWS_WEB_IDENTITY_TOKEN_FILE` |
 | Connection timeouts to RDS | the security group admits the cluster SG and the shared node SG. Confirm with `aws ec2 describe-security-groups` that the ids in `data.yaml`'s parameters match the live cluster |

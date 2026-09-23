@@ -694,9 +694,9 @@ Bean Validation only saw the 2 and `@Min(1)` passed.
 `src/main/resources/application.yml` turns the coercion off, for `totalSeats`
 on a new flight as well. A fractional number is now `400 MALFORMED_REQUEST`,
 and the service is never called.
-`controller/BookingControllerTest.java#seatsMustBeAWholeNumber` sends 2.5, a
-null and a missing field and expects that 400 for each. The fix is `f67d245`,
-and the test followed in `ccad5b4`.
+`controller/BookingControllerTest.java#seatsMustBeAWholeNumber` sends 2.5, 2.0,
+1e0, `"2"`, a null and a missing field and expects that 400 for each. The fix
+is `f67d245`, and the test followed in `ccad5b4`.
 
 ### The whole-number rule had other ways round it
 
@@ -704,9 +704,9 @@ and the test followed in `ccad5b4`.
 swagger-core, which brings `jackson-dataformat-yaml`, and Spring MVC then
 registers a YAML reader that no `spring.jackson` setting configures. A booking
 sent as `application/yaml` with `seats: 2.5` still booked two seats. The three
-writes now declare `consumes = application/json`, so a YAML body gets
-`415 UNSUPPORTED_MEDIA_TYPE`. The fix is `dff5ef9`, pinned by
-`controller/BookingControllerTest.java#yamlBodyReturns415` and
+writes now declare `consumes = application/json`, so a body sent as
+`application/yaml` gets `415 UNSUPPORTED_MEDIA_TYPE`. The fix is `dff5ef9`,
+pinned by `controller/BookingControllerTest.java#yamlBodyReturns415` and
 `controller/FlightControllerTest.java#yamlBodyReturns415`.
 
 The JSON reader had gaps of its own. `"seats": "2"` was read from text.
@@ -716,9 +716,9 @@ seconds: a date in the year 58971, which passed `@Future`.
 `spring.jackson.mapper.allow-coercion-of-scalars: false` closes the first
 (`bdb6781`) and `spring.jackson.datatype.enum.fail-on-numbers-for-enums: true`
 the second (`f1ae45e`). For the third, `validation/IsoInstantDeserializer.java`
-accepts a departure time only as an ISO-8601 string. An offset such as
-`+05:30` still works and is stored in UTC (`f1ae45e`). Each case is
-`400 MALFORMED_REQUEST`.
+accepts a departure time only as an ISO-8601 instant, such as
+`2026-09-23T10:00:00Z`. An offset such as `+05:30` still works and is stored in
+UTC (`f1ae45e`). Each case is `400 MALFORMED_REQUEST`.
 `controller/BookingControllerTest.java#seatsMustBeAWholeNumber`,
 `controller/FlightControllerTest.java#statusAsANumberReturns400` and
 `controller/FlightControllerTest.java#departureTimeMustBeAnIsoString` each

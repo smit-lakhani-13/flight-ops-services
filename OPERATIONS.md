@@ -465,8 +465,10 @@ at the old ones.
 
 The table in
 [deploy/aws/README.md](deploy/aws/README.md#when-something-goes-wrong) maps
-each stop to its cause. It covers `up.sh` stopping at step 1 on the JDK, at
-step 5 on `AmazonEKSEditPolicy`, and at step 6 on the data stack's status. It
+each stop to its cause. For `up.sh` that is step 1 on the JDK or eksctl, and
+step 4 while it finishes a cluster that already exists. It is also step 5 on
+`AmazonEKSEditPolicy`, step 6 on the data stack's status, and step 9 when the
+database password is not available. It
 also covers the 30-minute wait at step 10 for CI to create the Deployment, and
 CI stopping at "Is this commit already in ECR?". Once the Deployment exists,
 `up.sh` waits up to 20 more minutes for it to become available.

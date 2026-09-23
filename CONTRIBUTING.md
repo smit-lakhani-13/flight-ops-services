@@ -42,14 +42,14 @@ outbox's native SQL run against PostgreSQL. The build job's step "The
 PostgreSQL tests ran" fails CI if either class skips a test or has no report.
 
 So in CI the Surefire summary reads
-`Tests run: 244, Failures: 0, Errors: 0, Skipped: 0` for the service and
+`Tests run: 254, Failures: 0, Errors: 0, Skipped: 0` for the service and
 `Tests run: 25, Failures: 0, Errors: 0, Skipped: 0` for the Lambda. On a laptop
 without Docker the service line ends `Skipped: 8`.
 
 A new migration is not accepted until CI has gone green on it. The local H2
 profile never sees it, and neither does a laptop with no Docker.
 
-Today the service declares 244 tests and runs 236 of them without Docker, and
+Today the service declares 254 tests and runs 246 of them without Docker, and
 the Lambda runs 25. Do not edit those numbers by hand anywhere:
 
 ```bash

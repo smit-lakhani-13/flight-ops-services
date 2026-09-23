@@ -107,6 +107,11 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
   `SecurityConfig.DOC_PATHS` drops the literal `/v3/api-docs`, which
   `/v3/api-docs/**` already matches.
 
+- **Seat counts required in the schema.** `seats` on `BookingRequest` and
+  `totalSeats` on `CreateFlightRequest` are in the served OpenAPI document's
+  `required` lists (`OpenApiTest#seatCountsAreRequired`). The 400, 415 and
+  `/error` descriptions now name every case the code answers.
+
 - **Wall-clock rule.** `Booking` takes `createdAt` from `BookingWriter`'s
   `Clock`, so `time_comes_from_the_clock` in `ArchitectureTest` has no
   exemption. 1.1.0 exempted the whole `entity` package.
@@ -122,8 +127,9 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
   in `template.yaml` replaces `ReservedConcurrentExecutions: 10`. It caps only
   the poller and reserves nothing from the account pool.
 
-- **`up.sh` preflight.** Step 1 stops unless `./mvnw -v` reports JDK 21, and
-  `envsubst` is no longer required. The step logic lives in `deploy/aws/lib.sh`
+- **`up.sh` preflight.** Step 1 stops unless `./mvnw -v` reports JDK 21 and
+  `eksctl version` reports 0.184.0 or later, and `envsubst` is no longer
+  required. The step logic lives in `deploy/aws/lib.sh`
   functions, which `deploy/aws/selftest.sh` checks against stubbed tools.
 
 - **`demo.sh` dates.** It books flights departing 30 days ahead, computed with
@@ -152,10 +158,20 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
   `MALFORMED_REQUEST` (`FlightControllerTest#statusAsANumberReturns400`).
 
 - **Epoch departure times.** `CreateFlightRequest.departureTime` reads through
-  `IsoInstantDeserializer`, which accepts only an ISO-8601 string. A number
+  `IsoInstantDeserializer`, which accepts only an ISO-8601 instant. A number
   used to be read as epoch seconds, so a value in milliseconds landed in the
   year 58971 and passed `@Future`. An offset such as `+05:30` still works
   (`FlightControllerTest#departureTimeMustBeAnIsoString`).
+
+- **Departure times past the microsecond.** A `departureTime` of
+  `.123456789Z` came back in full in the 201, and as the stored `.123457Z` in a
+  later GET. `Flight` now truncates it to the microseconds the column keeps, so
+  both return `.123456Z` (`FlightTest#departureTimeIsTruncatedToMicroseconds`).
+
+- **A missing `Content-Type` was named `'null'`.** A write with no
+  `Content-Type` got `Content-Type 'null' is not supported.` It now gets
+  `The request has no Content-Type. Send application/json.`
+  (`BookingControllerTest#missingContentTypeReturns415`).
 
 - **Unencoded `Location` headers.** `FlightController#create` and
   `BookingController#book` now build `Location` with `UriComponentsBuilder`, so
@@ -240,6 +256,24 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
 - **`cost-check.sh` stopped early.** The first Cost Explorer pipeline ends in
   `|| true`, so the tagged, forecast and Budgets sections still run.
 
+- **Dead credentials.** `down.sh`, `up.sh` and `cost-check.sh` stop at once
+  with `AWS credentials are not usable`. `down.sh` used to run every delete
+  step and fail only at the sweep.
+
+- **Teardown sweep.** A full teardown failed its own sweep. The tag catch-all
+  counted the GitHub OIDC provider, which the foundation stack keeps. It now
+  leaves the provider out in both modes.
+
+- **An interrupted cluster create.** eksctl creates the control plane first,
+  then the networking addons, the OIDC provider and the node group. A run that
+  stopped in between found the cluster on its re-run and went on without them.
+  Step 4 now creates whichever of those is missing, and waits for vpc-cni and
+  the node group. Step 9 prints the commands to set a new database password
+  when the run that created the data stack stopped before writing it.
+
+- **LB controller policy file.** Step 8 wrote it to a fixed path in `/tmp`.
+  It now downloads it to a private `mktemp` file and removes it afterwards.
+
 The other fixes are to documentation only, and change no behaviour.
 
 - The README listed 20 error codes, and there are 21. It was missing
@@ -273,6 +307,13 @@ The other fixes are to documentation only, and change no behaviour.
   The bug stories moved to `NOTES.md`.
 
 ### Security
+
+- **Log lines from rejected input.** `GlobalExceptionHandler.printable`
+  replaces control, format and line-separator characters with `?` and caps the
+  value at 1,000 characters, as the Lambda does. It covers Jackson's message,
+  an unknown sort property and a constraint violation's database message, so a
+  newline in a request cannot forge a WARN line
+  (`FlightControllerTest#rejectedValueCannotForgeALogLine`).
 
 - **No password in the log.** `ApiSecurityProperties` checks the prefix in its
   constructor, so Boot's failure report no longer echoes a rejected value. The
