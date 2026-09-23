@@ -15,8 +15,9 @@ The constraint that shapes the answer is not technical. The infrastructure is
 meant for a demonstration lasting one to two weeks, run by one person on one
 account, and deleted afterwards. There is no second environment, no team and no
 drift to reconcile. Its most important property is that a tired operator can
-delete all of it and *know* it is gone. The running cost is $7.72/day, and the
-30-day cost of forgetting is $273.
+delete all of it and *know* it is gone. The running cost is $7.72 a day before
+tax. Forgetting it for 30 days costs $232, or $273 with the 18% GST that AWS
+adds on Indian invoices.
 
 ## Decision
 

@@ -27,10 +27,10 @@ to authorities prefixed `SCOPE_`. A token carrying
 authority strings the Basic user `api` is granted. The rules never learn which
 mechanism authenticated the request.
 
-JWT support is registered only when a `JwtDecoder` bean exists, and that bean
-exists only when `spring.security.oauth2.resourceserver.jwt.issuer-uri` is set.
-With no issuer configured, the service boots with Basic alone and no dead
-configuration.
+JWT support is registered only when Boot creates a `JwtDecoder` bean. It does
+that when `spring.security.oauth2.resourceserver.jwt.issuer-uri`, `jwk-set-uri`
+or `public-key-location` is set. With none of them, the service boots with
+Basic alone and no dead configuration.
 
 ## Consequences
 
@@ -46,6 +46,12 @@ configuration.
   issue `flights:read` and `flights:write`, or the mapping breaks without any
   error.
 
+* **The audience is a second contract.** `issuer-uri` alone accepts any token
+  the issuer signed, including one minted for another client in the tenant.
+  Turning JWT on also needs
+  `spring.security.oauth2.resourceserver.jwt.audiences: [flight-ops-service]`.
+  [SECURITY.md](../SECURITY.md) has the warning.
+
 * `anyRequest().denyAll()` closes the list, so a new endpoint is unreachable
   until someone decides who may reach it. That default is why the OpenAPI paths
   needed an explicit rule (see [ADR 0012](0012-openapi-public-read.md)).
@@ -57,7 +63,8 @@ configuration.
 
 * **Method security (`@PreAuthorize`).** Moving the rules off the paths and
   next to the code they protect reads well. It also scatters the answer to
-  "what can an unauthenticated caller reach?" across thirty files.
+  "what can an unauthenticated caller reach?" across every controller method
+  instead of one list.
 
 * **A gateway doing authorisation.** Correct in a mesh. This service must still
   be safe when called directly.

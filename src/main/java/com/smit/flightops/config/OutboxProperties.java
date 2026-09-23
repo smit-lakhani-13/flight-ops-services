@@ -13,7 +13,7 @@ import java.time.Duration;
  *
  * @param enabled         run the poller. On by default; a deployment with one
  *                        dedicated drainer pod sets it false on the other replicas.
- * @param pollInterval    milliseconds between drains, the floor on event latency (1s).
+ * @param pollInterval    milliseconds between drains; roughly the most a healthy event waits (1s).
  * @param batchSize       rows claimed per drain; bounds how long one replica holds locks.
  * @param maxAttempts     failures before a row is no longer claimed (10). Stops one bad
  *                        row from heading every batch of the {@code ORDER BY id} claim.

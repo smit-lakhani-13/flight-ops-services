@@ -48,7 +48,9 @@ on the reason above. Only the old reason was wrong.
 * **The wait is bounded.** Without `lock_timeout`, a stuck transaction holds
   every later request until the connection pool is empty, and the whole service
   times out. With it, the failure stays on one endpoint as a 503.
-  `LockTimeoutTest` pins both the timeout and the status code.
+  `LockTimeoutTest` pins the 503, the `Retry-After` header and the counter. It
+  runs on H2 with a 250 ms timeout, so no test shows PostgreSQL's own
+  `lock_timeout` firing.
 
 * **One lock order everywhere.** Two paths that disagree deadlock under load and
   nowhere else. This is why `cancelBooking` takes the flight row first, even

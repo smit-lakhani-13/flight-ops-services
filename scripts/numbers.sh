@@ -75,7 +75,7 @@ else
   for dir in target/surefire-reports lambda/target/surefire-reports; do
     [ -d "$dir" ] || continue
     grep -h 'Tests run' "$dir"/*.txt | sed 's/^Tests run: /  /;s/, Failures.*-- in / in /' \
-      | awk '{printf "%-6s %s\n", $1, $NF}' | sort -k2
+      | awk '{printf "%-6s %s\n", $1, $NF}' | sort -b -k2
   done
 fi
 

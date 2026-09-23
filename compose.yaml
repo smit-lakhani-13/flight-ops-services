@@ -75,9 +75,10 @@ services:
     ports:
       - "8080:8080"
     healthcheck:
-      # Readiness, not /actuator/health: the liveness half reports UP while
-      # Flyway is still migrating. wget, because the Alpine runtime image has
-      # BusyBox wget and no curl.
+      # Readiness, the check the Kubernetes readiness probe uses. It turns UP
+      # only when startup, the demo seeder included, has finished and the
+      # database answers. During Flyway nothing answers: the port opens after.
+      # wget, because the Alpine runtime image has BusyBox wget and no curl.
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health/readiness | grep -q UP"]
       interval: 10s
       timeout: 5s

@@ -225,9 +225,9 @@ org.hibernate.LazyInitializationException: Could not initialize proxy [Flight#4]
 `Booking.flight` is `@ManyToOne(fetch = LAZY)`, and `BookingDto.from`
 dereferences it. `BookingService.findById` had no `@Transactional` and called
 the inherited `JpaRepository.findById`. The race fix had given
-`findByIdempotencyKey` and `findByFlightNumber` a `JOIN FETCH`, and this plain
-lookup had none. The repository's own short-lived session had closed by the
-time the DTO mapping ran.
+`findByIdempotencyKey` a `JOIN FETCH`, as `findByFlightNumber` already had, and
+this plain lookup had none. The repository's own short-lived session had closed
+by the time the DTO mapping ran.
 
 `BookingControllerTest.locationHeaderResolves` mocks
 `bookingService.findById(...)`, which is why the suite never caught it. That
@@ -305,9 +305,10 @@ bad event would become many duplicates on the next drain.
 ### A poison row
 
 The claim is `ORDER BY id`, so an event the transport always rejects was
-retried first on every tick. It spent the whole batch failing while live events
-queued behind it. One bad row meant a total publishing outage, and waiting
-would never fix it.
+retried first on every tick, forever. Each one took a slot at the head of every
+batch and logged a WARN every second. A batch's worth of them, 100 at the
+default size, would have stopped publishing completely, and waiting would
+never fix it.
 
 The claim now carries `AND attempts < :maxAttempts`. After ten attempts the row
 drops out, `outbox_dead` rises above zero, and a WARN names the id and the
@@ -452,18 +453,20 @@ what it took, in the order the compiler found it:
 
 - Actuator packages moved. `EndpointRequest` is now in
   `org.springframework.boot.security.autoconfigure.actuate.web.servlet`, and
-  `HealthEndpoint` is in a new `spring-boot-health` module. `SecurityConfig`
-  needs both to match actuator endpoints by type instead of by literal path.
+  `HealthEndpoint` is in a new `spring-boot-health` module. `SecurityConfig`,
+  written on Boot 4 in `e83d846`, uses both to match actuator endpoints by type
+  instead of by literal path.
 
 - Testcontainers 2.x renamed every module. `org.testcontainers:postgresql`
   became `testcontainers-postgresql`, and the old coordinates are no longer
   published.
 
-- `@MockBean` and `@SpyBean` are gone: deprecated since Boot 3.4 and removed in
-  4.0. `@MockitoBean` and `@MockitoSpyBean` replace them.
+- `@MockBean` and `@SpyBean` are removed in 4.0. The tests already used
+  `@MockitoBean`, so this one cost nothing.
 
-- JUnit 6.0.3 arrives with the BOM, so `lambda/pom.xml` moved to match. Two
-  JUnit majors in one repository is a trap when switching between the modules.
+- JUnit 6.0.3 arrives with the BOM. `lambda/pom.xml` moved to match in
+  `416b4ac`. Two JUnit majors in one repository is a trap when switching
+  between the modules.
 
 The JDK was never the blocker, because Boot 4 needs Java 17 or later. The
 upgrade is `7b45b5b`, and [adr/0007](adr/0007-spring-boot-4.md) records the
@@ -472,8 +475,8 @@ decision.
 ## First review pass
 
 I read through my own code looking for rules that existed in one place and were
-trusted everywhere. Every fix in this pass landed in `eac8cc4`. Four of them
-are told above:
+trusted everywhere. Every fix in this pass first landed in `eac8cc4`. The
+clock entry names the later commits. Four of them are told above:
 [the sort parameter](#paging-that-could-skip-a-row),
 [the reused key](#a-replay-must-be-the-same-request),
 [the SQS timeout](#the-outbox-and-a-slow-queue) and
@@ -495,7 +498,8 @@ booker until the JDBC socket gave up. A Hikari `connection-init-sql` now runs
 `SET lock_timeout = '3s'`, which surfaces as `503 LOCK_TIMEOUT` with
 `Retry-After`. It is a connection-level setting. Every lock the service takes,
 native SQL included, gets the same bound, and no query can forget a hint.
-`LockTimeoutTest.contendedFlightRowGives503` pins it.
+`LockTimeoutTest.contendedFlightRowGives503` pins the 503 and `Retry-After` on
+H2, with a 250 ms timeout. No test fires PostgreSQL's own `lock_timeout`.
 
 ### A sort key that sorted wrong
 
@@ -560,6 +564,11 @@ checked it against five planted calls. Bean Validation was the last reader of
 the JVM clock. Hibernate Validator judges `@Future` against
 `Clock.systemDefaultZone()`, so `TimeConfig.validationClock` now hands it the
 bean (`ValidationClockTest`).
+
+The injected `Clock` is from `eac8cc4`. The first clock rule, with the
+`Booking` exemption, came in `f8d2d4b`. The constructor argument and the rule
+with no exemption came in `426098b`. The wider rule and `validationClock` came
+in `5835267`.
 
 ## Second review pass
 

@@ -109,7 +109,7 @@ APP_EVENTS_PUBLISHER=sqs \
 Make a booking and watch it arrive on the other side:
 
 ```bash
-sam logs -n booking-event-handler --stack-name flight-ops-lambda --tail
+sam logs -n BookingEventFunction --stack-name flight-ops-lambda --tail
 aws dynamodb scan --table-name <TableName from the outputs> --select COUNT
 ```
 
@@ -311,7 +311,7 @@ Prices are for `ap-south-1`, on-demand, from the AWS price list on 22 September
 | 2 × t3.medium | $0.0448/hr each | $2.15 |
 | NAT gateway | $0.056/hr + $0.056/GB | $1.43 |
 | Application Load Balancer | $0.0239/hr + LCU | $0.62 |
-| RDS db.t4g.micro + 20 GB gp3 | $0.021/hr | $0.50 |
+| RDS db.t4g.micro (instance hours) | $0.021/hr | $0.50 |
 | EBS (2 × 20 GB gp3), public IPv4 | | $0.62 |
 | SQS, Lambda, DynamoDB, X-Ray | free tier at this volume | $0.00 |
 | ECR, under 1 GB of images | $0.10/GB-month after any free tier | $0.00 |
@@ -319,7 +319,8 @@ Prices are for `ap-south-1`, on-demand, from the AWS price list on 22 September
 
 The figures assume 1.5 GB/day through the NAT gateway, about 0.25 LCU on the
 load balancer, control-plane logging off, and application logs kept out of
-CloudWatch.
+CloudWatch. The RDS row leaves out its 20 GB of gp3 storage, which adds under
+$0.10 a day.
 
 ### 7, 10 and 15 days
 
@@ -410,10 +411,16 @@ IRSA or image-pull error, so set the CLI default to match:
 aws configure set region ap-south-1
 ```
 
-Everything the repository creates carries the tag `Project=flight-ops`.
-`cluster.yaml` applies it to everything eksctl creates. `up.sh` passes
-`--tags Project=flight-ops` to every stack it deploys, and CloudFormation
-copies stack tags to the resources that take them. The catch-all query is:
+The three stacks `up.sh` deploys itself (the foundation, the data stack and
+the Lambda) carry the tag `Project=flight-ops`. It passes
+`--tags Project=flight-ops` to each one, and CloudFormation copies stack tags
+to the resources that take them. `cluster.yaml` puts the same tag on what
+eksctl creates from it: the cluster, its VPC and NAT gateway, and the node
+group. A few things are left untagged: the four EKS addons, the two IAM roles
+made by `eksctl create iamserviceaccount`, the load balancer controller's IAM
+policy, and the shared SAM bucket. None of them bills more than cents. The
+addons and the roles go with the cluster, and `down.sh` deletes the policy by
+name. The catch-all query is:
 
 ```bash
 aws resourcegroupstaggingapi get-resources --tag-filters Key=Project,Values=flight-ops

@@ -42,14 +42,14 @@ outbox's native SQL run against PostgreSQL. The build job's step "The
 PostgreSQL tests ran" fails CI if either class skips a test or has no report.
 
 So in CI the Surefire summary reads
-`Tests run: 254, Failures: 0, Errors: 0, Skipped: 0` for the service and
+`Tests run: 262, Failures: 0, Errors: 0, Skipped: 0` for the service and
 `Tests run: 25, Failures: 0, Errors: 0, Skipped: 0` for the Lambda. On a laptop
 without Docker the service line ends `Skipped: 8`.
 
 A new migration is not accepted until CI has gone green on it. The local H2
 profile never sees it, and neither does a laptop with no Docker.
 
-Today the service declares 257 tests and runs 249 of them without Docker, and
+Today the service declares 262 tests and runs 254 of them without Docker, and
 the Lambda runs 25. Do not edit those numbers by hand anywhere:
 
 ```bash
@@ -128,7 +128,7 @@ without a line of it changing.
 | `dependency-review` | dependency-review | the pull request *adds* a dependency with a high-severity advisory. The job needs the repository's dependency graph. If the graph is switched off, the job names the setting in its summary and passes, because no commit can fix a repository setting. A probe that answers anything other than 403 or 404 (an outage, a token problem) fails the job, so "the API had a bad minute" never looks like "the feature is off" |
 | `docs-check` | `scripts/refcheck.py` | a backticked `path` or `path#symbol` in any Markdown file does not resolve |
 | `docs-check` | `scripts/linkcheck.py` | a relative link or heading anchor is broken |
-| `docs-check` | `scripts/sweeps.sh` | a co-author trailer, a signature line, or a private path or file name appears in a tracked file **or a commit message** |
+| `docs-check` | `scripts/sweeps.sh` | a co-author trailer line or an appended "Generated with" signature appears in a tracked file or in a commit message on any ref, an absolute home-directory path appears in a tracked file, a pattern from the `SWEEP_PATTERNS` secret matches a tracked file path, a file's contents or a commit message, or `SWEEP_PATTERNS` is empty on a push or a manual run |
 | `deploy` | "Is this commit already in ECR?" | `describe-images` fails with anything other than `ImageNotFoundException` |
 | `deploy` | "The image will not start without a database" | the image, run with no environment, does not stop with `'url' must start with` |
 | `deploy` | Trivy, on the image | the built image has a CRITICAL vulnerability with a fix available. It runs before the push |
@@ -143,6 +143,15 @@ python3 scripts/refcheck.py && python3 scripts/linkcheck.py && scripts/sweeps.sh
 They have already caught errors in this repository's own documentation: a
 method name that did not exist, and a README count that was wrong. That is why
 they fail CI and are more than warnings.
+
+`scripts/sweeps.sh --tree-only` skips the history walk. The home-directory
+check ignores the path part of a URL. The script also reads case-insensitive
+extended regular expressions from the `SWEEP_PATTERNS` environment variable,
+and CI passes a repository secret of that name. When the variable is empty, a
+push or a manual run fails, so a deleted secret cannot turn the check
+into a silent pass. A local run or a pull request with the variable empty
+prints `skip` for that part and passes, because forks and Dependabot pull
+requests get no secrets.
 
 Run the shell gate locally too, and mind the version. 0.10 and 0.11 disagree
 about `cmd && log … || true`, so CI pins v0.11.0 instead of using whatever the

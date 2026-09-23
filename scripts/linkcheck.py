@@ -51,7 +51,10 @@ def slug(text):
     # Inline markup is stripped before slugging: `code`, **bold**, [links](x)
     # and the arrow characters this repository's headings use.
     text = re.sub(r'\[([^\]]*)\]\([^)]*\)', r'\1', text)
-    text = text.replace('`', '').replace('*', '').replace('_', '')
+    text = text.replace('`', '').replace('*', '')
+    # Only emphasis underscores go (_x_, __x__). GitHub keeps one inside a
+    # word, as in outbox_pending.
+    text = re.sub(r'(?<!\w)_+|_+(?!\w)', '', text)
     text = unicodedata.normalize('NFKC', text)
     kept = []
     for ch in text.lower():

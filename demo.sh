@@ -231,7 +231,6 @@ curl -s "${AUTH_ARGS[@]}" "$API/flights/$RACE_A" | python3 -c "import sys,json;p
 echo "   booking rows on $RACE_A (expect 1):"
 # $.content, not the top level. The list endpoint returns a PagedModel envelope,
 # {"content":[...],"page":{...}}, so len() on the document would print 2.
-curl -s "${AUTH_ARGS[@]}" "$API/flights/$RACE_A" >/dev/null
 curl -s "${AUTH_ARGS[@]}" "$API/bookings?flightNumber=$RACE_A" | python3 -c "
 import sys,json
 page=json.load(sys.stdin)
@@ -239,7 +238,7 @@ print('     rows =',len(page['content']),' (page.totalElements =',page['page']['
 
 echo
 say "In the app log you can see which path each caller took:"
-say "  'Lost an idempotency-key race ... recovering the winner's booking'"
+say "  'Lost an idempotency-key race on ...; recovered the winner's booking ...'"
 say "      = a race loser, recovered in a fresh transaction (this is the fix)"
 say "  'Idempotent replay of key ...'"
 say "      = arrived after the winner committed, took the cheap read path"

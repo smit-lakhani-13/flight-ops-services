@@ -91,8 +91,11 @@ updates:
         patterns: ["*"]
 
   # Both image tags in the Dockerfile, the maven build stage and the JRE
-  # runtime. Minor and patch bumps bring OS-level CVE fixes. A major bump is a
-  # JDK change and is ignored; see the header.
+  # runtime. Dependabot keeps a tag's precision and suffix, so 21-jre-alpine can
+  # only move to another Java major, and 3.9-eclipse-temurin-21 only to Maven
+  # 3.10 or 4. Majors of both are ignored: a Java major changes the JDK (see the
+  # header), and Maven 4 is its own upgrade. OS fixes do not come from here.
+  # 21-jre-alpine is a floating tag, so a fresh build pulls what it points to.
   - package-ecosystem: docker
     directory: "/"
     schedule:

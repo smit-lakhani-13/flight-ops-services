@@ -4,11 +4,11 @@ One file per event, and the file is the contract.
 
 `flight-ops-service` publishes `BookingCreated` to SQS; the Lambda in
 `lambda/` consumes it. They are separate Maven builds with no shared
-module, so no compiler checks that agreement. The producer could rename
-`flightNumber` to `flight_number` and both projects would build and both
-test suites would stay green. The break would surface only in production,
-as every message failing to parse and draining into the dead-letter queue
-after three receives.
+module, so no compiler checks that agreement. Without the contract tests
+below, the producer could rename `flightNumber` to `flight_number`, and
+both projects would build and both test suites would stay green. The break
+would surface only in production, as every message failing to parse and
+draining into the dead-letter queue after three receives.
 
 The one mercy is that the failure is loud, and it names the field. A
 renamed field binds to `null`, and the `BookingEvent` record's constructor

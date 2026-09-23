@@ -233,8 +233,9 @@ What keeps the lock from becoming an outage:
   [ADR 0002](adr/0002-pessimistic-locking.md) explains why I did not use a
   per-query hint. A request that cannot get the lock fails within seconds with
   `503 LOCK_TIMEOUT`. Without the bound it would hold a connection until the
-  pool was empty. `LockTimeoutTest` proves the timeout and the status code. H2
-  gets the same bound, spelled `SET LOCK_TIMEOUT 3000`.
+  pool was empty. H2 gets the same bound, spelled `SET LOCK_TIMEOUT 3000`.
+  `LockTimeoutTest` lowers it to 250 ms on H2 and proves a lock timeout becomes
+  a 503 with `Retry-After`. No test fires PostgreSQL's own `lock_timeout`.
 
 - **One lock order everywhere.** Booking and cancellation both take the flight
   row first and the booking row second
@@ -451,22 +452,38 @@ and restore the seats the booking had just debited.
 
 ## Module boundaries
 
-The build enforces the package layout.
-`src/test/java/com/smit/flightops/ArchitectureTest.java` fails it on any
-violation, so the diagram below is executable:
+`src/test/java/com/smit/flightops/ArchitectureTest.java` fails the build on the
+rules in the table below. Its layer rule checks four things. Nothing may use
+`controller`. Only `controller` may use `service`. Only `service` and `config`
+may use `repository`. Only `service`, `repository`, `dto`, `exception` and
+`config` may use `entity`. `observability` is not one of its layers, so its
+edges are not checked. That is why `OutboxMetrics` may read
+`OutboxEventRepository`. The diagram shows every package import in the main
+code:
 
 ```mermaid
 flowchart TD
     controller --> service
     controller --> dto
+    controller --> exception
     service --> repository
     service --> entity
     service --> dto
+    service --> exception
+    service --> config
+    service --> observability
     repository --> entity
     dto --> entity
+    dto --> validation
+    entity --> exception
     exception --> entity
+    exception --> dto
+    exception --> observability
     config --> repository
     config --> entity
+    config --> security
+    observability --> config
+    observability --> repository
     security --> dto
     validation --> dto
 ```
@@ -611,7 +628,7 @@ costs:
 | Seam | Swap in | Cost |
 |---|---|---|
 | `EventPublisher` | Kafka, Solace, EventBridge | One class behind `@ConditionalOnProperty`, and its mode added to `EventProperties.MODES`. The payload is already serialised, and an implementation receives bytes it must not interpret |
-| `spring.security.oauth2.resourceserver.jwt.issuer-uri` | Cognito, Okta, Entra | Configuration. The rules already treat a JWT scope and a Basic authority identically |
+| `spring.security.oauth2.resourceserver.jwt.issuer-uri` and `.audiences` | Cognito, Okta, Entra | Configuration: set both. `issuer-uri` alone accepts a token the issuer minted for another client in the tenant. The rules already treat a JWT scope and a Basic authority identically |
 | `Clock` (`src/main/java/com/smit/flightops/config/TimeConfig.java`) | A fixed clock in a test | Already used everywhere |
 | `management.opentelemetry.tracing.export.otlp.endpoint` | An OTLP collector | An environment variable. Ids are already generated and already on every log line |
 | The outbox poller | Debezium reading the WAL | A replication slot, a connector to operate, and a disk that fills if the consumer stops. I considered it and rejected it at this size |

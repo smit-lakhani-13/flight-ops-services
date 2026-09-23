@@ -7,8 +7,9 @@ annotation scope was widened in `ccad5b4` and recorded in place on 2026-09-23)
 
 The API had no machine-readable description. Adding springdoc is easy. The
 harder question is authorisation, because `anyRequest().denyAll()` (see
-[ADR 0005](0005-one-rule-set-for-basic-and-jwt.md)) means `/v3/api-docs` is a
-403 until someone decides otherwise.
+[ADR 0005](0005-one-rule-set-for-basic-and-jwt.md)) means `/v3/api-docs`
+answers 401 to an anonymous caller, and 403 to a signed-in one, until someone
+decides otherwise.
 
 ## Decision
 
@@ -49,16 +50,16 @@ curl -s -o /dev/null -w '%{http_code}\n' localhost:8080/api/v1/flights   # 401
   Refusing to publish them buys obscurity, and it costs every client a
   hand-written client.
 
-* The Swagger UI is reachable on the demo deployment, and
-  `SWAGGER_UI_ENABLED=false` turns it off while keeping the JSON. A client
-  generator reads the JSON, and the console sends live requests, so the two
-  carry different risk. On a service with a real user base the console would
-  be off in production and on everywhere else.
+* The Swagger UI stays on in the AWS configuration (`deploy/aws/up.sh` prints
+  its URL at the end), and `SWAGGER_UI_ENABLED=false` turns it off while
+  keeping the JSON. A client generator reads the JSON, and the console sends
+  live requests, so the two carry different risk. On a service with a real
+  user base the console would be off in production and on everywhere else.
 
 * **The document is tested.** `OpenApiTest` fetches `/v3/api-docs` anonymously
   and asserts that `/api/v1/flights` is still `401`. It also compares the
   documented page schema against the keys of a real authenticated response, so
-  the Boot 4 `{content, page{...}}` shape cannot drift from what is published.
+  the `{content, page{...}}` shape cannot drift from what is published.
 
 * Every operation carries `@Operation` and `@ApiResponses`, 401 and 403
   included. `OpenApiTest.RESPONSES` lists the documented status codes of each

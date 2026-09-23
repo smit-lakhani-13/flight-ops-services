@@ -124,11 +124,13 @@ public URL, anyone can learn the same by reading this repository.
 
 ## Sessions and CSRF
 
-`SessionCreationPolicy.STATELESS`, with CSRF disabled. Both follow from there
-being no cookie. CSRF protects a browser that attaches credentials on its own,
-and an `Authorization` header is not attached automatically. Leaving CSRF on
-with no session produces a 403 on every POST and a day of debugging. See
-[adr/0006](adr/0006-stateless-sessions-no-csrf.md).
+`SessionCreationPolicy.STATELESS`, with CSRF disabled. There is no cookie, and
+a bearer token is never attached by the browser. A Basic password can be, once
+the browser's own login prompt has cached it. What closes that gap is the
+request shape: every write needs a JSON body or is a `DELETE`, which a
+cross-site form cannot send, and there is no CORS policy to let another site's
+script through. Leaving CSRF on with no session produces a 403 on every POST
+and a day of debugging. See [adr/0006](adr/0006-stateless-sessions-no-csrf.md).
 
 If a browser-facing UI with cookie sessions is ever added, both decisions
 reverse, and the ADR is where to start.
@@ -239,7 +241,7 @@ written down. What is missing is a domain.
 
 - Error responses are `{code, message, timestamp}`, or
   `{code, fieldErrors, timestamp}` for a validation failure. They never carry
-  stack traces, SQL or internal class names. The README lists the 21 codes.
+  stack traces, SQL or internal class names. The README lists the 22 codes.
   Every error the application writes is JSON, whatever the `Accept` header
   asks for. An API request
   that accepts only XML or YAML gets `406 REQUEST_REJECTED`, written as JSON.
@@ -323,7 +325,7 @@ written down. What is missing is a domain.
 | Coverage floor | JaCoCo. The build fails under 80% line or 50% branch coverage |
 | Architecture rules | ArchUnit, 9 rules. A violation fails the build; it is not just reported |
 | Vulnerability and secret scanning | Trivy scans the filesystem on every run, and the image before it is pushed. Both fail the build on a fixable CRITICAL (the filesystem scan on HIGH too). Only the filesystem scan uploads SARIF, and only on a push. A pull request from a fork has a read-only token, so the upload would fail on permissions and say nothing about the code. The image scan reports in the job log, and ECR's own scan-on-push covers the image in the registry |
-| Static analysis | CodeQL `security-extended`, on every push and pull request, and weekly |
+| Static analysis | CodeQL `security-extended`, on a push or pull request to `main`, and weekly |
 | Pinned actions | Every `uses:` is a full commit SHA with the version as a trailing comment, and Dependabot rewrites the comment along with the SHA. A tag is a mutable pointer in someone else's repository. Re-pointing `@v4` at a malicious commit needs no access to this repository, and that is what happened to `tj-actions/changed-files` in March 2025. The cost is a pull request for every patch release |
 
 ## Known limitations

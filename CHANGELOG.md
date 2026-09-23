@@ -55,15 +55,19 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
   `deploy/aws/selftest.sh` against stubbed tools.
 
 - **Race tests.** `BookingIdempotencyTest#oneKeyRacedAcrossTwoFlightsBooksOnce`
-  races one key across two flights, and every race test releases its callers
-  through the `startTogether` latch.
+  races one key across two flights, and every race test in
+  `BookingIdempotencyTest` releases its callers through the `startTogether`
+  latch. The PostgreSQL race tests in `BookingIntegrationTest` still start
+  through `invokeAll`.
   `OutboxPrunePostgresTest#concurrentClaimsAreDisjointAndSkipRowsNotYetDue`
   runs two outbox claims at once on PostgreSQL.
 
 - **Other tests.** `FlightControllerTest#flightNumberRaceReturns409` replaces
   the misnamed `BookingControllerTest#concurrentDuplicateKeyReturns409`.
   `SecurityRulesTest#readScopeCannotWrite` now also sends a PATCH with the read
-  scope.
+  scope. `FlightControllerTest#existingFlightNumberReturns409` and
+  `#staleFlightWriteReturns409` cover `DUPLICATE_FLIGHT` and
+  `CONCURRENT_MODIFICATION`, two codes no test asserted before.
 
 ### Changed
 
@@ -122,13 +126,16 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
   `Clock`, so `time_comes_from_the_clock` in `ArchitectureTest` has no
   exemption. 1.1.0 exempted the whole `entity` package. The rule also matches
   any `java.time` `now()` that takes no `Clock`, `new Date()` and
-  `Calendar.getInstance()`. It used to name the no-argument `now()` of five
-  types, so `LocalDate.now(ZoneOffset.UTC)` passed.
+  `Calendar.getInstance()`. In 1.1.0 the rule was
+  `the_wall_clock_is_read_only_by_entities`, and it named only the no-argument
+  `now()` of `Instant`, `LocalDate` and `LocalDateTime`, so
+  `OffsetDateTime.now()` and `LocalDate.now(ZoneOffset.UTC)` passed.
 
 - **Test builds.** Both poms pin the Surefire JVM to
   `-Duser.timezone=Asia/Kolkata`, so a test that leans on the system zone fails
-  on a UTC runner too. The PostgreSQL tests move to Testcontainers 2
-  (`org.testcontainers.postgresql.PostgreSQLContainer`), and
+  on a UTC runner too. The PostgreSQL tests import Testcontainers 2's
+  `org.testcontainers.postgresql.PostgreSQLContainer` in place of the
+  deprecated `org.testcontainers.containers.PostgreSQLContainer`, and
   `migrationRanAndSchemaValidates` checks that Flyway applied every file from V1
   to V8.
 
@@ -145,6 +152,13 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
   modes, since the foundation stack keeps it. The query runs in ap-south-1, and
   AWS reports IAM resources from us-east-1, so it lists no IAM resource. A
   leftover IAM role or OIDC provider passes the sweep, and IAM bills nothing.
+
+- **Sweep patterns from a secret.** `scripts/sweeps.sh` keeps its built-in
+  checks, trailer lines and appended signatures, and adds absolute
+  home-directory paths. Any further patterns come from `SWEEP_PATTERNS`, which
+  CI fills from a repository secret of that name. A push or a manual run
+  without the secret fails; a local run without the variable, and a pull
+  request from a fork or Dependabot, skips that part and says so.
 
 - **`demo.sh` dates.** It books flights departing 30 days ahead, computed with
   BSD or GNU `date`, where a fixed date would have expired. Act 8 names every
@@ -208,6 +222,29 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
   `Integer.MAX_VALUE` before any query, as 400 `MALFORMED_REQUEST` with
   `page * size must not exceed 2147483647.`
   (`ErrorContractTest#pagePastTheLastAddressableRowIsABadRequest`).
+
+- **`ignorecase` on a number or a time was a 500.** The bookings list sorts
+  inside a declared `@Query`, where Spring Data applies `ignorecase` by
+  wrapping the column in `lower()`, and Hibernate refuses `lower()` on
+  anything that is not a string. So `?sort=seats,desc,ignorecase` was a 500.
+  `SortPolicy.stable` now drops `ignorecase` on every sortable property the
+  controller does not list as text, and the sort runs as asked. The flights
+  list was not affected, because its criteria query checks the type
+  (`ErrorContractTest#ignoreCaseOnANonTextPropertyIsDropped`).
+
+- **Departure years past 9999.** `Instant.parse` accepts
+  `+300000-01-01T00:00:00Z`, and PostgreSQL stores nothing after 294276 AD, so
+  the insert failed and the client got a 409 that told it to retry.
+  `IsoInstantDeserializer` now refuses anything after
+  `9999-12-31T23:59:59.999999Z` as 400 `MALFORMED_REQUEST`
+  (`FlightControllerTest#departureTimeAfterYear9999IsRejected`).
+
+- **No database was a 500.** When the pool stayed empty for its whole
+  connection timeout, or the database did not answer, the request was a 500
+  with a stack trace logged per caller. It is now 503 `DATABASE_UNAVAILABLE`
+  with `Retry-After: 1`, logged at WARN, for the same reason as
+  `LOCK_TIMEOUT`: the request was valid and can succeed later
+  (`FlightControllerTest#noDatabaseConnectionReturns503`).
 
 - **405 and 415 headers.** `GlobalExceptionHandler` copies the framework's
   headers in `handleSpringWebError`, so a 405 carries `Allow` and a 415 carries
@@ -291,7 +328,7 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
 
 The other fixes are to documentation only, and change no behaviour.
 
-- The README listed 20 error codes, and there are 21. It was missing
+- The README listed 20 error codes, and there were 21. It was missing
   `BAD_REQUEST`, which `ApiErrorController` returns for any other client error
   forwarded to `/error`. Its `UNKNOWN_SORT_PROPERTY` entry still described the
   behaviour from before `SortPolicy`.

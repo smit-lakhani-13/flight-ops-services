@@ -229,7 +229,8 @@ still billed at month end.
 | Connection timeouts to RDS | the security group admits the cluster SG and the shared node SG. Confirm with `aws ec2 describe-security-groups` that the ids in `data.yaml`'s parameters match the live cluster |
 | `eksctl delete cluster` fails after 20 min | the data stack is still up. Delete it, then re-run `down.sh` |
 | CI stops at "Is this commit already in ECR?" | `describe-images` failed with something other than `ImageNotFoundException`, usually a missing `ecr:DescribeImages` on the CI role. The step log shows the CLI's message |
-| CI deploy fails with a 403 from EKS | the access entry is missing or the OIDC `sub` does not match `repo:owner/repo:ref:refs/heads/main` |
+| CI stops at "Configure AWS credentials (OIDC)" with `Not authorized to perform sts:AssumeRoleWithWebIdentity` | the role did not accept the token. Its trust policy pins `sub` to `repo:<GitHubOwner>/<GitHubRepo>:ref:refs/heads/main`, with the owner and repo `foundation.yaml` was deployed with (default `smit-lakhani-13/flight-ops-services`). A wrong `AWS_ACCOUNT_ID` secret gives the same message |
+| CI's `kubectl` says `You must be logged in to the server (Unauthorized)` or `Forbidden` | Unauthorized: the CI role has no access entry on the cluster. Forbidden: the entry exists, but `AmazonEKSEditPolicy` is not associated with `namespace/flight-ops`. Re-run `up.sh`, whose step 5 grants both, or check with `aws eks list-associated-access-policies --cluster-name flight-ops-cluster --principal-arn <role arn>` |
 
 ## The files
 

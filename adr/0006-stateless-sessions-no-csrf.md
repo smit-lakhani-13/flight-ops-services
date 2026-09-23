@@ -20,16 +20,21 @@ I set `SessionCreationPolicy.STATELESS` and `csrf.disable()` together, in
 
 ## Consequences
 
-* **The two go together.** Turning CSRF protection off is safe only because
-  the service keeps no session. CSRF exists
-  because a browser attaches ambient credentials (a cookie) to a cross-site
-  request automatically. Basic and Bearer credentials are not ambient: a
-  cross-site page cannot make the victim's browser attach them. With no session
-  and no cookie there is no ambient credential, so there is no CSRF surface.
+* **The two go together.** CSRF works because a browser attaches a credential
+  to a cross-site request by itself. A session cookie is the usual one, and
+  this service sets no cookie and keeps no session. Basic is not immune: after
+  its own login prompt, which the 401 here triggers with
+  `WWW-Authenticate: Basic`, a browser remembers the credentials and sends them
+  again. What closes that gap is the request shape. Every write needs a JSON
+  body (`consumes = application/json` on each `POST` and the `PATCH`) or is a
+  `DELETE`. A cross-site HTML form can send neither, and a script would need a
+  CORS preflight, which this service never approves. A bearer token is never
+  attached automatically.
 
-* If a future change adds a session cookie or cookie-based auth, **CSRF
-  protection must come back on in the same commit**. This is the only way the
-  decision becomes wrong, which is why I state it here.
+* If a future change adds a session cookie or cookie-based auth, accepts a
+  form or `text/plain` body on a write, or adds a CORS policy that allows
+  credentials, **CSRF protection must come back on in the same commit**. These
+  are the ways the decision becomes wrong, which is why I state them here.
 
 * No session means no server-side state to replicate. Horizontal scaling is
   free, and a pod restart costs nobody their login.
@@ -46,3 +51,10 @@ I set `SessionCreationPolicy.STATELESS` and `csrf.disable()` together, in
 
 * **Sessions with sticky routing.** Reintroduces state for an API whose callers
   do not want it.
+
+**Correction (2026-09-23).** This record used to say Basic credentials are not
+ambient, and that a session cookie is the only way the decision becomes wrong.
+A browser caches Basic credentials after its login prompt and sends them again.
+The protection rests on JSON-only writes and the absence of a CORS policy, so
+a form body on a write or a CORS policy that allows credentials would also
+make the decision wrong.

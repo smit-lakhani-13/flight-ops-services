@@ -18,7 +18,7 @@ I picked an airline because seat inventory is a real consistency problem: many c
 
 ## Documentation
 
-On every CI run, the `docs-check` job runs `scripts/refcheck.py`, which resolves every file and symbol these documents cite, and `scripts/linkcheck.py`, which checks every link and heading anchor. I run `scripts/numbers.sh` by hand before I edit a count. It recomputes every count the documents claim, and it is not a gate.
+On every CI run, the `docs-check` job runs three scripts. `scripts/refcheck.py` resolves every file and symbol these documents cite. `scripts/linkcheck.py` checks every link and heading anchor. `scripts/sweeps.sh` reads the working tree and the commit history, and fails on a co-author trailer, a tool's signature, an absolute home-directory path in a tracked file, or a match for the patterns in the `SWEEP_PATTERNS` repository secret. I run `scripts/numbers.sh` by hand before I edit a count. It recomputes every count the documents claim, and it is not a gate.
 
 | Document | What it answers |
 |---|---|
@@ -29,7 +29,7 @@ On every CI run, the `docs-check` job runs `scripts/refcheck.py`, which resolves
 | [OPERATIONS.md](OPERATIONS.md) | Every environment variable, the metrics and what they mean, how to follow one booking across the queue, what to alert on, the playbooks, and what is not wired up |
 | [SECURITY.md](SECURITY.md) | The auth model, what is exposed and what is not, how secrets are handled, and the known limitations |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | The JDK trap, both build commands, what `Skipped: 8` means, and what CI enforces |
-| [CHANGELOG.md](CHANGELOG.md) | What changed in each release, the one change in 1.1.0 that can break a consumer, and why it is 1.1.0 and not 2.0.0 |
+| [CHANGELOG.md](CHANGELOG.md) | What changed in each release, the response field 1.1.0 removed, and why it is 1.1.0 and not 2.0.0 |
 | [contracts/README.md](contracts/README.md) | The event contract between the two modules, how both sides enforce it, and how to change it without breaking a deployed consumer |
 | [deploy/aws/README.md](deploy/aws/README.md) | What each script and template creates, who owns what between the scripts and CI, and the failure table |
 
@@ -117,7 +117,7 @@ docker run --name pg -e POSTGRES_PASSWORD=pass -e POSTGRES_DB=flightops \
 DB_PASSWORD=pass ./mvnw spring-boot:run -Dspring-boot.run.profiles=postgres
 ```
 
-`DB_PASSWORD` has no default: in the `postgres` profile, `spring.datasource.password` is `${DB_PASSWORD}` with nothing after the colon, because a scanner is right to flag a working password in a public repository. Leave it out and Hikari sends the literal `${DB_PASSWORD}`, and the boot fails with `FATAL: password authentication failed`, which names the wrong cause. `docker compose up --build` needs none of this, because `compose.yaml` sets it.
+`DB_PASSWORD` has no default: in the `postgres` profile, `spring.datasource.password` is plain `${DB_PASSWORD}`, because a scanner is right to flag a working password in a public repository. Leave it out and Hikari sends the literal `${DB_PASSWORD}`, and the boot fails with `FATAL: password authentication failed`, which names the wrong cause. `docker compose up --build` needs none of this, because `compose.yaml` sets it.
 
 The `postgres` profile switches the schema owner. Flyway applies the migrations in `db/migration` (`V1__init.sql` through `V8__drop_unused_active_booking_index.sql`), and Hibernate runs `ddl-auto: validate`, so an entity that no longer matches the tables, columns or column types fails the boot instead of altering them. It does not compare check constraints or indexes.
 
@@ -127,8 +127,8 @@ This table bounds every claim in this README.
 
 | Status | What |
 |---|---|
-| **Built, tested, and exercised over HTTP** | The whole app module. Every endpoint hit with `curl` against a running instance. Every status code in the tables below observed over HTTP or in a test, including the 401 and 403 bodies, except two 503s that no test covers: the one on a booking cancellation, and the health 503 during a database outage. `LockTimeoutTest` holds the flight row and gets the booking's 503 end to end. The flight status change and cancellation get theirs only in a slice test with a mocked service (`FlightControllerTest#flightWriteBehindARowLockReturns503`). The Lambda handler's logic, via 25 tests. |
-| **Verified against real PostgreSQL in CI** | All 282 tests, including the 8 Testcontainers integration tests: 5 in `BookingIntegrationTest` and 3 in `service/OutboxPrunePostgresTest`. They apply the Flyway migrations to an empty database and check `ddl-auto: validate` against the schema those migrations produced. They run `SELECT … FOR UPDATE` under 20 threads competing for 5 seats, and replay the same idempotency key from 20 threads at once. The runners have Docker, so these execute there and skip on a laptop without one, and the `build` job fails if either class is skipped or missing. |
+| **Built, tested, and exercised over HTTP** | The whole app module. Every endpoint hit with `curl` against a running instance. Every status code in the tables below observed over HTTP or in a test, including the 401 and 403 bodies, except two 503s that no test covers: the one on a booking cancellation, and the health 503 during a database outage. `LockTimeoutTest` holds the flight row and gets the booking's 503 end to end. The flight status change and cancellation get theirs only in a slice test with a mocked service (`FlightControllerTest#flightWriteBehindARowLockReturns503`), and `DATABASE_UNAVAILABLE` likewise, on a flight read (`FlightControllerTest#noDatabaseConnectionReturns503`). The Lambda module, via 25 tests: 19 for the handler and 6 for the consumer side of the event contract. |
+| **Verified against real PostgreSQL in CI** | The 8 Testcontainers integration tests: 5 in `BookingIntegrationTest` and 3 in `service/OutboxPrunePostgresTest`. CI runs all 287 tests, and these 8 are the only ones on PostgreSQL. The 8 apply the Flyway migrations to an empty database and check `ddl-auto: validate` against the schema those migrations produced. They run `SELECT … FOR UPDATE` under 20 threads competing for 5 seats, and replay the same idempotency key from 20 threads at once. The runners have Docker, so these execute there and skip on a laptop without one, and the `build` job fails if either class is skipped or missing. |
 | **Authored and reviewed, never executed** | The container image. `sam deploy` and `sam local invoke`; there is no `sam build`, because Maven builds the jar that `template.yaml` names. Every `kubectl` and `eksctl` step. The deploy half of the GitHub Actions workflow, which is gated off (see below). |
 | **Not implemented** | A Solace binding. Trace **export** from the service: ids are generated and logged, but there is no collector to send spans to. The Lambda's `Tracing: Active` has X-Ray record a sample of its invocations, and those traces do not carry the service's trace id. Rate limiting. |
 
@@ -200,7 +200,7 @@ The same picture with method names, plus the booking sequence, the idempotency d
 ## Repository layout
 
 ```
-├── src/main/java/com/smit/flightops/       57 files, 3,927 lines
+├── src/main/java/com/smit/flightops/       57 files, 3,975 lines
 │   ├── controller/     HTTP only: bind, validate, map to DTO, choose the status code
 │   ├── service/        orchestration, transaction boundaries, the outbox drain and pruner
 │   ├── entity/         Flight, Booking, FlightStatus, OutboxEvent: the invariants
@@ -220,9 +220,9 @@ The same picture with method names, plus the booking sequence, the idempotency d
 ├── NOTES.md                       the bugs I found and fixed
 ├── ARCHITECTURE.md                the diagrams and the method-by-method request path
 ├── DEPLOYMENT.md                  three shapes, the runbook, the cost of each, the teardown
-├── CHANGELOG.md                   1.0.0, 1.1.0, the unreleased work, and 1.1.0's one breaking change
+├── CHANGELOG.md                   1.0.0, 1.1.0, the unreleased work, and the response field 1.1.0 removed
 ├── adr/                           14 decision records, 0001–0014
-├── scripts/                       refcheck.py and linkcheck.py check the docs in CI;
+├── scripts/                       refcheck.py, linkcheck.py and sweeps.sh run in CI;
 │                                  numbers.sh recomputes the counts
 ├── contracts/                     the event schema both modules test against
 ├── lambda/                        separate parentless Maven module: SQS → DynamoDB consumer
@@ -279,7 +279,7 @@ The in-memory users stand in for an identity provider, and [SECURITY.md](SECURIT
 | `GET` | `/actuator/health`, `/actuator/health/liveness`, `/actuator/health/readiness` | none | 200 | 401 on a wrong password; 503 while the status is `DOWN` or `OUT_OF_SERVICE`, so a database outage takes `/health` and `/readiness` to 503 and leaves liveness at 200 |
 | `GET` | `/actuator/metrics`, `/actuator/prometheus` | `ROLE_OPS` | 200 | 401, 403 |
 
-Every `/api/**` row also answers 401 without valid credentials, a wrong password included, and 403 to an authenticated caller who lacks the authority. Both controllers produce and read JSON only. An `Accept` header of `application/xml` gets 406. A `POST` or `PATCH` whose `Content-Type` is missing or is not `application/json` gets 415, YAML and multipart included, so `curl -d` needs `-H 'Content-Type: application/json'`. The header decides, so a YAML body sent as `application/json` is `400 MALFORMED_REQUEST`. The health rows need no credentials.
+Every `/api/**` row also answers 401 without valid credentials, a wrong password included, and 403 to an authenticated caller who lacks the authority. Both controllers produce and read JSON only. An `Accept` header of `application/xml` gets 406. A `POST` or `PATCH` whose `Content-Type` is missing or is not `application/json` gets 415, YAML and multipart included, so `curl -d` needs `-H 'Content-Type: application/json'`. The header decides, so a YAML body sent as `application/json` is `400 MALFORMED_REQUEST`. Any `/api/**` row can also answer `503 DATABASE_UNAVAILABLE` when the service cannot reach its database. The health rows need no credentials.
 
 Every error the application produces has one JSON shape, `{code, message, timestamp}` or `{code, fieldErrors, timestamp}`, from `GlobalExceptionHandler`, `ErrorResponseWriter` (401 and 403) and `ApiErrorController` (`/error`). Each sets `Content-Type: application/json` itself, whatever the `Accept` header asked for. No controller contains a `try`/`catch`. Tomcat refuses some requests before Spring sees them: `%2F`, `%5C`, `%00` or `%zz` in the path, a raw `|`, or a 20KB header. Those get Tomcat's own HTML 400 page with no `X-Request-Id`, and an unknown path under an exposed actuator endpoint, such as `/actuator/metrics/nope`, returns an empty 404.
 
@@ -299,6 +299,7 @@ Jackson and Hibernate exception text names internal classes, tables and columns,
 | `IDEMPOTENCY_KEY_REUSED` | 409 | the key was first used for a different request. That is a client bug; a true replay returns the original booking |
 | `ILLEGAL_STATUS_TRANSITION` | 409 | the flight cannot go from its status to the requested one (`BOARDING → ARRIVED`, anything out of `ARRIVED`) |
 | `LOCK_TIMEOUT` | 503 + `Retry-After` | a write waited out the 3s `lock_timeout` on the flight row: a booking or a booking cancellation on its `SELECT … FOR UPDATE`, or a status change or flight cancellation queued behind one. The request was valid and the row was busy, so retry after `Retry-After` |
+| `DATABASE_UNAVAILABLE` | 503 + `Retry-After` | no database connection: the pool stayed empty for its whole connection timeout, or the database did not answer. The request was valid and can succeed later, so it is a 503 and not a 500, and it is logged at WARN with no stack trace |
 | `UNKNOWN_SORT_PROPERTY` | 400 | the sort property is not on the endpoint's published list (`SortPolicy`) |
 | `UNAUTHENTICATED` | 401 | no credentials, or credentials that do not verify; written by `JsonAuthenticationEntryPoint` |
 | `FORBIDDEN` | 403 | authenticated, without the authority this path needs; written by `JsonAccessDeniedHandler` |
@@ -338,7 +339,7 @@ UPDATE outbox_events SET attempts = 0, next_attempt_at = NULL WHERE id = ?
 ## Tests
 
 ```bash
-./mvnw clean verify                       # 257 tests: 249 run, 8 skipped, 0 failures
+./mvnw clean verify                       # 262 tests: 254 run, 8 skipped, 0 failures
 ./mvnw -f lambda/pom.xml clean verify     # 25 tests, 0 failures
 ```
 
@@ -346,18 +347,18 @@ UPDATE outbox_events SET attempts = 0, next_attempt_at = NULL WHERE id = ?
 |---|---|---|
 | Domain entity | 13 | plain JUnit, with no Spring and no database |
 | Service | 36 | `@ExtendWith(MockitoExtension.class)`, `@Mock`, `@InjectMocks`, `@Captor`, split across `BookingServiceTest` (orchestration, including a failed insert with no winning booking to recover), `BookingWriterTest` (the write path), `FlightServiceTest` and `SqsEventPublisherTest` (what goes on the wire) |
-| Web slice | 59 | `@WebMvcTest` + `@MockitoBean` in the two controller tests: status codes, `Location` headers, error JSON, `Allow` on a 405 and `Accept` on a 415, a YAML body or a missing `Content-Type` refused on each `POST` and `PATCH`, and the rules for flight numbers, airport codes, passenger names, seat counts, status values and departure times. The other 2 are `exception/ApiErrorControllerTest`, with no Spring context. One calls `ApiErrorController` directly and one drives it through a standalone MockMvc, because a full MockMvc never forwards to `/error` |
+| Web slice | 63 | `@WebMvcTest` + `@MockitoBean` in the two controller tests: status codes, `Location` headers, error JSON, `Allow` on a 405 and `Accept` on a 415, the 503 for a database that cannot be reached, a YAML body or a missing `Content-Type` refused on each `POST` and `PATCH`, and the rules for flight numbers, airport codes, passenger names, seat counts, status values and departure times. The other 2 are `exception/ApiErrorControllerTest`, with no Spring context. One calls `ApiErrorController` directly and one drives it through a standalone MockMvc, because a full MockMvc never forwards to `/error` |
 | Repository slice | 13 | `@DataJpaTest` + `TestEntityManager`: derived queries, JPQL, `JOIN FETCH`, constraints |
-| Full context (H2) | 83 | `@SpringBootTest`. The idempotency guarantee end to end, with four 10-caller races on one key: same request, different payloads, the last seat, and one key across two flights. The authorisation rules against the real filter chain, with the Basic and Bearer challenges and who sees health components. The outbox with its trace capture, the attempt ceiling and the retention pruner against an embedded database. The OpenAPI document's status codes per operation and its comparison with a real response. The lock timeout, the error contract with the 406, the page overflow and multipart parsing turned off, and a lazy-loading regression with no mocking anywhere in the chain |
+| Full context (H2) | 84 | `@SpringBootTest`. The idempotency guarantee end to end, with four 10-caller races on one key: same request, different payloads, the last seat, and one key across two flights. The authorisation rules against the real filter chain, with the Basic and Bearer challenges and who sees health components. The outbox with its trace capture, the attempt ceiling and the retention pruner against an embedded database. The OpenAPI document's status codes per operation and its comparison with a real response. The lock timeout, the error contract with the 406 and `ignorecase` on a sort property that is not text, the page overflow and multipart parsing turned off, and a lazy-loading regression with no mocking anywhere in the chain |
 | Event contract | 11 | one producer-side class and one consumer-side class, both asserting against `contracts/booking-created-v1.json`; the consumer side parses through the handler's own mapper |
 | Lambda handler | 19 | separate module: batch parsing, partial batch failure and the conditional write. `seats` is refused with no coercion when it is missing, below 1, a string or fractional. Body values are logged on one line and capped at 1,000 characters, and the producer's trace context survives the queue |
 | Configuration and startup checks | 23 | Boot's `Binder` over plain maps: an unresolved `${...}` placeholder is rejected at startup, every outbox bound is enforced and every default is wired. `EventPropertiesTest` also starts the whole application to see a bad `app.events.publisher` named, and `PasswordVerifiabilityTest` runs `SecurityConfig` in a `WebApplicationContextRunner` to see an unverifiable password stop startup. `ValidationClockTest` checks that `@Future` reads the `Clock` bean |
 | Architecture | 9 | ArchUnit over `target/classes`: the layering, no field injection, no `@Transactional` outside `service/`, and in main code no `java.time` `now()` without a `Clock`, no `System.currentTimeMillis()`, no `new Date()` and no `Calendar.getInstance()`. I checked each rule against a planted violation before committing it |
 | Observability | 8 | the request-id filter against a hostile inbound header, and the meters scraped through a real `PrometheusMeterRegistry`, since a `SimpleMeterRegistry` would accept any name |
-| Run | 274 | 0 failures (13 + 36 + 59 + 13 + 83 + 11 + 19 + 23 + 9 + 8) |
+| Run | 279 | 0 failures (13 + 36 + 63 + 13 + 84 + 11 + 19 + 23 + 9 + 8) |
 | PostgreSQL integration | 8 | `@Testcontainers(disabledWithoutDocker = true)`: 5 in `BookingIntegrationTest` and 3 in `service/OutboxPrunePostgresTest`, skipped without a container runtime |
 
-282 tests exist across the two modules: 274 run without Docker and 8 skip. CI runs all 282 on runners with Docker, and it is the only place the PostgreSQL paths run. Those are Flyway with `ddl-auto=validate`, `SELECT FOR UPDATE` under 20-way contention, a 20-thread key race, the native `DELETE … FOR UPDATE SKIP LOCKED` under two pruners, and the outbox claim under two competing pollers. The `build` job's "The PostgreSQL tests ran" step fails the run if either class skipped a test or left no report. See [CONTRIBUTING.md](CONTRIBUTING.md) for what the skipped count means.
+287 tests exist across the two modules: 279 run without Docker and 8 skip. CI runs all 287 on runners with Docker, and it is the only place the PostgreSQL paths run. Those are Flyway with `ddl-auto=validate`, `SELECT FOR UPDATE` under 20-way contention, a 20-thread key race, the native `DELETE … FOR UPDATE SKIP LOCKED` under two pruners, and the outbox claim under two competing pollers. The `build` job's "The PostgreSQL tests ran" step fails the run if either class skipped a test or left no report. See [CONTRIBUTING.md](CONTRIBUTING.md) for what the skipped count means.
 
 ## Deployment and cost
 
@@ -382,10 +383,10 @@ Each row is a choice I made, set against what a production system would do.
 
 | Current | Production would be | Why it is this way |
 |---|---|---|
-| Two users in an `InMemoryUserDetailsManager` | Cognito, Okta or Entra behind `issuer-uri` | The rules are real and tested, and the user store is a stub. The resource-server half is wired and activates when an issuer is configured, so the swap is configuration. |
+| Two users in an `InMemoryUserDetailsManager` | Cognito, Okta or Entra behind `issuer-uri` and `audiences` | The rules are real and tested, and the user store is a stub. The resource-server half is wired and activates when an issuer is configured, so the swap is configuration: set both properties, as [SECURITY.md](SECURITY.md) shows. |
 | Idempotent replay returns 201 | 200, arguably | It replays the original response, Stripe-style, so the body is identical. "201 Created" for something not created this time is a fair challenge. I documented it and left it. |
 | A poller drains the outbox | Debezium reading the WAL | A 1-second poll costs one indexed query per replica per second and adds up to a second of latency. CDC removes both and adds Kafka Connect, a connector to operate and a replication slot that fills the disk if the consumer stops. |
-| Retention is a batched `DELETE` on a schedule | a partitioned table, dropping old partitions | `DROP PARTITION` is O(1) and a delete is not, which matters from roughly the first hundred million rows. Below that, partitions add a maintenance job and an outage when that job fails. The pruner is 40 lines and bounded. |
+| Retention is a batched `DELETE` on a schedule | a partitioned table, dropping old partitions | Detaching and dropping an old partition is O(1) and a delete is not, which matters from roughly the first hundred million rows. Below that, partitions add a maintenance job and an outage when that job fails. The pruner is 40 lines and bounded. |
 | No circuit breaker | Resilience4j | There is one outbound dependency, and the outbox already absorbs its failure: a down SQS leaves rows unpublished and the next drain retries them. |
 | Contract tests share a JSON file | Pact, with a broker and a `can-i-deploy` gate in CI | The file catches the change that breaks the consumer, which is the whole job at two modules in one repository. A broker pays off when the consumers are other teams' services. |
 | The service's traces are generated and not exported; the trace id crosses into the Lambda as a log line | an OTLP collector on both sides, so the queue hop is one waterfall | The ids are on every log line and response, and `BookingEventHandler` logs the producer's `traceparent`, so two log greps follow one booking end to end. A waterfall needs a collector, and an exporter in a function whose whole point is a small package (10.3 MiB, with a 34 KB HTTP client) and a fast cold start. |

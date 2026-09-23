@@ -10,9 +10,9 @@ the kind that only hurt in production:
 
 * **Attempts.** The claim query is `ORDER BY id`. An event the transport
   structurally rejects (a payload it will refuse identically on attempt 10,000)
-  is therefore retried *first* on every tick. It consumes the batch while live
-  events queue behind it. One malformed row becomes a total publishing outage
-  that no amount of waiting resolves.
+  is therefore retried *first* on every tick, forever. Each one holds a slot at
+  the head of every batch. A batch's worth of them, 100 at the default size,
+  stops publishing completely, and no amount of waiting resolves it.
 
 * **Rows.** Published rows were never deleted, so the table grew forever. The
   partial index on unpublished rows keeps the *poller* fast, which hides the
@@ -70,15 +70,17 @@ at most `MAX_BATCHES_PER_RUN` batches.
   WAL.
 
 * Both bounds are configuration, because their right values are facts about
-  the deployment. Tests drive them with one-attempt and one-row limits, so the
-  behaviour at the boundary is proven by a test.
+  the deployment. Tests drive them with a two-attempt ceiling
+  (`OutboxPoisonRowTest`) and a one-row prune batch (`OutboxPrunerTest`), so
+  the behaviour at the boundary is proven by a test.
 
 ## Alternatives considered
 
-* **A partitioned table.** Dropping yesterday's partition with `DROP PARTITION`
-  is O(1) and a delete is not. That matters from roughly the first hundred
-  million rows. Below that, it buys a partitioning scheme, a job to create
-  partitions ahead of time, and an outage when that job is what fails.
+* **A partitioned table.** Detaching yesterday's partition and dropping its
+  table (`ALTER TABLE ... DETACH PARTITION`, then `DROP TABLE`) is O(1) and a
+  delete is not. That matters from roughly the first hundred million rows.
+  Below that, it buys a partitioning scheme, a job to create partitions ahead
+  of time, and an outage when that job is what fails.
 
 * **A dead-letter table.** A second place for the same row, and a second thing
   to remember to look at. The flag is already on the row, and the gauge already

@@ -23,9 +23,9 @@ A record's decision does not change once it is accepted. A decision that
 changes gets a new record that supersedes the old one. The old one stays,
 because the reasoning that was true at the time explains the code someone is
 reading today. I correct wrong facts in place. Where a correction changes the
-reasoning, a dated note says what the record used to claim, as in 0002, 0004,
-0009 and 0012. The retry backoff in 0013 and the annotation scope in 0012
-were changed in place, and each record's status line says so.
+reasoning, a dated note says what the record used to claim, as in 0002, 0003,
+0004, 0006, 0007, 0009 and 0012. The retry backoff in 0013 and the annotation
+scope in 0012 were changed in place, and each record's status line says so.
 
 | # | Decision | Status | Taken in |
 |---|---|---|---|

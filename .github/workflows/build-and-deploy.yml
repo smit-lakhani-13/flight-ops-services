@@ -455,9 +455,9 @@ jobs:
           comment-summary-in-pr: never
 
   # ---------------------------------------------------------------------------
-  # The documentation cites files and symbols, links to headings, and must
-  # carry no co-author trailer or name the private directory beside this
-  # repository. Those are mechanical, so they are checked here.
+  # The documentation cites files and symbols and links to headings, and every
+  # file and commit message must pass the hygiene sweeps. Those are mechanical,
+  # so they are checked here.
   docs-check:
     name: docs-check
     runs-on: ubuntu-latest
@@ -477,6 +477,10 @@ jobs:
         run: python3 scripts/linkcheck.py
 
       - name: Attribution and privacy sweeps
+        # Extra patterns come from a repository secret; see the script header.
+        # A push without the secret fails rather than skipping.
+        env:
+          SWEEP_PATTERNS: ${{ secrets.SWEEP_PATTERNS }}
         run: scripts/sweeps.sh
 
   # ---------------------------------------------------------------------------

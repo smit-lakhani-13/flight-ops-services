@@ -14,7 +14,7 @@ Description: >
 #   sam deploy --template-file template.yaml --stack-name flight-ops-lambda \
 #     --resolve-s3 --capabilities CAPABILITY_IAM
 #   sam local invoke BookingEventFunction -e events/sqs.json
-#   sam logs -n booking-event-handler --stack-name flight-ops-lambda --tail
+#   sam logs -n BookingEventFunction --stack-name flight-ops-lambda --tail
 #
 # Tear down with `sam delete --stack-name flight-ops-lambda --region ap-south-1`
 # or ./deploy/aws/down.sh. The shared bucket `--resolve-s3` creates is kept
@@ -217,5 +217,5 @@ Outputs:
     Value: !Ref FlightEventsTable
 
   FunctionName:
-    Description: sam logs -n <this> --stack-name <stack> --tail
+    Description: Physical function name. For logs - sam logs -n BookingEventFunction --stack-name <stack> --tail (the logical ID, not this value)
     Value: !Ref BookingEventFunction
