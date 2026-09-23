@@ -1,7 +1,9 @@
 package com.smit.flightops.dto;
 
 import com.smit.flightops.validation.DistinctEndpoints;
+import com.smit.flightops.validation.IsoInstantDeserializer;
 import jakarta.validation.constraints.*;
+import tools.jackson.databind.annotation.JsonDeserialize;
 
 import java.time.Instant;
 
@@ -30,7 +32,8 @@ public record CreateFlightRequest(
 
     @Min(1) @Max(850) int totalSeats,
 
-    @NotNull @Future Instant departureTime
+    @NotNull @Future @JsonDeserialize(using = IsoInstantDeserializer.class)
+    Instant departureTime
 ) {
 
     /**

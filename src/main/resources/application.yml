@@ -39,6 +39,10 @@ spring:
     mapper:
       # So is a count sent as a string. The schema says integer; "2" is refused too.
       allow-coercion-of-scalars: false
+    datatype:
+      enum:
+        # Otherwise {"status": 4} is read as the fifth constant, CANCELLED.
+        fail-on-numbers-for-enums: true
 
   data:
     web:

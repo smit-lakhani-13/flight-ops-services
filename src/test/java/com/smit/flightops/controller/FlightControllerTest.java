@@ -29,6 +29,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.allOf;
 import static org.hamcrest.Matchers.containsString;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
@@ -225,6 +226,61 @@ class FlightControllerTest {
                         .content("{\"status\":\"TELEPORTED\"}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("MALFORMED_REQUEST"));
+    }
+
+    /**
+     * Jackson reads a number as the enum constant at that position, so without
+     * {@code fail-on-numbers-for-enums} a status of 4 would cancel the flight.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"4", "\"4\""})
+    @DisplayName("a status sent as a number is 400, not the constant at that position")
+    void statusAsANumberReturns400(String status) throws Exception {
+        mockMvc.perform(patch("/api/v1/flights/UA123/status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":" + status + "}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("MALFORMED_REQUEST"));
+
+        verify(flightService, never()).updateStatus(any(), any());
+    }
+
+    /**
+     * Jackson reads a number as epoch seconds, so epoch milliseconds would be a
+     * departure in the year 58971 that {@code @Future} accepts.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"1798797600000", "\"1798797600000\"", "1798797600.5"})
+    @DisplayName("a departure time sent as a number is 400; only an ISO-8601 string is read")
+    void departureTimeMustBeAnIsoString(String departureTime) throws Exception {
+        String body = """
+                {"flightNumber":"UA999","origin":"EWR","destination":"SFO","totalSeats":100,"departureTime":%s}
+                """.formatted(departureTime);
+
+        mockMvc.perform(post("/api/v1/flights")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("MALFORMED_REQUEST"));
+
+        verify(flightService, never()).create(any());
+    }
+
+    /** The offset form is still ISO-8601, and it is stored as the same instant in UTC. */
+    @Test
+    @DisplayName("a departure time with an offset is read as the same instant")
+    void departureTimeWithAnOffsetIsRead() throws Exception {
+        when(flightService.create(any())).thenReturn(dto());
+
+        mockMvc.perform(post("/api/v1/flights")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"flightNumber":"UA999","origin":"EWR","destination":"SFO","totalSeats":100,
+                                 "departureTime":"2099-01-01T15:30:00+05:30"}
+                                """))
+                .andExpect(status().isCreated());
+
+        verify(flightService).create(argThat(r -> r.departureTime().equals(Instant.parse("2099-01-01T10:00:00Z"))));
     }
 
     @Test
