@@ -29,6 +29,14 @@ class FlightTest {
     }
 
     @Test
+    @DisplayName("the departure time keeps the microseconds the column stores")
+    void departureTimeIsTruncatedToMicroseconds() {
+        Flight flight = new Flight("UA123", "EWR", "LHR", 180, Instant.parse("2099-01-01T10:00:00.123456789Z"));
+
+        assertThat(flight.getDepartureTime()).isEqualTo(Instant.parse("2099-01-01T10:00:00.123456Z"));
+    }
+
+    @Test
     void reserveSeatsReducesAvailability() {
         Flight flight = flight();
 

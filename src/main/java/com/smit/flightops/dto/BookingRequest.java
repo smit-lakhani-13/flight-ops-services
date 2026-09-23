@@ -1,5 +1,6 @@
 package com.smit.flightops.dto;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.*;
 
 import java.nio.charset.StandardCharsets;
@@ -14,7 +15,8 @@ import java.util.Locale;
  * @param flightNumber matched against {@link CreateFlightRequest#FLIGHT_NUMBER}
  * @param passengerName free text without control characters: PostgreSQL refuses
  *        NUL in a text column, and {@code SEP} must not appear in any field
- * @param seats one to nine
+ * @param seats one to nine. Marked required for the OpenAPI document, which
+ *        treats a primitive as optional; Jackson refuses a missing one
  * @param idempotencyKey client-generated; the same key twice is the same
  *        booking, never two. It is written to the log on every replay and
  *        echoed in the 409 message, so it takes the character class
@@ -29,7 +31,7 @@ public record BookingRequest(
     @Pattern(regexp = "^[^\\p{Cntrl}]*$", message = "must not contain control characters")
     String passengerName,
 
-    @Min(1) @Max(9) int seats,
+    @Schema(requiredMode = Schema.RequiredMode.REQUIRED) @Min(1) @Max(9) int seats,
 
     @NotBlank @Size(max = 255)
     @Pattern(regexp = "^[A-Za-z0-9._:-]+$",

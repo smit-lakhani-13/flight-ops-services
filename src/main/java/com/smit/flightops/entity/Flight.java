@@ -8,6 +8,7 @@ import org.hibernate.annotations.Check;
 import org.hibernate.annotations.Checks;
 
 import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.Objects;
 
 @Entity
@@ -59,7 +60,8 @@ public class Flight {
         this.destination = destination;
         this.totalSeats = totalSeats;
         this.availableSeats = totalSeats;
-        this.departureTime = departureTime;
+        // TIMESTAMP(6) stores microseconds. Truncated here, so the 201 shows the time a GET returns.
+        this.departureTime = departureTime.truncatedTo(ChronoUnit.MICROS);
     }
 
     /**

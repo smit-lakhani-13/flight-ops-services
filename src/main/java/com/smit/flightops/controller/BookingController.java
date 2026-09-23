@@ -79,9 +79,10 @@ public class BookingController {
                             schema = @Schema(type = "string"))),
             @ApiResponse(responseCode = "400", description = """
                     `VALIDATION_FAILED` — a field is blank, out of range or has the wrong characters; \
-                    `fieldErrors` names each one. `MALFORMED_REQUEST` — the body is not valid JSON, or \
-                    `seats` is missing, fractional or sent as a string; this one has the \
-                    `{code, message, timestamp}` shape.""",
+                    `fieldErrors` names each one. `MALFORMED_REQUEST` — the body is empty or not valid \
+                    JSON, a field has the wrong JSON type or is too large for its type, or `seats` is \
+                    missing, null, a string, or written with a decimal point or an exponent (`2.0` \
+                    included). This one has the `{code, message, timestamp}` shape.""",
                     content = @Content(schema = @Schema(oneOf = {ValidationErrorResponse.class, ErrorResponse.class}))),
             @ApiResponse(responseCode = "401", description = "`UNAUTHENTICATED`",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
@@ -91,7 +92,7 @@ public class BookingController {
             @ApiResponse(responseCode = "404", description = "`FLIGHT_NOT_FOUND`",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "415", description =
-                    "`UNSUPPORTED_MEDIA_TYPE` — the body is not `application/json`. YAML is refused too.",
+                    "`UNSUPPORTED_MEDIA_TYPE` — the `Content-Type` is missing or is not `application/json`. YAML is refused too.",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "409", description = """
                     `INSUFFICIENT_SEATS` — fewer seats remain than requested, and a \

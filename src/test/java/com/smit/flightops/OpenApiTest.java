@@ -130,6 +130,19 @@ class OpenApiTest {
     }
 
     /**
+     * swagger-core marks a primitive {@code int} optional unless told otherwise,
+     * and the server answers a missing count with 400 {@code MALFORMED_REQUEST}.
+     */
+    @Test
+    @DisplayName("a seat count the server refuses when missing is required in the schema")
+    void seatCountsAreRequired() throws Exception {
+        JsonNode schemas = document().get("components").get("schemas");
+
+        assertThat(schemas.get("BookingRequest").get("required").toString()).contains("\"seats\"");
+        assertThat(schemas.get("CreateFlightRequest").get("required").toString()).contains("\"totalSeats\"");
+    }
+
+    /**
      * Compared with a live response, not a written expectation, because Spring
      * Data's page shape has changed between versions.
      */

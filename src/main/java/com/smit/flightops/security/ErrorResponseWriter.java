@@ -32,7 +32,9 @@ public class ErrorResponseWriter {
     }
 
     /**
-     * @param code a stable machine-readable code, from {@code GlobalExceptionHandler}'s vocabulary
+     * @param code a stable machine-readable code from the README's error-code table:
+     *        {@code UNAUTHENTICATED} from the entry point, {@code FORBIDDEN} from the
+     *        access-denied handler
      * @throws IOException if the client has already disconnected
      */
     public void write(HttpServletResponse response, HttpStatus status, String code, String message)

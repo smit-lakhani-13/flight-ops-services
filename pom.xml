@@ -158,7 +158,8 @@
 
         <!--
           Flyway owns the PostgreSQL schema; Hibernate only validates it. The starter
-          carries FlywayAutoConfiguration, and Flyway 10 ships each database as its own module.
+          carries FlywayAutoConfiguration. Flyway ships each database as its own module,
+          so PostgreSQL needs flyway-database-postgresql.
         -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -292,7 +293,7 @@
 
               The thresholds sit below the measured coverage with room. With no Docker, eight
               tests skip (five in BookingIntegrationTest, three in OutboxPrunePostgresTest),
-              and the bundle measures line 0.916 and branch 0.749. CI runs the Testcontainers
+              and the bundle measures about 0.91 line and 0.75 branch. CI runs the Testcontainers
               tests, so it can only measure higher.
 
               BUNDLE, because a per-class rule fails the build over an unused constructor on

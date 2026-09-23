@@ -53,10 +53,12 @@ public class OpenApiConfig {
                                 credentials. Four things outside it are, and all four \
                                 have a caller that cannot present any: this document and \
                                 the Swagger UI, `/actuator/health` and its liveness and \
-                                readiness groups, which a kubelet probes, and `/error`, \
-                                which is Spring's internal error dispatch and would turn \
-                                every error into a 401 about the error if it were \
-                                secured. The rest of `/actuator` needs the `ops` role.
+                                readiness groups, which a kubelet probes, and `/error`. \
+                                The container forwards an error raised outside Spring MVC \
+                                to `/error`. The firewall refuses some URLs before \
+                                credentials are read, and a secured `/error` would turn \
+                                that 400 into a 401. The rest of `/actuator` needs the \
+                                `ops` role.
 
                                 `POST /api/v1/bookings` is idempotent on `idempotencyKey`: \
                                 a repeated request returns the original booking, and the \

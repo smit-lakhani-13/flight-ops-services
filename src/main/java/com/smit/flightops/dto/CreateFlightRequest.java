@@ -2,6 +2,7 @@ package com.smit.flightops.dto;
 
 import com.smit.flightops.validation.DistinctEndpoints;
 import com.smit.flightops.validation.IsoInstantDeserializer;
+import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.*;
 import tools.jackson.databind.annotation.JsonDeserialize;
 
@@ -14,7 +15,9 @@ import java.time.Instant;
  * counts it and {@code " JF"} would be stored as a two-letter code.
  *
  * <p>The patterns use {@code *}, not {@code +}, so they accept an empty string
- * and leave that failure to {@code @NotBlank}.
+ * and leave that failure to {@code @NotBlank}. {@code totalSeats} is marked
+ * required for the OpenAPI document, which treats a primitive as optional;
+ * Jackson refuses a missing one.
  */
 @DistinctEndpoints
 public record CreateFlightRequest(
@@ -30,7 +33,7 @@ public record CreateFlightRequest(
     @Pattern(regexp = "^[A-Za-z]*$", message = "must contain only letters")
     String destination,
 
-    @Min(1) @Max(850) int totalSeats,
+    @Schema(requiredMode = Schema.RequiredMode.REQUIRED) @Min(1) @Max(850) int totalSeats,
 
     @NotNull @Future @JsonDeserialize(using = IsoInstantDeserializer.class)
     Instant departureTime

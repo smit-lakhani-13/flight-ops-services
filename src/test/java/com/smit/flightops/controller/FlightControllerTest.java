@@ -5,25 +5,32 @@ import com.smit.flightops.support.MetricsTestConfig;
 import tools.jackson.databind.ObjectMapper;
 import com.smit.flightops.dto.CreateFlightRequest;
 import com.smit.flightops.dto.FlightDto;
+import com.smit.flightops.entity.Flight;
 import com.smit.flightops.entity.FlightStatus;
 import com.smit.flightops.exception.FlightNotFoundException;
 import com.smit.flightops.service.FlightService;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Import;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.PessimisticLockingFailureException;
+import org.springframework.data.core.PropertyReferenceException;
+import org.springframework.data.core.TypeInformation;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.allOf;
@@ -264,6 +271,68 @@ class FlightControllerTest {
                 .andExpect(jsonPath("$.code").value("MALFORMED_REQUEST"));
 
         verify(flightService, never()).create(any());
+    }
+
+    /**
+     * {@code @NotNull} answers these, not Jackson, so they are a
+     * {@code VALIDATION_FAILED} that names the field.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"", ",\"departureTime\":null"})
+    @DisplayName("a missing or null departure time is 400 VALIDATION_FAILED, named in fieldErrors")
+    void missingDepartureTimeFailsValidation(String departureTime) throws Exception {
+        String body = """
+                {"flightNumber":"UA999","origin":"EWR","destination":"SFO","totalSeats":100%s}
+                """.formatted(departureTime);
+
+        mockMvc.perform(post("/api/v1/flights")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.fieldErrors.departureTime").value("must not be null"));
+
+        verify(flightService, never()).create(any());
+    }
+
+    /**
+     * Jackson quotes the rejected value in its message, and the handler logs
+     * that message. A newline in the value would start a line of its own.
+     */
+    @Test
+    @ExtendWith(OutputCaptureExtension.class)
+    @DisplayName("a rejected value with a newline in it stays on one log line")
+    void rejectedValueCannotForgeALogLine(CapturedOutput output) throws Exception {
+        mockMvc.perform(post("/api/v1/flights")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"flightNumber":"UA999","origin":"EWR","destination":"SFO","totalSeats":100,
+                                 "departureTime":"x\\nFORGED"}
+                                """))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(patch("/api/v1/flights/UA123/status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"status\":\"x\\nFORGED\"}"))
+                .andExpect(status().isBadRequest());
+        mockMvc.perform(get("/api/v1/flights").param("sort", "x\nFORGED"))
+                .andExpect(status().isBadRequest());
+        // PostgreSQL's constraint detail and Spring Data's property name carry client text too.
+        when(flightService.create(any())).thenThrow(new DataIntegrityViolationException("x\nFORGED"));
+        mockMvc.perform(post("/api/v1/flights")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"flightNumber":"UA999","origin":"EWR","destination":"SFO","totalSeats":100,
+                                 "departureTime":"2099-01-01T10:00:00Z"}
+                                """))
+                .andExpect(status().isConflict());
+        when(flightService.search(any(), any(), any())).thenThrow(
+                new PropertyReferenceException("x\nFORGED", TypeInformation.of(Flight.class), List.of()));
+        mockMvc.perform(get("/api/v1/flights"))
+                .andExpect(status().isBadRequest());
+
+        assertThat(output.getAll()).contains("Malformed request", "Unknown sort property",
+                "Constraint violation", "unresolved by Spring Data");
+        assertThat(output.getAll().lines()).noneMatch(line -> line.startsWith("FORGED"));
     }
 
     /** The offset form is still ISO-8601, and it is stored as the same instant in UTC. */

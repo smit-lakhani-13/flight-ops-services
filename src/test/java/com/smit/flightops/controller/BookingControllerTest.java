@@ -190,14 +190,16 @@ class BookingControllerTest {
 
     /**
      * {@code spring.jackson.deserialization.accept-float-as-int} is off, so 2.5
-     * is refused instead of booking two seats, and
+     * is refused instead of booking two seats. It goes by how the number is
+     * written, so 2.0 and 1e0 are refused as well.
      * {@code spring.jackson.mapper.allow-coercion-of-scalars} is off, so a count
      * sent as a string is refused too. A primitive {@code int} cannot be null, so
      * a missing count fails in Jackson as well, before Bean Validation.
      */
     @ParameterizedTest
-    @ValueSource(strings = {"\"seats\":2.5,", "\"seats\":\"2\",", "\"seats\":null,", ""})
-    @DisplayName("a fractional, string or missing seat count is 400 MALFORMED_REQUEST, never coerced")
+    @ValueSource(strings = {"\"seats\":2.5,", "\"seats\":2.0,", "\"seats\":1e0,", "\"seats\":\"2\",",
+                            "\"seats\":null,", ""})
+    @DisplayName("a seat count with a decimal point or an exponent, a string, null or missing is 400 MALFORMED_REQUEST")
     void seatsMustBeAWholeNumber(String seats) throws Exception {
         String body = """
                 {"flightNumber":"UA123","passengerName":"Smit Lakhani",%s"idempotencyKey":"demo-1"}
@@ -222,6 +224,37 @@ class BookingControllerTest {
                 .andExpect(status().isUnsupportedMediaType())
                 .andExpect(header().string("Accept", containsString(MediaType.APPLICATION_JSON_VALUE)))
                 .andExpect(jsonPath("$.code").value("UNSUPPORTED_MEDIA_TYPE"));
+    }
+
+    /**
+     * Spring's own text for this case is "Content-Type 'null' is not supported.",
+     * which names nothing the client sent.
+     */
+    @Test
+    @DisplayName("a write with no Content-Type is 415 with a message that says so")
+    void missingContentTypeReturns415() throws Exception {
+        mockMvc.perform(post("/api/v1/bookings"))
+                .andExpect(status().isUnsupportedMediaType())
+                .andExpect(header().string("Accept", MediaType.APPLICATION_JSON_VALUE))
+                .andExpect(jsonPath("$.code").value("UNSUPPORTED_MEDIA_TYPE"))
+                .andExpect(jsonPath("$.message").value("The request has no Content-Type. Send application/json."));
+
+        mockMvc.perform(post("/api/v1/bookings").content(VALID_BODY))
+                .andExpect(status().isUnsupportedMediaType())
+                .andExpect(jsonPath("$.message").value("The request has no Content-Type. Send application/json."));
+
+        verify(bookingService, never()).book(any());
+    }
+
+    /** Spring leaves the media type null here as well, so the handler reads the header instead. */
+    @Test
+    @DisplayName("an unparseable Content-Type keeps Spring's message")
+    void unparseableContentTypeKeepsSpringMessage() throws Exception {
+        mockMvc.perform(post("/api/v1/bookings")
+                        .header("Content-Type", "garbage")
+                        .content("{}"))
+                .andExpect(status().isUnsupportedMediaType())
+                .andExpect(jsonPath("$.message").value("Could not parse Content-Type."));
     }
 
     /**

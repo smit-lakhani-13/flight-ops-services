@@ -4,6 +4,7 @@ import com.smit.flightops.dto.ErrorResponse;
 import com.smit.flightops.observability.BookingMetrics;
 import com.smit.flightops.dto.ValidationErrorResponse;
 import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -15,7 +16,9 @@ import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.util.StringUtils;
 import org.springframework.web.ErrorResponseException;
+import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
@@ -23,6 +26,7 @@ import org.springframework.web.method.annotation.MethodArgumentTypeMismatchExcep
 
 import java.time.Clock;
 import java.util.Map;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -43,6 +47,8 @@ import java.util.stream.Collectors;
 public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
+    private static final Pattern NOT_PRINTABLE = Pattern.compile("[\\p{Cc}\\p{Cf}\\p{Zl}\\p{Zp}]");
 
     private final Clock clock;
     private final BookingMetrics metrics;
@@ -102,7 +108,8 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<ErrorResponse> handleDataIntegrity(DataIntegrityViolationException e) {
-        log.warn("Constraint violation: {}", e.getMostSpecificCause().getMessage());
+        // PostgreSQL's detail quotes the values the client sent.
+        log.warn("Constraint violation: {}", printable(e.getMostSpecificCause().getMessage()));
         return json(HttpStatus.CONFLICT)
                 .body(ErrorResponse.of("DUPLICATE_REQUEST",
                                        "This request conflicts with an existing record. Please retry.",
@@ -131,7 +138,7 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(UnknownSortPropertyException.class)
     public ResponseEntity<ErrorResponse> handleUnknownSortProperty(UnknownSortPropertyException e) {
-        log.warn("Unknown sort property: {}", e.getPropertyName());
+        log.warn("Unknown sort property: {}", printable(e.getPropertyName()));
         return json(HttpStatus.BAD_REQUEST)
                 .body(ErrorResponse.of("UNKNOWN_SORT_PROPERTY", e.getMessage(), clock.instant()));
     }
@@ -143,7 +150,7 @@ public class GlobalExceptionHandler {
      */
     @ExceptionHandler(PropertyReferenceException.class)
     public ResponseEntity<ErrorResponse> handleUnresolvedSortProperty(PropertyReferenceException e) {
-        log.warn("Unknown sort property (unresolved by Spring Data): {}", e.getPropertyName());
+        log.warn("Unknown sort property (unresolved by Spring Data): {}", printable(e.getPropertyName()));
         return json(HttpStatus.BAD_REQUEST)
                 .body(ErrorResponse.of("UNKNOWN_SORT_PROPERTY",
                                        "'%s' is not a sortable property.".formatted(e.getPropertyName()),
@@ -192,15 +199,15 @@ public class GlobalExceptionHandler {
 
     /**
      * A body Jackson cannot bind, or a path variable that will not convert. That
-     * covers an unknown enum constant or one sent as a number, a fractional,
-     * quoted or missing number where an {@code int} is declared, a time that is
-     * not an ISO-8601 string, and malformed JSON, none of which reach Bean
-     * Validation. The message is generic because Jackson's names internal
-     * classes and echoes the payload.
+     * covers malformed JSON, and an unknown enum constant or one sent as a number.
+     * It also covers a missing, null or quoted {@code int}, one written with a
+     * decimal point or an exponent, and a time that is not an ISO-8601 instant.
+     * None of these reach Bean Validation. The message is generic because
+     * Jackson's names internal classes and echoes the payload.
      */
     @ExceptionHandler({HttpMessageNotReadableException.class, MethodArgumentTypeMismatchException.class})
     public ResponseEntity<ErrorResponse> handleMalformed(Exception e) {
-        log.warn("Malformed request: {}", e.getMessage());
+        log.warn("Malformed request: {}", printable(e.getMessage()));
         return json(HttpStatus.BAD_REQUEST)
                 .body(ErrorResponse.of("MALFORMED_REQUEST",
                                        "Request could not be read. Check the field names, types and enum values.",
@@ -226,10 +233,16 @@ public class GlobalExceptionHandler {
      * headers that go with it: {@code Allow} on a 405, {@code Accept} on a 415.
      */
     @ExceptionHandler({ServletException.class, ErrorResponseException.class})
-    public ResponseEntity<ErrorResponse> handleSpringWebError(Exception e) {
+    public ResponseEntity<ErrorResponse> handleSpringWebError(Exception e, HttpServletRequest request) {
         if (e instanceof org.springframework.web.ErrorResponse errorResponse) {
             HttpStatusCode status = errorResponse.getStatusCode();
             String detail = errorResponse.getBody().getDetail();
+            // Spring's text for a missing header is "Content-Type 'null' is not supported.".
+            // The header is read, not the exception's media type, which an unparseable
+            // header leaves null too, and that case keeps "Could not parse Content-Type.".
+            if (e instanceof HttpMediaTypeNotSupportedException && !StringUtils.hasLength(request.getContentType())) {
+                detail = "The request has no Content-Type. Send application/json.";
+            }
             return ResponseEntity.status(status)
                     .headers(errorResponse.getHeaders())
                     .contentType(MediaType.APPLICATION_JSON)
@@ -246,6 +259,20 @@ public class GlobalExceptionHandler {
         log.error("Unhandled exception", e);
         return json(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(ErrorResponse.of("INTERNAL_ERROR", "An unexpected error occurred", clock.instant()));
+    }
+
+    /**
+     * The rule the Lambda's {@code BookingEventHandler.printable} applies: control,
+     * format and line-separator characters become {@code ?}, and the length is
+     * capped. Jackson quotes rejected input in full, and a newline in it would
+     * start a forged log line.
+     */
+    private static String printable(String value) {
+        if (value == null) {
+            return "null";
+        }
+        String oneLine = NOT_PRINTABLE.matcher(value).replaceAll("?");
+        return oneLine.length() <= 1000 ? oneLine : oneLine.substring(0, 1000) + "...";
     }
 
     private static ResponseEntity.BodyBuilder json(HttpStatus status) {

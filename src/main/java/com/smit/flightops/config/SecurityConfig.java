@@ -71,8 +71,8 @@ public class SecurityConfig {
                         // ops rule below and restart the pods in a loop.
                         .requestMatchers(EndpointRequest.to(HealthEndpoint.class)).permitAll()
                         .requestMatchers(EndpointRequest.toAnyEndpoint()).hasRole(ROLE_OPS)
-                        // The container's error dispatch. Denied, it would answer a 404
-                        // with a 401 about the error page.
+                        // The container's error dispatch. Denied, it would turn the
+                        // firewall's 400 for a refused URL into a 401 about the error page.
                         .requestMatchers("/error").permitAll()
                         // Outside /api, so without these the docs meet denyAll().
                         .requestMatchers(HttpMethod.GET, DOC_PATHS).permitAll()
