@@ -35,7 +35,9 @@ for arg in "$@"; do
 done
 
 require_tool aws
-ACCOUNT_ID=$(require_credentials)
+# `|| exit 1`: die inside $(...) ends only the subshell, and this script runs
+# without -e. Without it, expired credentials reach every delete call.
+ACCOUNT_ID=$(require_credentials) || exit 1
 
 step "0/9  What is about to be deleted"
 cat <<PLAN
@@ -408,12 +410,15 @@ fi
 tagged=$(q resourcegroupstaggingapi get-resources \
     --tag-filters Key=Project,Values=flight-ops \
     --query 'ResourceTagMappingList[].ResourceARN' --output text)
+# foundation.yaml retains the GitHub OIDC provider, with its Project tag, so it
+# is never a leftover. --keep-foundation also keeps the foundation's own
+# resources. The ARNs are split once, so every pattern sees one ARN per line.
+retained_arns=':oidc-provider/token\.actions\.githubusercontent\.com$'
 if [ "$KEEP_FOUNDATION" = 1 ]; then
-    foundation_arns=":stack/$FOUNDATION_STACK/|:repository/flight-ops-service\$|:role/github-actions-deploy\$"
-    foundation_arns="$foundation_arns|:policy/flight-ops-service-sqs-publish\$|:budget/flight-ops-(monthly|daily)\$"
-    foundation_arns="$foundation_arns|:oidc-provider/token\.actions\.githubusercontent\.com\$"
-    tagged=$(printf '%s' "$tagged" | tr '\t' '\n' | grep -Ev "$foundation_arns" | paste -sd' ' -)
+    retained_arns="$retained_arns|:stack/$FOUNDATION_STACK/|:repository/flight-ops-service\$|:role/github-actions-deploy\$"
+    retained_arns="$retained_arns|:policy/flight-ops-service-sqs-publish\$|:budget/flight-ops-(monthly|daily)\$"
 fi
+tagged=$(printf '%s' "$tagged" | tr '\t' '\n' | grep -Ev "$retained_arns" | paste -sd' ' -)
 check "anything tagged Project=flight-ops" "$tagged"
 
 # Advisory only: unassociated addresses anywhere in the account bill

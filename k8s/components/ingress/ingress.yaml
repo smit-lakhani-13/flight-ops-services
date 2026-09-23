@@ -13,11 +13,16 @@
 #     kubectl delete ingress flight-ops-ingress -n flight-ops   # first
 #     aws elbv2 describe-load-balancers --region ap-south-1 \
 #       --query 'LoadBalancers[].LoadBalancerName'              # confirm gone
+#     aws cloudformation delete-stack --stack-name flight-ops-data --region ap-south-1
+#     aws cloudformation wait stack-delete-complete \
+#       --stack-name flight-ops-data --region ap-south-1        # the database next
 #     eksctl delete cluster -f cluster.yaml                     # only then
 #
 # Delete the cluster first and the controller that owns the ALB goes with it.
 # The load balancer is orphaned: still billing, invisible to kubectl, and
-# findable only in the EC2 console.
+# findable only in the EC2 console. The database goes before the cluster too:
+# its security group sits in eksctl's VPC and blocks the VPC delete.
+# deploy/aws/down.sh does all of this, and the other stacks, in order.
 #
 # Without this file the app is testable through a port-forward, for $0:
 #     kubectl port-forward -n flight-ops svc/flight-ops 8080:80

@@ -28,19 +28,25 @@ cp "$here/lib.sh" "$here/down.sh" "$here/cost-check.sh" "$here/ecr-image-exists.
 cat > "$tmp/bin/aws" <<'STUB'
 #!/usr/bin/env bash
 printf 'aws %s\n' "$*" >> "$STUB_LOG"
-service=${1:-}; op=${2:-}
-stack='' query='' kubeconfig=''
+service=${1:-}; op=${2:-}; waiter=${3:-}
+stack='' query='' kubeconfig='' addon=''
 while [ $# -gt 0 ]; do
     case "$1" in
         --stack-name) stack=$2; shift ;;
         --query)      query=$2; shift ;;
         --kubeconfig) kubeconfig=$2; shift ;;
+        --addon-name) addon=$2; shift ;;
     esac
     shift
 done
 missing() { echo "An error occurred (ValidationError): Stack with id $stack does not exist" >&2; exit 254; }
 case "$service $op" in
-    'sts get-caller-identity') echo 123456789012 ;;
+    'sts get-caller-identity')
+        [ "${STUB_STS_FAILS:-0}" = 0 ] || {
+            echo 'An error occurred (ExpiredToken) when calling the GetCallerIdentity operation' >&2
+            exit 254
+        }
+        echo 123456789012 ;;
     'eks update-kubeconfig')
         [ "${STUB_CLUSTER_UP:-0}" = 1 ] || { echo 'No cluster found' >&2; exit 254; }
         printf 'apiVersion: v1\nkind: Config\n' > "${kubeconfig:-$KUBECONFIG}" ;;
@@ -50,6 +56,29 @@ case "$service $op" in
         [ "${STUB_ASSOCIATE_FAILS:-0}" = 0 ] || { echo 'An error occurred (AccessDeniedException)' >&2; exit 254; } ;;
     # The real CLI applies the --query; the stub prints its result.
     'eks list-associated-access-policies') printf '%s\n' "${STUB_ASSOCIATED:-}" ;;
+    'eks describe-cluster') echo "${STUB_ISSUER:-https://oidc.eks.ap-south-1.amazonaws.com/id/AB12}" ;;
+    'eks describe-addon')
+        [ "${STUB_ADDON_LOOKUP_FAILS:-0}" = 0 ] || { echo 'An error occurred (ThrottlingException) when calling the DescribeAddon operation' >&2; exit 254; }
+        case " ${STUB_ADDONS_MISSING:-} " in
+            *" $addon "*) echo "An error occurred (ResourceNotFoundException) when calling the DescribeAddon operation: No addon: $addon found" >&2; exit 254 ;;
+        esac
+        echo ACTIVE ;;
+    'eks create-addon')
+        [ "${STUB_ADDON_CREATE_FAILS:-0}" = 0 ] || { echo 'An error occurred (InvalidParameterException) when calling the CreateAddon operation' >&2; exit 254; } ;;
+    'eks describe-nodegroup')
+        case "${STUB_NODEGROUP:-}" in
+            active)  echo ACTIVE ;;
+            missing) echo 'An error occurred (ResourceNotFoundException) when calling the DescribeNodegroup operation' >&2; exit 254 ;;
+            *)       echo 'An error occurred (ThrottlingException) when calling the DescribeNodegroup operation' >&2; exit 254 ;;
+        esac ;;
+    # STUB_EKS_WAIT_FAILS names the waiters that fail, such as nodegroup-active.
+    'eks wait')
+        case " ${STUB_EKS_WAIT_FAILS:-} " in
+            *" $waiter "*) echo "Waiter $waiter failed: terminal failure state" >&2; exit 255 ;;
+        esac ;;
+    'iam list-open-id-connect-providers')
+        [ "${STUB_OIDC_LIST_FAILS:-0}" = 0 ] || { echo 'An error occurred (Throttling): Rate exceeded' >&2; exit 254; }
+        printf '%b' "${STUB_OIDC_PROVIDERS:-}" ;;
     'ecr describe-images')
         case "${STUB_ECR:-}" in
             found)   echo '{"imageDetails": [{"imageTags": ["abc123"]}]}' ;;
@@ -116,8 +145,10 @@ cat > "$tmp/bin/eksctl" <<'STUB'
 #!/usr/bin/env bash
 printf 'eksctl %s\n' "$*" >> "$STUB_LOG"
 case "$1" in
+    version) printf '%s\n' "${STUB_EKSCTL_VERSION-0.230.0}" ;;
     get)    [ "${STUB_CLUSTER_UP:-0}" = 1 ] ;;
     delete) [ "${STUB_EKSCTL_FAILS:-0}" = 0 ] ;;
+    utils|create) [ "${STUB_EKSCTL_CREATE_FAILS:-0}" = 0 ] ;;
 esac
 STUB
 
@@ -205,6 +236,24 @@ STUB_STACKS='' STUB_LIST_STACKS='flight-ops-foundation' STUB_TAGGED=$FOUNDATION_
     run down.sh
 expect_status "$name" 1 && expect_out "$name" 'FAIL  CloudFormation stacks: flight-ops-foundation' \
     && expect_out "$name" 'FAIL  anything tagged Project=flight-ops' && pass "$name"
+
+name="a full teardown passes when only the retained OIDC provider is tagged"
+STUB_STACKS='' STUB_LIST_STACKS='' \
+    STUB_TAGGED='arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com' \
+    run down.sh
+expect_status "$name" 0 && expect_out "$name" 'PASS  anything tagged Project=flight-ops' && pass "$name"
+
+name="unusable credentials stop down.sh and cost-check.sh before any other call"
+cred_failed=0
+for script in down.sh cost-check.sh; do
+    STUB_STS_FAILS=1 run "$script"
+    if ! { expect_status "$name: $script" 1 \
+            && expect_out "$name: $script" 'AWS credentials are not usable' \
+            && expect_calls "$name: $script" '^aws ' 1; }; then
+        cred_failed=1
+    fi
+done
+[ "$cred_failed" = 1 ] || pass "$name"
 
 name="kubectl and helm use the cluster's own kubeconfig, never the caller's"
 STUB_CLUSTER_UP=1 run down.sh
@@ -325,6 +374,120 @@ STUB_STACKS='flight-ops-data' STUB_DESCRIBE_FAILS=1 run_lib "$ready_probe"
 expect_status "$name" 1 && expect_out "$name" 'could not read the status of stack flight-ops-data' \
     && reject_out "$name" ABSENT && pass "$name"
 
+# How up.sh step 4 calls it when the cluster already exists. The account also
+# holds the GitHub provider and another cluster's.
+GITHUB_OIDC='arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com'
+OTHER_OIDC='arn:aws:iam::123456789012:oidc-provider/oidc.eks.ap-south-1.amazonaws.com/id/CD34'
+OWN_OIDC='arn:aws:iam::123456789012:oidc-provider/oidc.eks.ap-south-1.amazonaws.com/id/AB12'
+complete='complete_cluster cluster.yaml'
+
+name="complete_cluster leaves a cluster with its addons, OIDC provider and node group alone"
+STUB_OIDC_PROVIDERS="$GITHUB_OIDC\\t$OWN_OIDC" STUB_NODEGROUP=active run_lib "$complete"
+expect_status "$name" 0 && expect_calls "$name" '^eksctl ' 0 && expect_calls "$name" '^aws eks create-addon' 0 \
+    && expect_calls "$name" '^aws eks wait cluster-active --name flight-ops-cluster$' 1 \
+    && expect_calls "$name" '^aws eks wait addon-active --cluster-name flight-ops-cluster --addon-name vpc-cni$' 1 \
+    && expect_calls "$name" '^aws eks wait addon-active' 1 \
+    && expect_calls "$name" '^aws eks wait nodegroup-active --cluster-name flight-ops-cluster --nodegroup-name ng-1$' 1 \
+    && pass "$name"
+
+name="complete_cluster creates only the missing networking addons, before the node group"
+STUB_OIDC_PROVIDERS=$OWN_OIDC STUB_NODEGROUP=missing STUB_ADDONS_MISSING='kube-proxy coredns' run_lib "$complete"
+if expect_status "$name" 0 && expect_calls "$name" '^aws eks create-addon .*--addon-name vpc-cni$' 0 \
+        && expect_calls "$name" '^aws eks create-addon --cluster-name flight-ops-cluster --addon-name kube-proxy$' 1 \
+        && expect_calls "$name" '^aws eks create-addon --cluster-name flight-ops-cluster --addon-name coredns$' 1; then
+    last_addon=$(grep -n '^aws eks create-addon' "$STUB_LOG" | tail -1 | cut -d: -f1)
+    created_at=$(grep -n '^eksctl create nodegroup' "$STUB_LOG" | cut -d: -f1)
+    if [ -z "$created_at" ]; then
+        fail "$name" "no eksctl create nodegroup"
+    elif [ "$last_addon" -lt "$created_at" ]; then
+        pass "$name"
+    else
+        fail "$name" "an addon was created after the node group"
+    fi
+fi
+
+name="a failed addon lookup is not taken for a missing addon"
+STUB_OIDC_PROVIDERS=$OWN_OIDC STUB_NODEGROUP=active STUB_ADDON_LOOKUP_FAILS=1 run_lib "$complete"
+expect_status "$name" 1 && expect_out "$name" 'could not read addon vpc-cni' \
+    && expect_calls "$name" '^aws eks create-addon' 0 && expect_calls "$name" '^eksctl ' 0 && pass "$name"
+
+name="complete_cluster associates a missing OIDC provider, and another cluster's does not count"
+STUB_OIDC_PROVIDERS="$GITHUB_OIDC\\t$OTHER_OIDC" STUB_NODEGROUP=active run_lib "$complete"
+expect_status "$name" 0 \
+    && expect_calls "$name" '^eksctl utils associate-iam-oidc-provider --config-file cluster.yaml --approve$' 1 \
+    && expect_calls "$name" '^eksctl create ' 0 && pass "$name"
+
+name="complete_cluster creates a missing node group, then waits for it"
+STUB_OIDC_PROVIDERS=$OWN_OIDC STUB_NODEGROUP=missing run_lib "$complete"
+if expect_status "$name" 0 \
+        && expect_calls "$name" '^eksctl create nodegroup --config-file cluster.yaml --include ng-1$' 1 \
+        && expect_calls "$name" '^eksctl utils ' 0; then
+    created_at=$(grep -n '^eksctl create nodegroup' "$STUB_LOG" | cut -d: -f1)
+    wait_at=$(grep -n 'eks wait nodegroup-active' "$STUB_LOG" | cut -d: -f1)
+    if [ -z "$wait_at" ]; then
+        fail "$name" "no nodegroup-active wait"
+    elif [ "$wait_at" -gt "$created_at" ]; then
+        pass "$name"
+    else
+        fail "$name" "the wait ran before the create"
+    fi
+fi
+
+name="a failed lookup is not taken for a missing OIDC provider or node group"
+STUB_OIDC_LIST_FAILS=1 STUB_NODEGROUP=active run_lib "$complete"
+if expect_status "$name" 1 && expect_out "$name" 'could not list the IAM OIDC providers' \
+        && expect_calls "$name" '^eksctl ' 0; then
+    STUB_OIDC_PROVIDERS=$OWN_OIDC STUB_NODEGROUP=throttled run_lib "$complete"
+    expect_status "$name" 1 && expect_out "$name" 'could not read node group ng-1' \
+        && expect_calls "$name" '^eksctl ' 0 && pass "$name"
+fi
+
+name="complete_cluster stops on a cluster that does not become ACTIVE"
+STUB_EKS_WAIT_FAILS=cluster-active run_lib "$complete"
+expect_status "$name" 1 && expect_out "$name" 'cluster flight-ops-cluster is not ACTIVE' \
+    && expect_calls "$name" '^eksctl ' 0 && pass "$name"
+
+name="complete_cluster stops on vpc-cni or a node group that does not become ACTIVE"
+STUB_OIDC_PROVIDERS=$OWN_OIDC STUB_NODEGROUP=active STUB_EKS_WAIT_FAILS=addon-active run_lib "$complete"
+if expect_status "$name" 1 && expect_out "$name" 'addon vpc-cni did not become ACTIVE' \
+        && expect_out "$name" 'aws eks describe-addon --region ap-south-1 --cluster-name flight-ops-cluster' \
+        && expect_calls "$name" '^eksctl ' 0 && expect_calls "$name" 'eks describe-nodegroup' 0; then
+    STUB_OIDC_PROVIDERS=$OWN_OIDC STUB_NODEGROUP=active STUB_EKS_WAIT_FAILS=nodegroup-active run_lib "$complete"
+    expect_status "$name" 1 && expect_out "$name" 'node group ng-1 did not become ACTIVE' \
+        && expect_out "$name" 'aws eks describe-nodegroup --region ap-south-1 --cluster-name flight-ops-cluster' \
+        && reject_out "$name" 'is ACTIVE' && pass "$name"
+fi
+
+name="complete_cluster stops on a cluster with no OIDC issuer"
+STUB_ISSUER=None STUB_NODEGROUP=active run_lib "$complete"
+expect_status "$name" 1 && expect_out "$name" "cluster flight-ops-cluster has no OIDC issuer (got 'None')" \
+    && expect_calls "$name" 'iam list-open-id-connect-providers' 0 && expect_calls "$name" '^eksctl ' 0 && pass "$name"
+
+name="complete_cluster stops when an addon, the OIDC provider or the node group cannot be created"
+STUB_OIDC_PROVIDERS=$OWN_OIDC STUB_NODEGROUP=missing STUB_ADDONS_MISSING=vpc-cni STUB_ADDON_CREATE_FAILS=1 \
+    run_lib "$complete"
+if expect_status "$name" 1 && expect_out "$name" 'could not create addon vpc-cni' \
+        && expect_calls "$name" '^eksctl ' 0; then
+    STUB_OIDC_PROVIDERS=$GITHUB_OIDC STUB_NODEGROUP=missing STUB_EKSCTL_CREATE_FAILS=1 run_lib "$complete"
+    if expect_status "$name" 1 && expect_out "$name" 'could not associate an IAM OIDC provider with flight-ops-cluster' \
+            && expect_calls "$name" '^eksctl create ' 0; then
+        STUB_OIDC_PROVIDERS=$OWN_OIDC STUB_NODEGROUP=missing STUB_EKSCTL_CREATE_FAILS=1 run_lib "$complete"
+        expect_status "$name" 1 && expect_out "$name" 'could not create node group ng-1' \
+            && expect_calls "$name" 'eks wait nodegroup-active' 0 && pass "$name"
+    fi
+fi
+
+name="lib.sh names the node group cluster.yaml declares"
+: > "$OUT"
+declared=$(sed -n '/^managedNodeGroups:/,/^[^ #]/s/^  - name: //p' "$here/../../cluster.yaml")
+# shellcheck disable=SC2016  # expanded by the inner shell, after lib.sh is sourced
+named=$(bash -c '. "$1"; printf %s "${NODEGROUP:-}"' _ "$tmp/deploy/aws/lib.sh")
+if [ -n "$declared" ] && [ "$declared" = "$named" ]; then
+    pass "$name"
+else
+    fail "$name" "cluster.yaml declares '$declared', lib.sh names '$named'"
+fi
+
 name="require_jdbc_url stops on None and on nothing, and accepts a PostgreSQL URL"
 run_lib 'require_jdbc_url None'
 if expect_status "$name" 1 && expect_out "$name" "no usable JdbcUrl output (got 'None')"; then
@@ -342,6 +505,19 @@ if expect_status "$name" 0; then
     if expect_status "$name" 1 && expect_out "$name" "the Maven wrapper sees '17'"; then
         run_lib "require_jdk21 '$tmp/mvnw-none'"
         expect_status "$name" 1 && expect_out "$name" "the Maven wrapper sees 'no JDK'" && pass "$name"
+    fi
+fi
+
+name="require_eksctl accepts 0.184.0 or later and stops on an older one or none"
+STUB_EKSCTL_VERSION=0.230.0 run_lib require_eksctl
+if expect_status "$name" 0; then
+    STUB_EKSCTL_VERSION=1.0.0 run_lib require_eksctl
+    if expect_status "$name" 0; then
+        STUB_EKSCTL_VERSION=0.183.0 run_lib require_eksctl
+        if expect_status "$name" 1 && expect_out "$name" "this one reports '0.183.0'"; then
+            STUB_EKSCTL_VERSION='' run_lib require_eksctl
+            expect_status "$name" 1 && expect_out "$name" "reports 'no version'" && pass "$name"
+        fi
     fi
 fi
 
@@ -392,11 +568,17 @@ name="up.sh runs each of those checks"
 : > "$OUT"
 missing_calls=''
 # shellcheck disable=SC2016  # the calls are matched as written, unexpanded
-for call in 'require_jdk21 "$repo/mvnw"' 'grant_namespace_access ' 'if stack_ready "$DATA_STACK"' \
+for call in 'require_jdk21 "$repo/mvnw"' 'require_eksctl' 'complete_cluster "$repo/cluster.yaml"' \
+        'grant_namespace_access ' 'if stack_ready "$DATA_STACK"' \
         'require_jdbc_url "$DB_URL"' 'wait_for_deployment'; do
     grep -qF -- "$call" "$here/up.sh" || missing_calls="$missing_calls [$call]"
 done
 if [ -z "$missing_calls" ]; then pass "$name"; else fail "$name" "no call to$missing_calls"; fi
+
+# Another local user can create a file at a fixed name in /tmp before up.sh
+# does, and step 8 turns the file it downloads into an IAM policy.
+name="up.sh writes nothing to a fixed path in /tmp"
+if grep -n '/tmp/' "$here/up.sh" > "$OUT"; then fail "$name" "a fixed /tmp path"; else pass "$name"; fi
 
 echo
 if [ "$FAILED" -gt 0 ]; then

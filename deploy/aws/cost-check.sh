@@ -20,7 +20,7 @@ DAYS="${1:-7}"
 case "$DAYS" in ''|*[!0-9]*) die "usage: $0 [days]  (a whole number)" ;; esac
 
 require_tool aws
-ACCOUNT_ID=$(require_credentials)
+ACCOUNT_ID=$(require_credentials) || exit 1
 
 # BSD date (macOS, where this repo is developed) and GNU date (Linux, CI)
 # disagree on relative dates, and neither accepts the other's syntax.

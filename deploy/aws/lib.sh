@@ -17,6 +17,8 @@ STATE_FILE="$STATE_DIR/flight-ops.env"
 # that differs between the two is a resource no one finds again.
 # shellcheck disable=SC2034  # read by the scripts that source this file
 CLUSTER_NAME=flight-ops-cluster
+# The managed node group cluster.yaml declares. selftest.sh checks the two agree.
+NODEGROUP=ng-1
 # shellcheck disable=SC2034
 NAMESPACE=flight-ops
 # shellcheck disable=SC2034
@@ -51,7 +53,8 @@ require_tool() {
 }
 
 # Fails early and legibly, before the first real call fails with an opaque
-# token error twenty seconds in.
+# token error twenty seconds in. Callers read it with $(...), where die ends
+# only the subshell, so each one adds `|| exit 1`.
 require_credentials() {
     local identity
     identity=$(aws sts get-caller-identity --output text --query 'Account' 2>&1) || die \
@@ -169,6 +172,100 @@ require_jdk21() {
     major=$("$mvnw" -v 2>/dev/null | sed -n 's/^Java version: \([0-9]*\).*/\1/p' || true)
     [ "$major" = 21 ] || die "the Lambda build needs JDK 21; the Maven wrapper sees '${major:-no JDK}'.
     brew install openjdk@21, then point JAVA_HOME at it."
+}
+
+# complete_cluster looks the networking addons up as EKS addons. eksctl
+# installs them that way from 0.184.0. An older one installs them
+# self-managed, and a re-run would then try to create them a second time.
+require_eksctl() {
+    local version minor
+    version=$(eksctl version 2>/dev/null | head -1)
+    minor=$(printf '%s' "$version" | sed -n 's/^0\.\([0-9][0-9]*\)\..*/\1/p')
+    case "$version" in
+        0.*) [ -n "$minor" ] && [ "$minor" -ge 184 ] ;;
+        [1-9]*.*) true ;;
+        *) false ;;
+    esac || die "up.sh needs eksctl 0.184.0 or later; this one reports '${version:-no version}'.
+    brew upgrade eksctl"
+}
+
+# complete_cluster CONFIG: for a cluster that already exists. eksctl create
+# cluster makes the control plane without the networking addons EKS would
+# otherwise install. It then adds the vpc-cni, kube-proxy and coredns addons,
+# the IAM OIDC provider and the node group. A run that stops in between leaves
+# a cluster `eksctl get cluster` finds, with no CNI for nodes, nothing for IRSA
+# to trust, or no nodes. So each is checked and only a missing one is created.
+# As in stack_status, a lookup that fails for any other reason stops the run
+# instead of counting as "missing".
+complete_cluster() {
+    local config=$1 addon issuer providers arn associated=0 out
+    aws eks wait cluster-active --name "$CLUSTER_NAME" \
+        || die "cluster $CLUSTER_NAME is not ACTIVE. See:
+    aws eks describe-cluster --region $AWS_REGION --name $CLUSTER_NAME --query cluster.status"
+
+    # vpc-cni is created with no IRSA role, where eksctl would give it one.
+    # eksctl create nodegroup then puts the CNI policy on the node role instead.
+    for addon in vpc-cni kube-proxy coredns; do
+        if out=$(aws eks describe-addon --cluster-name "$CLUSTER_NAME" \
+                --addon-name "$addon" --query 'addon.status' --output text 2>&1); then
+            log "addon $addon already exists ($out)"
+        else
+            case "$out" in
+                *ResourceNotFoundException*) ;;
+                *) die "could not read addon $addon: $out" ;;
+            esac
+            aws eks create-addon --cluster-name "$CLUSTER_NAME" --addon-name "$addon" >/dev/null \
+                || die "could not create addon $addon"
+            ok "addon $addon requested"
+        fi
+    done
+    # Only vpc-cni, as eksctl does: nodes need it to become Ready, and coredns
+    # stays DEGRADED until there are nodes to run on.
+    aws eks wait addon-active --cluster-name "$CLUSTER_NAME" --addon-name vpc-cni \
+        || die "addon vpc-cni did not become ACTIVE. See:
+    aws eks describe-addon --region $AWS_REGION --cluster-name $CLUSTER_NAME \\
+        --addon-name vpc-cni --query addon.health"
+
+    issuer=$(aws eks describe-cluster --name "$CLUSTER_NAME" \
+        --query 'cluster.identity.oidc.issuer' --output text) \
+        || die "could not read the OIDC issuer of $CLUSTER_NAME"
+    case "$issuer" in
+        https://*) ;;
+        *) die "cluster $CLUSTER_NAME has no OIDC issuer (got '${issuer:-nothing}')" ;;
+    esac
+    providers=$(aws iam list-open-id-connect-providers \
+        --query 'OpenIDConnectProviderList[].Arn' --output text) \
+        || die "could not list the IAM OIDC providers"
+    for arn in $providers; do
+        case "$arn" in *":oidc-provider/${issuer#https://}") associated=1 ;; esac
+    done
+    if [ "$associated" = 1 ]; then
+        log "IAM OIDC provider already associated"
+    else
+        eksctl utils associate-iam-oidc-provider --config-file "$config" --approve \
+            || die "could not associate an IAM OIDC provider with $CLUSTER_NAME"
+        ok "IAM OIDC provider associated"
+    fi
+
+    if out=$(aws eks describe-nodegroup --cluster-name "$CLUSTER_NAME" \
+            --nodegroup-name "$NODEGROUP" --query 'nodegroup.status' --output text 2>&1); then
+        log "node group $NODEGROUP already exists ($out)"
+    else
+        case "$out" in
+            *ResourceNotFoundException*) ;;
+            *) die "could not read node group $NODEGROUP: $out" ;;
+        esac
+        eksctl create nodegroup --config-file "$config" --include "$NODEGROUP" \
+            || die "could not create node group $NODEGROUP"
+    fi
+    # A node group that CloudFormation is still creating has no nodes yet, and
+    # the Helm install in step 8 would time out waiting for one.
+    log "waiting for node group $NODEGROUP to become ACTIVE..."
+    aws eks wait nodegroup-active --cluster-name "$CLUSTER_NAME" --nodegroup-name "$NODEGROUP" \
+        || die "node group $NODEGROUP did not become ACTIVE. See:
+    aws eks describe-nodegroup --region $AWS_REGION --cluster-name $CLUSTER_NAME \\
+        --nodegroup-name $NODEGROUP --query nodegroup.health"
+    ok "node group $NODEGROUP is ACTIVE"
 }
 
 # stack_output prints nothing for a missing output, and render-aws.sh renders

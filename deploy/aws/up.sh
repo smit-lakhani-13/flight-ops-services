@@ -6,6 +6,10 @@
 # Roughly 50 minutes of wall clock, nearly all of it waiting for EKS (~20 min)
 # and RDS (~10 min). Every step checks whether its resource already exists
 # before creating it, so an interrupted run is resumed by running it again.
+# Step 4 also finishes a cluster that an interrupted eksctl left part-built.
+# The database password lives only in this shell from step 6 until step 9
+# writes the Secret. A run that stops in between stops again at step 9, and
+# says how to set a new password.
 #
 # It costs money from step 4 onwards. Step 1 prints the rate and asks.
 #
@@ -33,8 +37,9 @@ require_tool aws eksctl kubectl helm sam openssl htpasswd
 
 # Step 3 builds the Lambda jar with the Maven wrapper.
 require_jdk21 "$repo/mvnw"
+require_eksctl
 
-ACCOUNT_ID=$(require_credentials)
+ACCOUNT_ID=$(require_credentials) || exit 1
 ok "account $ACCOUNT_ID, region $AWS_REGION"
 
 profile_region=$(aws configure get region 2>/dev/null || true)
@@ -62,7 +67,8 @@ cat <<COST
    15 days  ≈ \$116  (\$137 ≈ ₹13,100)
    30 days  ≈ \$232  (\$273 ≈ ₹26,200)   <- the number that matters if you forget
 
-  Budgets will alert $ALERT_EMAIL at 50/80/100% of \$60/month and 80% of \$12/day.
+  Budgets will alert $ALERT_EMAIL at 50/80/100% of \$60/month, when the
+  month's forecast passes \$60, and at 80% of \$12/day.
   Confirm the subscription email when it arrives, or the alerts never fire.
 
   Tear it all down with:  $here/down.sh
@@ -139,7 +145,8 @@ ok "queue $SQS_QUEUE_URL"
 step "4/12  EKS cluster — this is the ~20 minute step"
 # ---------------------------------------------------------------------------
 if eksctl get cluster --name "$CLUSTER_NAME" >/dev/null 2>&1; then
-    ok "cluster already exists"
+    ok "cluster already exists — checking its addons, OIDC provider and node group"
+    complete_cluster "$repo/cluster.yaml"
 else
     eksctl create cluster -f "$repo/cluster.yaml"
 fi
@@ -206,8 +213,8 @@ if stack_ready "$DATA_STACK"; then
     ok "data stack already exists — not touching the password"
 else
     # Generated here, used twice (the RDS parameter and the Kubernetes
-    # Secret), and never written to disk. Losing it means replacing the
-    # instance, which for a demo database is a two-command fix.
+    # Secret), and never written to disk. A run that loses it before step 9
+    # stops there and prints the two commands that set a new one.
     DB_PASSWORD=$(openssl rand -base64 24 | tr -d '/@" =' | cut -c1-24)
     aws cloudformation deploy \
         --stack-name "$DATA_STACK" \
@@ -253,11 +260,17 @@ step "8/12  AWS Load Balancer Controller and metrics-server"
 # `kubectl get ingress` shows no ADDRESS, forever, with no error anywhere.
 LBC_POLICY_ARN="arn:aws:iam::${ACCOUNT_ID}:policy/AWSLoadBalancerControllerIAMPolicy"
 if ! aws iam get-policy --policy-arn "$LBC_POLICY_ARN" >/dev/null 2>&1; then
-    curl -fsSL -o /tmp/lbc-iam-policy.json \
+    # mktemp, not a fixed shared name: another local user could create that
+    # file first, and what it held would become an account-wide IAM policy.
+    policy_file=$(mktemp)
+    trap 'rm -f "$policy_file"' EXIT
+    curl -fsSL -o "$policy_file" \
         "https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/${LBC_POLICY_TAG}/docs/install/iam_policy.json"
     aws iam create-policy \
         --policy-name AWSLoadBalancerControllerIAMPolicy \
-        --policy-document file:///tmp/lbc-iam-policy.json >/dev/null
+        --policy-document "file://$policy_file" >/dev/null
+    rm -f "$policy_file"
+    trap - EXIT
     ok "created AWSLoadBalancerControllerIAMPolicy from $LBC_POLICY_TAG"
 fi
 
@@ -301,9 +314,17 @@ if kubectl get secret flight-ops-secret -n "$NAMESPACE" >/dev/null 2>&1; then
     API_PASSWORD_PLAIN='(unchanged — see your earlier run)'
     OPS_PASSWORD_PLAIN='(unchanged)'
 else
+    # An exported DB_PASSWORD gets here on a re-run: step 6 sets it only when
+    # it creates the data stack.
     [ -n "${DB_PASSWORD:-}" ] || die "the data stack already existed, so the database password is
-    not available here. Either delete the data stack and re-run, or create the
-    secret by hand from k8s/secret.example.yaml."
+    not available here: it lived only in the shell of the run that created the
+    stack. Delete the data stack and re-run, or set a new password on the
+    database and re-run from the same shell:
+    export DB_PASSWORD=\$(openssl rand -base64 24 | tr -d '/@\" =' | cut -c1-24)
+    aws rds modify-db-instance --region $AWS_REGION \\
+        --db-instance-identifier flight-ops-db \\
+        --master-user-password \"\$DB_PASSWORD\" --apply-immediately
+    ALERT_EMAIL=$ALERT_EMAIL $0"
 
     API_PASSWORD_PLAIN=$(openssl rand -base64 18 | tr -d '/+= ')
     OPS_PASSWORD_PLAIN=$(openssl rand -base64 18 | tr -d '/+= ')
