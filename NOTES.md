@@ -334,9 +334,9 @@ service was losing every event.
 
 A failed row now waits `app.outbox.retry-backoff` (2s), doubling per attempt up
 to a `max-retry-backoff` cap (5m). The claim skips a row whose time has not
-come, so ten attempts span about thirteen minutes. The doubling is a bounded
-loop. A shift, `base << (attempt - 1)`, is one character shorter and wrong at
-attempt 64.
+come, so ten attempts span about thirteen and a half minutes (810 seconds of
+waits). The doubling is a bounded loop. A shift, `base << (attempt - 1)`, is
+one character shorter and wrong at attempt 64.
 
 `OutboxRetryBackoffTest.aBurstOfDrainsDoesNotBurnTheCeiling` and
 `theWaitDoublesUpToTheCap` pin it. The backoff landed in `50e8871`.
@@ -416,9 +416,10 @@ The same read found more:
   one per account, shared by every repository that authenticates Actions to
   AWS, so it now has `DeletionPolicy: Retain`.
 
-Nothing automated tests these scripts, because a real test needs an AWS
-account. CI runs `shellcheck` and `bash -n` over them. The fixes are in
-`b576b6f`. `down.sh` now finishes with fourteen checks, and
+When I made these fixes, CI ran only `shellcheck` and `bash -n` over the
+scripts, because a real test needs an AWS account. The fixes are in `b576b6f`.
+Since `86b9e41`, `deploy/aws/selftest.sh` runs `down.sh` against stubbed tools
+in CI's `infra-lint` job. `down.sh` now finishes with fourteen checks, and
 [DEPLOYMENT.md](DEPLOYMENT.md) lists them.
 
 ## The Boot 4 upgrade
@@ -610,7 +611,10 @@ principal.
 `ExceptionTranslationFilter` never runs, so the entry point configured under
 `exceptionHandling` was dead code on that path. I wired the JSON entry point
 and access-denied handler into the configurer as well. The error contract now
-holds for bearer tokens as it does for Basic. No test covers this path yet.
+holds for bearer tokens as it does for Basic.
+`src/test/java/com/smit/flightops/BearerTokenChallengeTest.java#aRejectedBearerTokenGetsABearerChallenge`
+pins it. A bad token gets a 401, the `Bearer` challenge with
+`error="invalid_token"`, and the `UNAUTHENTICATED` JSON body.
 
 ### An expanded year poisoned the sort key
 
@@ -711,12 +715,14 @@ seconds: a date in the year 58971, which passed `@Future`.
 the second (`f1ae45e`). For the third, `validation/IsoInstantDeserializer.java`
 accepts a departure time only as an ISO-8601 string. An offset such as
 `+05:30` still works and is stored in UTC (`f1ae45e`). Each case is
-`400 MALFORMED_REQUEST`. The tests are
+`400 MALFORMED_REQUEST`.
 `controller/BookingControllerTest.java#seatsMustBeAWholeNumber`,
-`controller/FlightControllerTest.java#statusAsANumberReturns400`,
-`controller/FlightControllerTest.java#departureTimeMustBeAnIsoString` and
-`controller/FlightControllerTest.java#departureTimeWithAnOffsetIsRead`, and
-each failed before its fix.
+`controller/FlightControllerTest.java#statusAsANumberReturns400` and
+`controller/FlightControllerTest.java#departureTimeMustBeAnIsoString` each
+failed before its fix.
+`controller/FlightControllerTest.java#departureTimeWithAnOffsetIsRead` passes
+without the fix too, because Jackson's own reader takes an offset. It keeps
+the fix from refusing that form.
 
 ### A flight number that broke its own Location header
 

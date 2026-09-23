@@ -188,11 +188,7 @@ Documentation is part of the change and ships with it:
   what it costs. An ADR that only lists benefits is a brochure.
 - Numbers come from `scripts/numbers.sh`.
 - British spelling.
-- No emoji in prose. The only exception is the three-symbol legend in the
-  README's Project status table, where the symbol *is* the content. A reader
-  scanning the table sees at a glance which rows are executed, which are only
-  reviewed and which are absent, and three words in a narrow column do that
-  worse. Anywhere else an emoji is decoration.
+- No emoji in prose.
 
 ## Commits and pull requests
 

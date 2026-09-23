@@ -63,7 +63,7 @@ repeats the block with the reasoning.
 | Path | Who |
 |---|---|
 | `/actuator/health`, `/liveness`, `/readiness` | anyone. The kubelet has no credentials. Only `ROLE_OPS` sees the health components (`management.endpoint.health.roles: OPS`); everyone else gets the status and the group names |
-| `/actuator/**` (everything else) | `ROLE_OPS` |
+| `/actuator`, `info`, `metrics`, `prometheus` (the other exposed endpoints) | `ROLE_OPS` |
 | `/v3/api-docs/**`, `/v3/api-docs.yaml`, `/swagger-ui.html`, `/swagger-ui/**` | anyone, for `GET` and `HEAD`. See below |
 | `/error` | anyone. It is the container's own forward target and is not an API route |
 | `/api/**` | `flights:read` for `GET` and `HEAD`; `flights:write` for `POST`, `PATCH` and `DELETE` |
@@ -227,9 +227,9 @@ written down. What is missing is a domain.
 
 - The writes read JSON only. swagger-core puts a YAML reader on the classpath,
   and none of the `spring.jackson` settings reach it, so each write declares
-  `consumes = application/json`. A body in any other format gets
+  `consumes = application/json`. A request with any other `Content-Type`, or none, gets
   `415 UNSUPPORTED_MEDIA_TYPE`. In JSON, a whole number sent as text, a status
-  sent as a number and a departure time that is not an ISO-8601 string are
+  sent as a number and a departure time sent as a number or as text that is not ISO-8601 are
   each `400 MALFORMED_REQUEST`. None of them is converted into a value the
   client did not write.
 
@@ -240,7 +240,8 @@ written down. What is missing is a domain.
   asks for. An API request
   that accepts only XML or YAML gets `406 REQUEST_REJECTED`, written as JSON.
 
-- `X-Request-Id` is echoed on every response and appears in logs. A client's
+- `X-Request-Id` is echoed on every response the application handles and
+  appears in logs. A client's
   value is kept only if it matches `^[A-Za-z0-9._:-]{1,128}$`. Anything else
   is replaced with a generated UUID, because the value reaches a log line and
   a newline in it would forge a log entry. `idempotencyKey` takes the same
@@ -333,8 +334,9 @@ written down. What is missing is a domain.
    passwords and seeded data. It starts, serves everything and stores nothing,
    and `./mvnw spring-boot:run` or a bare `java -jar` gets it. The image sets
    `SPRING_PROFILES_ACTIVE=prod`, so a container started with no profile fails
-   closed: a bare `docker run` stops with `'url' must start with "jdbc"`. CI
-   checks that in "The image will not start without a database".
+   closed: a bare `docker run` stops with `'url' must start with "jdbc"`. The deploy job's
+   step "The image will not start without a database" checks that before it
+   pushes an image. That job is gated off, so the check has never run.
    `compose.yaml` selects `postgres`, and the ConfigMap sets `prod`.
 
 6. **A placeholder hash starts.** The startup self-check proves the encoder can

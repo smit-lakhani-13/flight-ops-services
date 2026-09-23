@@ -74,6 +74,7 @@ the step "The image will not start without a database".
 ## 3. The async half alone
 
 ```bash
+export AWS_REGION=ap-south-1 AWS_DEFAULT_REGION=ap-south-1   # what deploy/aws/lib.sh pins
 rm -rf .aws-sam
 ./mvnw -B -q -f lambda/pom.xml clean package
 sam deploy \
@@ -86,7 +87,8 @@ sam deploy \
   --tags Project=flight-ops
 ```
 
-These are the commands step 3 of `up.sh` runs, and they need JDK 21. Maven
+These are the commands step 3 of `up.sh` runs, in the region
+`deploy/aws/lib.sh` pins, and they need JDK 21. Maven
 builds the jar, and `sam build` is not used. SAM builds in a scratch copy of
 the `CodeUri` directory, where the Lambda tests cannot find `../events` and
 `../contracts`. So `template.yaml` points `CodeUri` at the shaded jar,
@@ -115,7 +117,8 @@ The log line carries the `traceparent` of the HTTP request that made the
 booking. With it, one request can be followed across a process boundary and a
 queue.
 
-Delete the stack with `sam delete --stack-name flight-ops-lambda`, or with
+Delete the stack with
+`sam delete --stack-name flight-ops-lambda --region ap-south-1`, or with
 [`deploy/aws/down.sh`](deploy/aws/down.sh). Neither removes the
 `aws-sam-cli-managed-default` bucket that `--resolve-s3` created, because every
 SAM project in the account and region shares it. `down.sh --delete-sam-bucket`
@@ -185,31 +188,37 @@ interrupted run, run the same command again.
 
 ### The order, and why it is that order
 
-1. **Foundation** (ECR, GitHub OIDC, CI role, budgets). CI cannot push an image
+The numbers are `up.sh`'s own steps. Step 1 is the preflight and the cost
+table, and steps 10 to 12 are the hand-off to CI, the Ingress and the demo
+described above.
+
+2. **Foundation** (ECR, GitHub OIDC, CI role, budgets). CI cannot push an image
    to a registry that does not exist, and the budgets should be alerting before
    anything expensive is created.
-2. **SAM** (queue, table, Lambda). It is cheap and independent of the cluster,
+3. **SAM** (queue, table, Lambda). It is cheap and independent of the cluster,
    and the cluster's ConfigMap needs its queue URL.
-3. **EKS** (~20 min). The long one.
-4. **Access entry.** CI gets `AmazonEKSEditPolicy` scoped to one namespace,
+4. **EKS** (~20 min). The long one.
+5. **Access entry.** CI gets `AmazonEKSEditPolicy` scoped to one namespace,
    through the access-entry API. I kept away from the `aws-auth` ConfigMap,
    because one malformed edit to it locks every principal out of the cluster at
    once, including the one that would fix it. The associate call's exit code
    cannot tell "already associated" from "refused". So this step reads the
    association back and stops unless the policy is scoped to
    `namespace/flight-ops`.
-5. **RDS** (~10 min). It needs eksctl's VPC and subnets, so it cannot come
+6. **RDS** (~10 min). It needs eksctl's VPC and subnets, so it cannot come
    earlier. A data stack in `CREATE_COMPLETE`, `UPDATE_COMPLETE` or
    `UPDATE_ROLLBACK_COMPLETE` counts as existing, and its password is left
    alone. `ROLLBACK_COMPLETE` or `DELETE_FAILED` stops the run with the
    commands that delete the stack. Any `*_IN_PROGRESS` state stops it and
    tells you to wait for the stack to finish, then re-run. A status read that
    fails for any reason but "does not exist" stops it too, because a throttled
-   call taken for "no stack" would redeploy it with a new password. So does a `JdbcUrl` output
-   that does not start with `jdbc:postgresql://`.
-6. **IRSA, load balancer controller, metrics-server.** Cluster setup that
+   call taken for "no stack" would redeploy it with a new password. So does a
+   `JdbcUrl` output that does not start with `jdbc:postgresql://`.
+7. **IRSA.** The pods' AWS identity, with no access keys. Cluster setup that
    happens once. No deploy repeats it.
-7. **Namespace and Secret.** Generated passwords, never written to disk. The API
+8. **Load balancer controller and metrics-server.** Also set up once, and no
+   deploy repeats it.
+9. **Namespace and Secret.** Generated passwords, never written to disk. The API
    and ops passwords are bcrypt-hashed. The database password is stored as it
    is, because the JDBC driver needs it.
 
@@ -315,8 +324,8 @@ until after the weekend. Creating the stack takes 50 minutes and deleting it
 takes 20, and neither number decides the bill. Whether someone remembers the
 teardown does, which is why the 30-day row is here.
 
-`up.sh` creates two budgets: $60/month, alerting at 50/80/100%, and $12/day,
-alerting at 80%. They send e-mail, and an e-mail does not stop anything.
+`up.sh` creates two budgets: $60/month, alerting at 50/80/100% of actual
+spend and when the forecast passes 100%, and $12/day, alerting at 80%. They send e-mail, and an e-mail does not stop anything.
 **Warning:** set a calendar reminder for the teardown date before you create
 anything.
 

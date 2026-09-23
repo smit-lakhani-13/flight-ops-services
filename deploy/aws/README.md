@@ -189,8 +189,9 @@ Two orderings in that script matter:
 `--keep-foundation` keeps ECR, the CI role and the budgets. CI's "Is this
 commit already in ECR?" step then finds an image already pushed for the commit
 it deploys, and skips the build. The sweep leaves out the foundation stack and
-the resources it owns, and still checks everything else. ECR storage is the
-only charge that remains (DEPLOYMENT.md section 5).
+the resources it owns, and still checks everything else. The kept images stay in ECR, which DEPLOYMENT.md
+section 5 counts as free tier at this volume. The shared SAM bucket also
+stays, as it does after a full teardown, unless you pass `--delete-sam-bucket`.
 
 Two things the sweep cannot prove. Cost Explorer lags, so check again the next
 day and expect zero, not "small". And data already transferred this month is
@@ -237,6 +238,7 @@ and `sam` expect to find them. `up.sh` builds the Lambda with
 scratch copy of `lambda/`, where the tests cannot find `../events` and
 `../contracts`.
 
-The scripts keep their state in `deploy/aws/.state/flight-ops.env`: account id,
-queue URL, database endpoint and load balancer hostname. It is gitignored, it holds
-no passwords, and `down.sh` renames it to `.done` once the sweep passes clean.
+The scripts keep their state in `deploy/aws/.state/flight-ops.env`: the account
+id, the ECR repository URI, the queue URL, the JDBC URL and the load balancer
+hostname. It is gitignored and holds no passwords. Once the sweep passes
+clean, `down.sh` renames it to `flight-ops.env.<account id>.done`.

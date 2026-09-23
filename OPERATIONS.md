@@ -70,8 +70,9 @@ starts, serves every endpoint, passes the demo and stores nothing.
 `./mvnw spring-boot:run` and a bare `java -jar` get it. The image does not: the
 Dockerfile sets `SPRING_PROFILES_ACTIVE=prod`, so a container started with no
 profile fails closed. With no `DB_URL`, a bare `docker run` stops with
-`'url' must start with "jdbc"`, and CI checks that in "The image will not start
-without a database". `compose.yaml` selects `postgres`, and
+`'url' must start with "jdbc"`. The deploy job's step "The image will not start
+without a database" checks that before it pushes an image. That job is gated
+off, so the check has never run. `compose.yaml` selects `postgres`, and
 `k8s/base/configmap.yaml` sets `prod` for the cluster. The Deployment pulls the
 whole ConfigMap in with `envFrom`.
 
@@ -151,8 +152,9 @@ Every log line carries the application name, trace id, span id and request id:
 [flight-ops-service,10cd4f19102abf7a3f922f252b6d4a97,da65ef2344ac0aa1,599214ae-5bf0-4fca-8bbf-2eddc2ce7cda]
 ```
 
-The last field is the `X-Request-Id`, which is on every response, including 401
-and 403. A user reporting "it said 403" can hand over one string that finds the
+The last field is the `X-Request-Id`, which is on every response the
+application handles, including 401 and 403. Tomcat's own 400 page and a
+`TRACE` refusal carry none. A user reporting "it said 403" can hand over one string that finds the
 request.
 
 `RequestIdFilter` runs at `HIGHEST_PRECEDENCE`, ahead of Spring Security. A 401
@@ -469,9 +471,9 @@ also covers the 30-minute wait at step 10 for CI to create the Deployment, and
 CI stopping at "Is this commit already in ECR?". Once the Deployment exists,
 `up.sh` waits up to 20 more minutes for it to become available.
 
-`deploy/aws/selftest.sh` tests `up.sh`'s checks, `down.sh`'s sweep and the
-deploy job's ECR lookup against stubbed `aws`, `kubectl`, `helm`, `eksctl` and
-`mvnw` commands. It uses no credentials, takes a few seconds, and runs in CI's
+`deploy/aws/selftest.sh` runs `down.sh`, `cost-check.sh`, `ecr-image-exists.sh`
+and `up.sh`'s checks in `lib.sh` against stubbed `aws`, `kubectl`, `helm`,
+`eksctl`, `sleep` and `mvnw` commands. It uses no credentials, takes a few seconds, and runs in CI's
 `infra-lint` job.
 
 ### Rotating the API or ops password
@@ -503,11 +505,13 @@ the property at startup either way.
   cross-process trace hunt is `kubectl logs | grep <traceId>` on this side and
   CloudWatch Logs Insights on the Lambda's log group on the other.
 
-- **No traces are exported.** Micrometer Tracing generates the ids and puts
+- **The service exports no traces.** Micrometer Tracing generates the ids and puts
   them in the logs. They come from OpenTelemetry through
   `spring-boot-starter-opentelemetry`. OTLP export activates only when
   `management.opentelemetry.tracing.export.otlp.endpoint` is set, and it is
-  not. The log line is the trace.
+  not. The log line is the trace. The Lambda has X-Ray active tracing, so
+  X-Ray records a sample of its invocations. Those traces start at the Lambda
+  and do not carry the service's trace id.
 
 - **No metrics are pushed.** The same starter's metrics half is opt-out. It
   brings `micrometer-registry-otlp`, a push registry that targets

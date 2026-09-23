@@ -121,7 +121,7 @@ Reading it in the source, in order:
 |---|---|---|
 | Correlation | `src/main/java/com/smit/flightops/observability/RequestIdFilter.java#doFilterInternal` | Runs ahead of Spring Security, so a 401 also carries `X-Request-Id` |
 | Authorisation | `src/main/java/com/smit/flightops/config/SecurityConfig.java#apiSecurityFilterChain` | One rule set for Basic and JWT alike |
-| Binding and validation | `src/main/java/com/smit/flightops/dto/BookingRequest.java` | Bean Validation on the record components. The flight number is letters and digits, and the passenger name has no control characters. Failures become 400 before any service code runs. Jackson refuses a fractional `seats` because `accept-float-as-int` is off in `src/main/resources/application.yml`, and a missing one because a primitive `int` cannot be null. `allow-coercion-of-scalars: false` refuses `"2"` as text, `fail-on-numbers-for-enums: true` refuses a status sent as a number, and `validation/IsoInstantDeserializer.java` refuses a departure time that is not an ISO-8601 string. All of these are `400 MALFORMED_REQUEST`. The writes read JSON only, so a YAML body gets 415 before any of this runs |
+| Binding and validation | `src/main/java/com/smit/flightops/dto/BookingRequest.java` | Bean Validation on the record components. The flight number is letters and digits, and the passenger name has no control characters. Failures become 400 before any service code runs. Jackson refuses a `seats` written with a decimal point, `2.0` included, because `accept-float-as-int` is off in `src/main/resources/application.yml`, and a missing or null one because a primitive `int` cannot be null. `allow-coercion-of-scalars: false` refuses `"2"` as text, `fail-on-numbers-for-enums: true` refuses a status sent as a number, and `validation/IsoInstantDeserializer.java` refuses a departure time that is not an ISO-8601 string. All of these are `400 MALFORMED_REQUEST`. A missing or null departure time never reaches the deserializer, so `@NotNull` answers it with `400 VALIDATION_FAILED`. The writes read JSON only, so a body sent with any other `Content-Type`, YAML included, gets 415 before any of this runs |
 | Idempotency | `src/main/java/com/smit/flightops/service/BookingService.java#book` | Decides replay, conflict or insert. Holds no transaction of its own |
 | The write | `src/main/java/com/smit/flightops/service/BookingWriter.java#insertNewBooking` | The transaction, the row lock, the key re-check under the lock, the seat arithmetic and the outbox row |
 | The race loser | `src/main/java/com/smit/flightops/service/BookingWriter.java#recoverReplay` | Reads the winner in a fresh read-only transaction. `BookingService#book` holds no transaction, so the loser's has already rolled back. If `book` ever becomes transactional, `REQUIRES_NEW` still keeps the read in its own transaction |
@@ -325,8 +325,8 @@ metric and an alert.
 The transport itself is one interface,
 `src/main/java/com/smit/flightops/service/EventPublisher.java`, with two
 implementations: `LoggingEventPublisher` for local runs and
-`SqsEventPublisher` in AWS. Swapping transports takes one bean definition, and
-no business logic knows which one is wired.
+`SqsEventPublisher` in AWS. Adding a transport takes one class and one entry in
+`EventProperties.MODES`, and no business logic knows which one is wired.
 
 `app.events.publisher` picks the implementation, `log` or `sqs`.
 `OutboxPublisher` takes `EventProperties` as its first constructor argument,
@@ -610,7 +610,7 @@ costs:
 
 | Seam | Swap in | Cost |
 |---|---|---|
-| `EventPublisher` | Kafka, Solace, EventBridge | One bean definition. The payload is already serialised, and an implementation receives bytes it must not interpret |
+| `EventPublisher` | Kafka, Solace, EventBridge | One class behind `@ConditionalOnProperty`, and its mode added to `EventProperties.MODES`. The payload is already serialised, and an implementation receives bytes it must not interpret |
 | `spring.security.oauth2.resourceserver.jwt.issuer-uri` | Cognito, Okta, Entra | Configuration. The rules already treat a JWT scope and a Basic authority identically |
 | `Clock` (`src/main/java/com/smit/flightops/config/TimeConfig.java`) | A fixed clock in a test | Already used everywhere except `Booking.createdAt`, which is the documented exception |
 | `management.opentelemetry.tracing.export.otlp.endpoint` | An OTLP collector | An environment variable. Ids are already generated and already on every log line |

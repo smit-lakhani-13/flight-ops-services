@@ -130,7 +130,7 @@ This table bounds every claim in this README.
 | **Built, tested, and exercised over HTTP** | The whole app module. Every endpoint hit with `curl` against a running instance. Every status code in the tables below observed over HTTP or in a test, including the 401 and 403 bodies, except the 503 on a booking cancellation. `LockTimeoutTest` holds the flight row and gets the booking's 503 end to end. The flight status change and cancellation get theirs only in a slice test with a mocked service (`FlightControllerTest#flightWriteBehindARowLockReturns503`). The Lambda handler's logic, via 25 tests. |
 | **Verified against real PostgreSQL in CI** | All 269 tests, including the 8 Testcontainers integration tests: 5 in `BookingIntegrationTest` and 3 in `service/OutboxPrunePostgresTest`. They apply the Flyway migrations to an empty database and check `ddl-auto: validate` against the schema those migrations produced. They run `SELECT … FOR UPDATE` under 20 threads competing for 5 seats, and replay the same idempotency key from 20 threads at once. The runners have Docker, so these execute there and skip on a laptop without one, and the `build` job fails if either class is skipped or missing. |
 | **Authored and reviewed, never executed** | The container image. `sam deploy` and `sam local invoke`; there is no `sam build`, because Maven builds the jar that `template.yaml` names. Every `kubectl` and `eksctl` step. The deploy half of the GitHub Actions workflow, which is gated off (see below). |
-| **Not implemented** | A Solace binding. Trace **export**: ids are generated and logged, but there is no collector to send spans to. Rate limiting. |
+| **Not implemented** | A Solace binding. Trace **export** from the service: ids are generated and logged, but there is no collector to send spans to. The Lambda's `Tracing: Active` has X-Ray record a sample of its invocations, and those traces do not carry the service's trace id. Rate limiting. |
 
 **Warning.** Nothing here has ever been deployed, and merging to `main` does not deploy it.
 
@@ -195,7 +195,7 @@ What the repository does not claim:
 
 The same picture with method names, plus the booking sequence, the idempotency decision table, the lock order, the outbox drain, the `FlightStatus` state machine and the ER diagram, is in [ARCHITECTURE.md](ARCHITECTURE.md). Each decision has its own file in [adr/](adr/README.md).
 
-`app.events.publisher: log | sqs` picks the implementation with `@ConditionalOnProperty`, and `log` is the default, so nothing tries to reach AWS on a laptop. `EventProperties` refuses any other value at startup and names the property. `@Primary` and `@Qualifier` only choose which bean is injected, and still build every candidate, including an SQS client on a machine with no credentials. `@ConditionalOnProperty` decides whether the bean exists at all. A comment on `EventPublisher` names Solace as a transport the interface could take, and there is no Solace implementation.
+`app.events.publisher: log | sqs` picks the implementation with `@ConditionalOnProperty`, and `log` is the default, so nothing tries to reach AWS on a laptop. `EventProperties` refuses any other value at startup and names the property. `@Primary` and `@Qualifier` only choose which bean is injected, and still build every candidate, including an SQS client on a machine with no credentials. `@ConditionalOnProperty` decides whether the bean exists at all. There is no Solace implementation. One would need no change to `EventPublisher`, which takes a serialised payload and headers.
 
 ## Repository layout
 
@@ -209,7 +209,8 @@ The same picture with method names, plus the booking sequence, the idempotency d
 │   ├── exception/      9 domain exceptions, the @RestControllerAdvice, ApiErrorController
 │   ├── security/       the JSON 401 and 403 writers
 │   ├── observability/  RequestIdFilter, BookingMetrics, OutboxMetrics
-│   ├── validation/     @DistinctEndpoints, a class-level Bean Validation constraint
+│   ├── validation/     @DistinctEndpoints, a class-level Bean Validation constraint,
+│   │                   and IsoInstantDeserializer, which takes only an ISO-8601 time
 │   └── config/         SecurityConfig, OpenApiConfig, AwsConfig, four
 │                       @ConfigurationProperties records, TimeConfig, DataSeeder
 ├── src/main/resources/
@@ -251,10 +252,10 @@ Callers use HTTP Basic or a bearer token. The two in-memory accounts are `api`, 
 | Path | Who gets in |
 |---|---|
 | `/actuator/health`, `/health/liveness`, `/health/readiness` | everyone: the kubelet has no credentials, and a probe that needed them would fail the pod on a password rotation. Only `ops` sees the components behind the status (`management.endpoint.health.roles: OPS`) |
-| every other `/actuator/**` | `ROLE_OPS` |
+| `/actuator`, `/actuator/info`, `/actuator/metrics/**`, `/actuator/prometheus` | `ROLE_OPS` |
 | `GET`/`HEAD` `/api/**` | `SCOPE_flights:read` |
 | `POST`, `PATCH`, `DELETE /api/**` | `SCOPE_flights:write` |
-| `GET`/`HEAD` on `/v3/api-docs**` and `/swagger-ui/**` | everyone (see [adr/0012](adr/0012-openapi-public-read.md)) |
+| `GET`/`HEAD` on `/v3/api-docs/**`, `/v3/api-docs.yaml`, `/swagger-ui.html` and `/swagger-ui/**` | everyone (see [adr/0012](adr/0012-openapi-public-read.md)) |
 | `/error` | everyone. The container forwards errors raised outside Spring MVC (a firewall-rejected URL, an exception in a filter) to `/error` after the chain has run, and denying it would turn each of those into a 401 about `/error`. MVC 404s never get there, because `GlobalExceptionHandler` answers them first. `exception/ApiErrorController` answers in the same `{code, message, timestamp}` envelope with a generic message, because the container's own error text can name an internal path or exception class |
 | anything else | `denyAll()` |
 
@@ -273,14 +274,14 @@ The in-memory users stand in for an identity provider, and [SECURITY.md](SECURIT
 | `DELETE` | `/api/v1/flights/{flightNumber}` | `flights:write` | 204 | 404, 409, 503 |
 | `POST` | `/api/v1/bookings` | `flights:write` | 201 + `Location` | 400, 404, 409, 415, 503 |
 | `GET` | `/api/v1/bookings/{bookingId}` | `flights:read` | 200 | 400, 404 |
-| `GET` | `/api/v1/bookings?flightNumber=&page=&size=` | `flights:read` | 200 (paginated) | 400 |
+| `GET` | `/api/v1/bookings?flightNumber=&page=&size=&sort=` | `flights:read` | 200 (paginated) | 400 |
 | `DELETE` | `/api/v1/bookings/{bookingId}` | `flights:write` | 200 | 400, 404, 503 |
-| `GET` | `/actuator/health`, `/actuator/health/liveness`, `/actuator/health/readiness` | none | 200 | 401 on a wrong password |
+| `GET` | `/actuator/health`, `/actuator/health/liveness`, `/actuator/health/readiness` | none | 200 | 401 on a wrong password; 503 while the status is `DOWN` or `OUT_OF_SERVICE`, so a database outage takes `/health` and `/readiness` to 503 and leaves liveness at 200 |
 | `GET` | `/actuator/metrics`, `/actuator/prometheus` | `ROLE_OPS` | 200 | 401, 403 |
 
-Every `/api/**` row also answers 401 without valid credentials, a wrong password included, and 403 to an authenticated caller who lacks the authority. Both controllers produce and read JSON only. An `Accept` header of `application/xml` gets 406, and a request body in any other format, YAML included, gets 415. The health rows need no credentials.
+Every `/api/**` row also answers 401 without valid credentials, a wrong password included, and 403 to an authenticated caller who lacks the authority. Both controllers produce and read JSON only. An `Accept` header of `application/xml` gets 406. A write whose `Content-Type` is missing or is not `application/json` gets 415, YAML included, so `curl -d` needs `-H 'Content-Type: application/json'`. The header decides, so a YAML body sent as `application/json` is `400 MALFORMED_REQUEST`. The health rows need no credentials.
 
-Every error the application produces has one JSON shape, `{code, message, timestamp}` or `{code, fieldErrors, timestamp}`, from `GlobalExceptionHandler`, `ErrorResponseWriter` (401 and 403) and `ApiErrorController` (`/error`). Each sets `Content-Type: application/json` itself, whatever the `Accept` header asked for. No controller contains a `try`/`catch`. Tomcat refuses some requests before Spring sees them: `%2F`, `%5C`, `%00` or `%zz` in the path, a raw `|`, or a 20KB header. Those get Tomcat's own HTML 400 page with no `X-Request-Id`, and unknown actuator sub-paths return an empty 404.
+Every error the application produces has one JSON shape, `{code, message, timestamp}` or `{code, fieldErrors, timestamp}`, from `GlobalExceptionHandler`, `ErrorResponseWriter` (401 and 403) and `ApiErrorController` (`/error`). Each sets `Content-Type: application/json` itself, whatever the `Accept` header asked for. No controller contains a `try`/`catch`. Tomcat refuses some requests before Spring sees them: `%2F`, `%5C`, `%00` or `%zz` in the path, a raw `|`, or a 20KB header. Those get Tomcat's own HTML 400 page with no `X-Request-Id`, and an unknown path under an exposed actuator endpoint, such as `/actuator/metrics/nope`, returns an empty 404.
 
 Jackson and Hibernate exception text names internal classes, tables and columns, so the client gets a fixed string and the detail goes to the log at WARN. I wrote the project's own exception messages for clients, and those pass through: `FlightNotFoundException`, `BookingNotFoundException`, `InsufficientSeatsException`, `FlightNotBookableException`, `DuplicateFlightException`, `IllegalFlightTransitionException`, `IdempotencyKeyConflictException` and `UnknownSortPropertyException`. So does Spring MVC's own `ErrorResponse` detail, such as `Method 'POST' is not supported.`, which names only the request. A stray `IllegalArgumentException` gets the fixed `The request contained an invalid value.`
 
@@ -301,11 +302,11 @@ Jackson and Hibernate exception text names internal classes, tables and columns,
 | `UNKNOWN_SORT_PROPERTY` | 400 | the sort property is not on the endpoint's published list (`SortPolicy`) |
 | `UNAUTHENTICATED` | 401 | no credentials, or credentials that do not verify; written by `JsonAuthenticationEntryPoint` |
 | `FORBIDDEN` | 403 | authenticated, without the authority this path needs; written by `JsonAccessDeniedHandler` |
-| `VALIDATION_FAILED` | 400 | Bean Validation, per field, including `@DistinctEndpoints`, which refuses a flight from EWR to EWR. A flight number with a space, `/` or `%` inside gets `must contain only letters and digits`. An airport code with a digit, symbol or padding gets `must contain only letters`. A passenger name with a control character gets `must not contain control characters` |
-| `MALFORMED_REQUEST` | 400 | unreadable body, an unknown enum constant or one sent as a number, a `seats` or `totalSeats` that is fractional, quoted or missing, a `departureTime` that is not an ISO-8601 string, bad path variable, missing query parameter, or `page * size` above 2147483647 on either list endpoint |
+| `VALIDATION_FAILED` | 400 | Bean Validation, per field, including `@DistinctEndpoints`, which refuses a flight from EWR to EWR. A flight number with a space, `/` or `%` inside gets `must contain only letters and digits`. An airport code with a digit, symbol or padding gets `must contain only letters`. A passenger name with a control character gets `must not contain control characters`. A missing or null `departureTime` gets `must not be null` |
+| `MALFORMED_REQUEST` | 400 | unreadable body, an unknown enum constant or one sent as a number, a `seats` or `totalSeats` that is missing, null, quoted, or written with a decimal point or an exponent (`2.0` included), a `departureTime` sent as anything but an ISO-8601 string (a missing or null one is `VALIDATION_FAILED`), bad path variable, missing query parameter, or `page * size` above 2147483647 on either list endpoint |
 | `RESOURCE_NOT_FOUND` | 404 | unmapped path |
-| `METHOD_NOT_ALLOWED` | 405 | a verb the security rules allow on a path that does not map it, such as `POST` on `/api/v1/flights/UA123` (and `TRACE`); the `Allow` header lists the mapped verbs. `PUT` and `OPTIONS` get 403 from `anyRequest().denyAll()` |
-| `UNSUPPORTED_MEDIA_TYPE` | 415 | a request body that is not `application/json`, YAML included; the `Accept` header names JSON |
+| `METHOD_NOT_ALLOWED` | 405 | a verb the security rules allow on a path that does not map it, such as `POST` on `/api/v1/flights/UA123`; the `Allow` header lists the mapped verbs. Tomcat refuses `TRACE` before any filter runs, so its 405 comes from `ApiErrorController`, with the servlet's full `Allow` list and no `X-Request-Id`. `PUT` and `OPTIONS` get 403 from `anyRequest().denyAll()`, or 401 without credentials |
+| `UNSUPPORTED_MEDIA_TYPE` | 415 | a `Content-Type` that is missing or is not `application/json`, YAML included; the `Accept` header names JSON |
 | `REQUEST_REJECTED` | 4xx | any other Spring MVC client error, such as the 406 for a non-JSON `Accept` |
 | `BAD_REQUEST` | 4xx | any other client error the container forwards to `/error`; written by `ApiErrorController` in the same envelope |
 | `INTERNAL_ERROR` | 500 | last resort; the stack trace is logged and never returned |
@@ -364,7 +365,7 @@ Nothing in this section has been executed.
 
 ```bash
 docker compose up --build                       # the whole stack, locally
-kubectl kustomize k8s/overlays/aws               # what would be applied to EKS
+kubectl kustomize k8s/overlays/aws               # the EKS manifests, before render-aws.sh fills the ${…} values
 ```
 
 The image is built on an amd64 CI runner for amd64 nodes, so the pipeline needs no `--platform` flag. A plain `docker build` on Apple Silicon produces arm64, and the pod crash-loops with `exec /bin/sh: exec format error`, so build locally with `--platform linux/amd64`. The Lambda runs on arm64, so this applies to the service image only.
@@ -387,7 +388,7 @@ Each row is a choice I made, set against what a production system would do.
 | Retention is a batched `DELETE` on a schedule | a partitioned table, dropping old partitions | `DROP PARTITION` is O(1) and a delete is not, which matters from roughly the first hundred million rows. Below that, partitions add a maintenance job and an outage when that job fails. The pruner is 40 lines and bounded. |
 | No circuit breaker | Resilience4j | There is one outbound dependency, and the outbox already absorbs its failure: a down SQS leaves rows unpublished and the next drain retries them. |
 | Contract tests share a JSON file | Pact, with a broker and a `can-i-deploy` gate in CI | The file catches the change that breaks the consumer, which is the whole job at two modules in one repository. A broker pays off when the consumers are other teams' services. |
-| Traces are generated and not exported; the trace id crosses into the Lambda as a log line | an OTLP collector on both sides, so the queue hop is one waterfall | The ids are on every log line and response, and `BookingEventHandler` logs the producer's `traceparent`, so two log greps follow one booking end to end. A waterfall needs a collector, and an exporter in a function whose whole point is a small package (10.3 MiB, with a 34 KB HTTP client) and a fast cold start. |
+| The service's traces are generated and not exported; the trace id crosses into the Lambda as a log line | an OTLP collector on both sides, so the queue hop is one waterfall | The ids are on every log line and response, and `BookingEventHandler` logs the producer's `traceparent`, so two log greps follow one booking end to end. A waterfall needs a collector, and an exporter in a function whose whole point is a small package (10.3 MiB, with a 34 KB HTTP client) and a fast cold start. |
 | H2 uses `create-drop` | Flyway + `validate`, as PostgreSQL already has | Migrations on a throwaway in-memory database buy nothing. |
 | `events/*.json` `md5OfBody` values are placeholders | real captured messages | Nothing reads the field, but it is not real traffic. |
 
