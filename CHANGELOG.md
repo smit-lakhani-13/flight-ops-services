@@ -385,8 +385,9 @@ The other fixes are to documentation only, and change no behaviour.
   `deploy/aws/foundation.yaml` grants `sqs:SendMessage` only, the one SQS call
   the service makes. It dropped `sqs:GetQueueUrl` and `sqs:GetQueueAttributes`.
 
-- **The image fails closed.** A bare `docker run` used to serve H2 with the dev
-  passwords. The `Dockerfile` now sets `SPRING_PROFILES_ACTIVE=prod`, so the
+- **The image fails closed.** Built from the old `Dockerfile`, a bare
+  `docker run` would have served H2 with the dev passwords. No image was ever
+  built from it. The `Dockerfile` now sets `SPRING_PROFILES_ACTIVE=prod`, so the
   image stops with `'url' must start with "jdbc"` until it gets a database.
 
 ## 1.1.0 — 2026-09-23

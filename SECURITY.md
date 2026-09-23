@@ -339,8 +339,8 @@ written down. What is missing is a domain.
 3. **Kubernetes Secrets.** Secrets live in Kubernetes Secrets, not in Secrets
    Manager.
 
-4. **No audit log.** Who cancelled which flight is in the application log and
-   nowhere durable.
+4. **No audit log.** The application log says which flight or booking was
+   cancelled and when, but not who did it, and nothing keeps it.
 
 5. **A laptop default profile.** The default profile is H2 in memory, `{noop}`
    passwords and seeded data. It starts, serves everything and stores nothing,

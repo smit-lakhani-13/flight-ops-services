@@ -135,7 +135,8 @@ Resources:
       BackupRetentionPeriod: 0
       DeleteAutomatedBackups: true
       # No final snapshot, as with DeletionPolicy: Delete. The schema is in
-      # src/main/resources/db/migration and the data is seed data.
+      # src/main/resources/db/migration, and the prod profile seeds nothing, so
+      # the only rows are what a demo wrote.
       DeletionProtection: false
       AutoMinorVersionUpgrade: true
       CopyTagsToSnapshot: true
