@@ -479,7 +479,7 @@ flowchart TD
 | `no_java_util_logging`, `no_standard_streams` | Log lines that bypass the correlation pattern |
 | `repositories_are_interfaces` | Hand-written persistence sneaking in beside Spring Data |
 | `transactions_are_opened_only_in_the_service_layer` | A transaction opened in a controller, spanning the HTTP response |
-| `the_wall_clock_is_read_only_by_entities` | `Instant.now()`, `System.currentTimeMillis()` or the `LocalDate` family in testable code, where an injected `Clock` belongs. The one exemption is `Booking`, named by class, because Hibernate constructs it and its `createdAt` initialiser has no `Clock` |
+| `time_comes_from_the_clock` | `Instant.now()`, `System.currentTimeMillis()` or another `java.time` type's `now()` in main code, where an injected `Clock` belongs. It has no exemption. `BookingWriter` passes `clock.instant()` to the `Booking` constructor |
 | `no_web_types_below_the_controller` | A service that cannot be called from a scheduler or a test |
 
 I checked each rule against a planted violation before committing it. A rule
@@ -612,6 +612,6 @@ costs:
 |---|---|---|
 | `EventPublisher` | Kafka, Solace, EventBridge | One class behind `@ConditionalOnProperty`, and its mode added to `EventProperties.MODES`. The payload is already serialised, and an implementation receives bytes it must not interpret |
 | `spring.security.oauth2.resourceserver.jwt.issuer-uri` | Cognito, Okta, Entra | Configuration. The rules already treat a JWT scope and a Basic authority identically |
-| `Clock` (`src/main/java/com/smit/flightops/config/TimeConfig.java`) | A fixed clock in a test | Already used everywhere except `Booking.createdAt`, which is the documented exception |
+| `Clock` (`src/main/java/com/smit/flightops/config/TimeConfig.java`) | A fixed clock in a test | Already used everywhere |
 | `management.opentelemetry.tracing.export.otlp.endpoint` | An OTLP collector | An environment variable. Ids are already generated and already on every log line |
 | The outbox poller | Debezium reading the WAL | A replication slot, a connector to operate, and a disk that fills if the consumer stops. I considered it and rejected it at this size |

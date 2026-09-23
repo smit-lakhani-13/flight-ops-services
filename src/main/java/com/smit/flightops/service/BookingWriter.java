@@ -79,7 +79,7 @@ public class BookingWriter {
 
         Booking booking = bookingRepository.save(new Booking(
                 flight, request.passengerName(), request.seats(),
-                request.idempotencyKey(), request.fingerprint()));
+                request.idempotencyKey(), request.fingerprint(), clock.instant()));
 
         // No passenger name: it is personal data, and log aggregation keeps and
         // indexes these lines. The booking id joins to the row that holds it.

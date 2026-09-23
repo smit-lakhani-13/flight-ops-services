@@ -169,13 +169,11 @@ input list. Leave it out and every script that sources it reports SC1091.
 | `no_standard_streams` | nothing writes to stdout |
 | `repositories_are_interfaces` | repositories are interfaces named `*Repository` |
 | `transactions_are_opened_only_in_the_service_layer` | `@Transactional` appears only in `service` |
-| `the_wall_clock_is_read_only_by_entities` | no `Instant.now()` outside `Booking` |
+| `time_comes_from_the_clock` | no `Instant.now()` in main code |
 | `no_web_types_below_the_controller` | no servlet types in service, entity or repository |
 
-The `Instant.now()` rule exempts one class, `Booking`, where
-`Booking.createdAt` reads the wall clock. Everything else takes time from the
-injected `Clock`. If you need another exemption, discuss it in the pull request
-before anyone widens the rule.
+Every class takes time from the injected `Clock`. If you need an exemption,
+discuss it in the pull request before anyone widens the rule.
 
 ## Documentation
 

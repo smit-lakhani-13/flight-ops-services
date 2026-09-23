@@ -45,6 +45,7 @@ class BookingServiceTest {
     @InjectMocks private BookingService bookingService;
 
     private static final Instant DEPARTURE = Instant.now().plus(Duration.ofHours(8));
+    private static final Instant CREATED_AT = Instant.parse("2026-09-20T11:00:00Z");
 
     private Flight flight() {
         return new Flight("UA123", "EWR", "LHR", 180, DEPARTURE);
@@ -73,12 +74,13 @@ class BookingServiceTest {
         Flight flight = flight();
         flight.reserveSeats(3);
         Booking original = new Booking(flight, "Smit Lakhani", 3, "demo-1",
-                                       request(3, "demo-1").fingerprint());
+                                       request(3, "demo-1").fingerprint(), CREATED_AT);
         when(bookingRepository.findByIdempotencyKey("demo-1")).thenReturn(Optional.of(original));
 
         BookingDto dto = bookingService.book(request(3, "demo-1"));
 
         assertThat(dto.seats()).isEqualTo(3);
+        assertThat(dto.createdAt()).isEqualTo(CREATED_AT);
         verifyNoInteractions(bookingWriter);
     }
 
@@ -153,7 +155,7 @@ class BookingServiceTest {
     @Test
     @DisplayName("findById maps the entity to a DTO")
     void findByIdReturnsTheBooking() {
-        Booking booking = new Booking(flight(), "Smit Lakhani", 3, "demo-6", null);
+        Booking booking = new Booking(flight(), "Smit Lakhani", 3, "demo-6", null, CREATED_AT);
         when(bookingRepository.findById(1L)).thenReturn(Optional.of(booking));
 
         BookingDto dto = bookingService.findById(1L);

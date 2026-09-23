@@ -41,10 +41,8 @@ build emits:
 * **No ignore lists.** Once a gate acquires a list of exceptions, it documents
   what is broken and stops being a gate. Every exemption in the ArchUnit rules
   is part of the rule's scope, with its reason in the rule's Javadoc, and
-  there is no suppression file. The clock rule, for example, exempts one class
-  by its full name, `src/main/java/com/smit/flightops/entity/Booking.java`.
-  Hibernate constructs that entity too, so its `createdAt` initialiser has no
-  `Clock` to inject.
+  there is no suppression file. The clock rule, for
+  example, has none.
 
 * I checked each ArchUnit rule against a planted violation before committing
   it. A rule that has never failed is a rule no one has shown to work.

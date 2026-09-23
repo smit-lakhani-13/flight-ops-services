@@ -107,9 +107,9 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
   `SecurityConfig.DOC_PATHS` drops the literal `/v3/api-docs`, which
   `/v3/api-docs/**` already matches.
 
-- **Wall-clock rule.** `the_wall_clock_is_read_only_by_entities` in
-  `ArchitectureTest` now exempts only `com.smit.flightops.entity.Booking`, where
-  1.1.0 exempted the whole `entity` package.
+- **Wall-clock rule.** `Booking` takes `createdAt` from `BookingWriter`'s
+  `Clock`, so `time_comes_from_the_clock` in `ArchitectureTest` has no
+  exemption. 1.1.0 exempted the whole `entity` package.
 
 - **Test builds.** Both poms pin the Surefire JVM to
   `-Duser.timezone=Asia/Kolkata`, so a test that leans on the system zone fails

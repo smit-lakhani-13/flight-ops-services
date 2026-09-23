@@ -12,6 +12,8 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
+import java.time.ZonedDateTime;
 
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
@@ -120,20 +122,20 @@ class ArchitectureTest {
                     .as("@Transactional appears only in the service package");
 
     /**
-     * One source of time: the {@link java.time.Clock} bean. The only exemption is
-     * {@code Booking}, whose {@code createdAt} initialiser has nothing to inject into
-     * because Hibernate constructs the entity too. The exemption names that class,
-     * not its package. {@code System.currentTimeMillis} and the {@code LocalDate}
-     * family are the accidental ways round the rule.
+     * One source of time: the {@link java.time.Clock} bean. {@code System.currentTimeMillis}
+     * and the other {@code java.time} types' {@code now()} are the accidental ways round
+     * the rule. {@code TimeConfig} builds the bean with {@code Clock.systemUTC()}, which
+     * the rule does not name.
      */
     @ArchTest
-    static final ArchRule the_wall_clock_is_read_only_by_entities =
-            noClasses().that().doNotHaveFullyQualifiedName("com.smit.flightops.entity.Booking")
-                    .should().callMethod(Instant.class, "now")
-                    .orShould().callMethod(LocalDate.class, "now")
-                    .orShould().callMethod(LocalDateTime.class, "now")
-                    .orShould().callMethod(System.class, "currentTimeMillis")
-                    .as("time comes from the injected Clock; only Booking.createdAt reads the wall clock");
+    static final ArchRule time_comes_from_the_clock = noClasses()
+            .should().callMethod(Instant.class, "now")
+            .orShould().callMethod(LocalDate.class, "now")
+            .orShould().callMethod(LocalDateTime.class, "now")
+            .orShould().callMethod(OffsetDateTime.class, "now")
+            .orShould().callMethod(ZonedDateTime.class, "now")
+            .orShould().callMethod(System.class, "currentTimeMillis")
+            .as("time comes from the injected Clock");
 
     /**
      * No servlet or Spring Web types below the controller, so a service stays callable

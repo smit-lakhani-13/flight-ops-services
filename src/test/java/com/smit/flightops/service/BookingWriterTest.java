@@ -31,6 +31,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -46,12 +47,16 @@ import static org.mockito.Mockito.when;
 class BookingWriterTest {
 
     private static final Instant CANCELLED_AT = Instant.parse("2026-09-20T12:00:00Z");
+    private static final Instant CREATED_AT = Instant.parse("2026-09-20T11:00:00Z");
 
     @Mock private FlightRepository flightRepository;
     @Mock private BookingRepository bookingRepository;
     @Mock private OutboxWriter outboxWriter;
 
-    /** A fixed Clock, so cancellation times are known; a mock would trip strict stubs. */
+    /**
+     * A fixed Clock, so every time the writer stamps is known; a mock would trip strict
+     * stubs. CREATED_AT is for the bookings a test builds by hand.
+     */
     @Spy private Clock clock = Clock.fixed(CANCELLED_AT, ZoneOffset.UTC);
 
     @InjectMocks private BookingWriter bookingWriter;
@@ -89,6 +94,19 @@ class BookingWriterTest {
     }
 
     @Test
+    @DisplayName("createdAt is the injected Clock's instant, truncated to microseconds")
+    void createdAtComesFromTheClock() {
+        when(flightRepository.findByFlightNumberForUpdate("UA123")).thenReturn(Optional.of(flight()));
+        when(bookingRepository.save(any(Booking.class))).thenAnswer(i -> i.getArgument(0));
+        // Nanoseconds, so the assertion also shows the truncation PostgreSQL would do.
+        doReturn(Instant.parse("2026-09-20T12:00:00.123456789Z")).when(clock).instant();
+
+        BookingDto dto = bookingWriter.insertNewBooking(request(1, "demo-7"));
+
+        assertThat(dto.createdAt()).isEqualTo(Instant.parse("2026-09-20T12:00:00.123456Z"));
+    }
+
+    @Test
     @DisplayName("REGRESSION: a replay that arrives when the winner took the last seats is a lost race, not an oversell")
     void racingReplayOnTheLastSeatIsNotAnOversell() {
         // The winner committed under this lock and took every remaining seat. If
@@ -97,7 +115,7 @@ class BookingWriterTest {
         Flight full = flight();
         full.reserveSeats(180);
         when(flightRepository.findByFlightNumberForUpdate("UA123")).thenReturn(Optional.of(full));
-        Booking winner = new Booking(full, "Smit Lakhani", 2, "raced-key", "fp");
+        Booking winner = new Booking(full, "Smit Lakhani", 2, "raced-key", "fp", CREATED_AT);
         when(bookingRepository.findByIdempotencyKey("raced-key")).thenReturn(Optional.of(winner));
 
         assertThatThrownBy(() -> bookingWriter.insertNewBooking(request(2, "raced-key")))
@@ -115,7 +133,7 @@ class BookingWriterTest {
     void theReCheckIsInsideTheLock() {
         Flight flight = flight();
         when(flightRepository.findByFlightNumberForUpdate("UA123")).thenReturn(Optional.of(flight));
-        Booking winner = new Booking(flight, "Smit Lakhani", 1, "raced-key-2", "fp");
+        Booking winner = new Booking(flight, "Smit Lakhani", 1, "raced-key-2", "fp", CREATED_AT);
         when(bookingRepository.findByIdempotencyKey("raced-key-2")).thenReturn(Optional.of(winner));
 
         assertThatThrownBy(() -> bookingWriter.insertNewBooking(request(1, "raced-key-2")))
@@ -192,7 +210,8 @@ class BookingWriterTest {
         // A real fingerprint: Booking.matchesRequest short-circuits on null, which
         // would pass any fingerprint.
         BookingRequest original = request(3, "raced-key");
-        Booking winner = new Booking(flight, "Smit Lakhani", 3, "raced-key", original.fingerprint());
+        Booking winner = new Booking(flight, "Smit Lakhani", 3, "raced-key",
+                                     original.fingerprint(), CREATED_AT);
         when(bookingRepository.findByIdempotencyKey("raced-key")).thenReturn(Optional.of(winner));
 
         BookingDto dto = bookingWriter.recoverReplay("raced-key", original.fingerprint());
@@ -209,7 +228,7 @@ class BookingWriterTest {
         // loser must get the same 409 as the sequential case.
         Flight flight = flight();
         Booking winner = new Booking(flight, "Ada Lovelace", 3, "reused-key",
-                                     request(3, "reused-key").fingerprint());
+                                     request(3, "reused-key").fingerprint(), CREATED_AT);
         when(bookingRepository.findByIdempotencyKey("reused-key")).thenReturn(Optional.of(winner));
 
         String differentRequest = new BookingRequest("UA123", "Grace Hopper", 1, "reused-key").fingerprint();
@@ -231,7 +250,7 @@ class BookingWriterTest {
     void cancellationReleasesSeats() {
         Flight flight = flight();
         flight.reserveSeats(3);
-        Booking booking = new Booking(flight, "Smit Lakhani", 3, "cancel-1", null);
+        Booking booking = new Booking(flight, "Smit Lakhani", 3, "cancel-1", null, CREATED_AT);
 
         when(bookingRepository.findFlightNumberById(7L)).thenReturn(Optional.of("UA123"));
         when(flightRepository.findByFlightNumberForUpdate("UA123")).thenReturn(Optional.of(flight));
@@ -249,7 +268,7 @@ class BookingWriterTest {
     void secondCancellationIsANoOp() {
         Flight flight = flight();
         flight.reserveSeats(3);
-        Booking booking = new Booking(flight, "Smit Lakhani", 3, "cancel-2", null);
+        Booking booking = new Booking(flight, "Smit Lakhani", 3, "cancel-2", null, CREATED_AT);
         booking.cancel(CANCELLED_AT.minusSeconds(60));
 
         when(bookingRepository.findFlightNumberById(8L)).thenReturn(Optional.of("UA123"));
@@ -269,7 +288,7 @@ class BookingWriterTest {
     void cancellationTakesTheLocksInTheDocumentedOrder() {
         Flight flight = flight();
         flight.reserveSeats(1);
-        Booking booking = new Booking(flight, "Smit Lakhani", 1, "cancel-3", null);
+        Booking booking = new Booking(flight, "Smit Lakhani", 1, "cancel-3", null, CREATED_AT);
 
         when(bookingRepository.findFlightNumberById(9L)).thenReturn(Optional.of("UA123"));
         when(flightRepository.findByFlightNumberForUpdate("UA123")).thenReturn(Optional.of(flight));

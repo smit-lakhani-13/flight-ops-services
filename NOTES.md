@@ -545,9 +545,12 @@ pin it.
 
 Time came from `Instant.now()` inside the domain, so no test could drive a
 clock-dependent path. An injected `Clock` (`config/TimeConfig.java`) is now the
-source everywhere except the `Booking.createdAt` field initialiser. An entity is
-constructed with `new`, so that field cannot be injected. ArchUnit's
-`the_wall_clock_is_read_only_by_entities` rule is scoped to allow it.
+source everywhere. At first the `Booking.createdAt` field initialiser was
+exempt, on the grounds that an entity is constructed with `new`. That reason
+did not hold. `BookingWriter` holds the `Clock` and calls the constructor, as
+`OutboxWriter` does for `OutboxEvent`. `Booking` now takes `createdAt` as a
+constructor argument, and ArchUnit's `time_comes_from_the_clock` rule has no
+exemption.
 
 ## Second review pass
 

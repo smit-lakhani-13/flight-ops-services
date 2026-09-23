@@ -31,6 +31,7 @@ class BookingRepositoryTest {
     @Autowired private TestEntityManager entityManager;
 
     private static final Instant SOON = Instant.now().plus(Duration.ofHours(8)).truncatedTo(ChronoUnit.MICROS);
+    private static final Instant CREATED_AT = Instant.parse("2026-09-20T11:00:00Z");
 
     private Flight flight(String number) {
         return flightRepository.saveAndFlush(new Flight(number, "EWR", "LHR", 180, SOON));
@@ -39,7 +40,7 @@ class BookingRepositoryTest {
     @Test
     void findByIdempotencyKeyReturnsTheBooking() {
         Flight flight = flight("UA123");
-        bookingRepository.saveAndFlush(new Booking(flight, "Smit Lakhani", 3, "demo-1", null));
+        bookingRepository.saveAndFlush(new Booking(flight, "Smit Lakhani", 3, "demo-1", null, CREATED_AT));
 
         assertThat(bookingRepository.findByIdempotencyKey("demo-1"))
                 .get()
@@ -52,7 +53,7 @@ class BookingRepositoryTest {
     @DisplayName("REGRESSION: JOIN FETCH on findByIdempotencyKey too, because the caller reads it after BookingService.book's transaction has closed")
     void findByIdempotencyKeyAlsoJoinFetchesTheFlight() {
         Flight flight = flight("UA123");
-        bookingRepository.saveAndFlush(new Booking(flight, "Smit Lakhani", 3, "demo-1", null));
+        bookingRepository.saveAndFlush(new Booking(flight, "Smit Lakhani", 3, "demo-1", null, CREATED_AT));
         entityManager.clear();
 
         Booking found = bookingRepository.findByIdempotencyKey("demo-1").orElseThrow();
@@ -68,10 +69,10 @@ class BookingRepositoryTest {
     @DisplayName("the unique index rejects a second row with the same key, whatever the service checked")
     void duplicateIdempotencyKeyIsRejectedByTheDatabase() {
         Flight flight = flight("UA123");
-        bookingRepository.saveAndFlush(new Booking(flight, "Smit Lakhani", 3, "demo-1", null));
+        bookingRepository.saveAndFlush(new Booking(flight, "Smit Lakhani", 3, "demo-1", null, CREATED_AT));
 
         assertThatThrownBy(() ->
-                bookingRepository.saveAndFlush(new Booking(flight, "Someone Else", 1, "demo-1", null)))
+                bookingRepository.saveAndFlush(new Booking(flight, "Someone Else", 1, "demo-1", null, CREATED_AT)))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 
@@ -79,8 +80,8 @@ class BookingRepositoryTest {
     @DisplayName("JOIN FETCH loads the flight eagerly, so listing bookings has no N+1")
     void joinFetchInitialisesTheFlight() {
         Flight flight = flight("UA123");
-        bookingRepository.saveAndFlush(new Booking(flight, "Smit Lakhani", 3, "demo-1", null));
-        bookingRepository.saveAndFlush(new Booking(flight, "Someone Else", 1, "demo-2", null));
+        bookingRepository.saveAndFlush(new Booking(flight, "Smit Lakhani", 3, "demo-1", null, CREATED_AT));
+        bookingRepository.saveAndFlush(new Booking(flight, "Someone Else", 1, "demo-2", null, CREATED_AT));
         // Detach everything, so the flight can only be present if the query fetched it.
         entityManager.clear();
 
@@ -99,8 +100,10 @@ class BookingRepositoryTest {
 
     @Test
     void findByFlightNumberIgnoresOtherFlights() {
-        bookingRepository.saveAndFlush(new Booking(flight("UA123"), "Smit Lakhani", 3, "demo-1", null));
-        bookingRepository.saveAndFlush(new Booking(flight("UA456"), "Someone Else", 1, "demo-2", null));
+        bookingRepository.saveAndFlush(
+                new Booking(flight("UA123"), "Smit Lakhani", 3, "demo-1", null, CREATED_AT));
+        bookingRepository.saveAndFlush(
+                new Booking(flight("UA456"), "Someone Else", 1, "demo-2", null, CREATED_AT));
 
         assertThat(bookingRepository.findByFlightNumber("UA123", Pageable.unpaged())).hasSize(1);
         assertThat(bookingRepository.findByFlightNumber("XX999", Pageable.unpaged())).isEmpty();

@@ -34,10 +34,10 @@ public class Booking {
 
     /**
      * Truncated to microseconds, all PostgreSQL stores; the DynamoDB sort key is built
-     * from it. The one wall-clock read in main code, which ArchitectureTest exempts by
-     * name: Hibernate constructs entities too, so there is nothing to inject a Clock into.
+     * from it. {@code BookingWriter} passes the injected Clock's instant, as it does for
+     * {@link #cancel(Instant)}.
      */
-    @Column(nullable = false) private Instant createdAt = Instant.now().truncatedTo(ChronoUnit.MICROS);
+    @Column(nullable = false) private Instant createdAt;
 
     /**
      * SHA-256 of the creating request, from {@code BookingRequest.fingerprint()}, so the
@@ -57,10 +57,11 @@ public class Booking {
     protected Booking() {}
 
     public Booking(Flight flight, String passengerName, int seats,
-                   String idempotencyKey, String requestFingerprint) {
+                   String idempotencyKey, String requestFingerprint, Instant createdAt) {
         this.flight = flight; this.passengerName = passengerName;
         this.seats = seats;   this.idempotencyKey = idempotencyKey;
         this.requestFingerprint = requestFingerprint;
+        this.createdAt = createdAt.truncatedTo(ChronoUnit.MICROS);
     }
 
     public Long getId() { return id; }
