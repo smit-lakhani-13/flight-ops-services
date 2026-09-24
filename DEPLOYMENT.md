@@ -35,10 +35,10 @@ The middle one is underrated. It is the interesting half of the architecture:
 the transactional outbox crossing a real queue into a real consumer. It also
 costs nothing. SQS gives a million requests a month free forever, DynamoDB
 on-demand bills per write with no hourly charge, and an idle Lambda costs
-nothing at all, and its two CloudWatch alarms fit inside the ten standard
-alarms CloudWatch does not charge for, unless the account already uses them.
-The EKS half is where the money goes. What it adds is Kubernetes, and it says
-nothing new about this system's design.
+nothing at all. The two CloudWatch alarms on the queues fit inside the ten
+standard alarms CloudWatch does not charge for, unless the account already
+uses them. The EKS half is where the money goes. What it adds is Kubernetes,
+and it says nothing new about this system's design.
 
 [§5](#5-what-it-costs) also prices cheaper variants of the third shape. Public
 subnets with no NAT gateway cost $6.42/day. A single EC2 instance running

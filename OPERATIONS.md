@@ -253,7 +253,7 @@ In the order they matter:
 | 2 | `outbox_pending` rising for 10 min | the drain is losing to the write rate, or SQS is rejecting |
 | 3 | `rate(bookings_lock_timeout_total[5m]) > 0` | users are getting 503s on flight row contention |
 | 4 | SQS `ApproximateNumberOfMessagesVisible` on the **DLQ** `> 0` | the Lambda failed three times on the same message. Declared as `template.yaml#BookingEventDLQAlarm`, never deployed, with no notification target |
-| 5 | SQS `ApproximateAgeOfOldestMessage` on the main queue above 600 s for 5 minutes | the Lambda is behind, throttled at its concurrency cap, or not polling; retries alone stay under 540 s. Declared as `template.yaml#BookingEventBacklogAlarm`, never deployed, with no notification target |
+| 5 | SQS `ApproximateAgeOfOldestMessage` on the main queue above 600 s for 5 minutes | the Lambda is behind at its concurrency cap of five, throttled by a dry account pool, or not polling; retries alone take about 540 s. Declared as `template.yaml#BookingEventBacklogAlarm`, never deployed, with no notification target |
 | 6 | readiness failing on any pod for 5 min | usually the database |
 | 7 | RDS `DatabaseConnections` above 50 | more than the service's own pools can open: 4 pods × 10, or 5 × 10 during a rollout surge. Something else is connecting, or `maxReplicas` went up without a bigger instance class (about 112 connections). See [DEPLOYMENT.md §7](DEPLOYMENT.md#7-what-breaks-first) |
 
@@ -528,8 +528,9 @@ the property at startup either way.
   (`template.yaml#BookingEventDLQAlarm`,
   `template.yaml#BookingEventBacklogAlarm`), linted in CI and never deployed,
   with no notification target: an alarm would change state in the console
-  and tell no one. The other rows are Prometheus conditions, and nothing
-  scrapes Prometheus.
+  and tell no one. Rows 1 to 3 are Prometheus conditions, and nothing scrapes
+  `/actuator/prometheus`. Row 6 would need a Kubernetes monitor and row 7 an
+  RDS alarm, and neither exists.
 
 That is fine for a two-week demo on a $7.72/day cluster, and not for
 production.

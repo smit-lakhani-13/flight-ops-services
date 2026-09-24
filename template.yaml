@@ -107,8 +107,9 @@ Resources:
   # state in the console and tells no one. CI lints this template and never
   # deploys it.
   #
-  # Any message on the dead-letter queue means the Lambda failed three times on
-  # it.
+  # Any message on the dead-letter queue was received three times without
+  # success. Usually the Lambda failed on it three times; a dry account pool
+  # can also throttle one there.
   BookingEventDLQAlarm:
     Type: AWS::CloudWatch::Alarm
     Properties:
