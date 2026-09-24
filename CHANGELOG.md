@@ -189,6 +189,10 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
   BSD or GNU `date`, where a fixed date would have expired. Act 8 names every
   anonymous path, and the H2 reset line prints only against localhost.
 
+- **Why one service.** `ARCHITECTURE.md` says why bookings and flights share a
+  service and the Lambda does not, and the README and the pom call it a service
+  rather than a microservice.
+
 ### Removed
 
 - **Queries only tests called.** `FlightRepository` loses the two-argument

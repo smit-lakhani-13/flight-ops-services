@@ -4,7 +4,7 @@
 [![codeql](https://img.shields.io/github/actions/workflow/status/smit-lakhani-13/flight-ops-services/codeql.yml?branch=main&label=codeql)](https://github.com/smit-lakhani-13/flight-ops-services/actions/workflows/codeql.yml)
 [![licence: MIT](https://img.shields.io/badge/licence-MIT-blue)](LICENSE)
 
-Flight inventory and booking microservice: a Spring Boot REST API over PostgreSQL that publishes booking events to SQS, where an AWS Lambda consumer projects them into DynamoDB.
+Flight inventory and booking service: a Spring Boot REST API over PostgreSQL that publishes booking events to SQS, where an AWS Lambda consumer projects them into DynamoDB.
 
 **Java 21 · Spring Boot 4.1.1 · Spring Security 7 · Spring Data JPA · PostgreSQL / H2 · Flyway**
 
