@@ -197,6 +197,10 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
   service and the Lambda does not, and the README and the pom call it a service
   rather than a microservice.
 
+- **Idempotency keys never expire, and the README now says so.** The
+  trade-offs table gives the reason (a cancelled booking keeps its key) and
+  what a retention window would change for clients.
+
 ### Removed
 
 - **Queries only tests called.** `FlightRepository` loses the two-argument
