@@ -20,9 +20,11 @@ Description: >
 # or ./deploy/aws/down.sh. The shared bucket `--resolve-s3` creates is kept
 # unless you pass --delete-sam-bucket.
 #
-# Everything here is pay-per-use and idles at about $0 (DEPLOYMENT.md section
-# 5). X-Ray stays inside its free tier at this volume: 100,000 traces recorded
-# and 1,000,000 retrieved a month.
+# Everything here but the two alarms is pay-per-use and idles at about $0
+# (DEPLOYMENT.md section 5). The alarms bill per alarm-month whether or not
+# they fire, after the ten standard alarms CloudWatch does not charge an
+# account for. X-Ray stays inside its free tier at this volume: 100,000 traces
+# recorded and 1,000,000 retrieved a month.
 
 Globals:
   Function:
@@ -92,6 +94,64 @@ Resources:
       # 14 days, the SQS maximum: a Friday-night failure is still there on
       # Monday week.
       MessageRetentionPeriod: 1209600
+      Tags:
+        - Key: Project
+          Value: flight-ops
+
+  # No AlarmActions on either alarm, on purpose. An action is an ARN, in
+  # practice an SNS topic, and neither this stack nor
+  # deploy/aws/foundation.yaml has one. Wiring one means a topic here with an
+  # e-mail subscription, a new parameter for the address (foundation.yaml's
+  # AlertEmail belongs to another stack), and someone clicking the confirmation
+  # link SNS sends before anything is delivered. Until then an alarm changes
+  # state in the console and tells no one. CI lints this template and never
+  # deploys it.
+  #
+  # Any message on the dead-letter queue means the Lambda failed three times on
+  # it.
+  BookingEventDLQAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: booking-events-dlq-not-empty
+      AlarmDescription: A booking event failed three times and is on the dead-letter queue.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt BookingEventDLQ.QueueName
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      # An idle queue publishes no metrics, which is this queue's normal state.
+      TreatMissingData: notBreaching
+      Tags:
+        - Key: Project
+          Value: flight-ops
+
+  # A message that keeps failing is received three times, 180 s of visibility
+  # each, and leaves for the dead-letter queue within about 540 s. So an oldest
+  # message older than 600 s has not been retried out; it is waiting, and the
+  # Lambda is behind, throttled or not polling.
+  BookingEventBacklogAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: booking-events-backlog
+      AlarmDescription: The oldest booking event has waited more than ten minutes for the Lambda.
+      Namespace: AWS/SQS
+      MetricName: ApproximateAgeOfOldestMessage
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt BookingEventQueue.QueueName
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 5
+      Threshold: 600
+      ComparisonOperator: GreaterThanThreshold
+      # Reported only while the queue holds a message, so an empty queue is
+      # missing data, and healthy.
+      TreatMissingData: notBreaching
       Tags:
         - Key: Project
           Value: flight-ops
@@ -215,6 +275,14 @@ Outputs:
   TableName:
     Description: aws dynamodb query --table-name <this> --key-condition-expression 'flightNumber = :f' ...
     Value: !Ref FlightEventsTable
+
+  DlqAlarmName:
+    Description: Alarm on any message in the DLQ. No notification target - aws cloudwatch describe-alarms --alarm-names <this>
+    Value: !Ref BookingEventDLQAlarm
+
+  BacklogAlarmName:
+    Description: Alarm on the oldest queued message passing 600 s. No notification target - aws cloudwatch describe-alarms --alarm-names <this>
+    Value: !Ref BookingEventBacklogAlarm
 
   FunctionName:
     Description: Physical function name. For logs - sam logs -n BookingEventFunction --stack-name <stack> --tail (the logical ID, not this value)

@@ -135,7 +135,7 @@ Deployment, which names that Secret and never sees its contents.
 | Resource | Created by | Why there |
 |---|---|---|
 | ECR, GitHub OIDC trust, CI role, budgets | `foundation.yaml` | must exist before CI can push anything |
-| SQS, DLQ, DynamoDB, the Lambda | `template.yaml` via `sam deploy`, from the jar Maven builds | SAM owns its own stack; it is also the only half that is useful on its own |
+| SQS, DLQ, two CloudWatch alarms, DynamoDB, the Lambda | `template.yaml` via `sam deploy`, from the jar Maven builds | SAM owns its own stack; it is also the only half that is useful on its own |
 | Cluster, VPC, NAT, nodes | `cluster.yaml` via `eksctl` | eksctl's VPC layout is what the RDS template reads its subnets from |
 | RDS, its subnet group and security group | `data.yaml` | needs eksctl's VPC, so it cannot come earlier |
 | IRSA roles, LB controller, metrics-server | `up.sh` | one-off cluster setup, not per-deploy |
