@@ -24,7 +24,7 @@ On every CI run, the `docs-check` job runs three scripts. `scripts/refcheck.py` 
 |---|---|
 | [NOTES.md](NOTES.md) | The bugs I found in this service, why each happened, and the test and commit that pin each fix |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | How the pieces fit: the booking sequence naming every method it passes through, the idempotency decision table, the lock order, the outbox, the status state machine, the ER diagram, and the module boundaries the build enforces |
-| [adr/](adr/README.md) | Why each decision went the way it did, and what I rejected: 14 records covering the outbox, pessimistic locking, ids, the request fingerprint, the security model, Boot 4, the Lambda, the IaC choice, the region, observability, OpenAPI, the outbox bounds and the quality gates |
+| [adr/](adr/README.md) | Why each decision went the way it did, and what I rejected: 15 records covering the outbox, pessimistic locking, ids, the request fingerprint, the security model, Boot 4, the Lambda, the IaC choice, the region, observability, OpenAPI, the outbox bounds, the quality gates and the event transport |
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Three ways to run it, the runbook for each, what each costs for 7, 10 and 15 days, what breaks first under load, and how to tear it all down with proof |
 | [OPERATIONS.md](OPERATIONS.md) | Every environment variable, the metrics and what they mean, how to follow one booking across the queue, what to alert on, the playbooks, and what is not wired up |
 | [SECURITY.md](SECURITY.md) | The auth model, what is exposed and what is not, how secrets are handled, and the known limitations |
@@ -194,7 +194,7 @@ What the repository does not claim:
 
 The same picture with method names, plus the booking sequence, the idempotency decision table, the lock order, the outbox drain, the `FlightStatus` state machine and the ER diagram, is in [ARCHITECTURE.md](ARCHITECTURE.md). Each decision has its own file in [adr/](adr/README.md).
 
-`app.events.publisher: log | sqs` picks the implementation with `@ConditionalOnProperty`, and `log` is the default, so nothing tries to reach AWS on a laptop. `EventProperties` refuses any other value at startup and names the property. `@Primary` and `@Qualifier` only choose which bean is injected, and still build every candidate, including an SQS client on a machine with no credentials. `@ConditionalOnProperty` decides whether the bean exists at all. There is no Solace implementation. One would need no change to `EventPublisher`, which takes a serialised payload and headers.
+`app.events.publisher: log | sqs` picks the implementation with `@ConditionalOnProperty`, and `log` is the default, so nothing tries to reach AWS on a laptop. `EventProperties` refuses any other value at startup and names the property. `@Primary` and `@Qualifier` only choose which bean is injected, and still build every candidate, including an SQS client on a machine with no credentials. `@ConditionalOnProperty` decides whether the bean exists at all. There is no Solace implementation. One would need no change to `EventPublisher`, which takes a serialised payload and headers, but it would need a publisher class, a `ConnectionFactory` bean and the vendor's client library, a mode, a test and a new consumer, because the Lambda reads `SQSEvent`. [ADR 0015](adr/0015-event-transport.md) sets out that cost from Solace's documentation, not from a run here.
 
 ## Repository layout
 
@@ -220,7 +220,7 @@ The same picture with method names, plus the booking sequence, the idempotency d
 ├── ARCHITECTURE.md                the diagrams and the method-by-method request path
 ├── DEPLOYMENT.md                  three shapes, the runbook, the cost of each, the teardown
 ├── CHANGELOG.md                   1.0.0, 1.1.0, the unreleased work, and the response field 1.1.0 removed
-├── adr/                           14 decision records, 0001–0014
+├── adr/                           15 decision records, 0001–0015
 ├── scripts/                       refcheck.py, linkcheck.py and sweeps.sh run in CI;
 │                                  numbers.sh recomputes the counts
 ├── contracts/                     the event schema both modules test against

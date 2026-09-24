@@ -81,6 +81,10 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
   time and the counter. It runs in CI, and the guard step names it as a third
   class.
 
+- **Event transport decision.** [ADR 0015](adr/0015-event-transport.md) records
+  why events go to an SQS standard queue and what a JMS broker would cost, from
+  documentation.
+
 ### Changed
 
 - **Version.** Both poms say `1.2.0-SNAPSHOT` until the next tag, so a build
@@ -378,6 +382,10 @@ The other fixes are to documentation only, and change no behaviour.
 - Comments and Javadoc across the code were trimmed and checked against the
   behaviour above, and every Markdown document was rewritten in plain language.
   The bug stories moved to `NOTES.md`.
+
+- **Transport cost understated.** `ARCHITECTURE.md` said a new transport took
+  one class and a mode; for a JMS broker it also takes a connection factory, a
+  client library, a test and a new consumer.
 
 ### Security
 

@@ -7,7 +7,7 @@ room will propose them again a year later.
 
 I wrote every record after the decision it records. The "Taken in" column names
 the commit in which the decision landed. The first commit, `4a9a5b9`, is from
-15 September 2026, and the records were written on 22 September:
+15 September 2026. 0001–0014 were written on 22 September:
 
 * 0001–0008 and 0011–0014 were written together in `040c3be`. For 0001–0008
   that was between about eight hours and seven days after the code. For
@@ -16,6 +16,10 @@ the commit in which the decision landed. The first commit, `4a9a5b9`, is from
 * 0009 and 0010 were written in `92922cd`, the same commit as the deployment
   scripts. The eksctl cluster file, the SAM template and `ap-south-1` were
   already in `4a9a5b9`.
+
+* 0015 was written on 25 September, ten days after `4a9a5b9`, the commit in
+  which the queue, its dead-letter queue and the Lambda's event source mapping
+  first appear.
 
 None of them was an RFC that a team approved before any code existed.
 
@@ -43,6 +47,7 @@ scope in 0012 were changed in place, and each record's status line says so.
 | [0012](0012-openapi-public-read.md) | The OpenAPI document is public; the API it describes is not | accepted | `82ea9b4`, `ccad5b4`, `2fb66de` |
 | [0013](0013-outbox-ceiling-and-retention.md) | The outbox is bounded: an attempt ceiling and a retention window | accepted | `a6efc1c`, `50e8871` |
 | [0014](0014-quality-gates.md) | The build fails on architecture, coverage and dependency drift | accepted | `631f5f0`, `f8d2d4b` |
+| [0015](0015-event-transport.md) | Events go to an SQS standard queue, not a JMS broker | accepted | `4a9a5b9` |
 
 ## Writing another one
 
