@@ -127,8 +127,9 @@ class LockTimeoutTest {
         CountDownLatch releaseLock = new CountDownLatch(1);
         double timeoutsBefore = lockTimeoutCount();
 
-        // The same holder as contendedFlightRowGives503. cancelBooking locks the
-        // flight row before the booking row, so holding the flight row is enough.
+        // The same holder as contendedFlightRowGives503. cancelBooking takes the
+        // flight row lock too, so holding it is enough. This does not check the
+        // order in which cancelBooking takes its two locks.
         try (ExecutorService holder = Executors.newSingleThreadExecutor()) {
             try {
                 holder.submit(() -> new TransactionTemplate(transactionManager).execute(status -> {
@@ -159,7 +160,6 @@ class LockTimeoutTest {
             }
         }
     }
-
 
     @Test
     @DisplayName("with nothing holding the lock the same request succeeds, so the timeout is not just rejecting everything")
