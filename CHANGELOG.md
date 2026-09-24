@@ -176,6 +176,15 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
   BSD or GNU `date`, where a fixed date would have expired. Act 8 names every
   anonymous path, and the H2 reset line prints only against localhost.
 
+### Removed
+
+- **Queries only tests called.** `FlightRepository` loses the two-argument
+  `findByOriginAndDestination`, `findByStatusAndDepartureTimeBetween`, both
+  `findBookable` overloads and the native `findNextTen`, and `FlightStatus`
+  loses `bookableStatuses`, whose only caller was `findBookable`. Three of
+  their tests go, and the fourth now checks the paged search the service
+  uses. A method only a test calls is a test of nothing.
+
 ### Fixed
 
 - **Fractional numbers were truncated.** Jackson read `"seats": 2.7` as 2, so
