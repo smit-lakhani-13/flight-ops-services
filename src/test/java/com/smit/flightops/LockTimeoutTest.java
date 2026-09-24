@@ -1,5 +1,6 @@
 package com.smit.flightops;
 
+import com.jayway.jsonpath.JsonPath;
 import com.smit.flightops.config.SecurityConfig;
 import com.smit.flightops.observability.BookingMetrics;
 import io.micrometer.core.instrument.Counter;
@@ -22,15 +23,17 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * The lock timeout end to end: a contended flight row gives 503 with {@code Retry-After},
- * not a hang and not a 500. The setting only works if the database error, Hibernate's
- * {@code LockTimeoutException}, Spring's translation, the advice and the header all agree.
+ * The lock timeout end to end: a booking or a booking cancellation behind a contended
+ * flight row gives 503 with {@code Retry-After}, not a hang and not a 500. The setting only
+ * works if the database error, Hibernate's {@code LockTimeoutException}, Spring's
+ * translation, the advice and the header all agree.
  *
  * <p>It runs on H2, which raises error 50200 from {@code SET LOCK_TIMEOUT} where PostgreSQL
  * raises 55P03 from {@code lock_timeout}. Both reach the same Hibernate exception, so this
@@ -106,6 +109,57 @@ class LockTimeoutTest {
             }
         }
     }
+
+    @Test
+    @DisplayName("a cancellation that cannot get the flight row lock is 503 with Retry-After, not 500")
+    void contendedFlightRowGives503OnCancel() throws Exception {
+        String created = mockMvc.perform(post("/api/v1/bookings")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"flightNumber":"UA123","passengerName":"Katherine Johnson","seats":1,
+                                 "idempotencyKey":"lock-timeout-cancel-1"}
+                                """))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        Number bookingId = JsonPath.read(created, "$.bookingId");
+
+        CountDownLatch lockHeld = new CountDownLatch(1);
+        CountDownLatch releaseLock = new CountDownLatch(1);
+        double timeoutsBefore = lockTimeoutCount();
+
+        // The same holder as contendedFlightRowGives503. cancelBooking locks the
+        // flight row before the booking row, so holding the flight row is enough.
+        try (ExecutorService holder = Executors.newSingleThreadExecutor()) {
+            try {
+                holder.submit(() -> new TransactionTemplate(transactionManager).execute(status -> {
+                    flightRepository.findByFlightNumberForUpdate("UA123").orElseThrow();
+                    lockHeld.countDown();
+                    try {
+                        releaseLock.await(30, TimeUnit.SECONDS);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                    return null;
+                }));
+
+                assertThat(lockHeld.await(30, TimeUnit.SECONDS))
+                        .as("the holder thread should have taken the row lock")
+                        .isTrue();
+
+                mockMvc.perform(delete("/api/v1/bookings/{bookingId}", bookingId.longValue()))
+                        .andExpect(status().isServiceUnavailable())
+                        .andExpect(header().string("Retry-After", "1"))
+                        .andExpect(jsonPath("$.code").value("LOCK_TIMEOUT"));
+
+                assertThat(lockTimeoutCount())
+                        .as("the cancellation's 503 must also move bookings.lock_timeout")
+                        .isEqualTo(timeoutsBefore + 1);
+            } finally {
+                releaseLock.countDown();
+            }
+        }
+    }
+
 
     @Test
     @DisplayName("with nothing holding the lock the same request succeeds, so the timeout is not just rejecting everything")
