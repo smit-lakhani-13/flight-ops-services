@@ -327,9 +327,15 @@ metric and an alert.
 
 The transport itself is one interface,
 `src/main/java/com/smit/flightops/service/EventPublisher.java`, with two
-implementations: `LoggingEventPublisher` for local runs and
-`SqsEventPublisher` in AWS. Adding a transport takes one class and one entry in
-`EventProperties.MODES`, and no business logic knows which one is wired.
+implementations: `LoggingEventPublisher` for local runs and `SqsEventPublisher`
+in AWS. No business logic knows which transport is wired, and adding one leaves
+`EventPublisher` unchanged, but it is more than one class. For a JMS broker it
+is a publisher class behind `@ConditionalOnProperty`, a `ConnectionFactory` bean
+and the vendor's client library, a mode in
+`src/main/java/com/smit/flightops/config/EventProperties.java#MODES`, a test,
+and a new consumer, because the Lambda reads `SQSEvent`.
+[ADR 0015](adr/0015-event-transport.md) sets out that cost from the vendors'
+documentation; none of it has been built or run here.
 
 `app.events.publisher` picks the implementation, `log` or `sqs`.
 `OutboxPublisher` takes `EventProperties` as its first constructor argument,
@@ -629,7 +635,7 @@ costs:
 
 | Seam | Swap in | Cost |
 |---|---|---|
-| `EventPublisher` | Kafka, Solace, EventBridge | One class behind `@ConditionalOnProperty`, and its mode added to `EventProperties.MODES`. The payload is already serialised, and an implementation receives bytes it must not interpret |
+| `EventPublisher` | A JMS broker (Solace PubSub+, TIBCO EMS), Kafka, EventBridge | `EventPublisher` itself does not change, because the payload is already serialised. For a JMS broker the cost is more than one class: a publisher behind `@ConditionalOnProperty`, a `ConnectionFactory` bean and the vendor's client library, a mode in `src/main/java/com/smit/flightops/config/EventProperties.java#MODES`, a test, and a new consumer, because the Lambda reads `SQSEvent` and Lambda has no event source for Solace or EMS. Kafka and EventBridge cost something different. [ADR 0015](adr/0015-event-transport.md) sets out each from the vendors' documentation; none has been built or run here |
 | `spring.security.oauth2.resourceserver.jwt.issuer-uri` and `.audiences` | Cognito, Okta, Entra | Configuration: set both. `issuer-uri` alone accepts a token the issuer minted for another client in the tenant. The rules already treat a JWT scope and a Basic authority identically |
 | `Clock` (`src/main/java/com/smit/flightops/config/TimeConfig.java`) | A fixed clock in a test | Already used everywhere |
 | `management.opentelemetry.tracing.export.otlp.endpoint` | An OTLP collector | An environment variable. Ids are already generated and already on every log line |
