@@ -372,6 +372,8 @@ The image is built on an amd64 CI runner for amd64 nodes, so the pipeline needs 
 
 The `Dockerfile` sets `SPRING_PROFILES_ACTIVE=prod`, so a bare `docker run` with no database stops at startup with `'url' must start with "jdbc"`. Without that default it would serve in-memory H2 with the `{noop}` dev passwords. `compose.yaml` selects `postgres`, and the ConfigMap selects `prod`.
 
+The image measured 299.5 MB (299477691 bytes) in CI run 36032424801 on 2026-09-24, as `docker image inspect` reports it on the runner. It has never been pushed, so no registry has reported a size for it. The runtime base is a tag rather than a digest, so the figure moves when `eclipse-temurin:21-jre-alpine` is rebuilt or a dependency changes.
+
 The Lambda's SQS event in `template.yaml` caps the consumer at five concurrent invocations with `ScalingConfig.MaximumConcurrency: 5` (valid from 2 to 1000). It reserves nothing from the account's concurrency pool and limits only the poller.
 
 The EKS control plane bills about $0.10 an hour (about $73 a month) with no worker nodes, until it is deleted. On demand in `ap-south-1` the whole stack costs $7.72 a day: $54 for 7 days, $116 for 15 and $232 for 30, or $64, $137 and $273 with the 18% GST AWS India invoices. See [DEPLOYMENT.md](DEPLOYMENT.md) for the breakdown, three cheaper shapes (one is a single EC2 instance at $0.80 a day) and the runbook. `deploy/aws/down.sh` ends with fourteen checks and fails if any finds something or if a query itself fails.
