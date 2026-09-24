@@ -6,8 +6,8 @@ before the outbox of ADR 0001 arrived in `e83d846`)
 ## Context
 
 Solace PubSub+ and TIBCO EMS are described here from their vendors'
-documentation, and Lambda's event sources from AWS's. None of them has been
-used, built against or run in this project.
+documentation, and Lambda's event sources other than SQS from AWS's. None of
+them has been used, built against or run in this project.
 
 I chose SQS in the first commit, `4a9a5b9`, when the service still sent the
 event from inside the booking transaction, and I recorded the choice after the
@@ -87,19 +87,19 @@ with a dead-letter queue after three receives.
     queue and dead-message queue are vendor-specific too. So are a mode in
     `src/main/java/com/smit/flightops/config/EventProperties.java#MODES` and a
     test.
-  * On the consuming side, the event source mapping goes, because Lambda has
-    no event source for Solace PubSub+ or TIBCO EMS. Its broker event sources,
-    by the AWS Lambda documentation, are Amazon MQ (ActiveMQ, read over JMS,
-    and RabbitMQ), Amazon MSK and self-managed Kafka. Even on Amazon MQ for
-    ActiveMQ, the handler would receive an `ActiveMQEvent`, not an `SQSEvent`,
-    and a failed message retries the whole batch. The replacement is one of
-    two things. One is a bridge from the broker into SQS, in front of the
-    existing mapping. The other is a `@JmsListener` on a transacted session
-    (`sessionTransacted = true`, which Spring's
-    `AbstractMessageListenerContainer` documentation recommends for redelivery
-    on an exception; `CLIENT_ACKNOWLEDGE` is only best-effort), with the
-    conditional `PutItem` kept to absorb redeliveries. That listener is an
-    always-on Spring consumer, the option
+  * On the consuming side, the event source mapping cannot be pointed at the
+    broker, because Lambda has no event source for Solace PubSub+ or TIBCO
+    EMS. Its broker event sources, by the AWS Lambda documentation, are Amazon
+    MQ (ActiveMQ, read over JMS, and RabbitMQ), Amazon MSK and self-managed
+    Kafka. Even on Amazon MQ for ActiveMQ, the handler would receive an
+    `ActiveMQEvent`, not an `SQSEvent`, and a failed message retries the whole
+    batch. The replacement is one of two things. One is a bridge from the
+    broker into SQS, in front of the existing mapping. The other is a
+    `@JmsListener` on a transacted session (`sessionTransacted = true`, which
+    Spring's `AbstractMessageListenerContainer` documentation recommends for
+    redelivery on an exception; `CLIENT_ACKNOWLEDGE` is only best-effort),
+    with the conditional `PutItem` kept to absorb redeliveries. That listener
+    is an always-on Spring consumer, the option
     [ADR 0008](0008-standalone-lambda-consumer.md) rejected for its idle cost.
   * Neither broker is coded in this repository. Solace's Jakarta JMS client is
     on Maven Central (`com.solacesystems:sol-jms-jakarta`). The TIBCO EMS

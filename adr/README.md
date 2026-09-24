@@ -18,8 +18,8 @@ the commit in which the decision landed. The first commit, `4a9a5b9`, is from
   already in `4a9a5b9`.
 
 * 0015 was written on 25 September, ten days after `4a9a5b9`, the commit in
-  which the queue, its dead-letter queue and the Lambda's event source
-  mapping first appear.
+  which the queue, its dead-letter queue and the Lambda's event source mapping
+  first appear.
 
 None of them was an RFC that a team approved before any code existed.
 
