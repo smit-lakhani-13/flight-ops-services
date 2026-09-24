@@ -15,7 +15,8 @@ COPY pom.xml .
 RUN --mount=type=cache,target=/root/.m2 mvn dependency:go-offline -B
 
 COPY src ./src
-# Tests run in CI, which gates on `mvn verify` before it builds this image.
+# Tests run in CI's build job. The deploy job, the only one that pushes this
+# image, needs that job to pass first.
 RUN --mount=type=cache,target=/root/.m2 mvn clean package -DskipTests -B
 
 # ---------- Stage 2: runtime ----------

@@ -12,7 +12,7 @@ Flight inventory and booking microservice: a Spring Boot REST API over PostgreSQ
 
 I picked an airline because seat inventory is a real consistency problem: many clients want the same few seats, clients retry, and a mistake sells one seat twice.
 
-**Scope.** This is a demo that has never served production traffic. CI builds both modules and runs every test, including the PostgreSQL integration tests, on every push to `main` and every pull request. The `Dockerfile`, `k8s/`, `template.yaml`, `deploy/aws/` and the deploy job are written, linted and validated offline, but I have never applied them. Their prices and runbook are in [DEPLOYMENT.md](DEPLOYMENT.md), and [Project status](#project-status) shows what has actually run.
+**Scope.** This is a demo that has never served production traffic. CI builds both modules and runs every test, including the PostgreSQL integration tests, on every push to `main` and every pull request. CI also builds the image from the `Dockerfile` on every push to `main` and every pull request, starts it with no database, and never pushes it. `k8s/`, `template.yaml`, `deploy/aws/` and the deploy job are written, linted and validated offline, but I have never applied them. Their prices and runbook are in [DEPLOYMENT.md](DEPLOYMENT.md), and [Project status](#project-status) shows what has actually run.
 
 **Contents:** [Documentation](#documentation) · [Run it](#run-it-in-30-seconds) · [Status](#project-status) · [Architecture](#architecture) · [Layout](#repository-layout) · [Security](#security) · [API](#api) · [Metrics](#metrics) · [Tests](#tests) · [Deployment](#deployment-and-cost) · [Trade-offs](#trade-offs-and-known-limitations) · [Review](#what-i-found-in-review) · [Versions](#versions)
 
@@ -129,20 +129,19 @@ This table bounds every claim in this README.
 |---|---|
 | **Built, tested, and exercised over HTTP** | The whole app module. Every endpoint hit with `curl` against a running instance. Every status code in the tables below observed over HTTP or in a test, including the 401 and 403 bodies, except two 503s that no test covers: the one on a booking cancellation, and the health 503 during a database outage. `LockTimeoutTest` holds the flight row and gets the booking's 503 end to end. The flight status change and cancellation get theirs only in a slice test with a mocked service (`FlightControllerTest#flightWriteBehindARowLockReturns503`), and `DATABASE_UNAVAILABLE` likewise, on a flight read (`FlightControllerTest#noDatabaseConnectionReturns503`). The Lambda module, via 25 tests: 19 for the handler and 6 for the consumer side of the event contract. |
 | **Verified against real PostgreSQL in CI** | The 8 Testcontainers integration tests: 5 in `BookingIntegrationTest` and 3 in `service/OutboxPrunePostgresTest`. CI runs all 287 tests, and these 8 are the only ones on PostgreSQL. The 8 apply the Flyway migrations to an empty database and check `ddl-auto: validate` against the schema those migrations produced. They run `SELECT … FOR UPDATE` under 20 threads competing for 5 seats, and replay the same idempotency key from 20 threads at once. The runners have Docker, so these execute there and skip on a laptop without one, and the `build` job fails if either class is skipped or missing. |
-| **Authored and reviewed, never executed** | The container image. `sam deploy` and `sam local invoke`; there is no `sam build`, because Maven builds the jar that `template.yaml` names. Every `kubectl` and `eksctl` step. The deploy half of the GitHub Actions workflow, which is gated off (see below). |
+| **Built and started in CI, never pushed** | The container image. The `image` job builds it from the `Dockerfile` on every push to `main` and every pull request, starts it with no environment, and fails unless it stops at startup for want of a database. It has never been pushed to a registry, never run against a database and never served a request. |
+| **Authored and reviewed, never executed** | `sam deploy` and `sam local invoke`; there is no `sam build`, because Maven builds the jar that `template.yaml` names. Every `kubectl` and `eksctl` step. The deploy half of the GitHub Actions workflow, which is gated off (see below). |
 | **Not implemented** | A Solace binding. Trace **export** from the service: ids are generated and logged, but there is no collector to send spans to. The Lambda's `Tracing: Active` has X-Ray record a sample of its invocations, and those traces do not carry the service's trace id. Rate limiting. |
 
 **Warning.** Nothing here has ever been deployed, and merging to `main` does not deploy it.
 
-The deploy job is gated on a `DEPLOY_ENABLED` repository variable that has never been set. A gate on the branch alone would make the first push to a fresh clone assume an IAM role built from an unset `AWS_ACCOUNT_ID` secret, and go red for a reason unrelated to the code. So `build`, `infra-lint`, `trivy-fs` and `docs-check` run on every push to `main` and every pull request, with `dependency-review` on pull requests only. The deploy job reports as skipped until someone provisions the role and sets the variable. Read the green badge as "it builds and the tests pass".
+The deploy job is gated on a `DEPLOY_ENABLED` repository variable that has never been set. A gate on the branch alone would make the first push to a fresh clone assume an IAM role built from an unset `AWS_ACCOUNT_ID` secret, and go red for a reason unrelated to the code. So `build`, `infra-lint`, `trivy-fs`, `docs-check` and `image` run on every push to `main` and every pull request, with `dependency-review` on pull requests only. The deploy job reports as skipped until someone provisions the role and sets the variable. Read the green badge as "it builds and the tests pass".
 
 **Why the gap:** I wrote and reviewed the infrastructure on a machine with no container runtime and no cluster. CI runs what it can reach, including the integration tests that need a real database. The rest of the "never executed" row needs a registry, a cluster or a funded AWS account, and the project has none of the three.
 
 What the repository does not claim:
 
 - I wrote `events/*.json` by hand, and none of it is captured queue traffic. Their `md5OfBody` values are placeholders, and nothing in the code reads that field.
-
-- No image size is quoted. The Dockerfile is multi-stage, but the image has never been built, so any figure would be invented.
 
 ## Architecture
 
@@ -238,8 +237,8 @@ The same picture with method names, plus the booking sequence, the idempotency d
 ├── template.yaml                  SAM template for the Lambda
 ├── compose.yaml                   PostgreSQL + the app, for the container path locally
 ├── Dockerfile                     multi-stage: JDK + Maven build → JRE runtime
-└── .github/workflows/             build-and-deploy.yml (build, infra-lint, trivy-fs
-                                   and docs-check on every trigger, dependency-review
+└── .github/workflows/             build-and-deploy.yml (build, infra-lint, trivy-fs,
+                                   docs-check and image on every trigger, dependency-review
                                    on pull requests, the gated deploy), codeql.yml
 ```
 
@@ -362,7 +361,7 @@ UPDATE outbox_events SET attempts = 0, next_attempt_at = NULL WHERE id = ?
 
 ## Deployment and cost
 
-Nothing in this section has been executed.
+Nothing in this section has been executed, except building the image and starting it with no database, which the `image` job does in CI.
 
 ```bash
 docker compose up --build                       # the whole stack, locally

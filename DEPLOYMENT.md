@@ -69,7 +69,8 @@ local database, Flyway and the log publisher. The image itself defaults to
 passwords. Run bare, with no `DB_URL`, it stops at startup with
 `'url' must start with "jdbc"`. It never falls back to H2 and the `{noop}` dev
 passwords. The deploy job checks for that failure before it pushes an image, in
-the step "The image will not start without a database".
+the step "The image will not start without a database". The `image` job runs
+the same check on every push to `main` and every pull request.
 
 ## 3. The async half alone
 

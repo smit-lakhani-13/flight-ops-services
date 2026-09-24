@@ -1,21 +1,22 @@
 name: build-and-deploy
 
-# One file, six jobs, and no trigger runs all six.
+# One file, seven jobs, and no trigger runs all seven.
 #
 #   build              every trigger      both Maven modules, suite, coverage, SBOM
 #   infra-lint         every trigger      the manifests and CloudFormation that nothing compiles
 #   trivy-fs           every trigger      dependency CVEs and committed secrets
 #   docs-check         every trigger      citations, links, attribution and privacy sweeps
+#   image              every trigger      docker build, a start with no database, the size; never pushed
 #   dependency-review  pull_request only  what a pull request ADDS
 #   deploy             gated push or      render, apply, wait, smoke
 #                      manual run on main
 #
-# A pull request runs five jobs. A push to main or a manual run on main runs
-# four plus a deploy that is skipped unless it is configured. A manual run on
-# any other branch runs four. dependency-review diffs a pull request against its
+# A pull request runs six jobs. A push to main or a manual run on main runs
+# five plus a deploy that is skipped unless it is configured. A manual run on
+# any other branch runs five. dependency-review diffs a pull request against its
 # base, and a push has no base to diff against.
 #
-# Branch protection is meant to require the four that run on every trigger (a
+# Branch protection is meant to require the five that run on every trigger (a
 # repository setting, outside this file). dependency-review stays advisory: it
 # is the one gate that can pass on a repository setting instead of the code.
 #
@@ -82,7 +83,8 @@ jobs:
 
       # `verify`, not `test`: it also runs the enforcer, jacoco:check against
       # the coverage floor and the CycloneDX SBOM, so a JAR that cannot be
-      # assembled or slipping coverage fails here, before `docker build`.
+      # assembled or slipping coverage fails here, and the deploy job, which
+      # needs this one, stops before its `docker build`.
       # `./mvnw`, not the runner's Maven: the wrapper pins the version and its
       # SHA-256.
       - name: Build and test
@@ -484,12 +486,53 @@ jobs:
         run: scripts/sweeps.sh
 
   # ---------------------------------------------------------------------------
+  # The image, on every trigger, never pushed. This proves on every pull request
+  # that the Dockerfile builds and that the image refuses to start without a
+  # database. It logs in to nothing and pushes nothing; the deploy job builds its
+  # own copy on its own runner.
+  image:
+    name: image
+    runs-on: ubuntu-latest
+    # The build stage downloads every dependency: the BuildKit cache mount is
+    # empty on a fresh runner.
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build the image
+        run: docker build --build-arg "GIT_SHA=${{ github.sha }}" -t flight-ops-service:ci .
+
+      # The deploy job's check, against the local tag. See the comment there.
+      - name: The image will not start without a database
+        run: |
+          status=0
+          out=$(timeout 120 docker run --rm flight-ops-service:ci 2>&1) || status=$?
+          printf '%s\n' "$out" | tail -n 3 | cut -c1-400
+          if [ "$status" -ne 0 ] && grep -q "'url' must start with" <<<"$out"; then
+            echo "stopped at startup (exit $status) for want of a DB_URL"
+          else
+            echo "::error::the image did not stop for want of a database (exit $status); does the Dockerfile still set SPRING_PROFILES_ACTIVE=prod?"
+            exit 1
+          fi
+
+      # In the log as well as the summary: `gh run view --log` reads the log,
+      # and the job summary is shown only on the run page. MB is 1,000,000 bytes.
+      - name: Record the image size
+        run: |
+          bytes=$(docker image inspect flight-ops-service:ci --format '{{.Size}}')
+          mb=$(awk -v b="$bytes" 'BEGIN { printf "%.1f", b / 1000000 }')
+          server=$(docker version --format '{{.Server.Version}}')
+          echo "image size: ${mb} MB (${bytes} bytes), docker image inspect, Docker ${server}"
+          echo "flight-ops-service:ci is **${mb} MB** (${bytes} bytes) as \`docker image inspect\` reports it on this runner (Docker ${server}). It was not pushed." >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------------
   # Everything below runs only for a configured push or manual run on main.
   deploy:
     name: deploy
     # Not dependency-review: it is skipped on a push, and a skipped dependency
     # skips everything downstream of it.
-    needs: [build, infra-lint, trivy-fs, docs-check]
+    needs: [build, infra-lint, trivy-fs, docs-check, image]
 
     # The `env` context is not available in a job-level `if`, so the
     # condition is written out.
