@@ -85,6 +85,10 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
   why events go to an SQS standard queue and what a JMS broker would cost, from
   documentation.
 
+- **What an Oracle port would change.** [ADR 0016](adr/0016-oracle-port.md)
+  is a proposal written from Oracle's and Hibernate's documentation and never
+  run: two outbox queries, the lock-wait bound and the migration spellings.
+
 ### Changed
 
 - **Version.** Both poms say `1.2.0-SNAPSHOT` until the next tag, so a build
