@@ -38,7 +38,7 @@ changes.
   small statement. I would accept that, because the pruner is a background
   job, but it is a trade and not a translation.
 
-* **The lock wait.** The `postgres` profile bounds the wait with
+* **The lock wait.** The `postgres` and `prod` profiles bound the wait with
   `SET lock_timeout = '3s'` in `connection-init-sql`. Oracle has no session
   setting for row-lock waits; `DDL_LOCK_TIMEOUT` covers DDL only. Hibernate's
   Oracle dialect renders a pessimistic lock with a timeout as
@@ -48,24 +48,30 @@ changes.
   the Oracle run would check. Oracle's ORA-30006 reaches Spring as a
   `PessimisticLockingFailureException`, which
   `src/main/java/com/smit/flightops/exception/GlobalExceptionHandler.java#handleLockTimeout`
-  already maps to the 503.
+  already maps to the 503. A hint bounds only the query that carries it, which
+  is why [ADR 0002](0002-pessimistic-locking.md) chose the session setting:
+  `src/main/java/com/smit/flightops/service/FlightService.java#updateStatus`
+  and `#cancel` load the flight without a lock and write it at flush, so on
+  Oracle they would have to use the locking query too, or the 503 documented
+  for a status change or a flight cancellation would become a wait with no
+  bound.
 
 * **Spellings in the migrations.** An identity column for `BIGSERIAL`;
-  `TIMESTAMP(6) WITH TIME ZONE` for V7's `TIMESTAMPTZ`; `ADD (column type)`
-  for `ADD COLUMN`; `DEFAULT 0 NOT NULL` for V5's `NOT NULL DEFAULT 0`;
-  `VARCHAR2(n CHAR)` for character lengths; `CLOB` for `TEXT`. The partial
-  index `idx_outbox_unpublished` becomes a function-based index on
-  `CASE WHEN published_at IS NULL THEN id END`, and the claim query has to use
-  the same expression to reach it. V4's partial index, which V8 drops again,
-  can be left out of an Oracle set together with that drop; V8's
-  `DROP INDEX IF EXISTS` exists only from Oracle Database 23ai.
-  `ddl-auto: validate` would then show which entity mappings need a column
-  type per vendor.
+  `NUMBER(19)` for V1's `BIGINT`; `TIMESTAMP(6) WITH TIME ZONE` for V7's
+  `TIMESTAMPTZ`; `ADD (column type)` for `ADD COLUMN`; `DEFAULT 0 NOT NULL`
+  for V5's `NOT NULL DEFAULT 0`; `VARCHAR2(n CHAR)` for character lengths;
+  `CLOB` for `TEXT`. The partial index `idx_outbox_unpublished` becomes a
+  function-based index on `CASE WHEN published_at IS NULL THEN id END`, and
+  the claim query has to use the same expression to reach it. V4's partial
+  index, which V8 drops again, can be left out of an Oracle set together with
+  that drop; V8's `DROP INDEX IF EXISTS` exists only from Oracle Database
+  23ai. `ddl-auto: validate` would then show which entity mappings need a
+  column type per vendor.
 
 ## Consequences
 
-* The port is two rewritten queries, one moved setting and a second set of
-  migrations, not a driver swap.
+* The port is two rewritten queries, a session-wide lock-wait bound replaced
+  by per-query hints and a second set of migrations, not a driver swap.
 * Pruning on Oracle would give up `SKIP LOCKED`, so two replicas pruning at
   once would wait for each other.
 * Nothing here has run. Every sentence is from documentation until the CI run
@@ -92,6 +98,6 @@ changes.
 An `OracleContainer` on `gvenzl/oracle-free:slim-faststart` in CI, with
 `ddl-auto: validate`; the two concurrency tests from
 `src/test/java/com/smit/flightops/service/OutboxPrunePostgresTest.java`, one
-with two pruners and one with two pollers; and one more test in which
-transaction A locks rows 1 to 10 and transaction B, with a batch size of 10,
-must receive rows 11 to 20.
+with two pruners, rewritten to expect the second pruner to wait, and one with
+two pollers; and one more test in which transaction A locks rows 1 to 10 and
+transaction B, with a batch size of 10, must receive rows 11 to 20.
