@@ -45,9 +45,10 @@ public class OutboxEvent {
      * creates {@code TEXT}, and {@code ddl-auto: validate} would refuse to start the
      * application. H2 runs {@code create-drop}, so it never shows locally. The tests
      * that run Flyway and {@code validate} against real PostgreSQL are
-     * {@code BookingIntegrationTest} and {@code OutboxPrunePostgresTest}; both skip
-     * without Docker. {@code LONG32VARCHAR} renders as {@code text} on PostgreSQL and
-     * binds as a plain string, so no large object is created per write.
+     * {@code BookingIntegrationTest}, {@code OutboxPrunePostgresTest} and
+     * {@code LockTimeoutPostgresTest}; all three skip without Docker.
+     * {@code LONG32VARCHAR} renders as {@code text} on PostgreSQL and binds as a plain
+     * string, so no large object is created per write.
      */
     @JdbcTypeCode(SqlTypes.LONG32VARCHAR)
     @Column(nullable = false)

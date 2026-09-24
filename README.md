@@ -28,7 +28,7 @@ On every CI run, the `docs-check` job runs three scripts. `scripts/refcheck.py` 
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Three ways to run it, the runbook for each, what each costs for 7, 10 and 15 days, what breaks first under load, and how to tear it all down with proof |
 | [OPERATIONS.md](OPERATIONS.md) | Every environment variable, the metrics and what they mean, how to follow one booking across the queue, what to alert on, the playbooks, and what is not wired up |
 | [SECURITY.md](SECURITY.md) | The auth model, what is exposed and what is not, how secrets are handled, and the known limitations |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | The JDK trap, both build commands, what `Skipped: 8` means, and what CI enforces |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | The JDK trap, both build commands, what `Skipped: 9` means, and what CI enforces |
 | [CHANGELOG.md](CHANGELOG.md) | What changed in each release, the response field 1.1.0 removed, and why it is 1.1.0 and not 2.0.0 |
 | [contracts/README.md](contracts/README.md) | The event contract between the two modules, how both sides enforce it, and how to change it without breaking a deployed consumer |
 | [deploy/aws/README.md](deploy/aws/README.md) | What each script and template creates, who owns what between the scripts and CI, and the failure table |
@@ -128,7 +128,7 @@ This table bounds every claim in this README.
 | Status | What |
 |---|---|
 | **Built, tested, and exercised over HTTP** | The whole app module. Every endpoint hit with `curl` against a running instance. Every status code in the tables below observed over HTTP or in a test, including the 401 and 403 bodies, except two 503s that no test covers: the one on a booking cancellation, and the health 503 during a database outage. `LockTimeoutTest` holds the flight row and gets the booking's 503 end to end. The flight status change and cancellation get theirs only in a slice test with a mocked service (`FlightControllerTest#flightWriteBehindARowLockReturns503`), and `DATABASE_UNAVAILABLE` likewise, on a flight read (`FlightControllerTest#noDatabaseConnectionReturns503`). The Lambda module, via 25 tests: 19 for the handler and 6 for the consumer side of the event contract. |
-| **Verified against real PostgreSQL in CI** | The 8 Testcontainers integration tests: 5 in `BookingIntegrationTest` and 3 in `service/OutboxPrunePostgresTest`. CI runs all 287 tests, and these 8 are the only ones on PostgreSQL. The 8 apply the Flyway migrations to an empty database and check `ddl-auto: validate` against the schema those migrations produced. They run `SELECT … FOR UPDATE` under 20 threads competing for 5 seats, and replay the same idempotency key from 20 threads at once. The runners have Docker, so these execute there and skip on a laptop without one, and the `build` job fails if either class is skipped or missing. |
+| **Verified against real PostgreSQL in CI** | The 9 Testcontainers integration tests: 5 in `BookingIntegrationTest`, 3 in `service/OutboxPrunePostgresTest` and 1 in `LockTimeoutPostgresTest`. CI runs all 288 tests, and these 9 are the only ones on PostgreSQL. The 9 apply the Flyway migrations to an empty database and check `ddl-auto: validate` against the schema those migrations produced. They run `SELECT … FOR UPDATE` under 20 threads competing for 5 seats, replay the same idempotency key from 20 threads at once, and hold a flight row until PostgreSQL's own 3 s `lock_timeout` fires with SQLSTATE `55P03`. The runners have Docker, so these execute there and skip on a laptop without one, and the `build` job fails if any of the three classes is skipped or missing. |
 | **Built and started in CI, never pushed** | The container image. The `image` job builds it from the `Dockerfile` on every push to `main` and every pull request, starts it with no environment, and fails unless it stops at startup for want of a database. It has never been pushed to a registry, never run against a database and never served a request. |
 | **Authored and reviewed, never executed** | `sam deploy` and `sam local invoke`; there is no `sam build`, because Maven builds the jar that `template.yaml` names. Every `kubectl` and `eksctl` step. The deploy half of the GitHub Actions workflow, which is gated off (see below). |
 | **Not implemented** | A Solace binding. Trace **export** from the service: ids are generated and logged, but there is no collector to send spans to. The Lambda's `Tracing: Active` has X-Ray record a sample of its invocations, and those traces do not carry the service's trace id. Rate limiting. |
@@ -199,7 +199,7 @@ The same picture with method names, plus the booking sequence, the idempotency d
 ## Repository layout
 
 ```
-├── src/main/java/com/smit/flightops/       57 files, 3,975 lines
+├── src/main/java/com/smit/flightops/       57 files, 3,976 lines
 │   ├── controller/     HTTP only: bind, validate, map to DTO, choose the status code
 │   ├── service/        orchestration, transaction boundaries, the outbox drain and pruner
 │   ├── entity/         Flight, Booking, FlightStatus, OutboxEvent: the invariants
@@ -215,7 +215,7 @@ The same picture with method names, plus the booking sequence, the idempotency d
 ├── src/main/resources/
 │   ├── application.yml            profiles: default (H2), postgres, prod
 │   └── db/migration/              Flyway V1–V8, which owns the PostgreSQL schema
-├── src/test/java/                 32 test classes (34 with the Lambda's)
+├── src/test/java/                 33 test classes (35 with the Lambda's)
 ├── NOTES.md                       the bugs I found and fixed
 ├── ARCHITECTURE.md                the diagrams and the method-by-method request path
 ├── DEPLOYMENT.md                  three shapes, the runbook, the cost of each, the teardown
@@ -338,7 +338,7 @@ UPDATE outbox_events SET attempts = 0, next_attempt_at = NULL WHERE id = ?
 ## Tests
 
 ```bash
-./mvnw clean verify                       # 262 tests: 254 run, 8 skipped, 0 failures
+./mvnw clean verify                       # 263 tests: 254 run, 9 skipped, 0 failures
 ./mvnw -f lambda/pom.xml clean verify     # 25 tests, 0 failures
 ```
 
@@ -355,9 +355,9 @@ UPDATE outbox_events SET attempts = 0, next_attempt_at = NULL WHERE id = ?
 | Architecture | 9 | ArchUnit over `target/classes`: the layering, no field injection, no `@Transactional` outside `service/`, and in main code no `java.time` `now()` without a `Clock`, no `System.currentTimeMillis()`, no `new Date()` and no `Calendar.getInstance()`. I checked each rule against a planted violation before committing it |
 | Observability | 8 | the request-id filter against a hostile inbound header, and the meters scraped through a real `PrometheusMeterRegistry`, since a `SimpleMeterRegistry` would accept any name |
 | Run | 279 | 0 failures (13 + 36 + 63 + 13 + 84 + 11 + 19 + 23 + 9 + 8) |
-| PostgreSQL integration | 8 | `@Testcontainers(disabledWithoutDocker = true)`: 5 in `BookingIntegrationTest` and 3 in `service/OutboxPrunePostgresTest`, skipped without a container runtime |
+| PostgreSQL integration | 9 | `@Testcontainers(disabledWithoutDocker = true)`: 5 in `BookingIntegrationTest`, 3 in `service/OutboxPrunePostgresTest` and 1 in `LockTimeoutPostgresTest`, skipped without a container runtime |
 
-287 tests exist across the two modules: 279 run without Docker and 8 skip. CI runs all 287 on runners with Docker, and it is the only place the PostgreSQL paths run. Those are Flyway with `ddl-auto=validate`, `SELECT FOR UPDATE` under 20-way contention, a 20-thread key race, the native `DELETE … FOR UPDATE SKIP LOCKED` under two pruners, and the outbox claim under two competing pollers. The `build` job's "The PostgreSQL tests ran" step fails the run if either class skipped a test or left no report. See [CONTRIBUTING.md](CONTRIBUTING.md) for what the skipped count means.
+288 tests exist across the two modules: 279 run without Docker and 9 skip. CI runs all 288 on runners with Docker, and it is the only place the PostgreSQL paths run. Those are Flyway with `ddl-auto=validate`, `SELECT FOR UPDATE` under 20-way contention, a 20-thread key race, the native `DELETE … FOR UPDATE SKIP LOCKED` under two pruners, the outbox claim under two competing pollers, and PostgreSQL's own `lock_timeout` firing on a held flight row. The `build` job's "The PostgreSQL tests ran" step fails the run if any of the three classes skipped a test or left no report. See [CONTRIBUTING.md](CONTRIBUTING.md) for what the skipped count means.
 
 ## Deployment and cost
 
