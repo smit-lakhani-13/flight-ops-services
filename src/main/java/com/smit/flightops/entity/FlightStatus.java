@@ -1,7 +1,5 @@
 package com.smit.flightops.entity;
 
-import java.util.Arrays;
-import java.util.List;
 import java.util.Objects;
 
 /**
@@ -38,14 +36,6 @@ public enum FlightStatus {
             case SCHEDULED, BOARDING, DELAYED -> true;
             case DEPARTED, ARRIVED, CANCELLED -> false;
         };
-    }
-
-    /**
-     * {@link #isBookable()} as a list, so a JPQL {@code status IN :statuses} is driven by
-     * the enum instead of a literal such as {@code status = 'SCHEDULED'}.
-     */
-    public static List<FlightStatus> bookableStatuses() {
-        return Arrays.stream(values()).filter(FlightStatus::isBookable).toList();
     }
 
     /**

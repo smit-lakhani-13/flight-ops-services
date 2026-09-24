@@ -1,7 +1,6 @@
 package com.smit.flightops.repository;
 
 import com.smit.flightops.entity.Flight;
-import com.smit.flightops.entity.FlightStatus;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -17,8 +16,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Derived-query names and the native query are checked only at startup or first
- * execution, so these tests run each one. Several are examples the API does not call.
+ * Derived-query names are checked only at startup or first execution, so these tests
+ * run the flight-number lookups, the paged origin-and-destination search and the
+ * locking query that the service calls.
  *
  * <p>{@code @DataJpaTest} rolls each test back and starts an embedded database,
  * so no test can see another's rows.
@@ -58,9 +58,9 @@ class FlightRepositoryTest {
         save("UA123", "EWR", "LHR", 180);
         save("UA789", "EWR", "SFO", 200);
 
-        assertThat(flightRepository.findByOriginAndDestination("EWR", "LHR")).hasSize(1);
-        assertThat(flightRepository.findByOriginAndDestination("EWR", "SFO")).hasSize(1);
-        assertThat(flightRepository.findByOriginAndDestination("ORD", "LHR")).isEmpty();
+        assertThat(flightRepository.findByOriginAndDestination("EWR", "LHR", PageRequest.of(0, 10)).getContent()).hasSize(1);
+        assertThat(flightRepository.findByOriginAndDestination("EWR", "SFO", PageRequest.of(0, 10)).getContent()).hasSize(1);
+        assertThat(flightRepository.findByOriginAndDestination("ORD", "LHR", PageRequest.of(0, 10)).getContent()).isEmpty();
     }
 
     @Test
@@ -74,44 +74,6 @@ class FlightRepositoryTest {
         assertThat(page.getContent()).hasSize(2);
         assertThat(page.getTotalElements()).isEqualTo(3);
         assertThat(page.getTotalPages()).isEqualTo(2);
-    }
-
-    @Test
-    @DisplayName("findBookable skips full and non-bookable flights, and keeps DELAYED ones")
-    void findBookableFiltersOnSeatsAndStatus() {
-        save("UA123", "EWR", "LHR", 180);
-        Flight full = save("UA124", "EWR", "LHR", 2);
-        full.reserveSeats(2);
-        Flight cancelled = save("UA125", "EWR", "LHR", 180);
-        cancelled.cancel();
-        // A delayed flight still sells seats, per FlightStatus.isBookable(), and this query must agree.
-        Flight delayed = save("UA126", "EWR", "LHR", 180);
-        delayed.updateStatus(FlightStatus.DELAYED);
-        flightRepository.flush();
-
-        assertThat(flightRepository.findBookable(1))
-                .extracting(Flight::getFlightNumber)
-                .containsExactlyInAnyOrder("UA123", "UA126");
-    }
-
-    @Test
-    void findByStatusAndDepartureWindow() {
-        save("UA123", "EWR", "LHR", 180);
-
-        assertThat(flightRepository.findByStatusAndDepartureTimeBetween(
-                FlightStatus.SCHEDULED, SOON.minus(Duration.ofMinutes(1)), SOON.plus(Duration.ofMinutes(1))))
-                .hasSize(1);
-        assertThat(flightRepository.findByStatusAndDepartureTimeBetween(
-                FlightStatus.DEPARTED, SOON.minus(Duration.ofMinutes(1)), SOON.plus(Duration.ofMinutes(1))))
-                .isEmpty();
-    }
-
-    @Test
-    @DisplayName("the native LIMIT query executes; it is not portable, so it needs a test")
-    void nativeQueryRuns() {
-        save("UA123", "EWR", "LHR", 180);
-
-        assertThat(flightRepository.findNextTen("EWR")).hasSize(1);
     }
 
     @Test
