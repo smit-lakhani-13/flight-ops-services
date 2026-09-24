@@ -293,8 +293,8 @@
 
               The thresholds sit below the measured coverage with room. With no Docker, nine
               tests skip (five in BookingIntegrationTest, three in OutboxPrunePostgresTest,
-              one in LockTimeoutPostgresTest), and the bundle measures about 0.92 line and 0.75 branch. CI runs the Testcontainers
-              tests, so it can only measure higher.
+              one in LockTimeoutPostgresTest), and the bundle measures about 0.92 line and 0.75
+              branch. CI runs the Testcontainers tests, so it can only measure higher.
 
               BUNDLE, because a per-class rule fails the build over an unused constructor on
               an exception class. The one exclusion is the main() class, which every
