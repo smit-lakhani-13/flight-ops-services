@@ -24,7 +24,7 @@ On every CI run, the `docs-check` job runs three scripts. `scripts/refcheck.py` 
 |---|---|
 | [NOTES.md](NOTES.md) | The bugs I found in this service, why each happened, and the test and commit that pin each fix |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | How the pieces fit: the booking sequence naming every method it passes through, the idempotency decision table, the lock order, the outbox, the status state machine, the ER diagram, and the module boundaries the build enforces |
-| [adr/](adr/README.md) | Why each decision went the way it did, and what I rejected: 15 records covering the outbox, pessimistic locking, ids, the request fingerprint, the security model, Boot 4, the Lambda, the IaC choice, the region, observability, OpenAPI, the outbox bounds, the quality gates and the event transport |
+| [adr/](adr/README.md) | Why each decision went the way it did, and what I rejected: 16 records covering the outbox, pessimistic locking, ids, the request fingerprint, the security model, Boot 4, the Lambda, the IaC choice, the region, observability, OpenAPI, the outbox bounds, the quality gates, the event transport and a proposal for an Oracle port |
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Three ways to run it, the runbook for each, what each costs for 7, 10 and 15 days, what breaks first under load, and how to tear it all down with proof |
 | [OPERATIONS.md](OPERATIONS.md) | Every environment variable, the metrics and what they mean, how to follow one booking across the queue, what to alert on, the playbooks, and what is not wired up |
 | [SECURITY.md](SECURITY.md) | The auth model, what is exposed and what is not, how secrets are handled, and the known limitations |
@@ -220,7 +220,7 @@ The same picture with method names, plus the booking sequence, the idempotency d
 ├── ARCHITECTURE.md                the diagrams and the method-by-method request path
 ├── DEPLOYMENT.md                  three shapes, the runbook, the cost of each, the teardown
 ├── CHANGELOG.md                   1.0.0, 1.1.0, the unreleased work, and the response field 1.1.0 removed
-├── adr/                           15 decision records, 0001–0015
+├── adr/                           16 decision records, 0001–0016
 ├── scripts/                       refcheck.py, linkcheck.py and sweeps.sh run in CI;
 │                                  numbers.sh recomputes the counts
 ├── contracts/                     the event schema both modules test against

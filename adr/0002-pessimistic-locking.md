@@ -78,6 +78,11 @@ every path that changes seats or bookings.
 no test shows PostgreSQL's own `lock_timeout` firing.
 `LockTimeoutPostgresTest` now does.
 
+**Addendum (2026-09-25).** The bound on the wait is a PostgreSQL session
+setting, and Oracle has no session setting for row-lock waits
+(`DDL_LOCK_TIMEOUT` covers DDL only). [ADR 0016](0016-oracle-port.md)
+proposes, from documentation, where the bound would move.
+
 ## Alternatives considered
 
 * **Optimistic locking.** The better default for low contention, and the worst

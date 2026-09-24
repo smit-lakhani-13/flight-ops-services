@@ -640,3 +640,4 @@ costs:
 | `Clock` (`src/main/java/com/smit/flightops/config/TimeConfig.java`) | A fixed clock in a test | Already used everywhere |
 | `management.opentelemetry.tracing.export.otlp.endpoint` | An OTLP collector | An environment variable. Ids are already generated and already on every log line |
 | The outbox poller | Debezium reading the WAL | A replication slot, a connector to operate, and a disk that fills if the consumer stops. I considered it and rejected it at this size |
+| The database | Oracle | Two native outbox queries rewritten, the lock-wait bound moved from the session to the query, and a second set of migrations. [ADR 0016](adr/0016-oracle-port.md) sets this out from documentation, as a proposal; none of it has been built or run |

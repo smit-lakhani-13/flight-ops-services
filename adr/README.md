@@ -5,9 +5,10 @@ situation that forced the choice, what I chose, what it costs, and what I
 rejected. The rejected options are there because someone who was not in the
 room will propose them again a year later.
 
-I wrote every record after the decision it records. The "Taken in" column names
-the commit in which the decision landed. The first commit, `4a9a5b9`, is from
-15 September 2026. 0001–0014 were written on 22 September:
+I wrote every accepted record after the decision it records; 0016 is a proposal,
+and no decision has been taken. The "Taken in" column names the commit in which
+the decision landed. The first commit, `4a9a5b9`, is from 15 September 2026.
+0001–0014 were written on 22 September:
 
 * 0001–0008 and 0011–0014 were written together in `040c3be`. For 0001–0008
   that was between about eight hours and seven days after the code. For
@@ -48,6 +49,7 @@ scope in 0012 were changed in place, and each record's status line says so.
 | [0013](0013-outbox-ceiling-and-retention.md) | The outbox is bounded: an attempt ceiling and a retention window | accepted | `a6efc1c`, `50e8871` |
 | [0014](0014-quality-gates.md) | The build fails on architecture, coverage and dependency drift | accepted | `631f5f0`, `f8d2d4b` |
 | [0015](0015-event-transport.md) | Events go to an SQS standard queue, not a JMS broker | accepted | `4a9a5b9` |
+| [0016](0016-oracle-port.md) | What porting to Oracle would change | proposed | none |
 
 ## Writing another one
 
