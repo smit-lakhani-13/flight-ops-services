@@ -93,7 +93,7 @@ resulting failure blames the property.
 
 ## What CI enforces
 
-`.github/workflows/build-and-deploy.yml` defines six jobs, and not all of them
+`.github/workflows/build-and-deploy.yml` defines seven jobs, and not all of them
 run on every event. The workflow runs on a push or pull request to `main`, and
 on a manual run. The jobs run in parallel, so a red square names what broke
 before you open the log.
@@ -104,6 +104,7 @@ before you open the log.
 | `infra-lint` | every trigger |
 | `trivy-fs` | every trigger |
 | `docs-check` | every trigger |
+| `image` | every trigger. It builds and starts the image and never pushes it |
 | `dependency-review` | **pull requests only**. It diffs what the PR adds against the base, and a push has no base to diff against |
 | `deploy` | gated off: a push or manual run on `main` **and** `vars.DEPLOY_ENABLED == 'true'`. That variable is unset, so the job reports as skipped |
 
@@ -129,6 +130,8 @@ without a line of it changing.
 | `docs-check` | `scripts/refcheck.py` | a backticked `path` or `path#symbol` in any Markdown file does not resolve |
 | `docs-check` | `scripts/linkcheck.py` | a relative link or heading anchor is broken |
 | `docs-check` | `scripts/sweeps.sh` | a co-author trailer line or an appended "Generated with" signature appears in a tracked file or in a commit message on any ref, an absolute home-directory path appears in a tracked file, a pattern from the `SWEEP_PATTERNS` secret matches a tracked file path, a file's contents or a commit message, or `SWEEP_PATTERNS` is empty on a push or a manual run |
+| `image` | `docker build` | the `Dockerfile` does not build |
+| `image` | "The image will not start without a database" | the image, run with no environment, does not stop with `'url' must start with` |
 | `deploy` | "Is this commit already in ECR?" | `describe-images` fails with anything other than `ImageNotFoundException` |
 | `deploy` | "The image will not start without a database" | the image, run with no environment, does not stop with `'url' must start with` |
 | `deploy` | Trivy, on the image | the built image has a CRITICAL vulnerability with a fix available. It runs before the push |

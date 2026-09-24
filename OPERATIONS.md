@@ -70,11 +70,12 @@ starts, serves every endpoint, passes the demo and stores nothing.
 `./mvnw spring-boot:run` and a bare `java -jar` get it. The image does not: the
 Dockerfile sets `SPRING_PROFILES_ACTIVE=prod`, so a container started with no
 profile fails closed. With no `DB_URL`, a bare `docker run` stops with
-`'url' must start with "jdbc"`. The deploy job's step "The image will not start
-without a database" checks that before it pushes an image. That job is gated
-off, so the check has never run. `compose.yaml` selects `postgres`, and
-`k8s/base/configmap.yaml` sets `prod` for the cluster. The Deployment pulls the
-whole ConfigMap in with `envFrom`.
+`'url' must start with "jdbc"`. CI checks that on every push to `main` and
+every pull request, in the `image` job's step "The image will not start without
+a database". The deploy job runs the same step before it pushes an image. That
+job is gated off, so its copy has never run. `compose.yaml` selects `postgres`,
+and `k8s/base/configmap.yaml` sets `prod` for the cluster. The Deployment pulls
+the whole ConfigMap in with `envFrom`.
 
 ## Health
 

@@ -346,10 +346,12 @@ written down. What is missing is a domain.
    passwords and seeded data. It starts, serves everything and stores nothing,
    and `./mvnw spring-boot:run` or a bare `java -jar` gets it. The image sets
    `SPRING_PROFILES_ACTIVE=prod`, so a container started with no profile fails
-   closed: a bare `docker run` stops with `'url' must start with "jdbc"`. The deploy job's
-   step "The image will not start without a database" checks that before it
-   pushes an image. That job is gated off, so the check has never run.
-   `compose.yaml` selects `postgres`, and the ConfigMap sets `prod`.
+   closed: a bare `docker run` stops with `'url' must start with "jdbc"`. CI
+   checks that on every push to `main` and every pull request, in the `image`
+   job's step "The image will not start without a database". The deploy job
+   runs the same step before it pushes an image. That job is gated off, so its
+   copy has never run. `compose.yaml` selects `postgres`, and the ConfigMap sets
+   `prod`.
 
 6. **A placeholder hash starts.** The startup self-check proves the encoder can
    read a value. It cannot tell a malformed value behind a known prefix from a
