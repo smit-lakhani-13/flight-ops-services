@@ -72,8 +72,8 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
 - **The image is built in CI.** A new `image` job builds the `Dockerfile` on
   every push to `main` and every pull request, starts it with no environment,
   and fails unless it stops at startup for want of a database. It writes the
-  image size to the log and the job summary, holds no credentials and never
-  pushes. The deploy job now needs it.
+  image size to the log and the job summary, holds no cloud or registry
+  credentials and never pushes. The deploy job now needs it.
 
 ### Changed
 

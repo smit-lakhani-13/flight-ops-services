@@ -350,8 +350,8 @@ written down. What is missing is a domain.
    checks that on every push to `main` and every pull request, in the `image`
    job's step "The image will not start without a database". The deploy job
    runs the same step before it pushes an image. That job is gated off, so its
-   copy has never run.
-   `compose.yaml` selects `postgres`, and the ConfigMap sets `prod`.
+   copy has never run. `compose.yaml` selects `postgres`, and the ConfigMap sets
+   `prod`.
 
 6. **A placeholder hash starts.** The startup self-check proves the encoder can
    read a value. It cannot tell a malformed value behind a known prefix from a
