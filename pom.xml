@@ -18,7 +18,7 @@
 
     <name>flight-ops-service</name>
     <description>
-        Flight inventory and booking microservice. REST API over PostgreSQL with
+        Flight inventory and booking service. REST API over PostgreSQL with
         optimistic and pessimistic locking plus request idempotency on the seat
         reservation path, publishing booking events to SQS for a Lambda consumer
         to project into DynamoDB.

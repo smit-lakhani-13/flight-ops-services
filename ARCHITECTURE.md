@@ -65,6 +65,19 @@ and no response depends on SQS being up. That property is what the outbox
 buys. It is the most important structural decision in the service, and
 [ADR 0001](adr/0001-transactional-outbox.md) explains it.
 
+Bookings and flights are one service because the seat count and the booking
+commit together.
+`src/main/java/com/smit/flightops/service/BookingWriter.java#insertNewBooking`
+takes the flight row lock, reserves the seats, inserts the booking and writes
+the outbox row in one PostgreSQL transaction. As two services with a database
+each, that becomes a saga: reserve seats in one, insert the booking in the
+other, and release the seats again when the second step fails. The Lambda is
+separate for other reasons: it scales on queue depth, it can fail without
+failing a booking, and it owns a different store
+([ADR 0008](adr/0008-standalone-lambda-consumer.md)). Inside the service, the
+boundary between layers is the ArchUnit rule `layers_are_respected`, not a
+network hop.
+
 Some parts are stubs. The authorisation rules, the locking, the idempotency,
 the migrations and the event contract are production shapes. The user store is
 two in-memory accounts, and the deployment has never been run against real
