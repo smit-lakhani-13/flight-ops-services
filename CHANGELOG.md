@@ -94,6 +94,10 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
   oldest message older than ten minutes. Neither has a notification target
   yet. Both are linted in CI and have never been deployed.
 
+- **The cancellation's 503 has a test.** `LockTimeoutTest` now holds the
+  flight row while a booking is cancelled, and gets 503 `LOCK_TIMEOUT` with
+  `Retry-After`, as a new booking does.
+
 ### Changed
 
 - **Version.** Both poms say `1.2.0-SNAPSHOT` until the next tag, so a build
