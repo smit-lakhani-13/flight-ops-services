@@ -31,25 +31,27 @@ Both modules' Surefire runs pin the test JVM to `Asia/Kolkata`. CI runs in UTC,
 where a formatter that used the system zone would still pass; at +05:30 it
 fails.
 
-### `Skipped: 8` is correct
+### `Skipped: 9` is correct
 
-Eight tests are in two classes annotated
+Nine tests are in three classes annotated
 `@Testcontainers(disabledWithoutDocker = true)`: five in
-`BookingIntegrationTest` and three in `service/OutboxPrunePostgresTest`.
+`BookingIntegrationTest`, three in `service/OutboxPrunePostgresTest` and one
+in `LockTimeoutPostgresTest`.
 Without a container runtime they skip, and a local build is still green and
 still correct. CI runs them, and that is where the Flyway migrations and the
 outbox's native SQL run against PostgreSQL. The build job's step "The
-PostgreSQL tests ran" fails CI if either class skips a test or has no report.
+PostgreSQL tests ran" fails CI if any of the three classes skips a test or has
+no report.
 
 So in CI the Surefire summary reads
-`Tests run: 262, Failures: 0, Errors: 0, Skipped: 0` for the service and
+`Tests run: 263, Failures: 0, Errors: 0, Skipped: 0` for the service and
 `Tests run: 25, Failures: 0, Errors: 0, Skipped: 0` for the Lambda. On a laptop
-without Docker the service line ends `Skipped: 8`.
+without Docker the service line ends `Skipped: 9`.
 
 A new migration is not accepted until CI has gone green on it. The local H2
 profile never sees it, and neither does a laptop with no Docker.
 
-Today the service declares 262 tests and runs 254 of them without Docker, and
+Today the service declares 263 tests and runs 254 of them without Docker, and
 the Lambda runs 25. Do not edit those numbers by hand anywhere:
 
 ```bash
@@ -118,7 +120,7 @@ without a line of it changing.
 | `build` | `maven-enforcer` | wrong JDK, wrong Maven, duplicate dependency versions, or a transitive downgrade (`requireUpperBoundDeps`) |
 | `build` | JaCoCo | bundle coverage below 80% line or 50% branch |
 | `build` | ArchUnit | a layering rule is broken (9 rules in `ArchitectureTest`) |
-| `build` | "The PostgreSQL tests ran" | `BookingIntegrationTest` or `service/OutboxPrunePostgresTest` has no readable report, no tests, or a skipped test |
+| `build` | "The PostgreSQL tests ran" | `BookingIntegrationTest`, `service/OutboxPrunePostgresTest` or `LockTimeoutPostgresTest` has no readable report, no tests, or a skipped test |
 | `build` | "The SAM template points at the Lambda jar" | `template.yaml`'s `CodeUri` is not a built file, or the jar lacks the `Handler` class |
 | `build` | "Both SBOMs exist" | `target/bom.json` or `lambda/target/bom.json` is missing or empty |
 | `infra-lint` | kubeconform | the rendered `k8s/overlays/aws`, `k8s/namespace.yaml` or `k8s/components/ingress/ingress.yaml` is not valid against the Kubernetes 1.36 schemas |

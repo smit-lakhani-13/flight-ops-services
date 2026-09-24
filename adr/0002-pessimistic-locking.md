@@ -48,9 +48,11 @@ on the reason above. Only the old reason was wrong.
 * **The wait is bounded.** Without `lock_timeout`, a stuck transaction holds
   every later request until the connection pool is empty, and the whole service
   times out. With it, the failure stays on one endpoint as a 503.
-  `LockTimeoutTest` pins the 503, the `Retry-After` header and the counter. It
-  runs on H2 with a 250 ms timeout, so no test shows PostgreSQL's own
-  `lock_timeout` firing.
+  `LockTimeoutTest` pins the 503, the `Retry-After` header and the counter on
+  H2 with a 250 ms timeout, so it runs on a laptop. `LockTimeoutPostgresTest`
+  runs in CI against PostgreSQL 17 with the profile's own 3 s `lock_timeout`,
+  and checks that PostgreSQL gives up with SQLSTATE `55P03` after about three
+  seconds and that the caller gets the same 503.
 
 * **One lock order everywhere.** Two paths that disagree deadlock under load and
   nowhere else. This is why `cancelBooking` takes the flight row first, even
@@ -71,6 +73,10 @@ guards some future path that updates a flight without the row lock. Two such
 paths already existed, and the bullet now names them. For the same reason, the
 Decision section used to say "every write path" takes the lock. It now says
 every path that changes seats or bookings.
+
+**Correction (2026-09-24).** The bullet on the bounded wait used to say that
+no test shows PostgreSQL's own `lock_timeout` firing.
+`LockTimeoutPostgresTest` now does.
 
 ## Alternatives considered
 

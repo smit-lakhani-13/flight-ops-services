@@ -75,6 +75,12 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
   image size to the log and the job summary, holds no cloud or registry
   credentials and never pushes. The deploy job now needs it.
 
+- **PostgreSQL's lock timeout has a test.** `LockTimeoutPostgresTest` holds a
+  flight row on PostgreSQL 17 until the profile's own 3 s `lock_timeout`
+  fires. It checks SQLSTATE `55P03`, the 503 with `Retry-After`, the elapsed
+  time and the counter. It runs in CI, and the guard step names it as a third
+  class.
+
 ### Changed
 
 - **Version.** Both poms say `1.2.0-SNAPSHOT` until the next tag, so a build

@@ -235,7 +235,9 @@ What keeps the lock from becoming an outage:
   `503 LOCK_TIMEOUT`. Without the bound it would hold a connection until the
   pool was empty. H2 gets the same bound, spelled `SET LOCK_TIMEOUT 3000`.
   `LockTimeoutTest` lowers it to 250 ms on H2 and proves a lock timeout becomes
-  a 503 with `Retry-After`. No test fires PostgreSQL's own `lock_timeout`.
+  a 503 with `Retry-After`. `LockTimeoutPostgresTest` runs in CI against
+  PostgreSQL 17 and shows the 3 s `lock_timeout` itself firing, with SQLSTATE
+  `55P03`, and the caller getting the same 503.
 
 - **One lock order everywhere.** Booking and cancellation both take the flight
   row first and the booking row second

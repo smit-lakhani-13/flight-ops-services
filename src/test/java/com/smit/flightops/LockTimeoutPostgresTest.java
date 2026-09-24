@@ -2,20 +2,30 @@ package com.smit.flightops;
 
 import com.smit.flightops.config.SecurityConfig;
 import com.smit.flightops.observability.BookingMetrics;
+import com.smit.flightops.repository.FlightRepository;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
-import com.smit.flightops.repository.FlightRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.dao.PessimisticLockingFailureException;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.test.context.support.WithMockUser;
+import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 
+import java.sql.SQLException;
+import java.time.Duration;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -28,30 +38,31 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * The lock timeout end to end: a contended flight row gives 503 with {@code Retry-After},
- * not a hang and not a 500. The setting only works if the database error, Hibernate's
- * {@code LockTimeoutException}, Spring's translation, the advice and the header all agree.
+ * PostgreSQL's own {@code lock_timeout}, end to end. {@code LockTimeoutTest} covers the
+ * same path on H2 with a 250 ms timeout and runs without Docker. This one keeps the
+ * postgres profile's {@code SET lock_timeout = '3s'} and runs against PostgreSQL 17,
+ * so it checks the link that test cannot: that PostgreSQL itself gives up after about
+ * three seconds with SQLSTATE 55P03, and the caller still gets the 503.
  *
- * <p>It runs on H2, which raises error 50200 from {@code SET LOCK_TIMEOUT} where PostgreSQL
- * raises 55P03 from {@code lock_timeout}. Both reach the same Hibernate exception, so this
- * covers every link from Hibernate outwards and runs without Docker. PostgreSQL's own
- * timeout firing is covered in CI by {@code LockTimeoutPostgresTest}. 250ms keeps the
- * build fast; the latch makes sure the lock is held before the request goes out.
- * {@code @WithMockUser} holds both scopes because the subject is the error contract.
+ * <p>Skipped without a container runtime; CI runs it, and its "The PostgreSQL tests
+ * ran" step fails if it skipped.
  */
-@SpringBootTest(properties = {
-        // Its own database, so the held row lock cannot touch another test's cached context.
-        "spring.datasource.url=jdbc:h2:mem:locktimeouttest;DB_CLOSE_DELAY=-1",
-        "spring.datasource.hikari.connection-init-sql=SET LOCK_TIMEOUT 250"
-})
+@SpringBootTest
+@ActiveProfiles("postgres")
+@Testcontainers(disabledWithoutDocker = true)
 @AutoConfigureMockMvc
 @WithMockUser(authorities = {SecurityConfig.SCOPE_READ, SecurityConfig.SCOPE_WRITE})
-class LockTimeoutTest {
+class LockTimeoutPostgresTest {
+
+    @Container
+    @ServiceConnection
+    static PostgreSQLContainer postgres = new PostgreSQLContainer("postgres:17-alpine");
 
     @Autowired private MockMvc mockMvc;
     @Autowired private PlatformTransactionManager transactionManager;
     @Autowired private FlightRepository flightRepository;
     @Autowired private MeterRegistry meterRegistry;
+    @Autowired private JdbcTemplate jdbcTemplate;
 
     private double lockTimeoutCount() {
         Counter counter = meterRegistry.find(BookingMetrics.LOCK_TIMEOUT).counter();
@@ -59,8 +70,12 @@ class LockTimeoutTest {
     }
 
     @Test
-    @DisplayName("a booking that cannot get the flight row lock is 503 with Retry-After, not 500")
-    void contendedFlightRowGives503() throws Exception {
+    @DisplayName("PostgreSQL's lock_timeout fires with 55P03 after about 3 s, and the caller gets 503 LOCK_TIMEOUT")
+    void postgresLockTimeoutGives503() throws Exception {
+        // The profile's connection-init-sql must have reached the pool, or the
+        // timing below would be measuring something else.
+        assertThat(jdbcTemplate.queryForObject("SHOW lock_timeout", String.class)).isEqualTo("3s");
+
         CountDownLatch lockHeld = new CountDownLatch(1);
         CountDownLatch releaseLock = new CountDownLatch(1);
         double timeoutsBefore = lockTimeoutCount();
@@ -71,7 +86,8 @@ class LockTimeoutTest {
         try (ExecutorService holder = Executors.newSingleThreadExecutor()) {
             try {
                 holder.submit(() -> new TransactionTemplate(transactionManager).execute(status -> {
-                    // SELECT ... FOR UPDATE on the same row the booking path wants.
+                    // SELECT ... FOR UPDATE on the row the booking path wants. DataSeeder
+                    // inserts UA123 under the postgres profile too.
                     flightRepository.findByFlightNumberForUpdate("UA123").orElseThrow();
                     lockHeld.countDown();
                     try {
@@ -86,18 +102,25 @@ class LockTimeoutTest {
                         .as("the holder thread should have taken the row lock")
                         .isTrue();
 
-                mockMvc.perform(post("/api/v1/bookings")
+                long start = System.nanoTime();
+                MvcResult result = mockMvc.perform(post("/api/v1/bookings")
                                 .contentType(MediaType.APPLICATION_JSON)
                                 .content("""
-                                        {"flightNumber":"UA123","passengerName":"Ada Lovelace","seats":1,
-                                         "idempotencyKey":"lock-timeout-1"}
+                                        {"flightNumber":"UA123","passengerName":"Grace Hopper","seats":1,
+                                         "idempotencyKey":"pg-lock-timeout-1"}
                                         """))
                         .andExpect(status().isServiceUnavailable())
                         .andExpect(header().string("Retry-After", "1"))
-                        .andExpect(jsonPath("$.code").value("LOCK_TIMEOUT"));
+                        .andExpect(jsonPath("$.code").value("LOCK_TIMEOUT"))
+                        .andReturn();
+                long elapsedMs = Duration.ofNanos(System.nanoTime() - start).toMillis();
 
-                // The status is the client's contract and this counter the operator's:
-                // OPERATIONS.md alerts on rate(bookings_lock_timeout_total[5m]).
+                assertThat(result.getResolvedException()).isInstanceOf(PessimisticLockingFailureException.class);
+                assertThat(sqlStateOf(result.getResolvedException()))
+                        .as("PostgreSQL's lock_not_available")
+                        .isEqualTo("55P03");
+                // Not H2's 250 ms, and not Hikari's 30 s connection timeout.
+                assertThat(elapsedMs).isBetween(2_500L, 15_000L);
                 assertThat(lockTimeoutCount())
                         .as("the 503 must also move bookings.lock_timeout")
                         .isEqualTo(timeoutsBefore + 1);
@@ -107,22 +130,13 @@ class LockTimeoutTest {
         }
     }
 
-    @Test
-    @DisplayName("with nothing holding the lock the same request succeeds, so the timeout is not just rejecting everything")
-    void uncontendedBookingStillSucceeds() throws Exception {
-        double timeoutsBefore = lockTimeoutCount();
-
-        mockMvc.perform(post("/api/v1/bookings")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"flightNumber":"UA123","passengerName":"Alan Turing","seats":1,
-                                 "idempotencyKey":"lock-timeout-control-1"}
-                                """))
-                .andExpect(status().isCreated());
-
-        // The meter counts contention, so the happy path must not move it.
-        assertThat(lockTimeoutCount())
-                .as("a successful booking must not move bookings.lock_timeout")
-                .isEqualTo(timeoutsBefore);
+    /** The SQLState of the first SQLException in the cause chain, or null if there is none. */
+    private static String sqlStateOf(Throwable thrown) {
+        for (Throwable t = thrown; t != null; t = t.getCause()) {
+            if (t instanceof SQLException sql) {
+                return sql.getSQLState();
+            }
+        }
+        return null;
     }
 }

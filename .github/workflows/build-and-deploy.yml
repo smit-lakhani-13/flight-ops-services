@@ -92,9 +92,10 @@ jobs:
 
       # Docker is available on ubuntu-latest, so the Testcontainers classes run
       # here, and CI is the only place the real PostgreSQL path runs: Flyway
-      # V1-V8, ddl-auto=validate, SELECT FOR UPDATE under 20-way contention.
-      # Without Docker they skip, and a skipped test leaves the step above
-      # green. This step fails unless both classes ran with nothing skipped.
+      # V1-V8, ddl-auto=validate, SELECT FOR UPDATE under 20-way contention,
+      # and the 3s lock_timeout firing. Without Docker they skip, and a skipped
+      # test leaves the step above green. This step fails unless all three
+      # classes ran with nothing skipped.
       - name: The PostgreSQL tests ran
         run: |
           python3 - <<'EOF'
@@ -103,6 +104,7 @@ jobs:
 
           failed = False
           for name in ("com.smit.flightops.BookingIntegrationTest",
+                       "com.smit.flightops.LockTimeoutPostgresTest",
                        "com.smit.flightops.service.OutboxPrunePostgresTest"):
               path = f"target/surefire-reports/TEST-{name}.xml"
               try:

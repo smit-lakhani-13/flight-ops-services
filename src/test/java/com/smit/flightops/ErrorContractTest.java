@@ -33,8 +33,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * need a layer a slice would mock, such as the stored fingerprint behind a key
  * conflict or the seat count behind a cancellation. The {@code FOR UPDATE}
  * contention runs on PostgreSQL in {@link BookingIntegrationTest}.
- * {@link LockTimeoutTest} pins the lock-timeout-to-503 mapping on H2. No test
- * exercises PostgreSQL's own {@code lock_timeout} firing.
+ * {@link LockTimeoutTest} pins the lock-timeout-to-503 mapping on H2, and
+ * {@code LockTimeoutPostgresTest} covers PostgreSQL's own {@code lock_timeout}
+ * firing in CI.
  *
  * <p>Its own database URL, because a second context on the shared in-memory
  * database would drop and recreate the tables under this one. The caller holds
