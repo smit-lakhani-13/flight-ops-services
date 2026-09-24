@@ -89,6 +89,11 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
   is a proposal written from Oracle's and Hibernate's documentation and never
   run: two outbox queries, the lock-wait bound and the migration spellings.
 
+- **Two SQS alarms.** `template.yaml` gains `BookingEventDLQAlarm`, for any
+  message on the dead-letter queue, and `BookingEventBacklogAlarm`, for an
+  oldest message older than ten minutes. Neither has a notification target
+  yet. Both are linted in CI and have never been deployed.
+
 ### Changed
 
 - **Version.** Both poms say `1.2.0-SNAPSHOT` until the next tag, so a build

@@ -35,8 +35,10 @@ The middle one is underrated. It is the interesting half of the architecture:
 the transactional outbox crossing a real queue into a real consumer. It also
 costs nothing. SQS gives a million requests a month free forever, DynamoDB
 on-demand bills per write with no hourly charge, and an idle Lambda costs
-nothing at all. The EKS half is where the money goes. What it adds is
-Kubernetes, and it says nothing new about this system's design.
+nothing at all. The two CloudWatch alarms on the queues fit inside the ten
+standard alarms CloudWatch does not charge for, unless the account already
+uses them. The EKS half is where the money goes. What it adds is Kubernetes,
+and it says nothing new about this system's design.
 
 [§5](#5-what-it-costs) also prices cheaper variants of the third shape. Public
 subnets with no NAT gateway cost $6.42/day. A single EC2 instance running
@@ -97,8 +99,9 @@ the `CodeUri` directory, where the Lambda tests cannot find `../events` and
 in `.aws-sam/build` when one exists, so the first line removes a stale build
 left by an earlier `sam build`.
 
-This takes two minutes and creates the queue, the DLQ, the DynamoDB table and
-the Lambda. Then point a locally running service at it:
+This takes two minutes and creates the queue, the DLQ, two CloudWatch alarms
+on them with no notification target, the DynamoDB table and the Lambda. Then
+point a locally running service at it:
 
 ```bash
 SQS_QUEUE_URL=$(aws cloudformation describe-stacks --stack-name flight-ops-lambda \
@@ -314,7 +317,7 @@ Prices are for `ap-south-1`, on-demand, from the AWS price list on 22 September
 | Application Load Balancer | $0.0239/hr + LCU | $0.62 |
 | RDS db.t4g.micro (instance hours) | $0.021/hr | $0.50 |
 | EBS (2 × 20 GB gp3), public IPv4 | | $0.62 |
-| SQS, Lambda, DynamoDB, X-Ray | free tier at this volume | $0.00 |
+| SQS, Lambda, DynamoDB, X-Ray, two CloudWatch alarms | free tier at this volume; an account's first ten standard alarms are free | $0.00 |
 | ECR, under 1 GB of images | $0.10/GB-month after any free tier | $0.00 |
 | | | **$7.72** |
 
