@@ -524,6 +524,28 @@ The other fixes are to documentation only, and change no behaviour.
   `FOR UPDATE` would make the outbox replicas take turns, not publish an event
   twice.
 
+- **Documents that claimed more than the code does.** ADR 0005, and the README
+  after it, said `anyRequest().denyAll()` leaves any new endpoint unreachable
+  until it has a rule. A controller under `/api/**` is covered by the scope
+  rules on the day it ships, for GET, HEAD, POST, PATCH and DELETE; only one
+  outside `/api/**`, or a method the rules do not name, is refused.
+  SECURITY.md said the OIDC trust policy pins the audience to the repository
+  and branch. The audience is `sts.amazonaws.com`, and only the `sub` claim
+  names the repository. SECURITY.md and DEPLOYMENT.md also described the
+  cluster and the deploy job's credentials in the present tense, as if they
+  existed. DEPLOYMENT.md and `deploy/aws/README.md` said `up.sh` writes the
+  generated passwords into the Kubernetes Secret. It writes the database
+  password and the bcrypt hashes of the API and ops passwords, and prints
+  those two passwords to the terminal. ARCHITECTURE.md labelled the client's
+  call HTTPS, though neither the service nor the ingress serves TLS, and drew
+  a Prometheus scrape that nothing performs. The README said refcheck resolves
+  every file and symbol the documents cite, where it checks backticked paths
+  with a known extension and the symbol in each `path#symbol`; that curl
+  ignores a `-u` option passed as one argument, where it reads the user name
+  with a leading space; and that nothing but building the image and starting
+  it with no database had been executed, where CI also renders the overlay and
+  runs `deploy/aws/selftest.sh`.
+
 ### Security
 
 - **Log lines from rejected input.** `GlobalExceptionHandler.printable`

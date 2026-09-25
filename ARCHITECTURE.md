@@ -45,13 +45,13 @@ flowchart LR
     sqs["SQS booking-events"]
     lambda["BookingEventHandler<br/>(Java 21, arm64)"]
     ddb[("DynamoDB<br/>flight-status-events")]
-    prom["Prometheus scrape<br/>/actuator/prometheus"]
+    prom["Metrics at /actuator/prometheus<br/>(nothing scrapes it)"]
 
-    client -->|HTTPS| controller --> svc --> repo
+    client -->|HTTP| controller --> svc --> repo
     repo -->|"booking and outbox row,<br/>one transaction"| db
     svc -.->|"OutboxPublisher claims<br/>a batch and sends it"| sqs
     sqs --> lambda --> ddb
-    service -.-> prom
+    service --- prom
 ```
 
 The dotted line to SQS starts at `service/`, because `OutboxPublisher` is a

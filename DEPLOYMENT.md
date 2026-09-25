@@ -175,9 +175,10 @@ knows the passwords.
 CI deploys the application, and the script does not. The image tag is the
 commit SHA, and only the job that built the image knows it. A laptop build
 would tag whatever happened to be checked out, including uncommitted work. The
-split also keeps every password away from GitHub. `up.sh` writes the generated
-passwords straight into a Kubernetes Secret, and CI applies a Deployment that
-refers to it by name.
+split also keeps every password away from GitHub. `up.sh` writes the database
+password and the bcrypt hashes of the API and ops passwords into a Kubernetes
+Secret, and prints the API and ops passwords to the terminal. CI applies a
+Deployment that refers to the Secret by name.
 
 Before it builds, the deploy job asks ECR whether the commit's image is already
 there, in the step "Is this commit already in ECR?". It runs
@@ -465,10 +466,11 @@ No AWS account id is hard-coded anywhere. The files under `events/` use the
 placeholder `123456789012`, and the workflow reads
 `${{ secrets.AWS_ACCOUNT_ID }}`. No access key is stored either.
 `DefaultCredentialsProvider` in `AwsConfig` reads `~/.aws` on a laptop and the
-projected service-account token under IRSA. CI uses GitHub's OIDC provider and
-short-lived STS credentials. `deploy/aws/foundation.yaml` pins the trust
-policy's `sub` claim to this repository's `main` branch, because a wildcard
-there lets any repository on GitHub assume the role.
+projected service-account token under IRSA. The deploy job, which is gated
+off and has never run, would use GitHub's OIDC provider and short-lived STS
+credentials. `deploy/aws/foundation.yaml` pins the trust policy's `sub` claim
+to this repository's `main` branch, because a bare wildcard there lets any
+repository on GitHub assume the role.
 
 ## 6. Tearing it down
 

@@ -186,11 +186,13 @@ reverse, and the ADR is where to start.
   the Secrets Store CSI driver. It is not installed here. I count that as a
   gap, not as a trade-off I made.
 
-- **No AWS access keys anywhere.** In the cluster the pods use IRSA: a
-  projected, short-lived token exchanged with STS. CI uses GitHub's OIDC
-  provider and short-lived STS credentials. The trust policy pins both the
-  audience and the `sub` claim to `repo:owner/repo:ref:refs/heads/main`. A
-  wildcard there would let any repository on GitHub assume the role.
+- **No AWS access keys anywhere.** In the cluster the pods would use IRSA: a
+  projected, short-lived token exchanged with STS. The deploy job would use
+  GitHub's OIDC provider and short-lived STS credentials. The trust policy
+  pins the audience to `sts.amazonaws.com` and the `sub` claim to
+  `repo:owner/repo:ref:refs/heads/main`. A bare wildcard in `sub`, such as
+  `repo:*` under `StringLike`, would let any repository on GitHub assume the
+  role.
 
 ## Transport
 
@@ -286,16 +288,18 @@ written down. What is missing is a domain.
 - Multi-stage build. The runtime image has a JRE and one jar, and no compiler,
   Maven or source.
 
-- Nodes are in private subnets with no public IPs. Inbound traffic arrives only
-  through the load balancer.
+- `cluster.yaml` puts the nodes in private subnets with no public IPs, so
+  inbound traffic would arrive only through the load balancer. No cluster has
+  been created.
 
-- The node instance role does **not** carry the load balancer or autoscaler
-  policies. A policy on the instance role is available to every pod on the
-  node through the metadata service. The load balancer controller gets its own
-  IRSA role.
+- `cluster.yaml` gives the node instance role no load balancer or autoscaler
+  policy (`withAddonPolicies` sets only `cloudWatch`). A policy on the
+  instance role is available to every pod on the node through the metadata
+  service. The load balancer controller would get its own IRSA role.
 
-- CI's cluster access is `AmazonEKSEditPolicy` **scoped to the `flight-ops`
-  namespace**. It can roll out the application and cannot touch `kube-system`.
+- `up.sh` gives CI's role `AmazonEKSEditPolicy` **scoped to the `flight-ops`
+  namespace**, so it could roll out the application and could not touch
+  `kube-system`.
 
 ## AWS permissions
 

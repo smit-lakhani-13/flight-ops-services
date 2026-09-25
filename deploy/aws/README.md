@@ -126,9 +126,11 @@ it. A script that built and pushed from a laptop would tag whatever was checked
 out, including uncommitted changes, and the cluster would run something that
 does not exist in git.
 
-No password reaches GitHub either. `up.sh` generates the database and API
-passwords and writes them straight into a Kubernetes Secret. CI applies the
-Deployment, which names that Secret and never sees its contents.
+No password reaches GitHub either. `up.sh` generates the database, API and ops
+passwords. It writes the database password and the bcrypt hashes of the other
+two into a Kubernetes Secret, and prints the API and ops passwords to the
+terminal. CI applies the Deployment, which names that Secret and never sees
+its contents.
 
 ## Who creates what
 
