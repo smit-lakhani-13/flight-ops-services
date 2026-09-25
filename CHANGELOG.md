@@ -408,6 +408,11 @@ The other fixes are to documentation only, and change no behaviour.
   one class and a mode; for a JMS broker it also takes a connection factory, a
   client library, a test and a new consumer.
 
+- **"In AWS" in the transport paragraph.** `ARCHITECTURE.md` described
+  `SqsEventPublisher` as the publisher "in AWS", which reads as if the service
+  ran there. It has never run in AWS. The sentence now names the `prod`
+  profile, which selects it.
+
 ### Security
 
 - **Log lines from rejected input.** `GlobalExceptionHandler.printable`

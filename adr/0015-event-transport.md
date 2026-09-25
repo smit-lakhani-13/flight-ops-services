@@ -18,9 +18,10 @@ whatever the transport. And SQS leaves no broker to run or pay for.
 
 The sending side is already transport-neutral.
 `src/main/java/com/smit/flightops/service/EventPublisher.java#publish` takes
-an event type, a serialised payload and a map of headers, and the mode in
-`src/main/java/com/smit/flightops/config/EventProperties.java#MODES` picks the
-implementation at startup:
+an event type, a serialised payload and a map of headers. The setting
+`app.events.publisher`, which must be one of the values in
+`src/main/java/com/smit/flightops/config/EventProperties.java#MODES`, picks
+the implementation at startup through `@ConditionalOnProperty`:
 `src/main/java/com/smit/flightops/service/LoggingEventPublisher.java` or
 `src/main/java/com/smit/flightops/service/SqsEventPublisher.java`. The
 consumer is not neutral.
@@ -56,7 +57,8 @@ with a dead-letter queue after three receives.
   on that attribute and could need per-booking order. FIFO would also need a
   `MessageGroupId` on every send in
   `src/main/java/com/smit/flightops/service/SqsEventPublisher.java#publish`,
-  and its deduplication covers only five minutes, so the conditional write
+  and either a deduplication id there or content-based deduplication on the
+  queue. That deduplication covers only five minutes, so the conditional write
   would still be needed.
 
 * At-least-once delivery costs the consumer one conditional write.
@@ -77,16 +79,22 @@ with a dead-letter queue after three receives.
     `eventType` and each non-blank header, today only `traceparent`, would be
     set as String properties with `Message#setStringProperty`, as
     `src/main/java/com/smit/flightops/service/SqsEventPublisher.java#attributes`
-    sets them as String message attributes now. Delivery would be persistent,
-    to a queue with a topic subscription.
+    sets them as String message attributes now. Jakarta Messaging requires a
+    property name to be a valid identifier, which `traceparent` is. Delivery
+    would be persistent, to a queue (on Solace, a queue with a topic
+    subscription).
   * A `ConnectionFactory` bean in a configuration class of its own, like
     `src/main/java/com/smit/flightops/config/AwsConfig.java#sqsClient`, would
-    be the only vendor-specific code. The vendor's client library in
+    be the only vendor-specific class. The vendor's client library in
     `pom.xml`, which `requireUpperBoundDeps` and the `dependency-review` job
     would judge, its connection settings and their secret, and the broker-side
-    queue and dead-message queue are vendor-specific too. So are a mode in
+    queue and dead-message queue are vendor-specific too. Two more pieces are
+    not vendor-specific but are still needed: a mode in
     `src/main/java/com/smit/flightops/config/EventProperties.java#MODES` and a
-    test.
+    test. By Solace's documentation, a queue's `max-redelivery` defaults to 0,
+    which means redeliver forever. Left at that, a message that always fails
+    never reaches the dead-message queue, so it would be set to match the
+    three receives here.
   * On the consuming side, the event source mapping cannot be pointed at the
     broker, because Lambda has no event source for Solace PubSub+ or TIBCO
     EMS. Its broker event sources, by the AWS Lambda documentation, are Amazon
@@ -95,12 +103,14 @@ with a dead-letter queue after three receives.
     `ActiveMQEvent`, not an `SQSEvent`, and a failed message retries the whole
     batch. The replacement is one of two things. One is a bridge from the
     broker into SQS, in front of the existing mapping. The other is a
-    `@JmsListener` on a transacted session (`sessionTransacted = true`, which
-    Spring's `AbstractMessageListenerContainer` documentation recommends for
-    redelivery on an exception; `CLIENT_ACKNOWLEDGE` is only best-effort),
-    with the conditional `PutItem` kept to absorb redeliveries. That listener
-    is an always-on Spring consumer, the option
+    `@JmsListener` whose container factory sets `sessionTransacted` to `true`,
+    which Spring's `AbstractMessageListenerContainer` documentation recommends
+    for redelivery on an exception (`CLIENT_ACKNOWLEDGE` is only best-effort),
+    with the conditional `PutItem` kept to absorb redeliveries. As a second
+    service, that listener is the always-on Spring consumer
     [ADR 0008](0008-standalone-lambda-consumer.md) rejected for its idle cost.
+    Inside this service it would add no idle cost, but it would deploy in
+    lockstep with the producer, the coupling ADR 0008 keeps out.
   * Neither broker is coded in this repository. Solace's Jakarta JMS client is
     on Maven Central (`com.solacesystems:sol-jms-jakarta`). The TIBCO EMS
     client jars ship with an EMS installation and are not on Maven Central, so
@@ -108,11 +118,13 @@ with a dead-letter queue after three receives.
 
 * **XA across PostgreSQL and the broker in place of the outbox.** It needs a
   JTA transaction manager to coordinate the two and recovery for in-doubt
-  transactions, and [ADR 0001](0001-transactional-outbox.md) already rejects
-  two-phase commit. The outbox keeps the database the only resource that has
-  to commit. A local transacted session on the producer is no substitute: it
-  commits only on the broker, so committing it next to the database commit is
-  the send-after-commit that ADR 0001 rejects.
+  transactions. [ADR 0001](0001-transactional-outbox.md) rejects two-phase
+  commit because SQS has no XA. A JMS broker may offer it, so for a broker the
+  reason is the coordinator and its recovery, not the transport. The outbox
+  keeps the database the only resource that has to commit. A local transacted
+  session on the producer is no substitute: it commits only on the broker, so
+  committing it before or after the database commit is one of the two
+  orderings ADR 0001 rejects.
 
 * **EventBridge.** A bus that routes each event by rule to many targets. There
   is one consumer and nothing to route. A Lambda target is invoked
