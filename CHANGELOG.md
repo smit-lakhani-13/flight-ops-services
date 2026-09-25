@@ -51,6 +51,24 @@ still blank.
   in 2030 and 2031 against the real clock, so six of its tests would have
   started failing then. They now depart in 2099, like the suite's other fixed
   departure dates.
+- **A field that broke two rules got a different message from call to call.**
+  Hibernate Validator returns violations in no fixed order, and the handler
+  kept whichever came first, so an empty idempotency key or airport code got
+  `must not be blank` on one call and a size or character message on the next.
+  `GlobalExceptionHandler#handleValidation` now keeps the most basic one: null,
+  then blank, then size or range, then pattern. The idempotency key's pattern
+  accepts an empty string, like the others, so an empty key is only blank.
+- **Names that broke the idempotency check.** A `passengerName` with an
+  unpaired UTF-16 surrogate, such as U+D800, was stored, and the request
+  fingerprint turned it into `?`, so a name that differed only there, sent on
+  the same key, was answered as a replay instead of a 409. It now gets
+  `must not contain unpaired surrogates`. A name made only of no-break or
+  zero-width spaces passed `@NotBlank` and now gets `must not be blank`.
+- **The 400 descriptions in the OpenAPI document.** Both writes said a field
+  with the wrong JSON type got `MALFORMED_REQUEST`, but Jackson turns a
+  number or `true` sent for a text field into text, which then goes through
+  the same validation as any other. The descriptions now name the seat count,
+  and a text field sent as an array or an object, which Jackson still refuses.
 
 ## 1.2.0 — 2026-09-26
 

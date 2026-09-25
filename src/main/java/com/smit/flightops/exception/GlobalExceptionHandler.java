@@ -20,6 +20,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.util.StringUtils;
+import org.springframework.validation.FieldError;
 import org.springframework.web.ErrorResponseException;
 import org.springframework.web.HttpMediaTypeNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -28,6 +29,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import java.time.Clock;
+import java.util.Comparator;
 import java.util.Map;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -201,12 +203,20 @@ public class GlobalExceptionHandler {
      * Bean Validation failures, one message per field. Global errors are merged
      * in under the object name, so a class-level constraint that forgets to
      * target a field still reaches the client instead of an empty map.
+     *
+     * <p>A field that breaks several constraints reports the one {@link #rank}
+     * puts first, with ties going to the message that sorts first. Hibernate
+     * Validator returns violations in no fixed order, so keeping whichever came
+     * first gave the same request a different message from one call to the next.
      */
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ValidationErrorResponse> handleValidation(MethodArgumentNotValidException e) {
         Map<String, String> fieldErrors = e.getBindingResult().getFieldErrors().stream()
+                .sorted(Comparator.comparingInt(GlobalExceptionHandler::rank)
+                        .thenComparing(FieldError::getDefaultMessage,
+                                       Comparator.nullsLast(Comparator.naturalOrder())))
                 .collect(Collectors.toMap(
-                        org.springframework.validation.FieldError::getField,
+                        FieldError::getField,
                         fe -> fe.getDefaultMessage() == null ? "is invalid" : fe.getDefaultMessage(),
                         (first, second) -> first));
 
@@ -294,6 +304,24 @@ public class GlobalExceptionHandler {
         }
         String oneLine = NOT_PRINTABLE.matcher(value).replaceAll("?");
         return oneLine.length() <= 1000 ? oneLine : oneLine.substring(0, 1000) + "...";
+    }
+
+    /**
+     * Which of a field's violations the client sees, most basic first: a missing
+     * value, then a blank one, then a size or range, then a pattern, then any
+     * other constraint. The code is the constraint's simple name. So {@code ""}
+     * for an airport code is {@code must not be blank}, not the size message
+     * {@code @Size(min = 3)} also raises.
+     */
+    private static int rank(FieldError error) {
+        return switch (String.valueOf(error.getCode())) {
+            case "NotNull" -> 0;
+            case "NotBlank", "NotEmpty" -> 1;
+            case "Size", "Min", "Max", "DecimalMin", "DecimalMax", "Digits",
+                 "Positive", "PositiveOrZero", "Negative", "NegativeOrZero" -> 2;
+            case "Pattern" -> 3;
+            default -> 4;
+        };
     }
 
     private static ResponseEntity.BodyBuilder json(HttpStatus status) {

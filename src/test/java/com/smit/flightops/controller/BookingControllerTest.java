@@ -31,6 +31,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -125,9 +126,9 @@ class BookingControllerTest {
     }
 
     /**
-     * Blank fields report {@code @NotBlank}'s message: the name and flight-number
-     * patterns accept an empty string, so they do not compete for the one message
-     * the handler keeps per field.
+     * Blank fields report {@code @NotBlank}'s message: the name, flight-number and
+     * key patterns accept an empty string, so they do not compete for the one
+     * message the handler keeps per field.
      */
     @Test
     @DisplayName("blank fields and a zero seat count are 400, each named with its own message")
@@ -143,8 +144,8 @@ class BookingControllerTest {
                 .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
                 .andExpect(jsonPath("$.fieldErrors.flightNumber").value("must not be blank"))
                 .andExpect(jsonPath("$.fieldErrors.passengerName").value("must not be blank"))
-                .andExpect(jsonPath("$.fieldErrors.seats").exists())
-                .andExpect(jsonPath("$.fieldErrors.idempotencyKey").exists());
+                .andExpect(jsonPath("$.fieldErrors.seats").value("must be greater than or equal to 1"))
+                .andExpect(jsonPath("$.fieldErrors.idempotencyKey").value("must not be blank"));
     }
 
     /**
@@ -164,6 +165,63 @@ class BookingControllerTest {
                 .andExpect(jsonPath("$.fieldErrors.passengerName").value("must not contain control characters"));
 
         verify(bookingService, never()).book(any());
+    }
+
+    /**
+     * The fingerprint encodes the name with {@code getBytes(UTF_8)}, which turns
+     * an unpaired surrogate into {@code ?}, so {@code Jane?Doe} would replay this
+     * booking. The escape is written into the JSON by hand: a Java string with a
+     * lone surrogate would reach the server as {@code ?} already.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"Jane\\uD800Doe", "Jane\\uDFFFDoe"})
+    @DisplayName("a passenger name with an unpaired surrogate is refused at the edge")
+    void unpairedSurrogatesInANameAreRejected(String jsonEscapedName) throws Exception {
+        String body = """
+                {"flightNumber":"UA123","passengerName":"%s","seats":1,"idempotencyKey":"demo-1"}
+                """.formatted(jsonEscapedName);
+
+        mockMvc.perform(post("/api/v1/bookings")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.fieldErrors.passengerName").value("must not contain unpaired surrogates"));
+
+        verify(bookingService, never()).book(any());
+    }
+
+    /**
+     * {@code @NotBlank} passes all five: {@code String.isBlank} leaves out the
+     * no-break spaces, and the last two are format characters, not spaces.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"\u00A0", "\u2007", "\u202F", "\u200B", "\uFEFF"})
+    @DisplayName("a passenger name made only of a no-break or zero-width space is blank")
+    void anInvisibleNameIsBlank(String passengerName) throws Exception {
+        mockMvc.perform(post("/api/v1/bookings")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body("UA123", passengerName, 1)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.fieldErrors.passengerName").value("must not be blank"));
+
+        verify(bookingService, never()).book(any());
+    }
+
+    /** The emoji is a surrogate pair, one code point, which the surrogate rule must not refuse. */
+    @ParameterizedTest
+    @ValueSource(strings = {"Jane\u00A0Doe", "Jane Doe \uD83D\uDE00"})
+    @DisplayName("a name with an inner no-break space or an emoji is booked")
+    void aNameWithAnInnerNoBreakSpaceOrAnEmojiIsAccepted(String passengerName) throws Exception {
+        when(bookingService.book(any())).thenReturn(dto());
+
+        mockMvc.perform(post("/api/v1/bookings")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body("UA123", passengerName, 1)))
+                .andExpect(status().isCreated());
+
+        verify(bookingService).book(argThat(request -> request.passengerName().equals(passengerName)));
     }
 
     /**
