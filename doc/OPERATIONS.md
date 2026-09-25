@@ -267,7 +267,7 @@ In the order they matter:
 | 4 | SQS `ApproximateNumberOfMessagesVisible` on the **DLQ** `> 0` | a message was received three times without success, usually three Lambda failures on it. Declared as `lambda/template.yaml#BookingEventDLQAlarm`, never deployed, with no notification target |
 | 5 | SQS `ApproximateAgeOfOldestMessage` on the main queue above 600 s for 5 minutes | the Lambda is behind at its concurrency cap of five, throttled by a dry account pool, or not polling; retries alone take about 540 s. Declared as `lambda/template.yaml#BookingEventBacklogAlarm`, never deployed, with no notification target |
 | 6 | readiness failing on any pod for 5 min | usually the database |
-| 7 | RDS `DatabaseConnections` above 50 | more than the service's own pools can open: 4 pods × 10, or 5 × 10 during a rollout surge. Something else is connecting, or `maxReplicas` went up without a bigger instance class (about 112 connections). See [DEPLOYMENT.md §7](DEPLOYMENT.md#7-what-breaks-first) |
+| 7 | RDS `DatabaseConnections` above 50 | more than the service's own pools can open: 4 pods × 10, or 5 × 10 during a rollout surge. Something else is connecting, or `maxReplicas` went up without a bigger instance class (fewer than 112 connections; read the limit with `SHOW max_connections`). See [DEPLOYMENT.md §7](DEPLOYMENT.md#7-what-breaks-first) |
 
 ## Playbooks
 

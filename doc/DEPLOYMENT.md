@@ -341,7 +341,7 @@ The rolling update sets `maxUnavailable: 0`, and a `PodDisruptionBudget` covers
 voluntary disruptions such as a node drain. A rollout and a drain are different
 events, so each has its own guard.
 
-The heap is `-XX:MaxRAMPercentage=75.0`, so it follows the container's 768Mi
+The heap is `-XX:MaxRAMPercentage=50.0`, so it follows the container's 768Mi
 memory limit, and going over that limit gets the container OOMKilled. There is
 no CPU limit. CFS throttling hits a JVM hardest during class loading and GC,
 inside the startup probe's window. It would also make the HPA measure the
@@ -604,11 +604,12 @@ still billed at month end, because deleting a resource refunds nothing.
 Reasoned from the configuration, not measured under load, the order would be:
 
 1. **Database connections.** Four pods × a Hikari pool of 10 = 40 connections,
-   against db.t4g.micro's ~112. So `deploy/k8s/base/hpa.yaml` caps `maxReplicas`
-   at 4, well below what the cluster could hold. Raise the instance class before
-   the replica count. Otherwise the symptom is "remaining connection slots are
-   reserved", which looks like a database fault but comes from the replica
-   count.
+   against the fewer than 112 that db.t4g.micro allows (read it with
+   `SHOW max_connections`). So `deploy/k8s/base/hpa.yaml` caps `maxReplicas`
+   at 4, well below what the cluster could hold. Raise the instance class
+   before the replica count. Otherwise the symptom is "remaining connection
+   slots are reserved", which looks like a database fault but comes from the
+   replica count.
 
 2. **Seat lock contention.** Concurrent bookings for the *same flight* queue
    behind `SELECT ... FOR UPDATE`. That queue is what prevents overselling, so

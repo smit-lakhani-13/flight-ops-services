@@ -29,9 +29,11 @@ cat > "$tmp/bin/aws" <<'STUB'
 #!/usr/bin/env bash
 printf 'aws %s\n' "$*" >> "$STUB_LOG"
 service=${1:-}; op=${2:-}; waiter=${3:-}
-stack='' query='' kubeconfig='' addon=''
+stack='' query='' kubeconfig='' addon='' statuses=''
 while [ $# -gt 0 ]; do
     case "$1" in
+        --stack-status-filter)
+            while [ $# -gt 1 ] && [ "${2#--}" = "$2" ]; do statuses="$statuses $2"; shift; done ;;
         --stack-name) stack=$2; shift ;;
         --query)      query=$2; shift ;;
         --kubeconfig) kubeconfig=$2; shift ;;
@@ -95,9 +97,15 @@ case "$service $op" in
     'cloudformation delete-stack') ;;
     'cloudformation wait') [ "${STUB_WAIT_FAILS:-0}" = 0 ] || exit 255 ;;
     'cloudformation list-stacks')
-        # The one part of the JMESPath query that matters here: an exclusion.
+        # Each entry is name or name:STATUS, CREATE_COMPLETE if none is given.
+        # The status filter applies as AWS applies it: with none, every entry
+        # is listed. The one part of the JMESPath query that matters here is
+        # an exclusion.
         excluded=$(printf '%s' "$query" | sed -n "s/.*StackName!='\([^']*\)'.*/\1/p")
-        for s in ${STUB_LIST_STACKS:-}; do
+        for entry in ${STUB_LIST_STACKS:-}; do
+            s=${entry%%:*} status=CREATE_COMPLETE
+            [ "$s" = "$entry" ] || status=${entry#*:}
+            [ -z "$statuses" ] || case " $statuses " in *" $status "*) ;; *) continue ;; esac
             [ "$s" = "$excluded" ] || printf '%s\t' "$s"
         done ;;
     'resourcegroupstaggingapi get-resources') printf '%b' "${STUB_TAGGED:-}" ;;
@@ -239,6 +247,14 @@ STUB_STACKS='' STUB_LIST_STACKS='flight-ops-foundation' STUB_TAGGED=$FOUNDATION_
     run down.sh
 expect_status "$name" 1 && expect_out "$name" 'FAIL  CloudFormation stacks: flight-ops-foundation' \
     && expect_out "$name" 'FAIL  anything tagged Project=flight-ops' && pass "$name"
+
+name="a stack still deleting when the waiter gives up fails the sweep"
+STUB_STACKS='flight-ops-lambda' STUB_WAIT_FAILS=1 \
+    STUB_LIST_STACKS='flight-ops-lambda:DELETE_IN_PROGRESS flight-ops-old:DELETE_COMPLETE' \
+    run down.sh
+expect_status "$name" 1 && expect_out "$name" 'will list it until it has gone' \
+    && expect_out "$name" 'FAIL  CloudFormation stacks: flight-ops-lambda' \
+    && reject_out "$name" 'flight-ops-old' && pass "$name"
 
 name="a full teardown passes when only the retained OIDC provider is tagged"
 STUB_STACKS='' STUB_LIST_STACKS='' \
