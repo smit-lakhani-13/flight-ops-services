@@ -606,6 +606,13 @@ The other fixes are to documentation only, and change no behaviour.
 
 ### Security
 
+- **Tomcat 11.0.26.** `pom.xml` sets `<tomcat.version>` over the 11.0.24 that
+  Boot 4.1.1 manages. Trivy rates three advisories fixed in 11.0.25 critical:
+  CVE-2026-65182, CVE-2026-65905 and CVE-2026-68525. They sit in servlet
+  security constraints and Tomcat's DIGEST and FORM authenticators, which the
+  service does not use, since Spring Security authenticates. The current patch
+  release, 11.0.26, fixes twelve more.
+
 - **The 403 log line.** `JsonAccessDeniedHandler` logs the request path through
   `security/JsonAccessDeniedHandler.java#printable`, which replaces anything
   outside visible ASCII, CR and LF included, with `?`. The default profile logs

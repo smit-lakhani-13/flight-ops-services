@@ -425,7 +425,7 @@ I reproduced most of these against a running instance before fixing them. The te
 
 ## Versions
 
-Platform: Java 21.0.12.1 · Jakarta EE 11 · Spring Boot 4.1.1 · Spring Framework 7.0.9 · Spring Security 7.1.1 · Tomcat 11.0.24.
+Platform: Java 21.0.12.1 · Jakarta EE 11 · Spring Boot 4.1.1 · Spring Framework 7.0.9 · Spring Security 7.1.1 · Tomcat 11.0.26.
 
 Libraries: Hibernate 7.4.5 · Jackson 3.1.5 · Flyway 12.4.0 · springdoc-openapi 3.1.1 · AWS SDK for Java 2.55.2.
 
