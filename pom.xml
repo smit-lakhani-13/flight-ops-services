@@ -70,6 +70,17 @@
         <jackson-2-bom.version>2.22.2</jackson-2-bom.version>
 
         <!--
+          Tomcat, over the 11.0.24 that Boot 4.1.1 manages. Trivy rates three of the
+          advisories fixed in 11.0.25 critical: CVE-2026-65182, CVE-2026-65905 and
+          CVE-2026-68525. They sit in servlet security constraints and Tomcat's DIGEST
+          and FORM authenticators, which the service does not use (Spring Security
+          authenticates), but the image scan refuses any critical that has a fix. The
+          current patch release, 11.0.26, fixes twelve more. Drop this pin when Boot's
+          own version reaches 11.0.26.
+        -->
+        <tomcat.version>11.0.26</tomcat.version>
+
+        <!--
           JaCoCo is pinned for a reproducible build, because Boot's parent does not
           manage it. Boot's parent does manage the enforcer and CycloneDX; these two
           pins override its versions, so a Boot upgrade does not move them.
