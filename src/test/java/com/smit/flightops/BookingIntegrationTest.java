@@ -1,6 +1,7 @@
 package com.smit.flightops;
 
 import com.smit.flightops.config.DataSeeder;
+import com.smit.flightops.dto.BookingDto;
 import com.smit.flightops.dto.BookingRequest;
 import com.smit.flightops.dto.CreateFlightRequest;
 import com.smit.flightops.entity.Flight;
@@ -25,6 +26,7 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutionException;
@@ -32,7 +34,6 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -99,19 +100,19 @@ class BookingIntegrationTest {
     }
 
     /**
-     * Runs every task at once and reports how many completed without throwing.
-     * Only {@code allowedFailure} counts as a losing contender; any other cause,
-     * such as pool starvation or a lock timeout, fails the test with its stack trace.
+     * Runs every task at once and returns what each one that completed without
+     * throwing returned. Only {@code allowedFailure} counts as a losing contender;
+     * any other cause, such as pool starvation or a lock timeout, fails the test
+     * with its stack trace.
      */
-    private static int countSuccesses(List<Callable<Void>> tasks,
-                                      Class<? extends Throwable> allowedFailure) throws Exception {
-        AtomicInteger succeeded = new AtomicInteger();
+    private static <T> List<T> resultsOfSuccesses(List<Callable<T>> tasks,
+                                                  Class<? extends Throwable> allowedFailure) throws Exception {
+        List<T> results = new ArrayList<>();
         try (ExecutorService pool = Executors.newFixedThreadPool(tasks.size())) {
-            List<Future<Void>> futures = pool.invokeAll(tasks, 60, TimeUnit.SECONDS);
-            for (Future<Void> future : futures) {
+            List<Future<T>> futures = pool.invokeAll(tasks, 60, TimeUnit.SECONDS);
+            for (Future<T> future : futures) {
                 try {
-                    future.get();
-                    succeeded.incrementAndGet();
+                    results.add(future.get());
                 } catch (ExecutionException e) {
                     Throwable cause = e.getCause();
                     if (allowedFailure == null || !allowedFailure.isInstance(cause)) {
@@ -126,7 +127,13 @@ class BookingIntegrationTest {
                 }
             }
         }
-        return succeeded.get();
+        return results;
+    }
+
+    /** How many tasks completed without throwing, under the rules of {@link #resultsOfSuccesses}. */
+    private static int countSuccesses(List<Callable<Void>> tasks,
+                                      Class<? extends Throwable> allowedFailure) throws Exception {
+        return resultsOfSuccesses(tasks, allowedFailure).size();
     }
 
     @Test
@@ -199,20 +206,23 @@ class BookingIntegrationTest {
     void concurrentReplaysOfOneKeyBookOnce() throws Exception {
         String flightNumber = createFlight("CC002", 50);
 
-        List<Callable<Void>> attempts = java.util.stream.IntStream.range(0, CONTENDERS)
-                .<Callable<Void>>mapToObj(i -> () -> {
-                    bookingService.book(new BookingRequest(flightNumber, "Retrying Client", 2, "same-key"));
-                    return null;
-                })
+        List<Callable<BookingDto>> attempts = java.util.stream.IntStream.range(0, CONTENDERS)
+                .<Callable<BookingDto>>mapToObj(i -> () ->
+                        bookingService.book(new BookingRequest(flightNumber, "Retrying Client", 2, "same-key")))
                 .toList();
 
         // null: no failure is legitimate. The winner gets its own booking back.
         // Every other caller gets the winner's, from the pre-check in
         // BookingService.book or through BookingWriter.recoverReplay.
-        int booked = countSuccesses(attempts, null);
+        List<BookingDto> results = resultsOfSuccesses(attempts, null);
 
-        assertThat(booked).as("no caller should see an exception on a raced replay")
-                .isEqualTo(CONTENDERS);
+        assertThat(results).as("no caller should see an exception on a raced replay")
+                .hasSize(CONTENDERS)
+                .doesNotContainNull();
+        assertThat(results.stream().map(BookingDto::bookingId).distinct())
+                .as("every caller gets back the same booking id")
+                .singleElement()
+                .isNotNull();
         assertThat(bookingRepository.findByFlightNumber(flightNumber, Pageable.unpaged())).hasSize(1);
         assertThat(availableSeats(flightNumber)).isEqualTo(48);
     }

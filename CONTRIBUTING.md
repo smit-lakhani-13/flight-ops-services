@@ -57,9 +57,9 @@ flight row. The build job's step "The PostgreSQL tests ran" fails CI if any of
 the three classes skips a test or has no report.
 
 So in CI the Surefire summary reads
-`Tests run: 266, Failures: 0, Errors: 0, Skipped: 0` for the service and
+`Tests run: 267, Failures: 0, Errors: 0, Skipped: 0` for the service and
 `Tests run: 25, Failures: 0, Errors: 0, Skipped: 0` for the Lambda. On a laptop
-without Docker the service line ends `Skipped: 9`, and 257 of its tests run.
+without Docker the service line ends `Skipped: 9`, and 258 of its tests run.
 
 A new migration is not accepted until CI has gone green on it. The local H2
 profile never sees it, and neither does a laptop with no Docker.
@@ -116,17 +116,17 @@ scripts/numbers.sh          # recomputes every count the docs claim
 | Service | 36 | `@ExtendWith(MockitoExtension.class)`, `@Mock`, `@InjectMocks`, `@Captor`, split across `BookingServiceTest` (orchestration, including a failed insert with no winning booking to recover), `BookingWriterTest` (the write path), `FlightServiceTest` and `SqsEventPublisherTest` (what goes on the wire) |
 | Web slice | 66 | `@WebMvcTest` + `@MockitoBean` in the two controller tests: status codes, `Location` headers, error JSON, `Allow` on a 405 and `Accept` on a 415, the 503 for a database that cannot be reached, a YAML body or a missing `Content-Type` refused on each `POST` and `PATCH`, and the rules for flight numbers, airport codes, passenger names, seat counts, status values and departure times. The other 4 have no Spring context. 2 are `exception/ApiErrorControllerTest`: one calls `ApiErrorController` directly and one drives it through a standalone MockMvc, because a full MockMvc never forwards to `/error`. 2 are `security/JsonAccessDeniedHandlerTest`, which builds its request directly so that the path can carry a raw CR and LF |
 | Repository slice | 10 | `@DataJpaTest` + `TestEntityManager`: derived queries, JPQL, `JOIN FETCH`, constraints |
-| Full context (H2) | 86 | `@SpringBootTest`. The idempotency guarantee end to end, with four 10-caller races on one key: same request, different payloads, the last seat, and one key across two flights. The authorisation rules against the real filter chain, with the Basic and Bearer challenges and who sees health components. The outbox with its trace capture, the attempt ceiling and the retention pruner against an embedded database. The OpenAPI document's status codes per operation and its comparison with a real response. The lock timeout, the error contract with the 406 and `ignorecase` on a sort property that is not text, the page overflow and multipart parsing turned off, and a lazy-loading regression with no mocking anywhere in the chain |
+| Full context (H2) | 87 | `@SpringBootTest`. The idempotency guarantee end to end, with four 10-caller races on one key: same request, different payloads, the last seat, and one key across two flights. The authorisation rules against the real filter chain, with the Basic and Bearer challenges and who sees health components. The outbox with its trace capture, the attempt ceiling and the retention pruner against an embedded database. The OpenAPI document's status codes per operation and its comparison with a real response. The lock timeout, the error contract with the 406 and `ignorecase` on a sort property that is not text, the page overflow and multipart parsing turned off, and a lazy-loading regression with no mocking anywhere in the chain |
 | Event contract | 11 | the producer's and the consumer's `BookingEventContractTest`, both against `contracts/booking-created-v1.json`, as [Writing tests](#writing-tests) describes |
 | Lambda handler | 19 | separate module: batch parsing, partial batch failure and the conditional write. `seats` is refused with no coercion when it is missing, below 1, a string or fractional. Body values are logged on one line and capped at 1,000 characters, and the producer's trace context survives the queue |
 | Configuration and startup checks | 24 | Boot's `Binder` over plain maps: an unresolved `${...}` placeholder is rejected at startup, every outbox bound is enforced and every default is wired. `EventPropertiesTest` also starts the whole application to see a bad `app.events.publisher` named, and `PasswordVerifiabilityTest` runs `SecurityConfig` in a `WebApplicationContextRunner` to see an unverifiable password stop startup. `ValidationClockTest` checks that `@Future` reads the `Clock` bean, and `AwsConfigTest` that the `sts` module, which the credential chain needs for IRSA, is on the classpath |
 | Architecture | 9 | ArchUnit over `target/classes`, one test per rule in [Architecture rules](#architecture-rules). Each rule was seen to fail on a planted violation before it was committed |
 | Observability | 8 | the request-id filter against a hostile inbound header, and the booking meters scraped through a real `PrometheusMeterRegistry`, since a `SimpleMeterRegistry` would accept any name |
-| Run | 282 | 0 failures without Docker (13 + 36 + 66 + 10 + 86 + 11 + 19 + 24 + 9 + 8) |
+| Run | 283 | 0 failures without Docker (13 + 36 + 66 + 10 + 87 + 11 + 19 + 24 + 9 + 8) |
 | PostgreSQL integration | 9 | `@Testcontainers(disabledWithoutDocker = true)`, skipped without a container runtime; [`Skipped: 9` is correct](#skipped-9-is-correct) names the three classes and what they cover |
 
-So 291 tests exist across the two modules. 282 run without Docker and 9 skip,
-and CI runs all 291.
+So 292 tests exist across the two modules. 283 run without Docker and 9 skip,
+and CI runs all 292.
 
 ## What CI enforces
 

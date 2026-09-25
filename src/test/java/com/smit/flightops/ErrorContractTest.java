@@ -98,8 +98,8 @@ class ErrorContractTest {
     @Test
     @DisplayName("sort=departureTime,desc returns the later departure first")
     void knownSortPropertyStillSorts() throws Exception {
-        createFlight("ZZ200", "AMS", "CDG", "2031-03-01T08:00:00Z");
-        createFlight("ZZ201", "AMS", "CDG", "2031-03-01T08:00:00.500Z");
+        createFlight("ZZ200", "AMS", "CDG", "2099-03-01T08:00:00Z");
+        createFlight("ZZ201", "AMS", "CDG", "2099-03-01T08:00:00.500Z");
 
         String json = mockMvc.perform(get("/api/v1/flights")
                         .param("origin", "AMS")
@@ -110,15 +110,15 @@ class ErrorContractTest {
 
         List<String> departures = JsonPath.read(json, "$.content[*].departureTime");
         assertThat(departures.stream().map(Instant::parse)).containsExactly(
-                Instant.parse("2031-03-01T08:00:00.500Z"),
-                Instant.parse("2031-03-01T08:00:00Z"));
+                Instant.parse("2099-03-01T08:00:00.500Z"),
+                Instant.parse("2099-03-01T08:00:00Z"));
     }
 
     /** Booked smallest first, so the default creation order is the opposite of the one asked for. */
     @Test
     @DisplayName("sort=seats,desc on a flight's bookings returns the largest booking first")
     void knownSortPropertyOnBookingsStillSorts() throws Exception {
-        createFlight("ZZ300", "AMS", "FRA", "2031-03-01T08:00:00Z");
+        createFlight("ZZ300", "AMS", "FRA", "2099-03-01T08:00:00Z");
         book("ZZ300", "Ada Lovelace", 1, "contract-sort-1");
         book("ZZ300", "Grace Hopper", 3, "contract-sort-2");
 
@@ -139,9 +139,9 @@ class ErrorContractTest {
      * it is here so the two endpoints stay alike.
      */
     @Test
-    @DisplayName("ignorecase on a number or a time sorts normally; on a name it still applies")
+    @DisplayName("ignorecase on a number sorts normally, on a time it answers 200, on a name it still applies")
     void ignoreCaseOnANonTextPropertyIsDropped() throws Exception {
-        createFlight("ZZ302", "AMS", "BRU", "2031-03-01T08:00:00Z");
+        createFlight("ZZ302", "AMS", "BRU", "2099-03-01T08:00:00Z");
         book("ZZ302", "ada Lovelace", 1, "contract-ic-1");
         book("ZZ302", "Grace Hopper", 3, "contract-ic-2");
 
@@ -161,6 +161,7 @@ class ErrorContractTest {
         assertThat(JsonPath.<List<String>>read(byName, "$.content[*].passengerName"))
                 .containsExactly("ada Lovelace", "Grace Hopper");
 
+        // For a time only the status is checked, not the order.
         mockMvc.perform(get("/api/v1/bookings")
                         .param("flightNumber", "ZZ302")
                         .param("sort", "createdAt,asc,ignorecase"))
@@ -173,7 +174,7 @@ class ErrorContractTest {
     @Test
     @DisplayName("the booking list is paged: two bookings at size=1 are two pages with different rows")
     void bookingListIsPaged() throws Exception {
-        createFlight("ZZ301", "AMS", "MUC", "2031-03-01T08:00:00Z");
+        createFlight("ZZ301", "AMS", "MUC", "2099-03-01T08:00:00Z");
         book("ZZ301", "Ada Lovelace", 1, "contract-page-1");
         book("ZZ301", "Grace Hopper", 1, "contract-page-2");
 
@@ -223,7 +224,7 @@ class ErrorContractTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"flightNumber":"ZZ001","origin":"EWR","destination":"EWR",
-                                 "totalSeats":100,"departureTime":"2030-01-01T10:00:00Z"}
+                                 "totalSeats":100,"departureTime":"2099-01-01T10:00:00Z"}
                                 """))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
@@ -239,7 +240,7 @@ class ErrorContractTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"flightNumber":"ZZ002","origin":"ewr","destination":"EWR",
-                                 "totalSeats":100,"departureTime":"2030-01-01T10:00:00Z"}
+                                 "totalSeats":100,"departureTime":"2099-01-01T10:00:00Z"}
                                 """))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.fieldErrors.destination").exists());
@@ -345,7 +346,7 @@ class ErrorContractTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"flightNumber":"ZZ100","origin":"BOM","destination":"DEL",
-                                 "totalSeats":50,"departureTime":"2030-01-01T10:00:00Z"}
+                                 "totalSeats":50,"departureTime":"2099-01-01T10:00:00Z"}
                                 """))
                 .andExpect(status().isCreated());
 
@@ -369,7 +370,7 @@ class ErrorContractTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"flightNumber":"ZZ101","origin":"BOM","destination":"MAA",
-                                 "totalSeats":50,"departureTime":"2030-01-01T10:00:00Z"}
+                                 "totalSeats":50,"departureTime":"2099-01-01T10:00:00Z"}
                                 """))
                 .andExpect(status().isCreated());
 
