@@ -40,7 +40,9 @@ class ArchitectureTest {
      * a restriction; {@code dto}, {@code exception}, {@code security} and
      * {@code validation} are leaves anything may read.
      * {@code consideringOnlyDependenciesInLayers} exempts
-     * {@code FlightOpsServiceApplication}, which sits in no layer.
+     * {@code FlightOpsServiceApplication} and the {@code observability}
+     * package, which sit in no layer. That is why {@code OutboxMetrics} may
+     * read {@code OutboxEventRepository}.
      */
     @ArchTest
     static final ArchRule layers_are_respected = Architectures.layeredArchitecture()

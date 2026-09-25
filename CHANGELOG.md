@@ -98,6 +98,11 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
   flight row while a booking is cancelled, and gets 503 `LOCK_TIMEOUT` with
   `Retry-After`, as a new booking does.
 
+- **The outbox rollback has a test.**
+  `OutboxTest#aRolledBackBookingLeavesNoEvent` writes a booking and its event
+  row in one transaction, marks it rollback-only, and finds neither row
+  afterwards.
+
 ### Changed
 
 - **Version.** Both poms say `1.2.0-SNAPSHOT` until the next tag, so a build
@@ -440,6 +445,17 @@ The other fixes are to documentation only, and change no behaviour.
   reads, and the 1.1.0 Security notes gave that as the reason to leave it on.
   Setting it to false removes only the Kubernetes API token; the EKS pod
   identity webhook adds its own volume. The comment now says so.
+
+- **Tests that claimed more than they checked.** In 1.1.0 the oversell tests
+  in `OutboxTest`, `BookingIdempotencyTest` and `BookingIntegrationTest` were
+  named for a rollback, but an oversell is refused before anything is written.
+  Their display names now say so. The `OutboxTest` one is also renamed
+  `anOversellWritesNoEvent`, and its old name now belongs to the new rollback
+  test. `ErrorContractTest#cancellationReturnsSeatsExactlyOnce` could not see a
+  second seat credit, because `Flight.releaseSeats` clamps at `totalSeats` and
+  no other seat on the flight was sold. It now keeps one seat sold.
+  `FlightServiceTest#searchChoosesTheRightQuery` now runs the destination-only
+  search, and other test names and comments now match their assertions.
 
 ### Security
 

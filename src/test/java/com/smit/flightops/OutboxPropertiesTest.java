@@ -41,9 +41,8 @@ class OutboxPropertiesTest {
     }
 
     /**
-     * The one bound that is a relationship, which is why the checks are Java and not
-     * {@code @Positive}. Under an hour, with an hourly pruner, an operator cannot tell
-     * "published and pruned" from "never recorded".
+     * Under an hour, with an hourly pruner, an operator cannot tell "published
+     * and pruned" from "never recorded".
      */
     @Test
     @DisplayName("a retention shorter than an hour is refused, with a reason")

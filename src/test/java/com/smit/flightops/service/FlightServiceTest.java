@@ -27,7 +27,6 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -117,16 +116,18 @@ class FlightServiceTest {
         when(flightRepository.findByOriginAndDestination("EWR", "LHR", page))
                 .thenReturn(new PageImpl<>(List.of(flight())));
         when(flightRepository.findByOrigin("EWR", page)).thenReturn(new PageImpl<>(List.of(flight())));
+        when(flightRepository.findByDestination("LHR", page)).thenReturn(new PageImpl<>(List.of(flight())));
         when(flightRepository.findAll(page)).thenReturn(new PageImpl<>(List.of()));
 
         assertThat(flightService.search("ewr", "lhr", page)).hasSize(1);
         assertThat(flightService.search("ewr", null, page)).hasSize(1);
+        assertThat(flightService.search(null, " lhr ", page)).hasSize(1);
         assertThat(flightService.search("  ", "", page)).isEmpty();
 
         verify(flightRepository).findByOriginAndDestination("EWR", "LHR", page);
         verify(flightRepository).findByOrigin("EWR", page);
+        verify(flightRepository).findByDestination("LHR", page);
         verify(flightRepository).findAll(page);
-        verify(flightRepository, never()).findByDestination(any(), eq(page));
     }
 
     @Test

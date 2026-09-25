@@ -192,7 +192,7 @@ class BookingWriterTest {
     }
 
     @Test
-    @DisplayName("unknown flight throws before any lock is attempted on a nonexistent row")
+    @DisplayName("an unknown flight throws when the locking read finds no row, and records no event")
     void unknownFlightIsA404() {
         when(flightRepository.findByFlightNumberForUpdate("XX999")).thenReturn(Optional.empty());
 
