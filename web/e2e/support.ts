@@ -38,19 +38,23 @@ export function uniqueFlightNumber(): string {
   return `W${clock}${counter}`;
 }
 
+const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
 /**
  * A test flight's route: from EWR to three letters hashed from its number.
  * Each flight so has a route almost no other flight shares, and openFlight
  * finds it on the list's first page however many flights earlier runs, or
- * scripts/demo.sh, left on a busy route such as EWR to SFO.
+ * scripts/demo.sh, left on a busy route such as EWR to SFO. The first
+ * letter is never E, so the destination is never EWR itself, which the API
+ * refuses: a flight's origin and destination must differ.
  */
 export function routeOf(flightNumber: string): { origin: string; destination: string } {
   let hash = 0x811c9dc5;
   for (const char of flightNumber) hash = Math.imul(hash ^ char.charCodeAt(0), 0x01000193) >>> 0;
   let destination = "";
-  for (let i = 0; i < 3; i += 1) {
-    destination += String.fromCharCode(65 + (hash % 26));
-    hash = Math.floor(hash / 26);
+  for (const letters of [LETTERS.replace("E", ""), LETTERS, LETTERS]) {
+    destination += letters[hash % letters.length];
+    hash = Math.floor(hash / letters.length);
   }
   return { origin: "EWR", destination };
 }
