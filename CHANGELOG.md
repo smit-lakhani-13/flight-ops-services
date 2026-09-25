@@ -83,7 +83,7 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
 
 - **Event transport decision.** [ADR 0015](adr/0015-event-transport.md) records
   why events go to an SQS standard queue and what a JMS broker would cost, from
-  documentation.
+  documentation and without running one.
 
 - **What an Oracle port would change.** [ADR 0016](adr/0016-oracle-port.md)
   is a proposal written from Oracle's and Hibernate's documentation and never
@@ -411,7 +411,7 @@ The other fixes are to documentation only, and change no behaviour.
 - **"In AWS" in the transport paragraph.** `ARCHITECTURE.md` described
   `SqsEventPublisher` as the publisher "in AWS", which reads as if the service
   ran there. It has never run in AWS. The sentence now names the `prod`
-  profile, which selects it.
+  profile, which selects it by default.
 
 ### Security
 
