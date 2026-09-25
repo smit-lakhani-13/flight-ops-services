@@ -12,13 +12,13 @@ Flight inventory and booking service: a Spring Boot REST API over PostgreSQL tha
 
 I picked an airline because seat inventory is a real consistency problem: many clients want the same few seats, clients retry, and a mistake sells one seat twice.
 
-**Scope.** This is a demo that has never served production traffic. CI builds both modules and runs every test, including the PostgreSQL integration tests, on every push or pull request to `main`. CI also builds the image from the `Dockerfile` on every push or pull request to `main`, starts it with no database, and never pushes it. `k8s/`, `lambda/template.yaml`, `deploy/aws/` and the deploy job are written, linted and validated offline, but I have never applied them. Their prices and runbook are in [DEPLOYMENT.md](DEPLOYMENT.md), and [Project status](#project-status) shows what has actually run.
+**Scope.** This is a demo that has never served production traffic. CI builds both modules and runs every test, including the PostgreSQL integration tests, on every push or pull request to `main`. CI also builds the image from the `Dockerfile` on every push or pull request to `main`, starts it with no database, scans it with Trivy, and never pushes it. `k8s/`, `lambda/template.yaml`, `deploy/aws/` and the deploy job are written, linted and validated offline, but I have never applied them. Their prices and runbook are in [DEPLOYMENT.md](DEPLOYMENT.md), and [Project status](#project-status) shows what has actually run.
 
 **Contents:** [Documentation](#documentation) · [Run it](#run-it-in-30-seconds) · [Status](#project-status) · [Architecture](#architecture) · [Layout](#repository-layout) · [Security](#security) · [API](#api) · [Metrics](#metrics) · [Tests](#tests) · [Deployment](#deployment-and-cost) · [Trade-offs](#trade-offs-and-known-limitations) · [Review](#what-i-found-in-review) · [Versions](#versions)
 
 ## Documentation
 
-On every CI run, the `docs-check` job runs three scripts. `scripts/refcheck.py` checks that the file paths these documents cite in backticks exist (those with a known extension, plus `Dockerfile`, `mvnw` and `LICENSE`; its docstring lists what it skips), and that the symbol in each `path#symbol` appears in its file. `scripts/linkcheck.py` checks every link and heading anchor. `scripts/sweeps.sh` reads the working tree and the commit history, and fails on a co-author trailer, a tool's signature, an absolute home-directory path in a tracked file, or a match for the patterns in the `SWEEP_PATTERNS` repository secret. I run `scripts/numbers.sh` by hand before I edit a count. It recomputes every count the documents claim, and it is not a gate.
+On every CI run, the `docs-check` job runs four scripts. `scripts/refcheck.py` checks that the file paths these documents cite in backticks exist (those with a known extension, plus `Dockerfile`, `mvnw` and `LICENSE`; its docstring lists what it skips), and that the symbol in each `path#symbol` appears in its file. `scripts/linkcheck.py` checks every link and heading anchor. `scripts/numbers.sh --check-readme` fails when a count of decision records in this README differs from the ADR files in `adr/`, or when the index in `adr/README.md` does not link each of them exactly once. `scripts/sweeps.sh` reads the working tree and the commit history, and fails on a co-author trailer, a tool's signature, an absolute home-directory path in a tracked file, or a match for the patterns in the `SWEEP_PATTERNS` repository secret. I run `scripts/numbers.sh` without the flag by hand before I edit a count. It recomputes every count the documents claim, and apart from the ADR count, CI does not compare them with the documents.
 
 | Document | What it answers |
 |---|---|
@@ -129,7 +129,7 @@ This table bounds every claim in this README.
 |---|---|
 | **Built, tested, and exercised over HTTP** | The whole app module. Every endpoint hit with `curl` against a running instance. Every status code in the tables below observed over HTTP or in a test, including the 401 and 403 bodies, except one 503 that no test covers: the health 503 during a database outage. `LockTimeoutTest` holds the flight row and gets the 503 end to end, for a booking and for a booking cancellation. The flight status change and cancellation get theirs only in a slice test with a mocked service (`FlightControllerTest#flightWriteBehindARowLockReturns503`), and `DATABASE_UNAVAILABLE` likewise, on a flight read (`FlightControllerTest#noDatabaseConnectionReturns503`). The Lambda module, via 25 tests: 19 for the handler and 6 for the consumer side of the event contract. |
 | **Verified against real PostgreSQL in CI** | The 9 Testcontainers integration tests: 5 in `BookingIntegrationTest`, 3 in `service/OutboxPrunePostgresTest` and 1 in `LockTimeoutPostgresTest`. CI runs all 291 tests, and these 9 are the only ones on PostgreSQL. The 9 apply the Flyway migrations to an empty database and check `ddl-auto: validate` against the schema those migrations produced. They run `SELECT … FOR UPDATE` under 20 threads competing for 5 seats, replay the same idempotency key from 20 threads at once, and hold a flight row until PostgreSQL's own 3 s `lock_timeout` fires with SQLSTATE `55P03`. The runners have Docker, so these execute there and skip on a laptop without one, and the `build` job fails if any of the three classes is skipped or missing. |
-| **Built and started in CI, never pushed** | The container image. The `image` job builds it from the `Dockerfile` on every push or pull request to `main`, starts it with no environment, and fails unless it stops at startup for want of a database. It has never been pushed to a registry, never run against a database and never served a request. |
+| **Built and started in CI, never pushed** | The container image. The `image` job builds it from the `Dockerfile` on every push or pull request to `main`, starts it with no environment, and fails unless it stops at startup for want of a database. It then scans the image with Trivy and fails on a CRITICAL vulnerability with a fix available. It has never been pushed to a registry, never run against a database and never served a request. |
 | **Authored and reviewed, never executed** | `sam deploy` and `sam local invoke`; there is no `sam build`, because Maven builds the jar that `lambda/template.yaml` names. Every `kubectl` and `eksctl` step. The deploy half of the GitHub Actions workflow, which is gated off (see below). |
 | **Not implemented** | A Solace binding. Trace **export** from the service: ids are generated and logged, but there is no collector to send spans to. The Lambda's `Tracing: Active` has X-Ray record a sample of its invocations, and those traces do not carry the service's trace id. Rate limiting. |
 
@@ -221,8 +221,9 @@ The same picture with method names, plus the booking sequence, the idempotency d
 ├── DEPLOYMENT.md                  three shapes, the runbook, the cost of each, the teardown
 ├── CHANGELOG.md                   1.0.0, 1.1.0, the unreleased work, and the response field 1.1.0 removed
 ├── adr/                           16 decision records, 0001–0016
-├── scripts/                       refcheck.py, linkcheck.py and sweeps.sh run in CI;
-│                                  numbers.sh recomputes the counts; demo.sh is the tour
+├── scripts/                       CI runs refcheck.py, linkcheck.py, sweeps.sh and
+│                                  numbers.sh --check-readme; numbers.sh recomputes
+│                                  the counts; demo.sh is the tour
 ├── contracts/                     the event schema both modules test against
 ├── lambda/                        separate parentless Maven module: SQS → DynamoDB consumer,
 │                                  its SAM template and the SQS fixtures for sam local invoke
@@ -360,7 +361,7 @@ UPDATE outbox_events SET attempts = 0, next_attempt_at = NULL WHERE id = ?
 
 ## Deployment and cost
 
-Nothing in this section has been run against AWS or a cluster. CI runs parts of it without AWS credentials or a cluster: the `image` job builds the image and starts it with no database, `infra-lint` renders the overlay through `deploy/aws/render-aws.sh`, and `deploy/aws/selftest.sh` runs `down.sh`, `cost-check.sh`, `ecr-image-exists.sh` and the `lib.sh` checks `up.sh` calls against stubbed `aws`, `kubectl`, `helm`, `eksctl` and `mvnw` commands.
+Nothing in this section has been run against AWS or a cluster. CI runs parts of it without AWS credentials or a cluster: the `image` job builds the image, starts it with no database and scans it, `infra-lint` renders the overlay through `deploy/aws/render-aws.sh`, and `deploy/aws/selftest.sh` runs `down.sh`, `cost-check.sh`, `ecr-image-exists.sh` and the `lib.sh` checks `up.sh` calls against stubbed `aws`, `kubectl`, `helm`, `eksctl` and `mvnw` commands.
 
 ```bash
 docker compose up --build                       # the whole stack, locally

@@ -5,8 +5,10 @@ name: build-and-deploy
 #   build              every trigger      both Maven modules, suite, coverage, SBOM
 #   infra-lint         every trigger      the manifests and CloudFormation that nothing compiles
 #   trivy-fs           every trigger      dependency CVEs and committed secrets
-#   docs-check         every trigger      citations, links, attribution and privacy sweeps
-#   image              every trigger      docker build, a start with no database, the size; never pushed
+#   docs-check         every trigger      citations, links, the README's ADR count,
+#                                         attribution and privacy sweeps
+#   image              every trigger      docker build, a start with no database, the size,
+#                                         a CRITICAL scan; never pushed
 #   dependency-review  pull_request only  what a pull request ADDS
 #   deploy             gated push or      render, apply, wait, smoke
 #                      manual run on main
@@ -61,12 +63,18 @@ permissions:
 # assumes. Retagging is how tj-actions/changed-files harvested credentials
 # across tens of thousands of repositories in March 2025. Dependabot bumps the
 # SHAs and rewrites the version comment with them.
+#
+# Every job names its OS release, ubuntu-24.04, not ubuntu-latest. That label
+# moves to Ubuntu 26.04 between 19 October and 19 November 2026
+# (actions/runner-images#14748), and an OS jump belongs in a pull request of
+# its own. The pinned image is still rebuilt weekly with patches, so the pin
+# stops the jump, not all drift.
 
 jobs:
   # ---------------------------------------------------------------------------
   build:
     name: build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Room for the first run of the day to pull the postgres image. Bounded, so
     # a hung test cannot burn six hours of runner minutes.
     timeout-minutes: 25
@@ -91,7 +99,7 @@ jobs:
       - name: Build and test
         run: ./mvnw -B clean verify
 
-      # Docker is available on ubuntu-latest, so the Testcontainers classes run
+      # Docker is available on the runner, so the Testcontainers classes run
       # here, and CI is the only place the real PostgreSQL path runs: Flyway
       # V1-V8, ddl-auto=validate, SELECT FOR UPDATE under 20-way contention,
       # and the 3s lock_timeout firing. Without Docker they skip, and a skipped
@@ -202,7 +210,7 @@ jobs:
   # in about ninety seconds.
   infra-lint:
     name: infra-lint
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
 
     env:
@@ -282,6 +290,8 @@ jobs:
           cfn-lint lambda/template.yaml deploy/aws/foundation.yaml deploy/aws/data.yaml
 
       - name: Set up the SAM CLI
+        # setup-sam publishes major tags only (v0 to v3), so the version comment
+        # cannot be finer than v3. The SHA is the pin.
         uses: aws-actions/setup-sam@89ddb14d60e682855e3fea4be85b3c56485de310 # v3
         with:
           use-installer: true
@@ -320,7 +330,7 @@ jobs:
   # ---------------------------------------------------------------------------
   trivy-fs:
     name: trivy-fs
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
 
     permissions:
@@ -397,7 +407,7 @@ jobs:
   dependency-review:
     name: dependency-review
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
 
     steps:
@@ -465,7 +475,7 @@ jobs:
   # so they are checked here.
   docs-check:
     name: docs-check
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
 
     steps:
@@ -481,6 +491,12 @@ jobs:
       - name: Every link resolves
         run: python3 scripts/linkcheck.py
 
+      # The one count that changes by design: a new ADR must come with the
+      # README's record counts and its row in adr/README.md, in the same pull
+      # request.
+      - name: The README's ADR count matches the tree
+        run: scripts/numbers.sh --check-readme
+
       - name: Attribution and privacy sweeps
         # Extra patterns come from a repository secret; see the script header.
         # A push without the secret fails rather than skipping.
@@ -495,10 +511,17 @@ jobs:
   # builds its own copy on its own runner.
   image:
     name: image
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # The build stage downloads every dependency: the BuildKit cache mount is
     # empty on a fresh runner.
     timeout-minutes: 20
+
+    env:
+      # trivy-fs's mirror list, plus the Java database: an image scan reads
+      # the jar inside the image. trivy-fs scans no jar, so only the image
+      # scans need that database.
+      TRIVY_DB_REPOSITORY: mirror.gcr.io/aquasec/trivy-db:2,ghcr.io/aquasecurity/trivy-db:2,public.ecr.aws/aquasecurity/trivy-db:2
+      TRIVY_JAVA_DB_REPOSITORY: mirror.gcr.io/aquasec/trivy-java-db:1,ghcr.io/aquasecurity/trivy-java-db:1,public.ecr.aws/aquasecurity/trivy-java-db:1
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -529,10 +552,27 @@ jobs:
           echo "image size: ${mb} MB (${bytes} bytes), docker image inspect, Docker ${server}"
           echo "flight-ops-service:ci is **${mb} MB** (${bytes} bytes) as \`docker image inspect\` reports it on this runner (Docker ${server}). It was not pushed." >> "$GITHUB_STEP_SUMMARY"
 
+      # The deploy job's scan, on every trigger, so a fixable CRITICAL in the
+      # base image or the jar shows up on the pull request that brings it in.
+      # CRITICAL only, for the reason the deploy job gives.
+      - name: Scan the image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: flight-ops-service:ci
+          scanners: vuln
+          severity: CRITICAL
+          ignore-unfixed: true
+          format: table
+          exit-code: '1'
+
   # ---------------------------------------------------------------------------
   # Everything below runs only for a configured push or manual run on main.
   deploy:
-    name: deploy
+    # Says so in the checks list, where a bare "deploy" reads as something
+    # that ran. Rename it in the change that readies the first deploy, before
+    # DEPLOY_ENABLED is set, as step 10 in deploy/aws/README.md says.
+    name: deploy (gated off)
     # Not dependency-review: it is skipped on a push, and a skipped dependency
     # skips everything downstream of it.
     needs: [build, infra-lint, trivy-fs, docs-check, image]
@@ -557,7 +597,7 @@ jobs:
       && github.ref == 'refs/heads/main'
       && vars.DEPLOY_ENABLED == 'true'
 
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
 
     permissions:
@@ -642,12 +682,14 @@ jobs:
       # CRITICAL only, unlike the filesystem gate. This scans the whole base
       # image, where a HIGH in an OS package the JRE never calls would block
       # every deploy until Temurin ships a rebuild. ECR scans on push too, so a
-      # HIGH is still reported.
+      # HIGH is still reported. The image job runs the same scan on every
+      # trigger.
       - name: Scan the image before pushing it
         if: steps.image.outputs.exists == 'false'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         env:
           TRIVY_DB_REPOSITORY: mirror.gcr.io/aquasec/trivy-db:2,ghcr.io/aquasecurity/trivy-db:2,public.ecr.aws/aquasecurity/trivy-db:2
+          TRIVY_JAVA_DB_REPOSITORY: mirror.gcr.io/aquasec/trivy-java-db:1,ghcr.io/aquasecurity/trivy-java-db:1,public.ecr.aws/aquasecurity/trivy-java-db:1
         with:
           scan-type: image
           image-ref: ${{ env.IMAGE }}
