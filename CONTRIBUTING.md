@@ -32,7 +32,7 @@ it has its own Maven build:
 ```
 
 The gate is `verify`. The enforcer rules bind to `validate`, so `test` runs
-them too, but `test` stops before the CycloneDX SBOM (`package`) and JaCoCo's
+them too, but `test` stops before `target/bom.json` (`package`) and JaCoCo's
 threshold check (`verify`).
 
 Both modules' Surefire runs pin the test JVM to `Asia/Kolkata`. CI runs in UTC,

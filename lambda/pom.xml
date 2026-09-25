@@ -309,6 +309,7 @@
                     </execution>
                 </executions>
                 <configuration>
+                    <projectType>application</projectType>
                     <outputFormat>json</outputFormat>
                     <outputName>bom</outputName>
                     <includeTestScope>false</includeTestScope>

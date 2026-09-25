@@ -101,10 +101,12 @@ updates:
         patterns: ["*"]
 
   # Both image tags in the Dockerfile, the maven build stage and the JRE
-  # runtime. Dependabot keeps a tag's precision and suffix, so 21-jre-alpine can
-  # only move to another Java major, and 3.9-eclipse-temurin-21 only to Maven
-  # 3.10 or 4. Majors of both are ignored: a Java major changes the JDK (see the
-  # header), and Maven 4 is its own upgrade. OS fixes do not come from here.
+  # runtime. For 21-jre-alpine Dependabot keeps the suffix, so the ignore below
+  # stops a Java major. For 3.9-eclipse-temurin-21 it reads the whole tag as
+  # the version, so it can move the build stage's JDK within Maven 3 (PR #1
+  # proposed 3-eclipse-temurin-26), and the maven rule does not stop that. The
+  # enforcer's requireJavaVersion [21,22) does: the image job fails on any
+  # other JDK. Maven 4 is its own upgrade. OS fixes do not come from here.
   # 21-jre-alpine is a floating tag, so a fresh build pulls what it points to.
   - package-ecosystem: docker
     directory: "/"

@@ -342,7 +342,7 @@ work is written down. What is missing is a domain.
 | | |
 |---|---|
 | Dependency updates | Dependabot, monthly, on both Maven modules, the Actions workflows and the Dockerfile base images |
-| SBOM | CycloneDX, `target/bom.json`, on every build |
+| SBOM | CycloneDX, `target/bom.json` and `lambda/target/bom.json`, on every build, both typed `application`. The service jar also carries the one the Spring Boot parent writes, `target/classes/META-INF/sbom/application.cdx.json` |
 | Upper-bound dependency check | `maven-enforcer` `requireUpperBoundDeps`. A transitive downgrade fails the build |
 | Coverage floor | JaCoCo. The build fails under 80% line or 50% branch coverage |
 | Architecture rules | ArchUnit, 9 rules. A violation fails the build; it is not just reported |

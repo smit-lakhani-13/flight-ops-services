@@ -86,6 +86,19 @@ still blank.
   number or `true` sent for a text field into text, which then goes through
   the same validation as any other. The descriptions now name the seat count,
   and a text field sent as an array or an object, which Jackson still refuses.
+- **The SBOMs described two applications as libraries.** The CycloneDX plugin
+  types a module `library` unless told otherwise, and neither pom told it, so
+  both `target/bom.json` files did. Both are typed `application` now. The
+  service module also stops attaching its SBOM over the one the Spring Boot
+  parent embeds in the jar, which logged a replace warning on every build.
+- **infra-lint no longer floats with the SAM CLI.** `sam validate --lint` runs
+  the cfn-lint bundled with the SAM CLI, and setup-sam installed the latest
+  release on every run, so a new release could turn a required check red with
+  no template changed. The workflow pins it at 1.166.2.
+- **Two CI comments that misstated behaviour.** The CodeQL category never kept
+  Trivy's results apart, because code scanning keeps each tool's results
+  separately. Dependabot can move the build stage's JDK within Maven 3, and it
+  is the enforcer that stops such a bump, by failing the image job.
 
 ## 1.2.0 — 2026-09-26
 
