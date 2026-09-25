@@ -59,8 +59,9 @@ still blank.
   there says so. [ADR 0017](adr/0017-web-console.md) records the design and
   `web/README.md` maps each page to the calls it makes. The pages are laid out
   for phones, tablets and desktops, with touch-sized controls and 16 px field
-  text below 1280 px, and a Playwright spec checks every page at eleven
-  Chromium viewports. Built and tested in CI, never hosted.
+  text below 1280 px and on any touch screen, and a Playwright spec checks
+  every page at eleven Chromium viewports and the keyboard's outline on every
+  stop of the sign-in page. Built and tested in CI, never hosted.
 
 - **CI checks the console on every push or pull request to `main`.** A new
   `web` job lints, type-checks, unit-tests and builds it, then packages the

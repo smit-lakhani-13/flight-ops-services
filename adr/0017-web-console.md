@@ -73,6 +73,10 @@ The API does not change: no CORS mapping, no cookie, no new endpoint.
   to decide which buttons to offer. `web/lib/transitions.test.ts` reads the
   Java file and fails if the copies disagree, and the service still decides:
   the console can send any status and show the 409.
+* **The layout is a rule the tests hold.** Below 1280 px and on any touch
+  screen, every control is at least 44 px tall and every field has 16 px text.
+  A Playwright spec checks that on every page at eleven Chromium viewports.
+  That is emulation: nothing has run in Safari.
 * **Built and tested, never hosted.** CI lints, type-checks, unit-tests and
   builds the console, then drives it with Playwright against the service's own
   jar. There is no image, manifest or deploy step for it.

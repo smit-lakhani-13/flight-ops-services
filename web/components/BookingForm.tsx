@@ -61,9 +61,14 @@ export function BookingForm({ initialFlight }: { initialFlight: string }) {
   const [race, setRace] = useState<{ result: ApiResponse<RaceReport>; before: number | null; after: number | null } | null>(null);
   const [pending, setPending] = useState<Action | "race" | null>(null);
   const [announcement, setAnnouncement] = useState<Announcement | null>(null);
+  // Whether the last answer was a single booking's or the race's, so a single
+  // booking's error does not linger under a race that followed it.
+  const [last, setLast] = useState<"booking" | "race">("booking");
   // The booking each key's first successful Book made, so a replay is
-  // compared with the booking made on its own key.
-  const [firstByKey, setFirstByKey] = useState<Record<string, number>>({});
+  // compared with the booking made on its own key. A Map, because a key may be
+  // any name the API accepts, "constructor" included, and a plain object
+  // would find that one on its prototype.
+  const [firstByKey, setFirstByKey] = useState<ReadonlyMap<string, number>>(() => new Map());
 
   const latest = outcomes[0];
   const fieldError = (name: string) => latest?.result.error?.fieldErrors[name];
@@ -86,6 +91,9 @@ export function BookingForm({ initialFlight }: { initialFlight: string }) {
 
   async function book(action: Action) {
     setPending(action);
+    // Emptied first, so the same answer twice is still a change a screen
+    // reader announces.
+    setAnnouncement(null);
     try {
       const sent = request();
       if (action === "different") {
@@ -96,8 +104,11 @@ export function BookingForm({ initialFlight }: { initialFlight: string }) {
       const after = await seatsLeft(sent.flightNumber);
       const created = result.data;
       if (action === "book" && result.ok && created) {
-        setFirstByKey((current) => (sent.idempotencyKey in current ? current : { ...current, [sent.idempotencyKey]: created.bookingId }));
+        setFirstByKey((current) =>
+          current.has(sent.idempotencyKey) ? current : new Map(current).set(sent.idempotencyKey, created.bookingId),
+        );
       }
+      setLast("booking");
       setOutcomes((current) => [{ n: (current[0]?.n ?? 0) + 1, action, sent, result, before, after }, ...current].slice(0, 6));
       setAnnouncement({
         text: `${TITLES[action]}: ${result.status || "no answer"}, ${created ? `booking #${created.bookingId}` : (result.error?.code ?? "no body")}`,
@@ -110,12 +121,14 @@ export function BookingForm({ initialFlight }: { initialFlight: string }) {
 
   async function raceTen() {
     setPending("race");
+    setAnnouncement(null);
     try {
       const sent = request();
       const before = await seatsLeft(sent.flightNumber);
       const result = await api.post<RaceReport>("race", sent);
       const after = await seatsLeft(sent.flightNumber);
       setRace({ result, before, after });
+      setLast("race");
       if (result.ok && result.data) {
         const { statuses, bookingIds } = summariseRace(result.data.rows);
         const answers = Object.entries(statuses).map(([status, count]) => `${count} × ${status === "0" ? "no answer" : status}`);
@@ -143,7 +156,7 @@ export function BookingForm({ initialFlight }: { initialFlight: string }) {
     <div className="flex flex-col gap-6">
       <Card title="One booking request">
         <form onSubmit={submit} noValidate aria-label="Booking" className="flex flex-col gap-4">
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <Field label="Flight number" error={fieldError("flightNumber")}>
               <TextInput
                 name="flightNumber"
@@ -164,7 +177,7 @@ export function BookingForm({ initialFlight }: { initialFlight: string }) {
             <Field label="Seats" error={fieldError("seats")} hint="1 to 9">
               <TextInput name="seats" inputMode="numeric" value={form.seats} onChange={(e) => set("seats")(e.target.value)} invalid={!!fieldError("seats")} />
             </Field>
-            <Field label="Idempotency key" error={fieldError("idempotencyKey")}>
+            <Field label="Idempotency key" error={fieldError("idempotencyKey")} className="lg:col-span-3">
               <div className="flex gap-2">
                 <TextInput
                   name="idempotencyKey"
@@ -205,7 +218,10 @@ export function BookingForm({ initialFlight }: { initialFlight: string }) {
             identical requests at once from the console&apos;s server, the same experiment as act 4 of{" "}
             <code>scripts/demo.sh</code>. A different body on a used key is a client bug, and the API answers 409.
           </p>
-          {latest && !latest.result.ok && <ErrorBanner error={latest.result.error} claimedFields={FIELDS} />}
+          {/* The status line above already announced it. */}
+          {last === "booking" && latest && !latest.result.ok && (
+            <ErrorBanner error={latest.result.error} claimedFields={FIELDS} announce={false} />
+          )}
         </form>
       </Card>
 
@@ -223,7 +239,7 @@ export function BookingForm({ initialFlight }: { initialFlight: string }) {
         <section aria-label="Results" className="flex flex-col gap-3">
           <h2 className="text-base font-semibold">Results, newest first</h2>
           {outcomes.map((outcome) => (
-            <OutcomeCard key={outcome.n} outcome={outcome} firstBooking={firstByKey[outcome.sent.idempotencyKey]} />
+            <OutcomeCard key={outcome.n} outcome={outcome} firstBooking={firstByKey.get(outcome.sent.idempotencyKey)} />
           ))}
         </section>
       )}
@@ -240,7 +256,9 @@ function OutcomeCard({ outcome, firstBooking }: { outcome: Outcome; firstBooking
     <article
       data-testid="booking-outcome"
       data-action={outcome.action}
-      className={`min-w-0 rounded-card border border-l-4 border-slate-200 bg-white p-4 text-sm shadow-card dark:border-slate-800 dark:bg-slate-900 ${STATUS_EDGE[statusClass(result.status)]}`}
+      // The grey is set on the other three sides only: a colour for all four
+      // would cover the left edge's status colour in the dark scheme.
+      className={`min-w-0 rounded-card border border-l-4 border-y-slate-200 border-r-slate-200 bg-white p-4 text-sm shadow-card dark:border-y-slate-800 dark:border-r-slate-800 dark:bg-slate-900 ${STATUS_EDGE[statusClass(result.status)]}`}
     >
       <header className="mb-3 flex flex-wrap items-center gap-2">
         <h3 className="font-semibold">{TITLES[outcome.action]}</h3>
@@ -250,7 +268,7 @@ function OutcomeCard({ outcome, firstBooking }: { outcome: Outcome; firstBooking
             <span data-testid="booking-id">booking #{booking.bookingId}</span>
           </TextLink>
         ) : (
-          <span className="font-mono font-semibold break-all">{result.error?.code}</span>
+          <span className="font-mono font-semibold wrap-anywhere">{result.error?.code}</span>
         )}
         {outcome.action === "replay" && booking && firstBooking !== undefined && (
           <span
@@ -267,15 +285,15 @@ function OutcomeCard({ outcome, firstBooking }: { outcome: Outcome; firstBooking
       <dl className="grid gap-x-6 gap-y-1.5 sm:grid-cols-2">
         <Row label="Sent">
           {Number.isNaN(sent.seats) ? <code>seats: null</code> : `${sent.seats} seat${sent.seats === 1 ? "" : "s"}`} on{" "}
-          {sent.flightNumber}, key <code className="break-all">{sent.idempotencyKey}</code>
+          {sent.flightNumber}, key <code className="wrap-anywhere">{sent.idempotencyKey}</code>
         </Row>
         <Row label="Seats left">
           <span data-testid="seats-change">{before !== null && after !== null ? `${before} → ${after}` : NONE}</span>
           {debited !== null && <span className={MUTED}> ({debited} debited)</span>}
         </Row>
-        <Row label="Location">{result.location ? <code className="break-all">{result.location}</code> : NONE}</Row>
+        <Row label="Location">{result.location ? <code className="wrap-anywhere">{result.location}</code> : NONE}</Row>
         <Row label="X-Request-Id">
-          <code className="break-all">{result.requestId}</code>
+          <code className="wrap-anywhere">{result.requestId}</code>
           {result.echoedRequestId === result.requestId && <span className={MUTED}> (echoed)</span>}
         </Row>
         {!result.ok && result.error && (

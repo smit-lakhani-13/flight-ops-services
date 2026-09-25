@@ -32,6 +32,12 @@ describe("ErrorBanner", () => {
     expect(banner.textContent).not.toContain("must be at most 9");
   });
 
+  it("stays silent when told to, for a failed load that is not the answer to a press", () => {
+    const { container } = render(<ErrorBanner error={classify(404, { code: "FLIGHT_NOT_FOUND" })} announce={false} />);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(container.querySelector<HTMLElement>("[data-code]")?.dataset.code).toBe("FLIGHT_NOT_FOUND");
+  });
+
   it("leaves out the status on a network failure", () => {
     render(<ErrorBanner error={classify(0, null)} />);
     const banner = screen.getByRole("alert");

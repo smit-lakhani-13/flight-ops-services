@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, type FormEvent } from "react";
+import { useState, useTransition, type FormEvent } from "react";
 import type { ClassifiedError } from "@/lib/errors";
 import { useApi } from "@/lib/session";
 import type { CreateFlightRequest, Flight } from "@/lib/types";
@@ -26,13 +26,14 @@ export function CreateFlightForm() {
   const [form, setForm] = useState(() => ({ flightNumber: "", origin: "", destination: "", totalSeats: "180", departure: inAWeek() }));
   const [error, setError] = useState<ClassifiedError | null>(null);
   const [busy, setBusy] = useState(false);
+  // The move to the new flight's page is a transition, so the button stays
+  // busy until that page is ready and never outlives it.
+  const [leaving, startLeaving] = useTransition();
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
     setError(null);
-    // The button stays busy while the router moves to the new flight's page.
-    let leaving = false;
     try {
       const departure = new Date(form.departure);
       const body: CreateFlightRequest = {
@@ -48,12 +49,9 @@ export function CreateFlightForm() {
         return;
       }
       const next = pageFor(result.location);
-      if (next) {
-        leaving = true;
-        router.push(next);
-      }
+      if (next) startLeaving(() => router.push(next));
     } finally {
-      if (!leaving) setBusy(false);
+      setBusy(false);
     }
   }
 
@@ -98,7 +96,7 @@ export function CreateFlightForm() {
       <div className="flex flex-col gap-3 sm:col-span-2 lg:col-span-3 xl:col-span-5">
         <ErrorBanner error={error} claimedFields={FIELDS} />
         <div>
-          <Button type="submit" busy={busy}>
+          <Button type="submit" busy={busy || leaving}>
             Create flight
           </Button>
         </div>

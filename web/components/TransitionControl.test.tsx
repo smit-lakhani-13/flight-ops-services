@@ -44,4 +44,18 @@ describe("TransitionControl", () => {
     await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
     expect(onSend).toHaveBeenLastCalledWith("BOARDING");
   });
+
+  it("gives the buttons back and logs it when a send throws", async () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    const failure = new Error("boom");
+    render(<TransitionControl status="SCHEDULED" onSend={() => Promise.reject(failure)} />);
+    const move = screen.getByRole<HTMLButtonElement>("button", { name: "Move to BOARDING" });
+
+    fireEvent.click(move);
+
+    await waitFor(() => expect(logged).toHaveBeenCalledWith("A status change failed", failure));
+    await waitFor(() => expect(move.disabled).toBe(false));
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Send" }).disabled).toBe(false);
+    logged.mockRestore();
+  });
 });

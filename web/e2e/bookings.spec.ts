@@ -76,7 +76,8 @@ test("cancelling a booking returns its seats, and cancelling again changes nothi
 
   await page.getByRole("button", { name: "Cancel booking" }).click();
   await expect(page.getByTestId("cancelled-at")).not.toHaveText("—");
-  const cancelledAt = await page.getByTestId("cancelled-at").textContent();
+  const cancelledAt = await page.getByTestId("cancelled-at").getAttribute("datetime");
+  expect(cancelledAt).toBeTruthy();
 
   await page.getByRole("button", { name: "Cancel again" }).click();
   const answers = page.getByTestId("cancel-answers").locator("li");

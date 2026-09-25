@@ -35,7 +35,7 @@ const DEMOS = [
 export default function Overview() {
   const { session } = useSession();
   return (
-    <div className="flex flex-col gap-6">
+    <>
       <PageTitle
         title="Flight operations console"
         documentTitle="Overview"
@@ -47,8 +47,8 @@ export default function Overview() {
           {session ? (
             <Card title="Signed in">
               <p className="text-sm text-pretty">
-                As <code>{session.user}</code>.{" "}
-                {session.user === "ops" ? "This account reads the actuator; the flight pages will answer 403." : "Pick a demo to start."}
+                As <code className="wrap-anywhere">{session.user}</code>.{" "}
+                {session.apiScopes ? "Pick a demo to start." : "This account reads the actuator; the flight pages will answer 403."}
               </p>
             </Card>
           ) : (
@@ -85,6 +85,6 @@ export default function Overview() {
           </ol>
         </section>
       </div>
-    </div>
+    </>
   );
 }

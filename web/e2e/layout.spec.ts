@@ -7,10 +7,11 @@ import { createBooking, createFlight, go, openFlight, OPS_ACCOUNT, signIn, signI
 // breaks first. All of it is Chromium's emulation of those screens.
 
 /** Waits until no card is still reading, then lists what does not fit. */
-async function checkLayout(page: Page, where: string, touch: boolean): Promise<void> {
+async function checkLayout(page: Page, where: string, touch: boolean, signedIn = true): Promise<void> {
   await expect(page.getByText(/^(Loading|Checking|Reading)\b.*…$/)).toHaveCount(0);
   await expect(page.getByRole("navigation", { name: "Main" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
+  if (signedIn) await expect(page.getByRole("button", { name: "Sign out" })).toBeVisible();
+  else await expect(page.getByText("Not signed in", { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: /^Requests/ })).toBeVisible();
 
   const problems = await page.evaluate((touch) => {
@@ -95,27 +96,60 @@ test("every page fits the screen, keeps its header and has controls a finger can
   await checkLayout(page, "the request log", hasTouch);
 });
 
-test("the keyboard shows where it is on a link, a button and a field", async ({ page }) => {
+test("signed out, the overview and a missing page fit the screen too", async ({ page, hasTouch }) => {
   await page.goto("/");
   await expect(page.getByRole("form", { name: "Sign in" })).toBeVisible();
+  await checkLayout(page, "/ signed out", hasTouch, false);
 
-  const seen = new Set<string>();
-  for (let press = 0; press < 30 && seen.size < 3; press += 1) {
+  await page.goto("/no-such-page");
+  await expect(page.getByRole("heading", { level: 1, name: "Not found" })).toBeVisible();
+  await checkLayout(page, "a missing page", hasTouch, false);
+});
+
+test("the keyboard reaches every stop on the sign-in page and each shows the accent outline", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("form", { name: "Sign in" })).toBeVisible();
+  await expect(page.getByText(/^Checking\b.*…$/)).toHaveCount(0);
+  const accent = await page.evaluate(() => {
+    const probe = document.createElement("div");
+    probe.style.outlineColor = "var(--color-accent)";
+    document.body.append(probe);
+    const colour = getComputedStyle(probe).outlineColor;
+    probe.remove();
+    return colour;
+  });
+
+  const stops: string[] = [];
+  const kinds = new Set<string>();
+  for (let press = 0; press < 40; press += 1) {
     await page.keyboard.press("Tab");
-    const focused = await page.evaluate(() => {
+    const focused = await page.evaluate(async () => {
       const el = document.activeElement;
       if (!(el instanceof HTMLElement) || el === document.body) return null;
+      // transition-colors fades the outline in too; read it once it settles.
+      await Promise.all(el.getAnimations().map((animation) => animation.finished));
       const style = getComputedStyle(el);
-      const kind = el.matches("a[href]") ? "link" : el.matches("button") ? "button" : el.matches("input, select, textarea") ? "field" : el.tagName;
       return {
-        kind,
+        kind: el.matches("a[href]") ? "link" : el.matches("button") ? "button" : el.matches("input, select, textarea") ? "field" : el.tagName,
         name: (el.getAttribute("aria-label") ?? el.getAttribute("name") ?? el.textContent ?? "").trim().slice(0, 40),
-        ring: style.outlineStyle !== "none" && parseFloat(style.outlineWidth) >= 2 && style.outlineColor !== "rgba(0, 0, 0, 0)",
+        style: style.outlineStyle,
+        width: parseFloat(style.outlineWidth),
+        colour: style.outlineColor,
       };
     });
-    if (!focused) continue;
-    expect(focused.ring, `${focused.kind} "${focused.name}" shows no focus indicator`).toBe(true);
-    seen.add(focused.kind);
+    // Past the last stop the focus leaves the page; the walk is complete.
+    if (!focused) break;
+    const stop = `${focused.kind} "${focused.name}"`;
+    if (stops.includes(stop)) break;
+    stops.push(stop);
+    kinds.add(focused.kind);
+    expect.soft({ stop, style: focused.style, wide: focused.width >= 2, colour: focused.colour }).toEqual({
+      stop,
+      style: "solid",
+      wide: true,
+      colour: accent,
+    });
   }
-  expect([...seen]).toEqual(expect.arrayContaining(["link", "button", "field"]));
+  expect(stops.length, stops.join(", ")).toBeGreaterThan(8);
+  expect([...kinds]).toEqual(expect.arrayContaining(["link", "button", "field"]));
 });

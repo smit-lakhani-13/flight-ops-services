@@ -53,29 +53,40 @@ land next to their fields.
 
 ## Design
 
-The console has no UI dependencies: no component library, no icon pack and no
-web font. The pages use the system font stack, the icons are inline SVGs in
-`components/icons.tsx`, and the parts every page shares (buttons, fields,
-cards, status badges, the seat bar, key and value lists, skeletons, empty
-states and stat tiles) are in `components/ui.tsx`.
+Beyond Next.js, React and Tailwind, the console has no UI dependencies: no
+component library, no icon pack and no web font. The pages use the system font
+stack, the icons are inline SVGs in `components/icons.tsx`, and the parts every
+page shares (buttons, fields, cards, status badges, the seat bar, key and value
+lists, skeletons, empty states and stat tiles) are in `components/ui.tsx`.
 
 The tokens are in `app/globals.css`: one accent colour, two corner radii and
 two shadows. Surfaces are slate and the accent is sky. Colour otherwise carries
 meaning only: each flight status has its own, and an HTTP answer is green for
 a 2xx, amber for a 4xx, orange for a 409 and red for a 5xx. Text keeps at
-least 4.5:1 contrast in both schemes, and the dark scheme follows the system
-setting, with no toggle. Every link, button and field shows an outline in the
-accent colour when the keyboard reaches it, and the only motion is a colour
-transition, left out when the system asks for less motion.
+least 4.5:1 contrast in both schemes, apart from a disabled control, which is
+dimmed. A field's border and the focus outline keep at least 3:1 against what
+surrounds them. The dark scheme follows the system setting, with no toggle.
+Every link, button and field shows an outline in the accent colour when the
+keyboard reaches it, and the only motion is a colour transition, left out when
+the system asks for less motion.
 
 Below 1280 px, which takes in every phone and tablet viewport the tests use,
-every button, nav link, field and select is at least 44 px tall, and every
-field has 16 px text, so iOS does not zoom in when one takes focus. The
-pages keep a denser desktop layout from 1280 px up. The navigation wraps
-onto its own row rather than folding into a menu, and wide tables scroll
-inside their own box instead of widening the page.
+and on any touch screen however wide, every button, nav link, field and select
+is at least 44 px tall, and every field has 16 px text, so iOS does not zoom in
+when one takes focus. A desk with a mouse keeps a denser layout from 1280 px
+up. The navigation wraps onto its own row rather than folding into a menu, and
+wide tables scroll inside their own box instead of widening the page. On a
+phone the tables also drop their secondary columns: a flight's departure moves
+under its route, a booking's times give way to a "cancelled" tag, and the
+request log keeps the call, the answer and the id sent.
 
-![A flight's page at 390 px wide: the header wraps onto three rows and every control is at least 44 px tall](../doc/assets/console-phone.png)
+The request log opens as a drawer over the foot of the page and takes the
+keyboard's focus, since it comes last in the page. Escape inside it closes it
+and hands the focus back to the Requests button, and the page gains room to
+scroll its end clear of the drawer. A button that is busy keeps the focus and
+ignores presses, rather than going disabled and dropping it.
+
+![A flight's page at 390 px wide: the header wraps onto three rows and every button, nav link and field is at least 44 px tall](../doc/assets/console-phone.png)
 
 ## How a call travels
 
@@ -147,7 +158,7 @@ same booking id, and the flight's seat count down by the seats of one booking.
 |---|---|
 | `npm run lint` | ESLint with Next.js's core web vitals and TypeScript rules, no warnings allowed |
 | `npx tsc --noEmit` | The type-checker, strict, with unchecked index access |
-| `npm test` | Vitest: the proxy, the race and the `/api` route against a stubbed `fetch`, the browser's API client and the sign-in probe, the error classifier, the request log, the resource hook, the shared parts in `components/ui.tsx`, the error banner, the transition control and the request log drawer in jsdom, and a test that reads `FlightStatus.java` and fails if the console's copy of the transition table drifts from it |
+| `npm test` | Vitest: the proxy, the race and the `/api` route against a stubbed `fetch`, the browser's API client and the sign-in probe, the error classifier, the request log, the resource hook, and in jsdom the shared parts in `components/ui.tsx` (button tones and the busy state, field wiring, the seat bar, page titles, links and the Location mapping), the error banner, the booking form's replay comparison and status line, the transition control, and the request log drawer's focus, Escape and copy buttons; and a test that reads `FlightStatus.java` and fails if the console's copy of the transition table drifts from it |
 | `npm run e2e` | Playwright on Chromium against the built console and a running service: sign-in and sign-out, flights, bookings, replays and the race, validation, the proxy's refusals, the ops pages, and the layout of every page at eleven viewports |
 
 `npm run e2e` starts the console itself on port 3100 and expects the service
@@ -164,9 +175,10 @@ and 1180 px), all with touch and a mobile viewport, and two wider desktops
 fails if a page scrolls sideways, a table is not in its own scroll box, or the
 header loses its navigation, Sign out or Requests, and, on the touch projects,
 if a control is under 44 px tall or a field's text is under 16 px. A second
-test tabs from the top of the overview and checks that a link, a button and a
-field each show a focus outline. Chromium emulating a phone is not Safari:
-nothing here has run in WebKit.
+test checks the signed-out overview and a missing page the same way. A third
+tabs through every stop on the sign-in page and fails if any of them lacks a
+solid 2 px outline in the accent colour. Chromium emulating a phone is not
+Safari: nothing here has run in WebKit.
 
 ## What it does not do
 

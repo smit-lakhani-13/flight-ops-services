@@ -7,11 +7,11 @@ import { SpinnerIcon } from "./icons";
 
 // The primitives every page shares, in Tailwind classes alone, so the console
 // carries no component library to keep patched. Three rules hold for all of
-// them. Below Tailwind's xl breakpoint (1280 px) a control is at least 44 px
-// tall and a field's text is at least 16 px, so a finger can hit it and iOS
-// does not zoom on focus; from 1280 up the pages keep a desk's density. Every
-// control shows the accent outline when the keyboard reaches it. Nothing
-// moves but colour.
+// them. Below Tailwind's xl breakpoint (1280 px), and on any touch screen, a
+// control is at least 44 px tall and a field's text is at least 16 px, so a
+// finger can hit it and iOS does not zoom on focus; a desk from 1280 up keeps
+// its density. Every control shows the accent outline when the keyboard
+// reaches it. Nothing moves but colour.
 
 /** What a page shows where a value is absent: an em dash, which the specs match. */
 export const NONE = "\u2014";
@@ -22,37 +22,56 @@ export const MUTED = "text-slate-600 dark:text-slate-400";
 /** The keyboard focus outline, in the accent colour. */
 export const FOCUS = "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent";
 
-/** The touch height below 1280 px. */
-export const TOUCH = "max-xl:min-h-11";
+/** The touch height below 1280 px and on a coarse pointer, such as a large tablet. */
+export const TOUCH = "max-xl:min-h-11 pointer-coarse:min-h-11";
 
 type Tone = "primary" | "secondary" | "danger" | "ghost";
 
+// Every tone has a border, transparent where the fill carries the shape, so a
+// button keeps its outline when Windows forced colours replace the fills.
 const TONES: Record<Tone, string> = {
-  primary: "bg-accent-strong text-on-accent shadow-xs hover:bg-sky-800 dark:hover:bg-sky-300",
+  primary: "border-transparent bg-accent-strong text-on-accent shadow-xs hover:bg-sky-800 dark:hover:bg-sky-300",
   secondary:
-    "border border-slate-300 bg-white text-slate-800 shadow-xs hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800",
-  danger: "bg-rose-700 text-white shadow-xs hover:bg-rose-800 dark:bg-rose-600 dark:hover:bg-rose-500",
-  ghost: "text-slate-700 hover:bg-slate-200/70 dark:text-slate-300 dark:hover:bg-slate-800",
+    "border-slate-300 bg-white text-slate-800 shadow-xs hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100 dark:hover:bg-slate-800",
+  danger: "border-transparent bg-rose-700 text-white shadow-xs hover:bg-rose-800",
+  ghost: "border-transparent text-slate-700 hover:bg-slate-200/70 dark:text-slate-300 dark:hover:bg-slate-800",
 };
 
 type ButtonProps = ComponentProps<"button"> & {
   tone?: Tone;
-  /** Disables the button and shows a ring in place of its icon until the call returns. */
+  /**
+   * Shows a ring in place of the icon and ignores presses until the call
+   * returns. The button is marked aria-disabled rather than disabled, so the
+   * keyboard's focus stays on it.
+   */
   busy?: boolean;
   icon?: ReactNode;
   /** A square button holding only an icon; it then needs an aria-label. */
   iconOnly?: boolean;
 };
 
-export function Button({ tone = "primary", busy = false, icon, iconOnly = false, disabled, className = "", children, ...props }: ButtonProps) {
-  const shape = iconOnly ? "size-8 shrink-0 max-xl:size-11" : `px-3 py-1.5 ${TOUCH}`;
+export function Button({
+  tone = "primary",
+  busy = false,
+  icon,
+  iconOnly = false,
+  disabled,
+  onClick,
+  className = "",
+  children,
+  ...props
+}: ButtonProps) {
+  const shape = iconOnly ? "size-8 shrink-0 max-xl:size-11 pointer-coarse:size-11" : `px-3 py-1.5 ${TOUCH}`;
   return (
     <button
       type="button"
       {...props}
-      disabled={disabled || busy}
+      disabled={disabled && !busy}
+      aria-disabled={busy || undefined}
       aria-busy={busy || undefined}
-      className={`inline-flex items-center justify-center gap-2 rounded-control text-center text-sm font-medium motion-safe:transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${FOCUS} ${shape} ${TONES[tone]} ${className}`}
+      // Cancelling the click also stops a submit button's implicit submission.
+      onClick={(event) => (busy ? event.preventDefault() : onClick?.(event))}
+      className={`inline-flex items-center justify-center gap-2 rounded-control border text-center text-sm font-medium motion-safe:transition-colors disabled:cursor-not-allowed disabled:opacity-60 aria-disabled:cursor-not-allowed aria-disabled:opacity-60 ${FOCUS} ${shape} ${TONES[tone]} ${className}`}
     >
       {busy ? <SpinnerIcon /> : icon}
       {children}
@@ -155,7 +174,9 @@ export function Field({
       </label>
       <FieldContext value={{ id, describedBy, invalid: Boolean(error) }}>{children}</FieldContext>
       {error ? (
-        <span id={errorId} role="alert" className="text-xs text-rose-700 dark:text-rose-400">
+        // Not an alert: the form's banner announces the failure once, and each
+        // field says what is wrong through aria-invalid and this description.
+        <span id={errorId} className="text-xs text-rose-700 dark:text-rose-400">
           {error}
         </span>
       ) : (
@@ -169,7 +190,9 @@ export function Field({
   );
 }
 
-const CONTROL = `block w-full min-w-0 rounded-control border border-slate-300 bg-white px-2.5 py-1.5 text-sm text-slate-900 shadow-xs placeholder:text-slate-500 motion-safe:transition-colors focus:border-accent ${FOCUS} aria-[invalid=true]:border-rose-600 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-400 dark:aria-[invalid=true]:border-rose-400 max-xl:min-h-11 max-xl:text-base`;
+// The border is slate-500 in both schemes: 4.8:1 on white and 3.7:1 on a dark
+// card, over the 3:1 a field's edge needs to be seen.
+const CONTROL = `block w-full min-w-0 rounded-control border border-slate-500 bg-white px-2.5 py-1.5 text-sm text-slate-900 shadow-xs placeholder:text-slate-500 motion-safe:transition-colors focus:border-accent ${FOCUS} aria-[invalid=true]:border-rose-600 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-400 dark:aria-[invalid=true]:border-rose-400 max-xl:min-h-11 max-xl:text-base pointer-coarse:min-h-11 pointer-coarse:text-base`;
 
 function useFieldWiring(id: string | undefined, describedBy: string | undefined, invalid: boolean | undefined) {
   const field = useContext(FieldContext);
@@ -287,14 +310,22 @@ export function HttpStatus({ status }: { status: number }) {
   );
 }
 
-/** Seats left as a bar and as text: "12/20", read out as "12/20 seats left". */
-export function SeatBar({ available, total }: { available: number; total: number }) {
-  const sold = total > 0 ? Math.round(((total - available) / total) * 100) : 0;
-  const fill = available <= 0 ? "bg-rose-500" : total > 0 && available / total <= 0.1 ? "bg-amber-500" : "bg-accent";
+/**
+ * Seats left as a bar and as text: "12/20", read out as "12/20 seats left".
+ * The bar is as full as the flight has seats left, amber at a tenth or less.
+ * `compact` leaves the bar out below 640 px, where a table needs the room.
+ */
+export function SeatBar({ available, total, compact = false }: { available: number; total: number; compact?: boolean }) {
+  const left = total > 0 ? Math.round((Math.min(Math.max(available, 0), total) / total) * 100) : 0;
+  const fill = total > 0 && available / total <= 0.1 ? "bg-amber-500" : "bg-accent";
   return (
     <div className="flex items-center gap-2" title={`${total - available} of ${total} sold`}>
-      <div aria-hidden="true" className="h-1.5 w-20 shrink-0 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700">
-        <div className={`h-full rounded-full ${fill}`} style={{ width: `${sold}%` }} />
+      <div
+        aria-hidden="true"
+        data-testid="seat-bar"
+        className={`h-1.5 w-20 shrink-0 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700 ${compact ? "hidden sm:block" : ""}`}
+      >
+        <div className={`h-full rounded-full ${fill}`} style={{ width: `${left}%` }} />
       </div>
       <span className="text-sm whitespace-nowrap tabular-nums">
         {available}
@@ -371,11 +402,22 @@ export function Stat({ label, value, note, testId }: { label: string; value: Rea
   );
 }
 
-export function TextLink({ href, children, className = "" }: { href: string; children: ReactNode; className?: string }) {
+/** A link in the text. `standalone` is for one on a line of its own, which gets the touch height. */
+export function TextLink({
+  href,
+  children,
+  className = "",
+  standalone = false,
+}: {
+  href: string;
+  children: ReactNode;
+  className?: string;
+  standalone?: boolean;
+}) {
   return (
     <Link
       href={href}
-      className={`rounded-sm font-medium text-sky-700 underline-offset-2 hover:underline dark:text-sky-400 ${FOCUS} ${className}`}
+      className={`rounded-sm font-medium text-sky-700 underline-offset-2 hover:underline dark:text-sky-400 ${standalone ? `inline-flex items-center ${TOUCH}` : ""} ${FOCUS} ${className}`}
     >
       {children}
     </Link>

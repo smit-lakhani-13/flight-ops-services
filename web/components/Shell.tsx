@@ -38,7 +38,9 @@ export function Shell({ children }: { children: ReactNode }) {
 
 // The header wraps rather than folding into a menu: on a phone the brand and
 // Requests share the first row, the nav takes the second and the account the
-// third; from 1024 px they sit on one row.
+// third; from 1024 px they sit on one row. Below 360 px the brand shows only
+// its mark, so Requests still fits beside it; the name stays for a screen
+// reader.
 function Frame({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const { session, signOut } = useSession();
@@ -55,7 +57,7 @@ function Frame({ children }: { children: ReactNode }) {
     <div className="flex min-h-dvh flex-col">
       <a
         href="#main"
-        className={`sr-only rounded-control bg-white px-3 py-2 text-sm font-medium text-sky-800 shadow-card focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-30 dark:bg-slate-900 dark:text-sky-300 ${FOCUS}`}
+        className={`sr-only rounded-control bg-white text-sm font-medium text-sky-800 shadow-card focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-30 focus:px-3 focus:py-2 dark:bg-slate-900 dark:text-sky-300 ${FOCUS}`}
       >
         Skip to content
       </a>
@@ -68,7 +70,7 @@ function Frame({ children }: { children: ReactNode }) {
             <span className="flex size-7 items-center justify-center rounded-md bg-accent-strong text-on-accent">
               <PlaneIcon />
             </span>
-            flight-ops console
+            <span className="max-[359px]:sr-only">flight-ops console</span>
           </Link>
           <nav aria-label="Main" className="order-3 w-full md:order-2 md:w-auto md:flex-1">
             <ul className="flex flex-wrap gap-1 text-sm">

@@ -54,12 +54,20 @@ test("the request log shows each X-Request-Id the API echoed back", async ({ pag
   await signIn(page);
   await go(page, "Flights");
   await expect(page.getByTestId("flight-table")).toBeVisible();
-  await page.getByRole("button", { name: /^Requests/ }).click();
+  const requests = page.getByRole("button", { name: /^Requests/ });
+  await requests.click();
+  // The drawer comes last on the page, so it takes the focus when it opens.
+  await expect(page.getByRole("button", { name: "Close", exact: true })).toBeFocused();
 
   const log = page.getByTestId("request-log");
   await expect(log.getByTestId("sent-id").first()).toHaveText(/^web-[0-9a-f-]{36}$/);
   await expect(log.getByTestId("echoed-id").first()).toHaveText("same");
   await expect(log).not.toContainText("Basic ");
+
+  await page.keyboard.press("Escape");
+  await expect(log).toBeHidden();
+  await expect(requests).toBeFocused();
+  await expect(requests).toHaveAttribute("aria-expanded", "false");
 });
 
 test.describe("the proxy's allow-list", () => {

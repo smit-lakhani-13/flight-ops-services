@@ -15,6 +15,7 @@ test("a wrong password gets the API's 401 and clears the field", async ({ page }
 
 test("signing in opens the flight pages, and signing out closes them", async ({ page }) => {
   await signIn(page);
+  await expect(page.getByText("Pick a demo to start.")).toBeVisible();
   await go(page, "Flights");
   await expect(page.getByTestId("flight-table")).toContainText("UA123");
 
@@ -39,6 +40,7 @@ test("a reload forgets the credential, because nothing stores it", async ({ page
 
 test("the ops account signs in, and the flight pages show the API's 403", async ({ page }) => {
   await signIn(page, OPS_ACCOUNT);
+  await expect(page.getByText("the flight pages will answer 403")).toBeVisible();
   await go(page, "Flights");
   await expect(page.getByTestId("error-banner")).toHaveAttribute("data-code", "FORBIDDEN");
 });

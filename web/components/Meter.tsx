@@ -61,7 +61,7 @@ export function Meter({
       data-testid={`meter-${name}`}
     >
       <div className="min-w-0">
-        <h3 className="font-mono text-sm font-semibold break-all">{name}</h3>
+        <h3 className="font-mono text-sm font-semibold wrap-anywhere">{name}</h3>
         <p className={`mt-0.5 text-xs text-pretty ${MUTED}`}>{description}</p>
       </div>
       {result === null ? (
@@ -111,7 +111,7 @@ export function Meter({
       ) : result.status === 404 ? (
         <p className={`text-sm ${MUTED}`}>Not registered yet: the meter appears with its first event.</p>
       ) : (
-        <ErrorBanner error={result.error} />
+        <ErrorBanner error={result.error} announce={false} />
       )}
     </div>
   );

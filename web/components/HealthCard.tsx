@@ -62,7 +62,7 @@ export function HealthCard({
             >
               {status}
             </span>
-            <code className={`break-all ${MUTED}`}>GET /{path}</code>
+            <code className={`wrap-anywhere ${MUTED}`}>GET /{path}</code>
           </p>
           {health?.components ? (
             <ul className="grid gap-1.5 text-xs sm:grid-cols-2" data-testid="health-components">
@@ -71,7 +71,7 @@ export function HealthCard({
                   key={name}
                   className="flex min-w-0 items-center justify-between gap-2 rounded-md bg-slate-50 px-2 py-1.5 dark:bg-slate-950"
                 >
-                  <span className="min-w-0 font-mono break-all">{name}</span>
+                  <span className="min-w-0 font-mono wrap-anywhere">{name}</span>
                   <span
                     className={`font-mono font-semibold ${
                       component.status === "UP" ? "text-emerald-700 dark:text-emerald-400" : "text-rose-700 dark:text-rose-400"
@@ -87,7 +87,7 @@ export function HealthCard({
           )}
         </div>
       ) : (
-        <ErrorBanner error={result.error} />
+        <ErrorBanner error={result.error} announce={false} />
       )}
     </Card>
   );

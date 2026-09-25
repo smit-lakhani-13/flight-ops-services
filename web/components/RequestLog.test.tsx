@@ -1,12 +1,15 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { useEffect } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { LogEntry } from "@/lib/api";
 import { RequestLogProvider, useRequestLog } from "@/lib/request-log";
 import { RequestLog } from "./RequestLog";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 function entry(status: number, n: number): LogEntry {
   const requestId = `web-00000000-0000-4000-8000-00000000000${n}`;
@@ -65,9 +68,52 @@ describe("RequestLog", () => {
     expect(screen.getByRole("button", { name: "Clear" })).toHaveProperty("disabled", true);
   });
 
-  it("closes on Escape and asks for focus to go back", () => {
-    const onClose = renderLog([]);
-    fireEvent.keyDown(document, { key: "Escape" });
+  it("takes the focus when it opens, on Close", () => {
+    renderLog([]);
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Close" }));
+  });
+
+  it("closes on Escape inside it and asks for focus to go back", () => {
+    const onClose = renderLog([entry(201, 1)]);
+    fireEvent.keyDown(screen.getByRole("button", { name: /^Copy / }), { key: "Escape" });
+    expect(onClose).toHaveBeenCalledTimes(1);
     expect(onClose).toHaveBeenCalledWith(true);
+  });
+
+  it("leaves Escape alone outside it, while an input method composes, and once handled", () => {
+    const onClose = renderLog([]);
+    const drawer = screen.getByRole("complementary", { name: "Request log" });
+    fireEvent.keyDown(document.body, { key: "Escape" });
+    fireEvent.keyDown(drawer, { key: "Escape", isComposing: true });
+    fireEvent.keyDown(drawer, { key: "Enter" });
+    const handled = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+    handled.preventDefault();
+    drawer.dispatchEvent(handled);
+    expect(onClose).not.toHaveBeenCalled();
+  });
+
+  it("keeps the focus in the drawer when Clear empties it", () => {
+    renderLog([entry(201, 1)]);
+    const clear = screen.getByRole("button", { name: "Clear" });
+    clear.focus();
+    fireEvent.click(clear);
+    expect(screen.queryByTestId("request-log")).toBeNull();
+    expect(clear).toHaveProperty("disabled", true);
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "Close" }));
+  });
+
+  it("copies the id it sent, says so, and says nothing when the clipboard refuses", async () => {
+    const writeText = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("denied"));
+    vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
+    renderLog([entry(201, 1), entry(201, 2)]);
+    const [second, first] = screen.getAllByRole("button", { name: /^Copy / }) as [HTMLElement, HTMLElement];
+
+    await act(async () => fireEvent.click(first));
+    expect(writeText).toHaveBeenLastCalledWith("web-00000000-0000-4000-8000-000000000001");
+    expect(first.getAttribute("aria-label")).toBe("Copied web-00000000-0000-4000-8000-000000000001");
+
+    await act(async () => fireEvent.click(second));
+    expect(writeText).toHaveBeenLastCalledWith("web-00000000-0000-4000-8000-000000000002");
+    expect(second.getAttribute("aria-label")).toBe("Copy web-00000000-0000-4000-8000-000000000002");
   });
 });

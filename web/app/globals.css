@@ -41,6 +41,12 @@
 }
 
 @layer base {
+  /* While the request log is open it covers the bottom half of the screen, so
+     a field the keyboard reaches is scrolled clear of it, not behind it. */
+  html:has(#request-log-drawer) {
+    scroll-padding-bottom: 50vh;
+  }
+
   body {
     @apply bg-slate-50 text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100;
   }

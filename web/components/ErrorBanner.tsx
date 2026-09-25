@@ -5,6 +5,10 @@ import { AlertIcon } from "./icons";
 // messages no input on the page claimed. The console adds only a hint about
 // what to do next. Codes and messages can be long unbroken words, so they wrap
 // anywhere rather than widen a phone's page.
+//
+// A banner that answers something the user just did is an alert. One that a
+// card shows because its read failed passes `announce={false}`: a page of
+// cards would otherwise interrupt a screen reader once per card.
 
 const TONE: Record<ClassifiedError["kind"], string> = {
   unauthenticated: "border-rose-300 bg-rose-50 dark:border-rose-900 dark:bg-rose-950/40",
@@ -35,17 +39,19 @@ const ICON: Record<ClassifiedError["kind"], string> = {
 export function ErrorBanner({
   error,
   claimedFields = [],
+  announce = true,
 }: {
   error: ClassifiedError | null;
   /** Fields whose messages the form already shows beside the input. */
   claimedFields?: readonly string[];
+  announce?: boolean;
 }) {
   if (error === null) return null;
   const unclaimed = Object.entries(error.fieldErrors).filter(([field]) => !claimedFields.includes(field));
   const advice = hint(error);
   return (
     <div
-      role="alert"
+      role={announce ? "alert" : undefined}
       data-testid="error-banner"
       data-code={error.code}
       className={`flex min-w-0 gap-3 rounded-control border p-3 text-sm ${TONE[error.kind]}`}
@@ -54,7 +60,7 @@ export function ErrorBanner({
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-baseline gap-x-2">
           {error.status > 0 && <span className="font-mono text-xs text-slate-600 dark:text-slate-400">{error.status}</span>}
-          <span className="font-mono font-semibold break-all">{error.code}</span>
+          <span className="font-mono font-semibold wrap-anywhere">{error.code}</span>
         </div>
         <p className="mt-1 wrap-anywhere">{error.message}</p>
         {unclaimed.length > 0 && (

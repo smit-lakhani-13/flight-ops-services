@@ -24,15 +24,22 @@ export function TransitionControl({
 
   async function send(next: FlightStatus) {
     setBusy(true);
-    setError(await onSend(next));
-    setBusy(false);
+    try {
+      setError(await onSend(next));
+    } catch (error) {
+      // onSend answers with an error value; a throw is a bug, so it is logged
+      // and the buttons come back rather than staying disabled.
+      console.error("A status change failed", error);
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Allowed transitions">
         {allowed.length === 0 ? (
-          <span className="text-sm text-slate-500">{status} is terminal: no status can follow it.</span>
+          <span className="text-sm text-slate-600 dark:text-slate-400">{status} is terminal: no status can follow it.</span>
         ) : (
           allowed.map((next) => (
             <Button key={next} tone="secondary" disabled={busy} onClick={() => send(next)}>
@@ -54,7 +61,7 @@ export function TransitionControl({
             ))}
           </Select>
         </div>
-        <Button tone="ghost" disabled={busy} onClick={() => send(any)}>
+        <Button tone="secondary" disabled={busy} onClick={() => send(any)}>
           Send
         </Button>
       </div>

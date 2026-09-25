@@ -77,7 +77,19 @@ function BookingDetail({ bookingId }: { bookingId: string }) {
             { label: "Passenger", value: b.passengerName },
             { label: "Seats", value: b.seats },
             { label: "Created", value: formatInstant(b.createdAt), note: b.createdAt },
-            { label: "Cancelled", value: <span data-testid="cancelled-at">{b.cancelledAt ?? NONE}</span> },
+            {
+              label: "Cancelled",
+              // The attribute keeps the instant the service sent, which the
+              // list of answers below repeats.
+              value: b.cancelledAt ? (
+                <time dateTime={b.cancelledAt} data-testid="cancelled-at">
+                  {formatInstant(b.cancelledAt)}
+                </time>
+              ) : (
+                <span data-testid="cancelled-at">{NONE}</span>
+              ),
+              note: b.cancelledAt,
+            },
           ]}
         />
       </Card>

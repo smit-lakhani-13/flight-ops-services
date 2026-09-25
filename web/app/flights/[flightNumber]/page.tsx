@@ -1,14 +1,14 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { BookingTable } from "@/components/BookingTable";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { RefreshIcon } from "@/components/icons";
 import { Pager } from "@/components/Pager";
 import { RequireSession } from "@/components/RequireSession";
 import { TransitionControl } from "@/components/TransitionControl";
-import { Button, Card, formatInstant, KeyValue, MUTED, PageTitle, SeatBar, Skeleton, StatusBadge, TextLink, TOUCH } from "@/components/ui";
+import { Button, Card, formatInstant, KeyValue, MUTED, PageTitle, SeatBar, Skeleton, StatusBadge, TextLink } from "@/components/ui";
 import type { ClassifiedError } from "@/lib/errors";
 import { useApi } from "@/lib/session";
 import { isBookable, isCancellable } from "@/lib/transitions";
@@ -22,7 +22,11 @@ export default function FlightPage() {
       <PageTitle
         title={<span className="font-mono">{flightNumber}</span>}
         documentTitle={flightNumber}
-        subtitle={<TextLink href="/flights">All flights</TextLink>}
+        subtitle={
+          <TextLink href="/flights" standalone>
+            All flights
+          </TextLink>
+        }
       />
       <RequireSession>
         <FlightDetail flightNumber={flightNumber} />
@@ -37,6 +41,20 @@ function FlightDetail({ flightNumber }: { flightNumber: string }) {
   const [confirming, setConfirming] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [cancelError, setCancelError] = useState<ClassifiedError | null>(null);
+  // Opening or closing the question removes the button that was pressed, so
+  // the focus goes to Keep it, the safe answer, and back to Cancel flight.
+  const keep = useRef<HTMLButtonElement>(null);
+  const cancelFlight = useRef<HTMLButtonElement>(null);
+  const questionUsed = useRef(false);
+  useEffect(() => {
+    if (!questionUsed.current) return;
+    (confirming ? keep : cancelFlight).current?.focus();
+  }, [confirming]);
+
+  function ask(open: boolean) {
+    questionUsed.current = true;
+    setConfirming(open);
+  }
 
   const loadFlight = useCallback(() => api.get<Flight>(`v1/flights/${encodeURIComponent(flightNumber)}`), [api, flightNumber]);
   const loadBookings = useCallback(
@@ -64,7 +82,7 @@ function FlightDetail({ flightNumber }: { flightNumber: string }) {
       reloadFlight();
     } finally {
       setCancelling(false);
-      setConfirming(false);
+      ask(false);
     }
   }
 
@@ -90,7 +108,7 @@ function FlightDetail({ flightNumber }: { flightNumber: string }) {
           </span>
         }
         actions={
-          <TextLink href={`/book?flight=${f.flightNumber}`} className={`inline-flex items-center ${TOUCH}`}>
+          <TextLink href={`/book?flight=${f.flightNumber}`} standalone>
             Book a seat
           </TextLink>
         }
@@ -120,13 +138,13 @@ function FlightDetail({ flightNumber }: { flightNumber: string }) {
             <Button tone="danger" busy={cancelling} onClick={cancel}>
               Yes, cancel it
             </Button>
-            <Button tone="secondary" disabled={cancelling} onClick={() => setConfirming(false)}>
+            <Button ref={keep} tone="secondary" disabled={cancelling} onClick={() => ask(false)}>
               Keep it
             </Button>
           </div>
         ) : (
           <div className="flex flex-wrap items-center gap-3">
-            <Button tone="danger" onClick={() => setConfirming(true)}>
+            <Button ref={cancelFlight} tone="danger" onClick={() => ask(true)}>
               Cancel flight
             </Button>
             {!isCancellable(f.status) && (

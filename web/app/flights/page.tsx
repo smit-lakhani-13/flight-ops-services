@@ -47,13 +47,16 @@ function Flights() {
   const [filters, setFilters] = useState<Filters>({ origin: "", destination: "", sort: SORTS[0]!.value, page: 0 });
   const [creating, setCreating] = useState(false);
   const createForm = useRef<HTMLDivElement>(null);
-  // Set when the empty list's button opens the form, which sits above the list.
+  // Set when the empty list's button opens the form, which sits above the
+  // list. That button goes away as the form opens, so the focus moves to the
+  // form's first field instead of falling back to the page.
   const revealForm = useRef(false);
 
   useEffect(() => {
     if (creating && revealForm.current) {
       revealForm.current = false;
       createForm.current?.scrollIntoView({ block: "start" });
+      createForm.current?.querySelector("input")?.focus({ preventScroll: true });
     }
   }, [creating]);
 
@@ -91,11 +94,6 @@ function Flights() {
           </Button>
         }
       >
-        {creating && (
-          <div id="create-flight" ref={createForm} className="mb-5 scroll-mt-4 border-b border-slate-200 pb-5 dark:border-slate-800">
-            <CreateFlightForm />
-          </div>
-        )}
         <form onSubmit={search} aria-label="Search flights" className="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <Field label="Origin">
             <TextInput name="origin" placeholder="EWR" autoCapitalize="characters" value={draft.origin} onChange={(e) => setDraft({ ...draft, origin: e.target.value })} />
@@ -134,6 +132,14 @@ function Flights() {
           </div>
         </form>
       </Card>
+
+      {creating && (
+        <div id="create-flight" ref={createForm} className="scroll-mt-4">
+          <Card title="New flight">
+            <CreateFlightForm />
+          </Card>
+        </div>
+      )}
 
       <Card>
         {result === null ? (
