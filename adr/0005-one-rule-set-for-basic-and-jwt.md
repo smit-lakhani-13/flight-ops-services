@@ -52,8 +52,10 @@ Basic alone and no dead configuration.
   `spring.security.oauth2.resourceserver.jwt.audiences: [flight-ops-service]`.
   [SECURITY.md](../SECURITY.md) has the warning.
 
-* `anyRequest().denyAll()` closes the list, so a new endpoint is unreachable
-  until someone decides who may reach it. That default is why the OpenAPI paths
+* `anyRequest().denyAll()` closes the list. A new endpoint under `/api/**` is
+  covered by the scope rules for GET, HEAD, POST, PATCH and DELETE. One outside
+  it, or a method the rules do not name such as `PUT`, is unreachable until
+  someone decides who may reach it. That default is why the OpenAPI paths
   needed an explicit rule (see [ADR 0012](0012-openapi-public-read.md)).
 
 ## Alternatives considered

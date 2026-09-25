@@ -18,7 +18,7 @@ I picked an airline because seat inventory is a real consistency problem: many c
 
 ## Documentation
 
-On every CI run, the `docs-check` job runs three scripts. `scripts/refcheck.py` resolves every file and symbol these documents cite. `scripts/linkcheck.py` checks every link and heading anchor. `scripts/sweeps.sh` reads the working tree and the commit history, and fails on a co-author trailer, a tool's signature, an absolute home-directory path in a tracked file, or a match for the patterns in the `SWEEP_PATTERNS` repository secret. I run `scripts/numbers.sh` by hand before I edit a count. It recomputes every count the documents claim, and it is not a gate.
+On every CI run, the `docs-check` job runs three scripts. `scripts/refcheck.py` checks that the file paths these documents cite in backticks exist (those with a known extension, plus `Dockerfile`, `mvnw` and `LICENSE`; its docstring lists what it skips), and that the symbol in each `path#symbol` appears in its file. `scripts/linkcheck.py` checks every link and heading anchor. `scripts/sweeps.sh` reads the working tree and the commit history, and fails on a co-author trailer, a tool's signature, an absolute home-directory path in a tracked file, or a match for the patterns in the `SWEEP_PATTERNS` repository secret. I run `scripts/numbers.sh` by hand before I edit a count. It recomputes every count the documents claim, and it is not a gate.
 
 | Document | What it answers |
 |---|---|
@@ -90,7 +90,7 @@ curl -s -u api:dev-secret localhost:8080/api/v1/flights/UA123          # STILL 1
 curl -s -u api:dev-secret "localhost:8080/api/v1/bookings?flightNumber=UA123"   # ONE booking
 ```
 
-I spelled out `-u` on every line, because the obvious tidy-up, `A='-u api:dev-secret'; curl $A ...`, fails on macOS. In zsh an unquoted parameter is not word-split, so curl receives `-u api:dev-secret` as one argument, ignores it, and every call returns 401. Use an array instead: `A=(-u api:dev-secret); curl "${A[@]}" ...`
+I spelled out `-u` on every line, because the obvious tidy-up, `A='-u api:dev-secret'; curl $A ...`, fails on macOS. In zsh an unquoted parameter is not word-split, so curl receives `-u api:dev-secret` as one argument, reads the user name as ` api` with a leading space, and every call returns 401. Use an array instead: `A=(-u api:dev-secret); curl "${A[@]}" ...`
 
 Change the payload and keep the key, and the answer is `409 IDEMPOTENCY_KEY_REUSED`. A retry is the same request arriving twice. A different request on the same key is a client bug, and returning someone else's booking would hide it.
 
@@ -258,7 +258,7 @@ Callers use HTTP Basic or a bearer token. The two in-memory accounts are `api`, 
 | `/error` | everyone. The container forwards errors raised outside Spring MVC (a firewall-rejected URL, an exception in a filter) to `/error` after the chain has run, and denying it would turn each of those into a 401 about `/error`. MVC 404s never get there, because `GlobalExceptionHandler` answers them first. `exception/ApiErrorController` answers in the same `{code, message, timestamp}` envelope with a generic message, because the container's own error text can name an internal path or exception class |
 | anything else | `denyAll()` |
 
-The last rule is `anyRequest().denyAll()`. A controller added later is unreachable until I add its rule, which costs one line. With `permitAll()` it would be public on the day it ships, and with `authenticated()` any caller with credentials could reach it.
+The last rule is `anyRequest().denyAll()`. A controller added under `/api/**` is covered by the scope rules the day it ships, for GET, HEAD, POST, PATCH and DELETE. One outside `/api/**`, or a method the rules do not name such as `PUT`, is unreachable until I add its rule, which costs one line. With `permitAll()` as the last rule it would be public on the day it ships, and with `authenticated()` any caller with credentials could reach it.
 
 The in-memory users stand in for an identity provider, and [SECURITY.md](SECURITY.md) covers sessions, CSRF, secrets, transport and the known limitations.
 
@@ -361,7 +361,7 @@ UPDATE outbox_events SET attempts = 0, next_attempt_at = NULL WHERE id = ?
 
 ## Deployment and cost
 
-Nothing in this section has been executed, except building the image and starting it with no database, which the `image` job does in CI.
+Nothing in this section has been run against AWS or a cluster. CI runs parts of it without AWS credentials or a cluster: the `image` job builds the image and starts it with no database, `infra-lint` renders the overlay through `deploy/aws/render-aws.sh`, and `deploy/aws/selftest.sh` runs `down.sh`, `cost-check.sh`, `ecr-image-exists.sh` and the `lib.sh` checks `up.sh` calls against stubbed `aws`, `kubectl`, `helm`, `eksctl` and `mvnw` commands.
 
 ```bash
 docker compose up --build                       # the whole stack, locally
@@ -437,7 +437,7 @@ Built and tested on macOS arm64 with `JAVA_HOME=/opt/homebrew/opt/openjdk@21`. W
 
 `./mvnw` pins Maven 3.9.16 and its SHA-256, so CI needs no Maven install step and a substituted archive fails the build. The wrapper is `distributionType=only-script`: two shell scripts and a properties file, with no `maven-wrapper.jar` committed.
 
-[`.github/dependabot.yml`](.github/dependabot.yml) updates both Maven modules, the Actions workflow and the Dockerfile base images. The Lambda module has its own entry, because with no parent POM nothing else manages its versions. See [CONTRIBUTING.md](CONTRIBUTING.md#dependabot) for how I handle the pull requests.
+[`.github/dependabot.yml`](.github/dependabot.yml) updates both Maven modules, the Actions workflows and the Dockerfile base images. The Lambda module has its own entry, because with no parent POM nothing else manages its versions. See [CONTRIBUTING.md](CONTRIBUTING.md#dependabot) for how I handle the pull requests.
 
 ## Licence
 
