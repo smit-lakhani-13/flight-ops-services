@@ -343,10 +343,10 @@ metric and an alert.
 The transport itself is one interface,
 `src/main/java/com/smit/flightops/service/EventPublisher.java`, with two
 implementations: `LoggingEventPublisher` for local runs and `SqsEventPublisher`
-in AWS. No business logic knows which transport is wired, and adding one leaves
-`EventPublisher` unchanged, but it is more than one class. For a JMS broker it
-is a publisher class behind `@ConditionalOnProperty`, a `ConnectionFactory` bean
-and the vendor's client library, a mode in
+for the `prod` profile. No business logic knows which transport is wired, and
+adding one leaves `EventPublisher` unchanged, but it is more than one class.
+For a JMS broker it is a publisher class behind `@ConditionalOnProperty`, a
+`ConnectionFactory` bean and the vendor's client library, a mode in
 `src/main/java/com/smit/flightops/config/EventProperties.java#MODES`, a test,
 and a new consumer, because the Lambda reads `SQSEvent`.
 [ADR 0015](adr/0015-event-transport.md) sets out that cost from the vendors'
