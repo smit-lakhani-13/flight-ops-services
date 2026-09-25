@@ -1,5 +1,5 @@
 # An optional component that no overlay includes by default. The Ingress it
-# adds creates a billed ALB (DEPLOYMENT.md section 5) that outlives the pods,
+# adds creates a billed ALB (doc/DEPLOYMENT.md section 5) that outlives the pods,
 # so it is opted into, not part of the base. down.sh checks for an orphaned load
 # balancer before it reports success.
 #

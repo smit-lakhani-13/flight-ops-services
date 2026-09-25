@@ -8,9 +8,8 @@ maintainer can see. A public issue tells everyone at once.
 
 If that button is missing, the setting is off. Then open a public issue with
 one sentence and no detail: "I have a security finding, please open a private
-channel." Do not put the finding in it. A reporter who must choose between full
-disclosure and silence usually stays silent, and the fallback keeps a third
-option open.
+channel." Do not put the finding in it. The fallback gives a reporter an option
+between full disclosure and silence.
 
 Please include what you did, what happened and what you expected. A proof of
 concept helps. A working exploit is not required.
@@ -20,10 +19,10 @@ Supported: `main`. There is no support branch for older tags.
 ## What this is
 
 A demonstration service. It holds seeded data and has never processed a real
-booking. At the time of writing it has run only on a laptop and in CI. I wrote
-the AWS path and checked it with linters, and the deploy job is gated off.
-[DEPLOYMENT.md](DEPLOYMENT.md) opens with an `Executed on:` line that will
-carry the date if that changes.
+booking. It has run only on a laptop and in CI. The AWS path is written and
+linted, and the deploy job is gated off.
+[doc/DEPLOYMENT.md](doc/DEPLOYMENT.md) opens with an `Executed on:` line that
+will carry the date if that changes.
 
 Some decisions below suit a demo and would be wrong for a system with real
 users. Each one is marked where it comes up.
@@ -112,9 +111,9 @@ about the method and the path, and a 403 leaves no log line.
 
 ### The OpenAPI document is public and the API is not
 
-`/v3/api-docs` and Swagger UI are reachable without credentials. I chose this
-and recorded it in [adr/0012](adr/0012-openapi-public-read.md). The document
-describes paths and schemas, and every operation still requires
+`/v3/api-docs` and Swagger UI are reachable without credentials. This is
+deliberate and recorded in [adr/0012](adr/0012-openapi-public-read.md). The
+document describes paths and schemas, and every operation still requires
 authentication. Needing credentials to read about an API you cannot call helps
 no one. Set `SWAGGER_UI_ENABLED=false` to serve the JSON without the UI.
 
@@ -183,8 +182,8 @@ reverse, and the ADR is where to start.
 - **Secrets are only base64-encoded.** They are not encrypted: anyone with
   `get secret` on the namespace can read them, and `k8s/secret.example.yaml`
   says so in its header. The production answer is AWS Secrets Manager through
-  the Secrets Store CSI driver. It is not installed here. I count that as a
-  gap, not as a trade-off I made.
+  the Secrets Store CSI driver. It is not installed here. That is a gap, not a
+  trade-off.
 
 - **No AWS access keys anywhere.** In the cluster the pods would use IRSA: a
   projected, short-lived token exchanged with STS. The deploy job would use
@@ -198,18 +197,18 @@ reverse, and the ADR is where to start.
 
 Nothing is deployed, so nothing is on the internet today. This section
 describes what `k8s/components/ingress` would create the day someone applies
-it. A transport decision is easier to review before it is taken.
+it.
 
 That Ingress listens on **port 80 with no TLS**. Basic credentials would cross
 the internet base64-encoded, and anyone who captures them can decode them.
 
 That is acceptable for a short-lived demo with generated throwaway passwords
-and no real data, and for nothing else. I did not use a self-signed
-certificate, because it trains people to click through the warning that exists
+and no real data, and for nothing else. There is no self-signed certificate,
+because it trains people to click through the warning that exists
 to stop them. The HTTPS recipe (ACM, DNS validation, three Ingress annotations
 and `server.forward-headers-strategy`) is in
-[DEPLOYMENT.md §8](DEPLOYMENT.md#8-http-and-what-https-would-take). The work is
-written down. What is missing is a domain.
+[doc/DEPLOYMENT.md §8](doc/DEPLOYMENT.md#8-http-and-what-https-would-take). The
+work is written down. What is missing is a domain.
 
 ## Data exposure
 
@@ -217,8 +216,8 @@ written down. What is missing is a domain.
   key is a client's private token, and leaking it on a list endpoint would let
   any reader replay another client's booking.
 
-- `passengerName` **is** returned on the list endpoint. I made that scope
-  decision because this is an internal operations API, and the operator is
+- `passengerName` **is** returned on the list endpoint. That is a scope
+  decision: this is an internal operations API, and the operator is
   entitled to see who is on the flight. The field is in the OpenAPI schema for
   the response, so no one has to guess. `BookingWriter`'s log line leaves the
   name out, because it is personal data, and the event carries no name.

@@ -5,7 +5,7 @@
 # creates a public endpoint by accident.
 #
 # Applying it has the AWS Load Balancer Controller create an Application Load
-# Balancer, which bills from creation until it is deleted (DEPLOYMENT.md
+# Balancer, which bills from creation until it is deleted (doc/DEPLOYMENT.md
 # section 5). Deleting a Deployment does not delete an ALB.
 #
 # Teardown order matters. down.sh step 1 deletes this Ingress and waits for the

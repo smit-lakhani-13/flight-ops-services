@@ -209,7 +209,7 @@ Documentation is part of the change and ships with it:
   next commit, and `refcheck.py` can verify symbols but not line numbers.
 - A decision with a real trade-off gets an ADR in `adr/`. The format is in
   [adr/README.md](adr/README.md). Record the decision, the alternatives and
-  what it costs. An ADR that only lists benefits is a brochure.
+  what it costs.
 - Numbers come from `scripts/numbers.sh`.
 - British spelling.
 - No emoji in prose.
@@ -241,7 +241,7 @@ grouping.
   requests the first time Dependabot runs.
 
 - The `ignore` rules cover four artifacts and no more, because an `ignore` also
-  suppresses Dependabot's security updates for that dependency. I accept that
+  suppresses Dependabot's security updates for that dependency. That is accepted
   only where a bump would contradict a pin the project documents:
   `eclipse-temurin` and `maven` in the two base images (majors),
   `org.springframework.boot:spring-boot-starter-parent` (majors), and

@@ -100,7 +100,7 @@ class LockTimeoutTest {
                         .andExpect(jsonPath("$.code").value("LOCK_TIMEOUT"));
 
                 // The status is the client's contract and this counter the operator's:
-                // OPERATIONS.md alerts on rate(bookings_lock_timeout_total[5m]).
+                // doc/OPERATIONS.md alerts on rate(bookings_lock_timeout_total[5m]).
                 assertThat(lockTimeoutCount())
                         .as("the 503 must also move bookings.lock_timeout")
                         .isEqualTo(timeoutsBefore + 1);

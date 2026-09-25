@@ -9,7 +9,7 @@ Nothing here has been run against a real account. The templates lint, the
 scripts parse and are shellcheck-clean, and `selftest.sh` runs the teardown,
 the cost check, the ECR lookup and `up.sh`'s checks against stubbed tools.
 None of that is a real run.
-`DEPLOYMENT.md` records the date of the first one; until then that field
+`doc/DEPLOYMENT.md` records the date of the first one; until then that field
 reads `—`.
 
 ## Contents
@@ -28,7 +28,7 @@ reads `—`.
 
 ```
                          internet
-                            │  http (no TLS — see DEPLOYMENT.md)
+                            │  http (no TLS, see doc/DEPLOYMENT.md)
                      ┌──────▼──────┐
                      │     ALB     │  created by the LB controller
                      └──────┬──────┘  from k8s/components/ingress
@@ -52,8 +52,8 @@ The application half is the same code that runs on a laptop with
 It bills by the hour from the moment the cluster exists (step 4) until
 `down.sh` deletes it. The daily rate, the
 totals for a week or a forgotten month, and the cheaper shapes are in
-[DEPLOYMENT.md section 5](../../DEPLOYMENT.md#5-what-it-costs); `up.sh` prints
-the same table at step 1 before it asks to start.
+[DEPLOYMENT.md section 5](../../doc/DEPLOYMENT.md#5-what-it-costs); `up.sh`
+prints the same table at step 1 before it asks to start.
 
 `up.sh` creates two AWS Budgets that send e-mail at set shares of a monthly and
 a daily limit. A budget alert is an e-mail and stops nothing. Only `down.sh`
@@ -94,9 +94,9 @@ again instead of unpicking it by hand. If eksctl stopped part way through
 step 4 after EKS listed the cluster, the re-run finishes it, creating whichever
 of its networking addons, OIDC provider and node group is missing. A stop in
 the first minutes, before EKS lists the cluster, needs its CloudFormation stack
-to settle before the re-run (DEPLOYMENT.md section 4). A run that stops between
-steps 6 and 9 is different: the database password was only in that shell, and
-step 9 says how to set a new one.
+to settle before the re-run (`doc/DEPLOYMENT.md` section 4). A run that stops
+between steps 6 and 9 is different: the database password was only in that
+shell, and step 9 says how to set a new one.
 
 After step 1 it stops twice more. On a first run, step 9 prints the generated
 passwords and waits for `saved`. Step 10 prints four values and waits for

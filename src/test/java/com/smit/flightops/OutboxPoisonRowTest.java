@@ -107,7 +107,7 @@ class OutboxPoisonRowTest {
     }
 
     /**
-     * The re-drive statement from OPERATIONS.md, run verbatim, so the SQL an operator
+     * The re-drive statement from doc/OPERATIONS.md, run verbatim, so the SQL an operator
      * pastes is the SQL under test.
      */
     @Test

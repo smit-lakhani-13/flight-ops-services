@@ -1,13 +1,11 @@
 # Architecture decision records
 
 One file per decision that had a real alternative. Each record gives the
-situation that forced the choice, what I chose, what it costs, and what I
-rejected. The rejected options are there because someone who was not in the
-room will propose them again a year later.
+situation that forced a choice, the choice, its cost and the rejected options.
 
-I wrote every accepted record after the decision it records; 0016 is a proposal,
-and no decision has been taken. The "Taken in" column names the commit in which
-the decision landed. The first commit, `4a9a5b9`, is from 15 September 2026.
+Every accepted record was written after the decision it records; the "Taken in"
+column names the commit in which the decision landed. 0016 is a proposal and no
+decision has been taken. The first commit, `4a9a5b9`, is from 15 September 2026.
 0001–0014 were written on 22 September, and 0015 and 0016 on 25 September:
 
 * 0001–0008 and 0011–0014 were written together in `040c3be`. For 0001–0008
@@ -27,9 +25,9 @@ None of them was an RFC that a team approved before any code existed.
 A record's decision does not change once it is accepted. A decision that
 changes gets a new record that supersedes the old one. The old one stays,
 because the reasoning that was true at the time explains the code someone is
-reading today. I correct wrong facts in place. Where a correction changes the
-reasoning, a dated note says what the record used to claim, as in 0002, 0003,
-0004, 0006, 0007, 0008, 0009 and 0012. The retry backoff in 0013 and the
+reading today. Wrong facts are corrected in place. Where a correction changes
+the reasoning, a dated note says what the record used to claim, as in 0002,
+0003, 0004, 0006, 0007, 0008, 0009 and 0012. The retry backoff in 0013 and the
 annotation scope in 0012 were changed in place, and each record's status line
 says so.
 
@@ -63,4 +61,4 @@ citation stops being true.
 
 If you cannot write a real "Alternatives considered" for a record, it is
 probably a description of how the code works. That belongs in
-[`ARCHITECTURE.md`](../ARCHITECTURE.md).
+[`doc/ARCHITECTURE.md`](../doc/ARCHITECTURE.md).
