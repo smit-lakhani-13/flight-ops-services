@@ -66,6 +66,7 @@ jobs:
       - name: Analyse
         uses: github/codeql-action/analyze@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
         with:
-          # Keeps these results beside the Trivy SARIF that build-and-deploy.yml
-          # uploads under `trivy-fs`, instead of replacing it.
+          # A fixed name for this analysis, so the next CodeQL upload for Java on
+          # the same ref replaces it even if this workflow or job is renamed.
+          # Trivy's SARIF (`trivy-fs`) is kept apart by tool in any case.
           category: /language:java-kotlin

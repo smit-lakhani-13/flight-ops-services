@@ -398,6 +398,9 @@
             <!--
               A CycloneDX software bill of materials, target/bom.json, so the versions in
               the shipped artefact have a written answer. Test scope is not in the artefact.
+              The Boot parent adds its own execution at generate-resources, which embeds
+              META-INF/sbom/application.cdx.json in the jar. Both are typed application,
+              and only that one is attached, so Maven does not replace one with the other.
             -->
             <plugin>
                 <groupId>org.cyclonedx</groupId>
@@ -408,9 +411,13 @@
                         <id>build-sbom</id>
                         <phase>package</phase>
                         <goals><goal>makeBom</goal></goals>
+                        <configuration>
+                            <skipAttach>true</skipAttach>
+                        </configuration>
                     </execution>
                 </executions>
                 <configuration>
+                    <projectType>application</projectType>
                     <outputFormat>json</outputFormat>
                     <outputName>bom</outputName>
                     <includeTestScope>false</includeTestScope>
