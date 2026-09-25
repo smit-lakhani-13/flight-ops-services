@@ -13,8 +13,10 @@ import java.util.Locale;
  * The body of {@code POST /api/v1/bookings}.
  *
  * @param flightNumber matched against {@link CreateFlightRequest#FLIGHT_NUMBER}
- * @param passengerName free text without control characters: PostgreSQL refuses
- *        NUL in a text column, and {@code SEP} must not appear in any field
+ * @param passengerName free text without control characters. {@code \p{Cc}} is the
+ *        Unicode category, so it also refuses U+0080 to U+009F, which Java's
+ *        {@code \p{Cntrl}} lets through. PostgreSQL refuses NUL in a text column, and
+ *        {@code SEP} must not appear in any field
  * @param seats one to nine. Marked required for the OpenAPI document, which
  *        treats a primitive as optional; Jackson refuses a missing one
  * @param idempotencyKey client-generated; the same key twice is the same
@@ -28,7 +30,7 @@ public record BookingRequest(
     String flightNumber,
 
     @NotBlank @Size(max = 255)
-    @Pattern(regexp = "^[^\\p{Cntrl}]*$", message = "must not contain control characters")
+    @Pattern(regexp = "^[^\\p{Cc}]*$", message = "must not contain control characters")
     String passengerName,
 
     @Schema(requiredMode = Schema.RequiredMode.REQUIRED) @Min(1) @Max(9) int seats,

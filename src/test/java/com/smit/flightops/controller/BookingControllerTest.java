@@ -150,10 +150,11 @@ class BookingControllerTest {
     /**
      * PostgreSQL refuses NUL in a text column, which would be a 500, and a
      * newline forges a log line. The trailing newline checks that the pattern
-     * is matched against the whole value.
+     * is matched against the whole value. U+0085 is a C1 control, which Java's
+     * {@code \p{Cntrl}} would let through.
      */
     @ParameterizedTest
-    @ValueSource(strings = {"A\u0000B", "Ada\nLovelace", "Ada\n"})
+    @ValueSource(strings = {"A\u0000B", "Ada\nLovelace", "Ada\n", "Ada\u0085Lovelace"})
     @DisplayName("a passenger name with a control character is refused at the edge")
     void controlCharactersInANameAreRejected(String passengerName) throws Exception {
         mockMvc.perform(post("/api/v1/bookings")

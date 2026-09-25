@@ -44,14 +44,14 @@ PostgreSQL tests ran" fails CI if any of the three classes skips a test or has
 no report.
 
 So in CI the Surefire summary reads
-`Tests run: 263, Failures: 0, Errors: 0, Skipped: 0` for the service and
+`Tests run: 264, Failures: 0, Errors: 0, Skipped: 0` for the service and
 `Tests run: 25, Failures: 0, Errors: 0, Skipped: 0` for the Lambda. On a laptop
 without Docker the service line ends `Skipped: 9`.
 
 A new migration is not accepted until CI has gone green on it. The local H2
 profile never sees it, and neither does a laptop with no Docker.
 
-Today the service declares 263 tests and runs 254 of them without Docker, and
+Today the service declares 264 tests and runs 255 of them without Docker, and
 the Lambda runs 25. Do not edit those numbers by hand anywhere:
 
 ```bash
