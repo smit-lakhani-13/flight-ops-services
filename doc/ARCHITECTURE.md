@@ -21,9 +21,11 @@ map, and the ADRs hold the reasoning.
 | [The outbox](#the-outbox) | Writer, poller and pruner |
 | [Flight status is a state machine](#flight-status-is-a-state-machine) | Transitions and bookable statuses |
 | [Data model](#data-model) | Tables, migrations, `version` |
+| [Repository layout](#repository-layout) | Where each part lives, and what stays at the web edge |
 | [Module boundaries](#module-boundaries) | The ArchUnit rules |
 | [The consumer half](#the-consumer-half) | The Lambda and its deployment package |
 | [Where the seams are](#where-the-seams-are) | Extension points and their cost |
+| [Trade-offs](#trade-offs) | Each choice against what production would do, and what is still open |
 
 ---
 
@@ -83,7 +85,8 @@ ArchUnit rule `layers_are_respected`, not a network hop.
 Some parts are stubs. The authorisation rules, the locking, the idempotency,
 the migrations and the event contract are production shapes. The user store is
 two in-memory accounts, and the deployment has never been run against real
-AWS. The README's `Project status` table is the authoritative list.
+AWS. The README's [status table](../README.md#status) is the authoritative
+list.
 
 ---
 
@@ -350,14 +353,26 @@ The transport itself is one interface,
 implementations: `LoggingEventPublisher` for local runs and `SqsEventPublisher`
 for the `prod` profile. No business logic knows which transport is wired, and
 adding one leaves `EventPublisher` unchanged, but it is more than one class.
-For a JMS broker it is a publisher class behind `@ConditionalOnProperty`, a
-`ConnectionFactory` bean and the vendor's client library, a mode in
+There is no JMS publisher. For a JMS broker it is a publisher class behind
+`@ConditionalOnProperty`, a `ConnectionFactory` bean and the vendor's client
+library, a mode in
 `src/main/java/com/smit/flightops/config/EventProperties.java#MODES`, a test,
 and a new consumer, because the Lambda reads `SQSEvent`.
 [ADR 0015](../adr/0015-event-transport.md) sets out that cost from the vendors'
 documentation; none of it has been built or run here.
 
-`app.events.publisher` picks the implementation, `log` or `sqs`.
+`app.events.publisher` picks the implementation, `log` or `sqs`, through
+`@ConditionalOnProperty` on each publisher. `log` is the default
+(`matchIfMissing = true` on `LoggingEventPublisher`), so a run on a laptop
+never tries to reach AWS. The `prod` profile defaults to `sqs`.
+`src/main/java/com/smit/flightops/config/AwsConfig.java` carries the same
+condition, so a run in `log` mode builds no SQS client at all. `@Primary` and
+`@Qualifier` only choose which bean is injected. Spring would still build
+every candidate, including an SQS client on a machine with no credentials,
+and `SqsEventPublisher` would stop startup for want of `SQS_QUEUE_URL`.
+`@ConditionalOnProperty` decides whether the bean exists at all.
+
+`EventProperties` refuses any other value at startup and names the property.
 `OutboxPublisher` takes `EventProperties` as its first constructor argument,
 and Spring resolves arguments in order. An unknown value therefore stops
 startup with `app.events.publisher must be one of [log, sqs], not "<value>"`
@@ -475,6 +490,85 @@ flight without it. A status change that races a booking on the same flight is
 caught at flush by `version` and answered with `409 CONCURRENT_MODIFICATION`.
 Without `version`, the stale UPDATE would write back the old `available_seats`
 and restore the seats the booking had just debited.
+
+---
+
+## Repository layout
+
+```
+├── src/main/java/com/smit/flightops/
+│   ├── controller/     HTTP only: bind, validate, map to DTO, choose the
+│   │                   status code; SortPolicy checks the sort and adds the
+│   │                   tie-breaker
+│   ├── service/        orchestration, transaction boundaries, the outbox
+│   │                   writer, drain and pruner, and both event publishers
+│   ├── entity/         Flight, Booking, FlightStatus, OutboxEvent: the
+│   │                   invariants
+│   ├── repository/     Spring Data JPA, the FOR UPDATE query, the SKIP LOCKED
+│   │                   claim
+│   ├── dto/            request and response records, and BookingCreatedEvent
+│   │                   (the wire contract)
+│   ├── exception/      the domain exceptions, GlobalExceptionHandler (the
+│   │                   @RestControllerAdvice) and ApiErrorController
+│   ├── security/       the JSON 401 and 403 writers
+│   ├── observability/  RequestIdFilter, BookingMetrics, OutboxMetrics
+│   ├── validation/     @DistinctEndpoints, a class-level Bean Validation
+│   │                   constraint, and IsoInstantDeserializer, which takes only
+│   │                   an ISO-8601 instant
+│   └── config/         SecurityConfig, OpenApiConfig, AwsConfig, the
+│                       @ConfigurationProperties records, TimeConfig, DataSeeder
+├── src/main/resources/
+│   ├── application.yml         profiles: default (H2), postgres, prod
+│   └── db/migration/           the Flyway migrations, which own the PostgreSQL
+│                               schema
+├── src/test/java/              the service's tests
+├── lambda/                     a separate Maven module with no parent: the SQS
+│                               to DynamoDB consumer, its tests, template.yaml
+│                               (SAM) and events/, the hand-written SQS fixtures
+├── contracts/                  the event schema both modules test against
+├── doc/                        the API reference, this document, the defect
+│                               log, the deployment runbook and costs, and
+│                               operations
+├── adr/                        the decision records and their index
+├── scripts/                    refcheck.py, linkcheck.py, numbers.sh
+│                               --check-readme and sweeps.sh run in CI;
+│                               numbers.sh recomputes the counts; demo.sh is
+│                               the tour over HTTP
+├── deploy/
+│   ├── aws/                    up.sh, down.sh, cost-check.sh and render-aws.sh;
+│   │                           the helpers lib.sh and ecr-image-exists.sh;
+│   │                           selftest.sh, which runs down.sh, cost-check.sh,
+│   │                           ecr-image-exists.sh and up.sh's checks in
+│   │                           lib.sh against stubbed tools; the CloudFormation
+│   │                           templates foundation.yaml and data.yaml; the
+│   │                           eksctl cluster.yaml, version pinned; and
+│   │                           README.md, the runbook that orders them
+│   └── k8s/                    kustomize, and beside it namespace.yaml, which
+│       │                       up.sh applies once, and secret.example.yaml, a
+│       │                       template for the Secret up.sh creates
+│       ├── base/               the manifests true in any environment
+│       ├── overlays/aws/       image, IRSA annotation, queue URL, database URL
+│       └── components/ingress/ separate, because applying it provisions a
+│                               billed ALB
+├── compose.yaml                PostgreSQL and the service in containers
+│                               (defined, not run end to end)
+├── Dockerfile                  multi-stage: a JDK and Maven build stage, then
+│                               a JRE runtime
+├── pom.xml, mvnw               the service's build; the wrapper pins Maven
+├── README.md, CHANGELOG.md, CONTRIBUTING.md, SECURITY.md, LICENSE
+└── .github/                    workflows/build-and-deploy.yml (build,
+                                infra-lint, trivy-fs, docs-check and image on
+                                every trigger, dependency-review on pull
+                                requests, and the gated deploy),
+                                workflows/codeql.yml, dependabot.yml
+```
+
+A DTO never reaches the repository, and an entity never reaches a controller.
+Nothing in `service/`, `entity/` or `repository/` knows about HTTP. That stays
+in the web edge: `controller/`, `exception/`, `security/`,
+`observability/RequestIdFilter` and `config/SecurityConfig`. ArchUnit fails the
+build if HTTP types leak inward or a controller touches an entity;
+[Module boundaries](#module-boundaries) lists the rules.
 
 ---
 
@@ -664,3 +758,30 @@ costs:
 | `management.opentelemetry.tracing.export.otlp.endpoint` | An OTLP collector | An environment variable. Ids are already generated and already on every log line |
 | The outbox poller | Debezium reading the WAL | A replication slot, a connector to operate, and a disk that fills if the consumer stops. I considered it and rejected it at this size |
 | The database | Oracle | Two native outbox queries rewritten, the session-wide lock-wait bound narrowed to per-query hints, and a second set of migrations. [ADR 0016](../adr/0016-oracle-port.md) sets this out from documentation, as a proposal; none of it has been built or run |
+
+---
+
+## Trade-offs
+
+Each row is a choice I made, set against what a production system would do.
+The README keeps a short version of this table under
+[Trade-offs and still open](../README.md#trade-offs-and-still-open).
+
+| Current | Production would be | Why it is this way |
+|---|---|---|
+| Two users in an `InMemoryUserDetailsManager` | Cognito, Okta or Entra behind `issuer-uri` and `audiences` | The rules are real and tested, and the user store is a stub. The resource-server half is wired and activates when an issuer is configured, so the swap is configuration: set both properties, as [SECURITY.md](../SECURITY.md#authentication-and-authorisation) shows. |
+| Idempotent replay returns 201 | 200, arguably | It answers with the original status, Stripe-style, and the booking the key created, so the body matches the first response until the booking is cancelled, when `cancelledAt` is set. "201 Created" for something not created this time is a fair challenge. I documented it and left it. |
+| Idempotency keys never expire. The key is a `NOT NULL` column of the booking row under `uk_bookings_idempotency_key`, so the unique index grows by one entry per booking | Keys valid for a stated window (Stripe's documentation says a key may be removed once it is at least 24 hours old), after which a replay is a new request | Cancellation sets a timestamp and never deletes the row (`src/main/resources/db/migration/V4__booking_cancellation.sql`), so a cancelled booking keeps its key and a late replay returns it instead of booking again (`src/test/java/com/smit/flightops/ErrorContractTest.java#replayAfterCancellationDoesNotRebook`). A window would bound the index, but a replay after it would book again, a contract change clients have to be told about. It would also need a new migration, because applied ones are never edited. |
+| A poller drains the outbox | Debezium reading the WAL | A poll every second (`app.outbox.poll-interval` defaults to 1000 ms) costs one indexed query per replica per second and adds up to a second of latency. CDC removes both and adds Kafka Connect, a connector to operate and a replication slot that fills the disk if the consumer stops. |
+| Retention is a batched `DELETE` on a schedule | A partitioned table, dropping old partitions | Detaching and dropping an old partition is O(1) and a delete is not, which matters from roughly the first hundred million rows. Below that, partitions add a maintenance job and an outage when that job fails. The pruner is one short class, and each run is bounded: batches of 1,000 rows by default, and at most 50 batches (`src/main/java/com/smit/flightops/service/OutboxPruner.java#MAX_BATCHES_PER_RUN`). |
+| No circuit breaker | Resilience4j | Besides the database, SQS is the one outbound dependency (and the token issuer, once one is configured). The outbox already absorbs an SQS failure: a down queue leaves rows unpublished, and a later drain retries them after a backoff, up to the attempt ceiling in [The outbox](#the-outbox). Each send is bounded at 5 s (`src/main/java/com/smit/flightops/config/AwsConfig.java#sqsClient`) and runs on the poller, never on a request thread. |
+| Contract tests share a JSON file | Pact, with a broker and a `can-i-deploy` gate in CI | The file catches the change that breaks the consumer, which is the whole job while both modules live in one repository. A broker pays off when the consumers are other teams' services. |
+| The service's traces are generated and not exported. The trace id crosses the queue as a message attribute, and the Lambda logs it | An OTLP collector on both sides, so the queue hop is one waterfall | Trace and span ids are on the service's request log lines, and the request id is on every response the application handles. `BookingEventHandler` logs the producer's `traceparent`, so two log greps follow one booking end to end. Export from the service is one property away ([Where the seams are](#where-the-seams-are)). The Lambda would need an exporter in a function kept small for its cold start: 10.3 MiB, with a 34 KB HTTP client (`lambda/pom.xml`). No cold start has been measured. |
+| H2 uses `create-drop` | Flyway and `validate`, as PostgreSQL already has | The migrations are written for PostgreSQL, and running them on a throwaway in-memory database buys nothing. The PostgreSQL tests in CI apply them and validate the entities against the result. |
+| `lambda/events/*.json` are written by hand, and their `md5OfBody` and `md5OfMessageAttributes` values are placeholders | Messages captured from a real queue | Nothing in the code reads either field. The files are fixtures for the tests and for `sam local invoke`, and none of them is captured queue traffic. |
+
+### Still open
+
+| What happens | What should happen | The fix |
+|---|---|---|
+| There is no rate limiting. A single caller with valid credentials can take every connection in the pool. | A token bucket per principal at the gateway, or Bucket4j in front of the write endpoints. | Out of scope for the service. It belongs at the ingress, and I would sooner say so than add a half-measure here. |

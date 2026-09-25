@@ -23,10 +23,13 @@ import org.springframework.stereotype.Component;
  *       pruner is not running.</li>
  * </ul>
  *
- * <p>The gauges query the database on the scrape thread. A throw would drop the whole
- * {@code /actuator/prometheus} response, so they return {@code NaN} instead. Both count
- * through {@code idx_outbox_unpublished}, so they stay cheap however large the table is.
- * Micrometer holds the state object weakly, so it is the singleton repository.
+ * <p>The gauges query the database on the scrape thread. A failed query is logged at
+ * DEBUG and the gauge reports {@code NaN}. In Micrometer 1.17.1 the registry would report
+ * {@code NaN} for a throwing gauge anyway, logging a WARN and a stack trace the first time
+ * and DEBUG after that, so the catch only picks the log line; the rest of the response
+ * survives either way. Both count through {@code idx_outbox_unpublished}, so they stay
+ * cheap however large the table is. Micrometer holds the state object weakly, so it is
+ * the singleton repository.
  */
 @Component
 public class OutboxMetrics {

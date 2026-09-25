@@ -126,7 +126,7 @@ ensure_flight UA456 ORD SFO 150 || exit 1
 # seats on a flight that already has 40.
 #
 # So the flights these acts change carry a four-digit run suffix, and UA123 and
-# UA456 keep the names the README uses. Four digits, because CreateFlightRequest
+# UA456 keep the names doc/api.md uses. Four digits, because CreateFlightRequest
 # caps flightNumber at @Size(max = 10) and "RACE1" plus four is nine.
 RUN=$(date +%s); RUN=${RUN: -4}
 NEW_FLIGHT="ua999$RUN"          # act 1 creates it, act 3 cancels it

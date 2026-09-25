@@ -42,7 +42,7 @@ import java.util.stream.Collectors;
  * Spring negotiates the error body against {@code Accept}, and a client asking
  * for XML gets an empty 406 and a server-side stack trace instead of the error.
  * Timestamps come from the injected {@link Clock}, so a test can pin them. The
- * README tables every code.
+ * error-code table in doc/api.md lists every code.
  *
  * @see ApiErrorController
  */

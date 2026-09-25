@@ -25,8 +25,9 @@ later, in `d18f58b` (see [ADR 0011](0011-correlation-ids-and-metrics.md)).
   `jackson-2-bom.version` for libraries that have not moved. This has real
   effects. Adding springdoc pulled in swagger-core, which needs Jackson 2 at a
   higher version than Boot manages. The fix is to override Boot's own property
-  so the whole Jackson 2 line moves together. The README's Versions section
-  covers it, because the next person to add a library will meet it.
+  so the whole Jackson 2 line moves together. The Versions section of
+  [CONTRIBUTING.md](../CONTRIBUTING.md#versions) covers it, because the next
+  person to add a library will meet it.
 
 * Jackson 3 makes serialisation exceptions unchecked. Code that used to be
   forced to handle them now lets them propagate with no compiler error. Each

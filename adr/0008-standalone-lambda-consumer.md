@@ -40,8 +40,9 @@ returns only the ids that failed.
 * `arm64` is cheaper per GB-second than x86, and the workload has no native
   dependencies. The jar is pure bytecode, with `url-connection-client` as its
   HTTP client, so arm64 costs nothing to adopt. The *service* image is
-  different: it ships an OS and must be built for the nodes' amd64. The README
-  documents that asymmetry.
+  different: it ships an OS and must be built for the nodes' amd64.
+  [The deployment guide](../doc/DEPLOYMENT.md#the-service-image) documents
+  that asymmetry.
 
 * **One named HTTP client.** The SDK brings in two HTTP clients transitively,
   `netty-nio-client` and `apache5-client`. I exclude both in favour of

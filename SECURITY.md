@@ -59,9 +59,14 @@ Neither is set today: no `JwtDecoder` bean exists, and the service logs
 that do not need an authorisation server. `src/main/resources/application.yml`
 repeats the block with the reasoning.
 
+HTTP Basic checks credentials against two in-memory accounts, which stand in
+for an identity provider. `api` holds `SCOPE_flights:read` and
+`SCOPE_flights:write`, and `ops` holds `ROLE_OPS`. Their local passwords are in
+[doc/api.md](doc/api.md#authentication).
+
 | Path | Who |
 |---|---|
-| `/actuator/health`, `/liveness`, `/readiness` | anyone. The kubelet has no credentials. Only `ROLE_OPS` sees the health components (`management.endpoint.health.roles: OPS`); everyone else gets the status and the group names |
+| `/actuator/health`, `/liveness`, `/readiness` | anyone. The kubelet has no credentials, and a probe that needed them would fail the pod on a password rotation. Only `ROLE_OPS` sees the health components (`management.endpoint.health.roles: OPS`); everyone else gets the status and the group names |
 | `/actuator`, `info`, `metrics`, `prometheus` (the other exposed endpoints) | `ROLE_OPS` |
 | `/v3/api-docs/**`, `/v3/api-docs.yaml`, `/swagger-ui.html`, `/swagger-ui/**` | anyone, for `GET` and `HEAD`. See below |
 | `/error` | anyone. It is the container's own forward target and is not an API route |
@@ -69,14 +74,22 @@ repeats the block with the reasoning.
 | everything else | denied |
 
 `/error` is open for a reason that is easy to get wrong. The container forwards
-errors raised outside Spring MVC to `/error` after the security filter chain
-has run. A URL the firewall rejects is one: today it gets a `400` in the usual
-envelope, and with `/error` denied it would get a `401` about `/error`. MVC's
-own 404s never reach `/error`, because `GlobalExceptionHandler` answers them
-first. `exception/ApiErrorController` serves the path with the same
-`ErrorResponse` envelope as everything else and a generic message. The
-container's own error text can name an internal path or an exception class,
-and neither belongs in a response.
+errors raised outside Spring MVC to `/error` after the security filter chain has
+run. A URL the firewall rejects is one, and an exception thrown in a filter is
+another. The rejected URL gets a `400` in the usual envelope today, and with
+`/error` denied it would get a `401` about `/error`. MVC's own 404s never reach
+`/error`, because `GlobalExceptionHandler` answers them first.
+`exception/ApiErrorController` serves the path with the same `ErrorResponse`
+envelope as everything else and a generic message. The container's own error
+text can name an internal path or an exception class, and neither belongs in a
+response.
+
+The last rule is `anyRequest().denyAll()`. A controller added under `/api/**`
+is covered by the scope rules the day it ships, for `GET`, `HEAD`, `POST`,
+`PATCH` and `DELETE`. One outside `/api/**`, or a method the rules do not name
+such as `PUT`, is unreachable until I add its rule, which costs one line. With
+`permitAll()` as the last rule it would be public on the day it ships, and
+with `authenticated()` any caller with credentials could reach it.
 
 ### 401 and 403
 
@@ -242,10 +255,11 @@ work is written down. What is missing is a domain.
 
 - Error responses are `{code, message, timestamp}`, or
   `{code, fieldErrors, timestamp}` for a validation failure. They never carry
-  stack traces, SQL or internal class names. The README lists the 22 codes.
-  Every error the application writes is JSON, whatever the `Accept` header
-  asks for. An API request
-  that accepts only XML or YAML gets `406 REQUEST_REJECTED`, written as JSON.
+  stack traces, SQL or internal class names.
+  [doc/api.md](doc/api.md#error-codes) lists every code. Every error the
+  application's error handlers write is JSON, whatever the `Accept` header
+  asks for. An API request that accepts only XML or YAML gets
+  `406 REQUEST_REJECTED`, written as JSON.
 
 - `X-Request-Id` is echoed on every response the application handles and
   appears in logs. A client's
