@@ -68,4 +68,4 @@ ENV SPRING_PROFILES_ACTIVE=prod
 ENTRYPOINT ["sh", "-c", "exec java $JAVA_OPTS -jar app.jar"]
 
 # No HEALTHCHECK: Kubernetes ignores it and uses the three probes in
-# k8s/base/deployment.yaml. compose.yaml defines one for the local case.
+# deploy/k8s/base/deployment.yaml. compose.yaml defines one for the local case.

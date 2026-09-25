@@ -674,9 +674,9 @@ a zone bug ships green.
 
 ### The example Secret lacked the passwords
 
-`k8s/secret.example.yaml` did not carry the two API passwords. Anyone following
-the example deployed a pod with neither set, which is the first bug in this
-section. Both keys are in the example now, with the
+`deploy/k8s/secret.example.yaml` did not carry the two API passwords. Anyone
+following the example deployed a pod with neither set, which is the first bug in
+this section. Both keys are in the example now, with the
 `htpasswd -bnBC 10 "" 'pw' | tr -d ':\n'` recipe and a note that leaving them
 out fails startup. No test covers the example file.
 

@@ -64,7 +64,8 @@ spring:
       # multipart Content-Type before routing, and a missing boundary is a 500.
       enabled: false
 
-  # Boot's default, pinned because k8s/base/deployment.yaml depends on it:
+  # Boot's default, pinned because deploy/k8s/base/deployment.yaml depends on
+  # it:
   #   5s preStop + 30s drain = 35s < terminationGracePeriodSeconds: 45.
   lifecycle:
     timeout-per-shutdown-phase: 30s
@@ -235,8 +236,9 @@ logging:
     org.hibernate.SQL: ${SQL_LOG_LEVEL:DEBUG}
 
 ---
-# prod: everything from the environment, through k8s/base/configmap.yaml, the
-# overlays under k8s/overlays/ and the Secret.
+# prod: everything from the environment, through
+# deploy/k8s/base/configmap.yaml, the overlays under deploy/k8s/overlays/ and
+# the Secret.
 spring:
   config:
     activate:

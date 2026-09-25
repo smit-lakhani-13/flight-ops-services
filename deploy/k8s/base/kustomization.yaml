@@ -1,6 +1,6 @@
 # The cluster-agnostic half: no registry, account id, queue URL or database
 # host, so it applies to any cluster. Render it with
-#   kubectl kustomize k8s/base
+#   kubectl kustomize deploy/k8s/base
 #
 # Not here: namespace.yaml, because a Namespace is cluster-scoped and CI's
 # access entry is namespace-scoped, so every CI deploy would fail on a forbidden

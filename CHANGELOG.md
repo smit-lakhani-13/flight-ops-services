@@ -257,6 +257,12 @@ still blank.
   root are README, CHANGELOG, CONTRIBUTING and SECURITY, which readers and
   GitHub expect to find there.
 
+- **The kustomize tree moved under `deploy/`.** `k8s/` is now `deploy/k8s/`,
+  beside `deploy/aws/`, and every script, workflow step, comment and document
+  that named it follows, except the released sections of this changelog. The
+  `.gitignore` rule for the real Secret is now `**/secret.yaml`, which matches
+  that file name in any folder, so it cannot go stale when a folder moves again.
+
 ### Removed
 
 - **Queries only tests called.** `FlightRepository` loses the two-argument
@@ -498,7 +504,7 @@ The other fixes are to documentation only, and change no behaviour.
   ran there. It has never run in AWS. The sentence now names the `prod`
   profile, which selects it by default.
 
-- **What automount turns off.** `k8s/base/serviceaccount.yaml` said that
+- **What automount turns off.** `deploy/k8s/base/serviceaccount.yaml` said that
   setting `automountServiceAccountToken` to false removes the token volume IRSA
   reads, and the 1.1.0 Security notes gave that as the reason to leave it on.
   Setting it to false removes only the Kubernetes API token; the EKS pod
@@ -539,12 +545,12 @@ The other fixes are to documentation only, and change no behaviour.
   locks and `lock_timeout`.
 
 - **Container hardening overstated.** `SECURITY.md`, `DEPLOYMENT.md` and the
-  comments in the `Dockerfile` and `k8s/base/deployment.yaml` said the kubelet
-  checks `runAsNonRoot` against the image's user, so `USER spring` would fail
-  the pod. The pod sets `runAsUser: 1001`, which the kubelet checks instead;
-  the image's user counts only when `runAsUser` is unset. The manifest and
-  `DEPLOYMENT.md` also said code in the container could not drop a binary. It
-  can write one to the `/tmp` `emptyDir` and run it.
+  comments in the `Dockerfile` and `deploy/k8s/base/deployment.yaml` said the
+  kubelet checks `runAsNonRoot` against the image's user, so `USER spring` would
+  fail the pod. The pod sets `runAsUser: 1001`, which the kubelet checks
+  instead; the image's user counts only when `runAsUser` is unset. The manifest
+  and `DEPLOYMENT.md` also said code in the container could not drop a binary.
+  It can write one to the `/tmp` `emptyDir` and run it.
 
 - **Records that disagreed with the code.** The README said a test scrapes
   every meter through a real `PrometheusMeterRegistry`; it scrapes only the

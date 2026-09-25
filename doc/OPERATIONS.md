@@ -74,8 +74,8 @@ profile fails closed. With no `DB_URL`, a bare `docker run` stops with
 `main`, in the `image` job's step "The image will not start without
 a database". The deploy job runs the same step before it pushes an image. That
 job is gated off, so its copy has never run. `compose.yaml` selects `postgres`,
-and `k8s/base/configmap.yaml` sets `prod` for the cluster. The Deployment pulls
-the whole ConfigMap in with `envFrom`.
+and `deploy/k8s/base/configmap.yaml` sets `prod` for the cluster. The Deployment
+pulls the whole ConfigMap in with `envFrom`.
 
 ## Health
 
@@ -347,10 +347,10 @@ unprefixed bcrypt string raises `IllegalArgumentException` on the first login.
 ### Every login gets 401, and the log warns `Encoded password does not look like BCrypt`
 
 The value has the `{bcrypt}` prefix, but what follows is not a bcrypt hash.
-The usual cause is `{bcrypt}REPLACE_ME`, copied from `k8s/secret.example.yaml`
-without the real hash. Both startup checks pass it. `BCryptPasswordEncoder`
-logs a WARN and returns false in place of throwing, so the pod goes Ready and
-every login as that user gets a 401.
+The usual cause is `{bcrypt}REPLACE_ME`, copied from
+`deploy/k8s/secret.example.yaml` without the real hash. Both startup checks pass
+it. `BCryptPasswordEncoder` logs a WARN and returns false in place of throwing,
+so the pod goes Ready and every login as that user gets a 401.
 
 The WARN comes from `o.s.s.c.bcrypt.BCryptPasswordEncoder`. The self-check
 logs it once at startup for each such value, and every login logs it again. A WARN at startup therefore

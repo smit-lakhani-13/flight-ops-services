@@ -9,11 +9,12 @@
 #
 # Two manifests are left out, and up.sh applies both with `kubectl apply -f`:
 #
-#   k8s/namespace.yaml                     cluster-scoped, and CI's access entry
-#                                          is namespace-scoped, so CI may not
-#                                          apply it even once
-#   k8s/components/ingress/ingress.yaml    opt-in, and it bills an ALB from the
-#                                          moment it exists
+#   deploy/k8s/namespace.yaml          cluster-scoped, and CI's access entry is
+#                                      namespace-scoped, so CI may not apply it
+#                                      even once
+#   deploy/k8s/components/ingress/ingress.yaml
+#                                      opt-in, and it bills an ALB from the
+#                                      moment it exists
 #
 # Neither is in the overlay, so neither can arrive by accident on a push.
 #
@@ -50,7 +51,7 @@ fi
 # flag) with an empty string, and say nothing.
 # shellcheck disable=SC2016  # envsubst needs the literal names, so the shell
 # must not expand them first; expanded, the list would arrive empty.
-rendered=$(kubectl kustomize "$repo/k8s/overlays/aws" \
+rendered=$(kubectl kustomize "$repo/deploy/k8s/overlays/aws" \
     | envsubst '${AWS_ACCOUNT_ID} ${IMAGE_TAG} ${SQS_QUEUE_URL} ${DB_URL}')
 
 # A placeholder that survives means something was renamed in the overlay and

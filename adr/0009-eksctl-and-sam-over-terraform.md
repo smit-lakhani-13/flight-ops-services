@@ -30,7 +30,7 @@ shell script orchestrates them.
 | Cluster, VPC, node group, IRSA | eksctl | `deploy/aws/cluster.yaml` |
 | Queue, DLQ, table, Lambda | AWS SAM | `lambda/template.yaml` |
 | Database | CloudFormation | `deploy/aws/data.yaml` |
-| Kubernetes manifests | kustomize | `k8s/base`, `k8s/overlays/aws` |
+| Kubernetes manifests | kustomize | `deploy/k8s/base`, `deploy/k8s/overlays/aws` |
 | Order, idempotency, secrets, teardown | bash | `deploy/aws/up.sh`, `down.sh` |
 
 I do not use Terraform. I use Helm only to install the AWS Load Balancer

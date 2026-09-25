@@ -403,10 +403,10 @@ if [ "$KEEP_FOUNDATION" = 0 ]; then
 fi
 # The catch-all: anything tagged Project=flight-ops that no check above names.
 # The controller tags the ALB too, from the annotation in
-# k8s/components/ingress/ingress.yaml, so a surviving ALB shows here as well as
-# under "load balancers (v2)". A resource that is neither tagged nor named after
-# this project is invisible to both. The Cost Explorer check the next day is
-# the defence against that.
+# deploy/k8s/components/ingress/ingress.yaml, so a surviving ALB shows here as
+# well as under "load balancers (v2)". A resource that is neither tagged nor
+# named after this project is invisible to both. The Cost Explorer check the
+# next day is the defence against that.
 tagged=$(q resourcegroupstaggingapi get-resources \
     --tag-filters Key=Project,Values=flight-ops \
     --query 'ResourceTagMappingList[].ResourceARN' --output text)

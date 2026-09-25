@@ -6,9 +6,9 @@ A broken link looks broken when clicked. A sentence citing
 after the class is renamed, so these citations are checked here.
 
 A citation is an inline code span that looks like a path this repository could
-contain: only path characters, ending in a known source extension or naming
-one of BARE_FILES. `SELECT ... FOR UPDATE`, `kubectl set image` and a
-directory such as `k8s/overlays/aws/` are ignored; `k8s/base/hpa.yaml` and
+contain: only path characters, ending in a known source extension or naming one
+of BARE_FILES. `SELECT ... FOR UPDATE`, `kubectl set image` and a directory such
+as `deploy/k8s/overlays/aws/` are ignored; `deploy/k8s/base/hpa.yaml` and
 `src/main/java/com/smit/flightops/entity/Flight.java` are checked.
 
 In the `path#symbol` form the symbol must also appear in that file, so an ADR
@@ -39,9 +39,6 @@ BARE_FILES = ('Dockerfile', 'mvnw', 'LICENSE')
 # with its reason. Every entry is a file someone creates or will create; keep
 # the list short.
 EXPECTED_ABSENT = {
-    # Written by the reader from k8s/secret.example.yaml. The real one holds
-    # the passwords.
-    'k8s/secret.yaml': 'created by the reader, never committed',
     # The shape a breaking change would take; none has been made.
     'booking-created-v2.json': 'hypothetical, in the contract-change procedure',
     'contracts/booking-created-v2.json': 'hypothetical, in the contract-change procedure',

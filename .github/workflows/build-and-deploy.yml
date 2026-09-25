@@ -277,8 +277,8 @@ jobs:
         run: |
           kubeconform -strict -summary \
             -kubernetes-version "$KUBERNETES_VERSION" \
-            k8s/namespace.yaml \
-            k8s/components/ingress/ingress.yaml
+            deploy/k8s/namespace.yaml \
+            deploy/k8s/components/ingress/ingress.yaml
 
       # cfn-lint 1.x applies the AWS::Serverless transform itself, so one call
       # covers the SAM template and both stacks. `sam validate` below checks
@@ -712,9 +712,9 @@ jobs:
       # repository is the source of truth for all six resources: the ConfigMap,
       # the resource requests and the probe timings, not only the image.
       #
-      # k8s/base/deployment.yaml declares no `replicas`. With the field absent,
-      # `apply` leaves the live count alone and the HPA keeps ownership, instead
-      # of being reset on every push to main.
+      # deploy/k8s/base/deployment.yaml declares no `replicas`. With the field
+      # absent, `apply` leaves the live count alone and the HPA keeps ownership,
+      # instead of being reset on every push to main.
       #
       # render-aws.sh is the one render path: infra-lint validates its output
       # and this step applies it. It leaves out the Namespace (cluster-scoped,
@@ -745,7 +745,8 @@ jobs:
       # start, Flyway, the readiness probe's initialDelaySeconds) takes about
       # 90s on a cold node. The HPA's ceiling is 4 replicas, so the slowest
       # legitimate rollout is 4 x 90s = 6 minutes, and 12 leaves room for a
-      # slow pull. Raise this if maxReplicas in k8s/base/hpa.yaml is raised.
+      # slow pull. Raise this if maxReplicas in deploy/k8s/base/hpa.yaml is
+      # raised.
       - name: Wait for the rollout
         run: |
           kubectl rollout status "deployment/$DEPLOYMENT" \

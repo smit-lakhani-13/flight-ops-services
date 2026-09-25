@@ -51,16 +51,16 @@ printf 'test classes (lambda)  %s\n' \
 # Manifests only: kustomization.yaml files are assembly instructions, not
 # resources, and secret.example.yaml is a template that is never applied.
 k8s_manifests() {
-  git ls-files 'k8s/**/*.yaml' 'k8s/*.yaml' \
+  git ls-files 'deploy/k8s/**/*.yaml' 'deploy/k8s/*.yaml' \
     | grep -v 'kustomization.yaml' \
     | grep -v 'secret.example.yaml' \
     | grep -c "$1"
 }
-printf 'k8s base manifests     %s\n'   "$(k8s_manifests '^k8s/base/')"
-printf 'k8s overlay patches    %s\n'   "$(k8s_manifests '^k8s/overlays/')"
-printf 'k8s ingress component  %s\n'   "$(k8s_manifests '^k8s/components/')"
-printf 'k8s cluster-scoped     %s (namespace.yaml)\n' "$(k8s_manifests '^k8s/[^/]*\.yaml$')"
-printf 'kustomizations         %s\n'   "$(git ls-files 'k8s/**/kustomization.yaml' | wc -l | tr -d ' ')"
+printf 'k8s base manifests     %s\n'   "$(k8s_manifests '^deploy/k8s/base/')"
+printf 'k8s overlay patches    %s\n'   "$(k8s_manifests '^deploy/k8s/overlays/')"
+printf 'k8s ingress component  %s\n'   "$(k8s_manifests '^deploy/k8s/components/')"
+printf 'k8s cluster-scoped     %s (namespace.yaml)\n' "$(k8s_manifests '^deploy/k8s/[^/]*\.yaml$')"
+printf 'kustomizations         %s\n'   "$(git ls-files 'deploy/k8s/**/kustomization.yaml' | wc -l | tr -d ' ')"
 # cluster.yaml is an eksctl config, not a CloudFormation template.
 printf 'CloudFormation/deploy  %s templates, %s scripts\n' \
   "$(git ls-files 'deploy/aws/*.yaml' ':!deploy/aws/cluster.yaml' | wc -l | tr -d ' ')" \
