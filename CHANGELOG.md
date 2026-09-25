@@ -457,6 +457,17 @@ The other fixes are to documentation only, and change no behaviour.
   `FlightServiceTest#searchChoosesTheRightQuery` now runs the destination-only
   search, and other test names and comments now match their assertions.
 
+- **Replays were said to repeat the first response.** The OpenAPI description
+  of `POST /api/v1/bookings` called a replay's body byte-for-byte the original,
+  and ADR 0004 and the ARCHITECTURE.md sequence diagram said a replay returns
+  the original response. It returns the booking the key created as it is now,
+  so after a cancellation it carries `cancelledAt`
+  (`ErrorContractTest#replayAfterCancellationDoesNotRebook`). ADR 0004 also
+  counted four fingerprinted fields, where the hash covers three. Comments in
+  `BookingService` and `GlobalExceptionHandler` said the loser of a race on one
+  key always got 201. It gets 409 `IDEMPOTENCY_KEY_REUSED` when the two
+  requests differ.
+
 ### Security
 
 - **Log lines from rejected input.** `GlobalExceptionHandler.printable`

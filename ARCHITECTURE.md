@@ -114,7 +114,7 @@ sequenceDiagram
     Svc->>DB: findByIdempotencyKey(key)
     alt key already committed
         Svc->>Svc: fingerprint matches?
-        Svc-->>Ctl: replay the original 201, or 409
+        Svc-->>Ctl: 201 with the booking the key created, as it is now, or 409
     else key unseen
         Svc->>W: insertNewBooking(request)
         W->>DB: SELECT ... FOR UPDATE on the flight row
@@ -157,7 +157,12 @@ The path depends on details in that table that are easy to miss:
   recovery read without `REQUIRES_NEW` would join the loser's transaction.
   After a constraint violation, PostgreSQL has already marked that transaction
   aborted. That is how the race loser used to get a 409. `REQUIRES_NEW` keeps
-  the read out of that transaction.
+  the read out of that transaction, but a loser that should get `201` would
+  still fail. The exception leaving `insertNewBooking` would mark the shared
+  transaction rollback-only, and its commit at the end of `book` would throw
+  `UnexpectedRollbackException`, which would reach the client as a 500. A
+  loser whose request differs from the winner's would still get
+  `409 IDEMPOTENCY_KEY_REUSED`.
 
 - **No winner to recover.** If `recoverReplay` finds no booking holding the
   key, the insert failed for some other reason. `book` then rethrows the
@@ -167,7 +172,7 @@ The path depends on details in that table that are easy to miss:
   `src/main/java/com/smit/flightops/exception/GlobalExceptionHandler.java#handleDataIntegrity`,
   where it used to get a 500.
   `src/test/java/com/smit/flightops/service/BookingServiceTest.java#aViolationWithNoWinnerIsRethrown`
-  pins it.
+  pins the rethrow and the suppressed exception.
 
 - **`OutboxWriter#recordBookingCreated` is `MANDATORY`.** Called outside a
   transaction, it would still appear to work. Spring Data would open a

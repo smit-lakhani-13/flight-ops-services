@@ -107,7 +107,8 @@ public class GlobalExceptionHandler {
      * A unique constraint fired: in practice {@code FlightService#create} losing
      * the {@code uk_flights_flight_number} race. A booking that races on its
      * idempotency key never gets here, because {@code BookingService#book}
-     * recovers the winner's booking and answers 201.
+     * recovers the winner's booking and answers 201, or 409
+     * {@code IDEMPOTENCY_KEY_REUSED} when the two requests differ.
      */
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<ErrorResponse> handleDataIntegrity(DataIntegrityViolationException e) {
