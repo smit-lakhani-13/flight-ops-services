@@ -26,7 +26,8 @@ import java.util.Map;
  * republishes on the next tick, and the Lambda's conditional write absorbs the
  * duplicate. A row stops being claimed after {@code max-attempts} failures,
  * because the {@code ORDER BY id} claim would otherwise retry a poison row first
- * on every tick. {@code SKIP LOCKED} lets every replica run this safely.
+ * each time its backoff ends, forever. {@code SKIP LOCKED} lets every replica run
+ * this safely.
  *
  * @see OutboxEventRepository#claimUnpublished
  */
@@ -64,11 +65,11 @@ public class OutboxPublisher {
     /**
      * One drain.
      *
-     * <p>{@code fixedDelay}, so a slow drain delays the next poll instead of queueing
-     * scheduler runs behind it. {@code @Scheduled} and {@code @Transactional} work
-     * together only while this method is public and non-final: the scheduler calls
-     * the proxy. Otherwise the transaction is lost and {@code SKIP LOCKED} protects
-     * nothing, with no error from the compiler or at runtime.
+     * <p>{@code fixedDelay}, so the next poll starts only after a slow drain has
+     * finished. {@code @Scheduled} and {@code @Transactional} work together because
+     * the scheduler calls the proxy. A private method stops startup. A final one is
+     * not overridden, so it runs against the proxy's uninitialised fields and throws
+     * {@code NullPointerException} on every tick.
      *
      * <p>The send runs inside the transaction. The locks held are outbox rows, not
      * the flight row, and holding them is what stops a second replica sending the

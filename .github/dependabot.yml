@@ -17,6 +17,8 @@
 #      - JUnit: lambda/pom.xml copies the version Boot's BOM gives the service
 #        module. It is the one rule covering minors and patches too; the comment
 #        above it has the reason
+#      - Maven: the build stage's image, where a major (Maven 4) is its own
+#        upgrade
 #    Every other dependency, and the minors and patches of the other three,
 #    still flow automatically.
 version: 2
@@ -69,7 +71,7 @@ updates:
       # copy it into lambda/pom.xml, then run both builds.
       #
       # The cost: a junit-bom advisory opens no PR on this module either. JUnit
-      # is test scope and never ships in the Lambda artifact, and the service
+      # is test scope and never ships in the Lambda artefact, and the service
       # module still gets Boot's advisories.
       - dependency-name: "org.junit:junit-bom"
         update-types:

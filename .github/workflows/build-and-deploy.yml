@@ -33,9 +33,10 @@ on:
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   # Cancel superseded pull request runs: after a force-push, the run in flight
-  # tests a commit no one will merge. Never cancel a run on main. It can be
-  # inside `kubectl rollout status`, and the next push would deploy on top of a
-  # rollout that never settled.
+  # tests a commit no one will merge. Never cancel a run in progress on main. It
+  # can be inside `kubectl rollout status`, and the next push would deploy on
+  # top of a rollout that never settled. A pending run on main is still replaced
+  # by a newer one: by default GitHub keeps one pending run per group.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -81,10 +82,10 @@ jobs:
           # Caches ~/.m2, keyed on the pom hash.
           cache: maven
 
-      # `verify`, not `test`: it also runs the enforcer, jacoco:check against
-      # the coverage floor and the CycloneDX SBOM, so a JAR that cannot be
-      # assembled or slipping coverage fails here, and the deploy job, which
-      # needs this one, stops before its `docker build`.
+      # `verify`, not `test`: it also runs jacoco:check against the coverage
+      # floor and the CycloneDX SBOM, so a JAR that cannot be assembled or
+      # slipping coverage fails here, and the deploy job, which needs this one,
+      # stops before its `docker build`.
       # `./mvnw`, not the runner's Maven: the wrapper pins the version and its
       # SHA-256.
       - name: Build and test

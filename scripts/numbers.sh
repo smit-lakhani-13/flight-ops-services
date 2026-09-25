@@ -21,7 +21,7 @@ printf 'src/main/java          %s files, %s lines\n' \
   "$main_files" "$(printf "%'d" "$main_lines")"
 printf 'dto/ records           %s\n' \
   "$(git ls-files 'src/main/java/**/dto/*.java' | wc -l | tr -d ' ')"
-printf 'exception/ classes     %s (one of them GlobalExceptionHandler)\n' \
+printf 'exception/ classes     %s (GlobalExceptionHandler and ApiErrorController among them)\n' \
   "$(git ls-files 'src/main/java/**/exception/*.java' | wc -l | tr -d ' ')"
 printf 'Flyway migrations      %s (%s)\n' \
   "$(git ls-files 'src/main/resources/db/migration/*.sql' | wc -l | tr -d ' ')" \

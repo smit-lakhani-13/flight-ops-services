@@ -1,5 +1,6 @@
-# Keeps the build context small and secrets out of the image. Every file in
-# the context is sent to the daemon and could be picked up by a careless COPY.
+# Keeps the build context small and secrets out of the image. BuildKit loads
+# only the paths the Dockerfile copies, but a careless COPY could pick up any
+# file left in the context.
 
 # Build output. Stage 1 builds its own jar, and nothing COPYs a host-built one.
 target/
@@ -20,9 +21,11 @@ mvnw.cmd
 .vscode/
 .DS_Store
 
-# Docs and infrastructure: not needed to run the app
-*.md
+# Docs and infrastructure: not needed to run the app. `**/*.md`, because a
+# bare `*.md` matches only the root of the context.
+**/*.md
 k8s/
+deploy/
 cluster.yaml
 template.yaml
 .github/

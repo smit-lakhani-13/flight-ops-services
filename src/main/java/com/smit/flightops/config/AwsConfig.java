@@ -12,8 +12,9 @@ import software.amazon.awssdk.services.sqs.SqsClient;
 import java.time.Duration;
 
 /**
- * The SQS client, created only when the SQS publisher is selected, because building one
- * resolves a region and credentials eagerly and would stop a laptop with no AWS setup.
+ * The SQS client, created only when the SQS publisher is selected, so a run in
+ * {@code log} mode builds no AWS client. Building one needs no AWS setup: the region is
+ * passed in, and the credentials are looked up on the first send.
  * {@link DefaultCredentialsProvider} picks up a local profile in development and the
  * IRSA token on EKS, so there are no static keys.
  *

@@ -38,8 +38,9 @@ spec:
       #      also claim the ServiceAccount);
       #   3. the ServiceAccount: k8s/base/serviceaccount.yaml, with the role-arn
       #      annotation from k8s/overlays/aws/serviceaccount-irsa.yaml.
-      # A name that disagrees with serviceaccount.yaml leaves the pods Pending
-      # with `error looking up service account flight-ops/flight-ops-sa`.
+      # A name that disagrees with serviceaccount.yaml creates no pods:
+      # admission refuses each one, and the ReplicaSet's FailedCreate events
+      # include `error looking up service account flight-ops/flight-ops-sa`.
       serviceAccountName: flight-ops-sa
 
       securityContext:

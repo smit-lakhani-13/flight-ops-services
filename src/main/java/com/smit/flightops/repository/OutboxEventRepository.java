@@ -15,8 +15,11 @@ public interface OutboxEventRepository extends JpaRepository<OutboxEvent, Long> 
      * Claims a batch of unpublished events for this replica alone.
      *
      * <p>Native, for {@code SKIP LOCKED}: with plain {@code FOR UPDATE} a second
-     * replica blocks on the claimed rows and publishes them again once the first
-     * commits. With it, replicas drain disjoint batches without a leader or a
+     * replica waits on the claimed rows until the first commits, then drops the
+     * ones the first published, because PostgreSQL re-checks the {@code WHERE}
+     * clause against the committed rows. A wait past the 3s {@code lock_timeout}
+     * fails the drain instead. Either way the replicas take turns rather than share
+     * the work. With it, replicas drain disjoint batches without a leader or a
      * distributed lock. {@code LIMIT} bounds how many locks one replica holds while
      * it sends.
      *
@@ -24,7 +27,7 @@ public interface OutboxEventRepository extends JpaRepository<OutboxEvent, Long> 
      * NULL, every row that never failed, means claimable now. {@code ORDER BY id} is
      * roughly insertion order, not a total order across replicas. It is also why
      * {@code attempts < :maxAttempts} matters: a poison row would otherwise head
-     * every batch.
+     * a batch each time its backoff ends, forever.
      */
     @Query(value = """
             SELECT * FROM outbox_events

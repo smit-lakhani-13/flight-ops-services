@@ -6,10 +6,10 @@ A broken link looks broken when clicked. A sentence citing
 after the class is renamed, so these citations are checked here.
 
 A citation is an inline code span that looks like a path this repository could
-contain: only path characters, with a directory separator or a known source
-extension. `SELECT ... FOR UPDATE` and `kubectl set image` are ignored;
-`k8s/hpa.yaml` and `src/main/java/com/smit/flightops/entity/Flight.java` are
-checked.
+contain: only path characters, ending in a known source extension or naming
+one of BARE_FILES. `SELECT ... FOR UPDATE`, `kubectl set image` and a
+directory such as `k8s/overlays/aws/` are ignored; `k8s/base/hpa.yaml` and
+`src/main/java/com/smit/flightops/entity/Flight.java` are checked.
 
 In the `path#symbol` form the symbol must also appear in that file, so an ADR
 cannot cite a method the same commit renamed.
@@ -67,9 +67,9 @@ def looks_like_a_path(span):
         return True
     if not path.endswith(EXTENSIONS):
         return False
-    # A bare filename is a claim about this repository only if a file by that
-    # name exists here; main() decides. Otherwise it is prose, such as
-    # "application.yml" in a sentence about Spring in general.
+    # A bare filename is a claim about this repository: main() accepts it when
+    # a tracked file has that name and reports it otherwise, so a generic name
+    # in prose, such as `bootstrap.yml`, fails the check.
     return True
 
 

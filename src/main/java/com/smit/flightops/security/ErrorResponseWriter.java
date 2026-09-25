@@ -35,7 +35,9 @@ public class ErrorResponseWriter {
      * @param code a stable machine-readable code from the README's error-code table:
      *        {@code UNAUTHENTICATED} from the entry point, {@code FORBIDDEN} from the
      *        access-denied handler
-     * @throws IOException if the client has already disconnected
+     * @throws IOException if the servlet output stream cannot be obtained. A write to
+     *         a client that has disconnected can fail with Jackson 3's unchecked
+     *         {@code JacksonIOException} instead
      */
     public void write(HttpServletResponse response, HttpStatus status, String code, String message)
             throws IOException {
