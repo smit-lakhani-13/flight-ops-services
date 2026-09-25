@@ -41,8 +41,8 @@ flowchart LR
 
 | What | State |
 |---|---|
-| The service | Built and tested: 278 tests, 9 of them on PostgreSQL 17 through Testcontainers, which run in CI and skip on a machine without Docker. Every endpoint exercised over HTTP against a running instance; `scripts/demo.sh` replays the tour. |
-| The SQS publisher and the Lambda | Compiled and unit-tested against mocked AWS SDK clients (the Lambda module has 25 tests). Never connected to SQS or DynamoDB, real or emulated. |
+| The service | Built and tested: 279 tests, 9 of them on PostgreSQL 17 and 1 on ElasticMQ through Testcontainers, which run in CI and skip on a machine without Docker. Every endpoint exercised over HTTP against a running instance; `scripts/demo.sh` replays the tour. |
+| The SQS publisher and the Lambda | Unit-tested against mocked AWS SDK clients, and run in CI against emulators in containers: the publisher sends to ElasticMQ, where the test reads the message back, and the handler writes to DynamoDB Local on a table keyed as `lambda/template.yaml` keys it (the Lambda module has 28 tests, 3 of them on DynamoDB Local). Never connected to SQS or DynamoDB in AWS. |
 | The container image | Built from the `Dockerfile`, started without a database and scanned by Trivy in CI on every push or pull request to `main`. Never pushed to a registry. The job logs the image size on every run, about 300 MB. |
 | Written and linted, never run against AWS or a cluster | `deploy/k8s/` (kustomize), `lambda/template.yaml` (SAM), the scripts in `deploy/aws/` (CI renders the manifests with `render-aws.sh` and tests the teardown and `up.sh`'s checks against stubbed tools), and the deploy job, which is gated by a `DEPLOY_ENABLED` variable that has never been set. |
 | Not implemented | A JMS publisher, trace export to a collector, rate limiting. |
@@ -67,7 +67,7 @@ Every job below runs on every push or pull request to `main`, except `dependency
 
 | Job | What fails it |
 |---|---|
-| `build` | A failing test in either module, including the PostgreSQL tests, which must run and not skip; line coverage under 80% or branch coverage under 50% (floors set well below the measured figures, to catch a collapse: [ADR 0014](adr/0014-quality-gates.md)); an ArchUnit rule; the enforcer (JDK 21, Maven 3.9, no dependency resolved below what another needs) |
+| `build` | A failing test in either module, including the PostgreSQL and emulator tests, which must run and not skip; line coverage under 80% or branch coverage under 50% (floors set well below the measured figures, to catch a collapse: [ADR 0014](adr/0014-quality-gates.md)); an ArchUnit rule; the enforcer (JDK 21, Maven 3.9, no dependency resolved below what another needs) |
 | `infra-lint` | The kustomize render against the Kubernetes schemas, `cfn-lint`, `sam validate`, `shellcheck`, and a self-test of the deploy scripts against stubbed tools |
 | `trivy-fs` | A CRITICAL or HIGH vulnerability with a fix available, or a committed secret that Trivy rates CRITICAL or HIGH |
 | `image` | The image does not build, does not refuse to start without a database, or has a CRITICAL vulnerability with a fix available |

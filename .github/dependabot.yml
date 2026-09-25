@@ -7,16 +7,16 @@
 #    so the four entries could open twenty pull requests on the first run.
 #    Groups and explicit limits keep a monthly run to a handful.
 #
-# 2. The ignore rules name four artifacts, because an ignore condition also
+# 2. The ignore rules name five artifacts, because an ignore condition also
 #    stops Dependabot's security updates for that dependency. Each one is a
 #    major bump that would reverse a documented decision, so a person makes it:
 #      - the JDK: pom.xml sets <java.version>21</java.version>, and a major base
 #        image bump moves the runtime away from it
 #      - Spring Boot: a major moves packages and splits or renames starters, so
 #        it is never a drop-in
-#      - JUnit: lambda/pom.xml copies the version Boot's BOM gives the service
-#        module. It is the one rule covering minors and patches too; the comment
-#        above it has the reason
+#      - JUnit and Testcontainers: lambda/pom.xml copies the versions Boot's
+#        BOM gives the service module. These two rules cover minors and
+#        patches too; the comment above the junit-bom rule has the reason
 #      - Maven: the build stage's image, where a major (Maven 4) is its own
 #        upgrade
 #    Every other dependency, and the minors and patches of the other three,
@@ -74,6 +74,14 @@ updates:
       # is test scope and never ships in the Lambda artefact, and the service
       # module still gets Boot's advisories.
       - dependency-name: "org.junit:junit-bom"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
+      # Every update type, for the same reason: <testcontainers.version> in
+      # lambda/pom.xml copies what Boot's BOM manages for the service module
+      # (2.0.5 on both sides today), so only a Boot bump moves it.
+      - dependency-name: "org.testcontainers:*"
         update-types:
           - "version-update:semver-major"
           - "version-update:semver-minor"

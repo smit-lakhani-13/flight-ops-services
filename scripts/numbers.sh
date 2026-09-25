@@ -79,15 +79,17 @@ count() {  # sums an attribute across every surefire XML under a directory
 app_run=$(count target/surefire-reports tests)
 app_skipped=$(count target/surefire-reports skipped)
 lambda_run=$(count lambda/target/surefire-reports tests)
+lambda_skipped=$(count lambda/target/surefire-reports skipped)
 
 if [ "$app_run" = 'n/a' ] || [ "$lambda_run" = 'n/a' ]; then
   echo 'no surefire reports -- run both builds first (see the header)'
 else
   printf 'app module             %s declared, %s skipped, %s executed\n' \
     "$app_run" "$app_skipped" "$((app_run - app_skipped))"
-  printf 'lambda module          %s\n' "$lambda_run"
-  printf 'both modules           %s declared, %s run without Docker\n' \
-    "$((app_run + lambda_run))" "$((app_run - app_skipped + lambda_run))"
+  printf 'lambda module          %s declared, %s skipped, %s executed\n' \
+    "$lambda_run" "$lambda_skipped" "$((lambda_run - lambda_skipped))"
+  printf 'both modules           %s declared, %s executed\n' \
+    "$((app_run + lambda_run))" "$((app_run - app_skipped + lambda_run - lambda_skipped))"
   rule 'Per class (the Tests table adds these up)'
   for dir in target/surefire-reports lambda/target/surefire-reports; do
     [ -d "$dir" ] || continue
