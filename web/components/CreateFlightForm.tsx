@@ -6,7 +6,7 @@ import type { ClassifiedError } from "@/lib/errors";
 import { useApi } from "@/lib/session";
 import type { CreateFlightRequest, Flight } from "@/lib/types";
 import { ErrorBanner } from "./ErrorBanner";
-import { Button, Field, pageFor, TextInput } from "./ui";
+import { Button, countFrom, Field, pageFor, TextInput } from "./ui";
 
 const FIELDS = ["flightNumber", "origin", "destination", "totalSeats", "departureTime"] as const;
 
@@ -31,38 +31,47 @@ export function CreateFlightForm() {
     event.preventDefault();
     setBusy(true);
     setError(null);
-    const departure = new Date(form.departure);
-    const body: CreateFlightRequest = {
-      flightNumber: form.flightNumber,
-      origin: form.origin,
-      destination: form.destination,
-      totalSeats: Number.parseInt(form.totalSeats, 10),
-      departureTime: Number.isNaN(departure.getTime()) ? form.departure : departure.toISOString(),
-    };
-    const result = await api.post<Flight>("v1/flights", body);
-    setBusy(false);
-    if (!result.ok) {
-      setError(result.error);
-      return;
+    // The button stays busy while the router moves to the new flight's page.
+    let leaving = false;
+    try {
+      const departure = new Date(form.departure);
+      const body: CreateFlightRequest = {
+        flightNumber: form.flightNumber,
+        origin: form.origin,
+        destination: form.destination,
+        totalSeats: countFrom(form.totalSeats),
+        departureTime: Number.isNaN(departure.getTime()) ? form.departure : departure.toISOString(),
+      };
+      const result = await api.post<Flight>("v1/flights", body);
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      const next = pageFor(result.location);
+      if (next) {
+        leaving = true;
+        router.push(next);
+      }
+    } finally {
+      if (!leaving) setBusy(false);
     }
-    const next = pageFor(result.location);
-    if (next) router.push(next);
   }
 
   const fieldError = (name: string) => error?.fieldErrors[name];
   const set = (key: keyof typeof form) => (value: string) => setForm((current) => ({ ...current, [key]: value }));
 
   return (
-    <form onSubmit={submit} noValidate aria-label="Create flight" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+    <form onSubmit={submit} noValidate aria-label="Create flight" className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
       <Field label="Flight number" error={fieldError("flightNumber")} hint="Letters and digits; stored upper-case">
-        <TextInput name="flightNumber" value={form.flightNumber} onChange={(e) => set("flightNumber")(e.target.value)} invalid={!!fieldError("flightNumber")} />
+        <TextInput name="flightNumber" autoCapitalize="characters" value={form.flightNumber} onChange={(e) => set("flightNumber")(e.target.value)} invalid={!!fieldError("flightNumber")} />
       </Field>
       <Field label="Origin" error={fieldError("origin")} hint="Three letters">
-        <TextInput name="origin" value={form.origin} onChange={(e) => set("origin")(e.target.value)} invalid={!!fieldError("origin")} />
+        <TextInput name="origin" autoCapitalize="characters" value={form.origin} onChange={(e) => set("origin")(e.target.value)} invalid={!!fieldError("origin")} />
       </Field>
       <Field label="Destination" error={fieldError("destination")} hint="Three letters">
         <TextInput
           name="destination"
+          autoCapitalize="characters"
           value={form.destination}
           onChange={(e) => set("destination")(e.target.value)}
           invalid={!!fieldError("destination")}
@@ -86,11 +95,11 @@ export function CreateFlightForm() {
           invalid={!!fieldError("departureTime")}
         />
       </Field>
-      <div className="flex flex-col gap-3 sm:col-span-2 lg:col-span-5">
+      <div className="flex flex-col gap-3 sm:col-span-2 lg:col-span-3 xl:col-span-5">
         <ErrorBanner error={error} claimedFields={FIELDS} />
         <div>
-          <Button type="submit" disabled={busy}>
-            {busy ? "Creating…" : "Create flight"}
+          <Button type="submit" busy={busy}>
+            Create flight
           </Button>
         </div>
       </div>

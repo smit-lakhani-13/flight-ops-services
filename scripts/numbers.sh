@@ -113,7 +113,7 @@ if [ -d web/node_modules ]; then
   printf 'unit tests             %s declared\n' \
     "$(cd web && npx --no-install vitest list 2>/dev/null | grep -c ' > ')"
   printf 'end-to-end tests       %s declared\n' \
-    "$(cd web && npx --no-install playwright test --list 2>/dev/null \
+    "$(cd web && npx --no-install playwright test --list --project desktop-1280 2>/dev/null \
       | sed -n 's/^Total: \([0-9]*\) tests.*/\1/p')"
 else
   echo 'tests                  n/a -- run npm ci in web/ first'

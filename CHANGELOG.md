@@ -57,8 +57,10 @@ still blank.
   with the caller's credentials, which it neither logs nor keeps. The API is
   unchanged: no CORS policy and no cookie, so ADR 0006 holds, and a dated note
   there says so. [ADR 0017](adr/0017-web-console.md) records the design and
-  `web/README.md` maps each page to the calls it makes. Built and tested in
-  CI, never hosted.
+  `web/README.md` maps each page to the calls it makes. The pages are laid out
+  for phones, tablets and desktops, with touch-sized controls and 16 px field
+  text below 1280 px, and a Playwright spec checks every page at eleven
+  Chromium viewports. Built and tested in CI, never hosted.
 
 - **CI checks the console on every push or pull request to `main`.** A new
   `web` job lints, type-checks, unit-tests and builds it, then packages the

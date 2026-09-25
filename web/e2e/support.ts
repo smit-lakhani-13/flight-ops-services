@@ -87,3 +87,28 @@ export async function openFlight(page: Page, flightNumber: string): Promise<void
   await page.getByTestId("flight-table").getByRole("link", { name: flightNumber, exact: true }).click();
   await expect(page.getByRole("heading", { level: 1 })).toContainText(flightNumber);
 }
+
+/**
+ * Signs in through the sign-in form on the page already open, without a
+ * page.goto(), so a test can sign out and back in as another account and
+ * stay where it is.
+ */
+export async function signInHere(page: Page, account: Account = API_ACCOUNT): Promise<void> {
+  const form = page.getByRole("form", { name: "Sign in" });
+  await form.getByLabel("User").fill(account.user);
+  await form.getByLabel("Password").fill(account.password);
+  await form.getByRole("button", { name: "Sign in" }).click();
+  await expect(page.getByTestId("signed-in-as")).toContainText(account.user);
+}
+
+/** Books one seat on a flight through the console's own proxy and returns the booking's id. */
+export async function createBooking(request: APIRequestContext, flightNumber: string): Promise<number> {
+  counter += 1;
+  const response = await request.post("/api/v1/bookings", {
+    headers: { Authorization: basic(API_ACCOUNT) },
+    data: { flightNumber, passengerName: "Test Passenger", seats: 1, idempotencyKey: `e2e-${flightNumber}-${counter}` },
+  });
+  expect(response.status(), await response.text()).toBe(201);
+  const booking = (await response.json()) as { bookingId: number };
+  return booking.bookingId;
+}

@@ -1,23 +1,47 @@
 "use client";
 
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { useApi } from "@/lib/session";
 import type { Health } from "@/lib/types";
 import { useResource } from "@/lib/use-resource";
 import { ErrorBanner } from "./ErrorBanner";
-import { Card } from "./ui";
+import { Card, MUTED } from "./ui";
 
 function isHealth(value: unknown): value is Health {
   return typeof value === "object" && value !== null && typeof (value as { status?: unknown }).status === "string";
 }
 
-export function HealthCard({ title, path, anonymous, refreshKey = 0 }: { title: string; path: string; anonymous: boolean; refreshKey?: number }) {
+/** Wraps each read, so a page can tell when all its cards have answered. */
+export type Track = <T>(pending: Promise<T>) => Promise<T>;
+
+export function HealthCard({
+  title,
+  path,
+  anonymous,
+  refreshKey = 0,
+  track,
+}: {
+  title: string;
+  path: string;
+  anonymous: boolean;
+  refreshKey?: number;
+  track?: Track;
+}) {
   const api = useApi();
-  const load = useCallback(() => (anonymous ? api.anonymous<Health>(path) : api.get<Health>(path)), [api, anonymous, path]);
+  const load = useCallback(() => {
+    const pending = anonymous ? api.anonymous<Health>(path) : api.get<Health>(path);
+    return track ? track(pending) : pending;
+  }, [api, anonymous, path, track]);
   const { value: result, reload } = useResource(load);
 
+  // Reload when the key moves, not when the card mounts with a key already
+  // above zero: the first load has already started by then.
+  const seenKey = useRef(refreshKey);
   useEffect(() => {
-    if (refreshKey > 0) reload();
+    if (refreshKey !== seenKey.current) {
+      seenKey.current = refreshKey;
+      reload();
+    }
   }, [refreshKey, reload]);
 
   // A health endpoint answers 503, with the same body, while the status is DOWN.
@@ -27,27 +51,39 @@ export function HealthCard({ title, path, anonymous, refreshKey = 0 }: { title: 
   return (
     <Card title={title}>
       {result === null ? (
-        <p className="text-sm text-slate-500">Checking…</p>
+        <p className={`text-sm ${MUTED}`}>Checking…</p>
       ) : status ? (
-        <div className="flex flex-col gap-2" data-testid={`health-${path.replaceAll("/", "-")}${anonymous ? "" : "-signed-in"}`}>
-          <p className="flex items-center gap-2 text-sm">
-            <span aria-hidden className={`inline-block h-2.5 w-2.5 rounded-full ${status === "UP" ? "bg-emerald-500" : "bg-rose-500"}`} />
-            <span className="font-mono font-semibold" data-testid="health-status">
+        <div className="flex flex-col gap-3" data-testid={`health-${path.replaceAll("/", "-")}${anonymous ? "" : "-signed-in"}`}>
+          <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+            <span aria-hidden="true" className={`size-2.5 shrink-0 rounded-full ${status === "UP" ? "bg-emerald-500" : "bg-rose-500"}`} />
+            <span
+              className={`font-mono font-semibold ${status === "UP" ? "text-emerald-700 dark:text-emerald-400" : "text-rose-700 dark:text-rose-400"}`}
+              data-testid="health-status"
+            >
               {status}
             </span>
-            <code className="text-xs text-slate-500">GET /{path}</code>
+            <code className={`break-all ${MUTED}`}>GET /{path}</code>
           </p>
           {health?.components ? (
-            <ul className="grid gap-1 text-xs sm:grid-cols-2" data-testid="health-components">
+            <ul className="grid gap-1.5 text-xs sm:grid-cols-2" data-testid="health-components">
               {Object.entries(health.components).map(([name, component]) => (
-                <li key={name} className="flex justify-between rounded bg-slate-50 px-2 py-1 dark:bg-slate-950">
-                  <span className="font-mono">{name}</span>
-                  <span className="font-mono">{component.status}</span>
+                <li
+                  key={name}
+                  className="flex min-w-0 items-center justify-between gap-2 rounded-md bg-slate-50 px-2 py-1.5 dark:bg-slate-950"
+                >
+                  <span className="min-w-0 font-mono break-all">{name}</span>
+                  <span
+                    className={`font-mono font-semibold ${
+                      component.status === "UP" ? "text-emerald-700 dark:text-emerald-400" : "text-rose-700 dark:text-rose-400"
+                    }`}
+                  >
+                    {component.status}
+                  </span>
                 </li>
               ))}
             </ul>
           ) : (
-            <p className="text-xs text-slate-500">No components shown: only the ops account sees what is behind the status.</p>
+            <p className={`text-xs ${MUTED}`}>No components shown: only the ops account sees what is behind the status.</p>
           )}
         </div>
       ) : (

@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { CreateFlightForm } from "@/components/CreateFlightForm";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { FlightTable } from "@/components/FlightTable";
+import { CloseIcon, InboxIcon, PlusIcon, SearchIcon } from "@/components/icons";
 import { Pager } from "@/components/Pager";
 import { RequireSession } from "@/components/RequireSession";
-import { Button, Card, Field, PageTitle, Select, TextInput } from "@/components/ui";
+import { Button, Card, EmptyState, Field, PageTitle, Select, Skeleton, TextInput } from "@/components/ui";
 import { useApi } from "@/lib/session";
 import type { Flight, Page } from "@/lib/types";
 import { useResource } from "@/lib/use-resource";
@@ -45,6 +46,16 @@ function Flights() {
   const [draft, setDraft] = useState({ origin: "", destination: "" });
   const [filters, setFilters] = useState<Filters>({ origin: "", destination: "", sort: SORTS[0]!.value, page: 0 });
   const [creating, setCreating] = useState(false);
+  const createForm = useRef<HTMLDivElement>(null);
+  // Set when the empty list's button opens the form, which sits above the list.
+  const revealForm = useRef(false);
+
+  useEffect(() => {
+    if (creating && revealForm.current) {
+      revealForm.current = false;
+      createForm.current?.scrollIntoView({ block: "start" });
+    }
+  }, [creating]);
 
   const load = useCallback(
     () =>
@@ -69,24 +80,31 @@ function Flights() {
       <Card
         title="Search"
         actions={
-          <Button tone={creating ? "secondary" : "primary"} onClick={() => setCreating((open) => !open)} aria-expanded={creating}>
+          <Button
+            tone={creating ? "secondary" : "primary"}
+            icon={creating ? <CloseIcon /> : <PlusIcon />}
+            onClick={() => setCreating((open) => !open)}
+            aria-expanded={creating}
+            aria-controls="create-flight"
+          >
             {creating ? "Close the form" : "New flight"}
           </Button>
         }
       >
         {creating && (
-          <div className="mb-5 border-b border-slate-200 pb-5 dark:border-slate-800">
+          <div id="create-flight" ref={createForm} className="mb-5 scroll-mt-4 border-b border-slate-200 pb-5 dark:border-slate-800">
             <CreateFlightForm />
           </div>
         )}
-        <form onSubmit={search} aria-label="Search flights" className="grid items-end gap-3 sm:grid-cols-4">
+        <form onSubmit={search} aria-label="Search flights" className="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <Field label="Origin">
-            <TextInput name="origin" placeholder="EWR" value={draft.origin} onChange={(e) => setDraft({ ...draft, origin: e.target.value })} />
+            <TextInput name="origin" placeholder="EWR" autoCapitalize="characters" value={draft.origin} onChange={(e) => setDraft({ ...draft, origin: e.target.value })} />
           </Field>
           <Field label="Destination">
             <TextInput
               name="destination"
               placeholder="SFO"
+              autoCapitalize="characters"
               value={draft.destination}
               onChange={(e) => setDraft({ ...draft, destination: e.target.value })}
             />
@@ -100,8 +118,10 @@ function Flights() {
               ))}
             </Select>
           </Field>
-          <div className="flex gap-2">
-            <Button type="submit">Search</Button>
+          <div className="flex flex-wrap gap-2">
+            <Button type="submit" icon={<SearchIcon />}>
+              Search
+            </Button>
             <Button
               tone="ghost"
               onClick={() => {
@@ -117,12 +137,33 @@ function Flights() {
 
       <Card>
         {result === null ? (
-          <p className="text-sm text-slate-500">Loading…</p>
+          <Skeleton rows={5} label="Loading flights" />
         ) : result.ok && result.data ? (
-          <>
-            <FlightTable flights={result.data.content} />
-            <Pager page={result.data.page} onPage={(page) => setFilters({ ...filters, page })} />
-          </>
+          result.data.content.length === 0 ? (
+            <EmptyState
+              icon={<InboxIcon className="size-5" />}
+              action={
+                !creating && (
+                  <Button
+                    icon={<PlusIcon />}
+                    onClick={() => {
+                      revealForm.current = true;
+                      setCreating(true);
+                    }}
+                  >
+                    New flight
+                  </Button>
+                )
+              }
+            >
+              No flights match this search.
+            </EmptyState>
+          ) : (
+            <>
+              <FlightTable flights={result.data.content} />
+              <Pager page={result.data.page} onPage={(page) => setFilters({ ...filters, page })} />
+            </>
+          )
         ) : (
           <ErrorBanner error={result.error} />
         )}
