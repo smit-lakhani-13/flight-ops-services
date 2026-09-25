@@ -345,7 +345,12 @@ takes 20, and neither number decides the bill. Whether someone remembers the
 teardown does, which is why the 30-day row is here.
 
 `up.sh` creates two budgets: $60/month, alerting at 50/80/100% of actual
-spend and when the forecast passes 100%, and $12/day, alerting at 80%. They send e-mail, and an e-mail does not stop anything.
+spend and when the forecast passes 100%, and $8/day, alerting at 80%. That
+is $6.40, under the $7.72 the stack costs a day, so the daily alert comes on
+every full day the stack runs. AWS Budgets makes a forecast only once the
+account has about five weeks of cost history, so in a new account the
+forecast alert stays silent at first. The budgets send e-mail, and an e-mail
+does not stop anything.
 **Warning:** set a calendar reminder for the teardown date before you create
 anything.
 
