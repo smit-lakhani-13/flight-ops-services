@@ -274,7 +274,7 @@ Deployment, `kubectl logs` picks a Ready pod, and that pod has no previous run
 to show.
 
 `FATAL: password authentication failed for user …` points at `DB_PASSWORD`
-first. An unset value does not name itself. Relaxed binding hands the literal
+first. An unset value does not name itself. Spring hands the unresolved literal
 `${DB_PASSWORD}` to the driver, and Flyway's first connection fails as if the
 password were wrong. The application has no default to fall back on, and
 `application.yml` explains why beside the property.
@@ -459,7 +459,8 @@ correct, then run `flyway repair`.
 ### RDS unreachable
 
 The database security group admits the cluster SG and the shared node SG on
-5432. `deploy/aws/data.yaml` sets both from the live eksctl stack outputs. If
+5432. `deploy/aws/up.sh` reads both from the live eksctl stack outputs and
+passes them to `deploy/aws/data.yaml` only when it creates the data stack. If
 the cluster was recreated, those ids changed, and the data stack still points
 at the old ones.
 

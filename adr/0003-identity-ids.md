@@ -5,8 +5,8 @@ Status: accepted (recorded 2026-09-22, decision taken in commit `4a9a5b9`)
 ## Context
 
 I had to choose entity identifiers before anything else could be written, and
-the choice is hard to reverse: the id is in every foreign key, every URL and
-every stored event payload.
+the choice is hard to reverse: the id is in every foreign key, every booking
+URL and every stored event payload.
 
 ## Decision
 

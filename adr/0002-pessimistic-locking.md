@@ -28,8 +28,8 @@ I set the timeout on the connection instead of per query. A per-query hint
 (`jakarta.persistence.lock.timeout`) covers only the queries that carry it. A
 native `SELECT ... FOR UPDATE`, or a repository method added next year without
 the annotation, would wait forever and nothing would say so. The connection
-setting costs one line of configuration, covers every lock the service takes,
-and cannot be forgotten on a path added later.
+setting costs one line in each of the `postgres` and `prod` profiles, covers
+every lock the service takes, and cannot be forgotten on a path added later.
 
 **Correction (2026-09-23).** This section used to give a different reason: that
 the PostgreSQL dialect discards a positive `lock.timeout` hint without an
@@ -56,7 +56,7 @@ on the reason above. Only the old reason was wrong.
 
 * **One lock order everywhere.** Two paths that disagree deadlock under load and
   nowhere else. This is why `cancelBooking` takes the flight row first, even
-  though the row it is modifying is the booking.
+  though the request names a booking.
 
 * `503` with `Retry-After` semantics is the right answer. The request did not
   fail. It did not get a turn.
