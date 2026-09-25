@@ -576,6 +576,12 @@ The other fixes are to documentation only, and change no behaviour.
 
 ### Security
 
+- **The 403 log line.** `JsonAccessDeniedHandler` logs the request path through
+  `security/JsonAccessDeniedHandler.java#printable`, which replaces anything
+  outside visible ASCII, CR and LF included, with `?`. The default profile logs
+  plain text, one record per line, so a line break in the path could otherwise
+  start a forged line (`JsonAccessDeniedHandlerTest`).
+
 - **Log lines from rejected input.** `GlobalExceptionHandler.printable`
   replaces control, format and line-separator characters with `?` and caps the
   value at 1,000 characters, as the Lambda does. It covers Jackson's message,

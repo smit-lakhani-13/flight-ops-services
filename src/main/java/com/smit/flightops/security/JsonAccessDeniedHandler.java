@@ -36,8 +36,25 @@ public class JsonAccessDeniedHandler implements AccessDeniedHandler {
         // Worded for the rule set as well as the credential: a verb with no rule at
         // all, such as PUT, lands here too, and a working credential is not the cause.
         log.warn("Denied {} {} for an authenticated caller: no rule grants this method and path to its authorities",
-                request.getMethod(), request.getRequestURI());
+                request.getMethod(), printable(request.getRequestURI()));
         writer.write(response, HttpStatus.FORBIDDEN, "FORBIDDEN",
                 "Your credentials do not grant access to this resource");
+    }
+
+    /**
+     * The path as one line of visible ASCII: anything outside {@code !} to {@code ~},
+     * which includes CR, LF and every other control character, becomes {@code ?}.
+     * Tomcat refuses a raw CR or LF in the request line and the prod profile's ECS
+     * encoder escapes both, but the default profile writes plain text, one record per
+     * line, and that guarantee belongs to the line that writes it.
+     *
+     * <p>{@code GlobalExceptionHandler#printable} and the Lambda's helper turn only control,
+     * format and line-separator characters into {@code ?}, so an accented name survives.
+     * A path is meant to arrive percent-encoded, so visible ASCII loses nothing here,
+     * and {@code String.replaceAll} with a negated class is the form CodeQL's
+     * log-injection query treats as a sanitiser.
+     */
+    static String printable(String uri) {
+        return uri == null ? "null" : uri.replaceAll("[^\\x21-\\x7E]", "?");
     }
 }

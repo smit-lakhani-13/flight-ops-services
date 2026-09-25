@@ -128,7 +128,7 @@ This table bounds every claim in this README.
 | Status | What |
 |---|---|
 | **Built, tested, and exercised over HTTP** | The whole app module. Every endpoint hit with `curl` against a running instance. Every status code in the tables below observed over HTTP or in a test, including the 401 and 403 bodies, except one 503 that no test covers: the health 503 during a database outage. `LockTimeoutTest` holds the flight row and gets the 503 end to end, for a booking and for a booking cancellation. The flight status change and cancellation get theirs only in a slice test with a mocked service (`FlightControllerTest#flightWriteBehindARowLockReturns503`), and `DATABASE_UNAVAILABLE` likewise, on a flight read (`FlightControllerTest#noDatabaseConnectionReturns503`). The Lambda module, via 25 tests: 19 for the handler and 6 for the consumer side of the event contract. |
-| **Verified against real PostgreSQL in CI** | The 9 Testcontainers integration tests: 5 in `BookingIntegrationTest`, 3 in `service/OutboxPrunePostgresTest` and 1 in `LockTimeoutPostgresTest`. CI runs all 289 tests, and these 9 are the only ones on PostgreSQL. The 9 apply the Flyway migrations to an empty database and check `ddl-auto: validate` against the schema those migrations produced. They run `SELECT … FOR UPDATE` under 20 threads competing for 5 seats, replay the same idempotency key from 20 threads at once, and hold a flight row until PostgreSQL's own 3 s `lock_timeout` fires with SQLSTATE `55P03`. The runners have Docker, so these execute there and skip on a laptop without one, and the `build` job fails if any of the three classes is skipped or missing. |
+| **Verified against real PostgreSQL in CI** | The 9 Testcontainers integration tests: 5 in `BookingIntegrationTest`, 3 in `service/OutboxPrunePostgresTest` and 1 in `LockTimeoutPostgresTest`. CI runs all 291 tests, and these 9 are the only ones on PostgreSQL. The 9 apply the Flyway migrations to an empty database and check `ddl-auto: validate` against the schema those migrations produced. They run `SELECT … FOR UPDATE` under 20 threads competing for 5 seats, replay the same idempotency key from 20 threads at once, and hold a flight row until PostgreSQL's own 3 s `lock_timeout` fires with SQLSTATE `55P03`. The runners have Docker, so these execute there and skip on a laptop without one, and the `build` job fails if any of the three classes is skipped or missing. |
 | **Built and started in CI, never pushed** | The container image. The `image` job builds it from the `Dockerfile` on every push or pull request to `main`, starts it with no environment, and fails unless it stops at startup for want of a database. It has never been pushed to a registry, never run against a database and never served a request. |
 | **Authored and reviewed, never executed** | `sam deploy` and `sam local invoke`; there is no `sam build`, because Maven builds the jar that `template.yaml` names. Every `kubectl` and `eksctl` step. The deploy half of the GitHub Actions workflow, which is gated off (see below). |
 | **Not implemented** | A Solace binding. Trace **export** from the service: ids are generated and logged, but there is no collector to send spans to. The Lambda's `Tracing: Active` has X-Ray record a sample of its invocations, and those traces do not carry the service's trace id. Rate limiting. |
@@ -199,7 +199,7 @@ The same picture with method names, plus the booking sequence, the idempotency d
 ## Repository layout
 
 ```
-├── src/main/java/com/smit/flightops/       57 files, 3,965 lines
+├── src/main/java/com/smit/flightops/       57 files, 3,982 lines
 │   ├── controller/     HTTP only: bind, validate, map to DTO, choose the status code
 │   ├── service/        orchestration, transaction boundaries, the outbox drain and pruner
 │   ├── entity/         Flight, Booking, FlightStatus, OutboxEvent: the invariants
@@ -215,7 +215,7 @@ The same picture with method names, plus the booking sequence, the idempotency d
 ├── src/main/resources/
 │   ├── application.yml            profiles: default (H2), postgres, prod
 │   └── db/migration/              Flyway V1–V8, which owns the PostgreSQL schema
-├── src/test/java/                 34 test classes (36 with the Lambda's)
+├── src/test/java/                 35 test classes (37 with the Lambda's)
 ├── NOTES.md                       the bugs I found and fixed
 ├── ARCHITECTURE.md                the diagrams and the method-by-method request path
 ├── DEPLOYMENT.md                  three shapes, the runbook, the cost of each, the teardown
@@ -338,7 +338,7 @@ UPDATE outbox_events SET attempts = 0, next_attempt_at = NULL WHERE id = ?
 ## Tests
 
 ```bash
-./mvnw clean verify                       # 264 tests: 255 run, 9 skipped, 0 failures
+./mvnw clean verify                       # 266 tests: 257 run, 9 skipped, 0 failures
 ./mvnw -f lambda/pom.xml clean verify     # 25 tests, 0 failures
 ```
 
@@ -346,7 +346,7 @@ UPDATE outbox_events SET attempts = 0, next_attempt_at = NULL WHERE id = ?
 |---|---|---|
 | Domain entity | 13 | plain JUnit, with no Spring and no database |
 | Service | 36 | `@ExtendWith(MockitoExtension.class)`, `@Mock`, `@InjectMocks`, `@Captor`, split across `BookingServiceTest` (orchestration, including a failed insert with no winning booking to recover), `BookingWriterTest` (the write path), `FlightServiceTest` and `SqsEventPublisherTest` (what goes on the wire) |
-| Web slice | 64 | `@WebMvcTest` + `@MockitoBean` in the two controller tests: status codes, `Location` headers, error JSON, `Allow` on a 405 and `Accept` on a 415, the 503 for a database that cannot be reached, a YAML body or a missing `Content-Type` refused on each `POST` and `PATCH`, and the rules for flight numbers, airport codes, passenger names, seat counts, status values and departure times. The other 2 are `exception/ApiErrorControllerTest`, with no Spring context. One calls `ApiErrorController` directly and one drives it through a standalone MockMvc, because a full MockMvc never forwards to `/error` |
+| Web slice | 66 | `@WebMvcTest` + `@MockitoBean` in the two controller tests: status codes, `Location` headers, error JSON, `Allow` on a 405 and `Accept` on a 415, the 503 for a database that cannot be reached, a YAML body or a missing `Content-Type` refused on each `POST` and `PATCH`, and the rules for flight numbers, airport codes, passenger names, seat counts, status values and departure times. The other 4 have no Spring context. 2 are `exception/ApiErrorControllerTest`: one calls `ApiErrorController` directly and one drives it through a standalone MockMvc, because a full MockMvc never forwards to `/error`. 2 are `security/JsonAccessDeniedHandlerTest`, which builds its request directly so that the path can carry a raw CR and LF |
 | Repository slice | 10 | `@DataJpaTest` + `TestEntityManager`: derived queries, JPQL, `JOIN FETCH`, constraints |
 | Full context (H2) | 86 | `@SpringBootTest`. The idempotency guarantee end to end, with four 10-caller races on one key: same request, different payloads, the last seat, and one key across two flights. The authorisation rules against the real filter chain, with the Basic and Bearer challenges and who sees health components. The outbox with its trace capture, the attempt ceiling and the retention pruner against an embedded database. The OpenAPI document's status codes per operation and its comparison with a real response. The lock timeout, the error contract with the 406 and `ignorecase` on a sort property that is not text, the page overflow and multipart parsing turned off, and a lazy-loading regression with no mocking anywhere in the chain |
 | Event contract | 11 | one producer-side class and one consumer-side class, both asserting against `contracts/booking-created-v1.json`; the consumer side parses through the handler's own mapper |
@@ -354,10 +354,10 @@ UPDATE outbox_events SET attempts = 0, next_attempt_at = NULL WHERE id = ?
 | Configuration and startup checks | 24 | Boot's `Binder` over plain maps: an unresolved `${...}` placeholder is rejected at startup, every outbox bound is enforced and every default is wired. `EventPropertiesTest` also starts the whole application to see a bad `app.events.publisher` named, and `PasswordVerifiabilityTest` runs `SecurityConfig` in a `WebApplicationContextRunner` to see an unverifiable password stop startup. `ValidationClockTest` checks that `@Future` reads the `Clock` bean, and `AwsConfigTest` that the `sts` module, which the credential chain needs for IRSA, is on the classpath |
 | Architecture | 9 | ArchUnit over `target/classes`: the layering, no field injection, no `@Transactional` outside `service/`, and in main code no `java.time` `now()` without a `Clock`, no `System.currentTimeMillis()`, no `new Date()` and no `Calendar.getInstance()`. I checked each rule against a planted violation before committing it |
 | Observability | 8 | the request-id filter against a hostile inbound header, and the booking meters scraped through a real `PrometheusMeterRegistry`, since a `SimpleMeterRegistry` would accept any name |
-| Run | 280 | 0 failures (13 + 36 + 64 + 10 + 86 + 11 + 19 + 24 + 9 + 8) |
+| Run | 282 | 0 failures (13 + 36 + 66 + 10 + 86 + 11 + 19 + 24 + 9 + 8) |
 | PostgreSQL integration | 9 | `@Testcontainers(disabledWithoutDocker = true)`: 5 in `BookingIntegrationTest`, 3 in `service/OutboxPrunePostgresTest` and 1 in `LockTimeoutPostgresTest`, skipped without a container runtime |
 
-289 tests exist across the two modules: 280 run without Docker and 9 skip. CI runs all 289 on runners with Docker, and it is the only place the PostgreSQL paths run. Those are Flyway with `ddl-auto=validate`, `SELECT FOR UPDATE` under 20-way contention, a 20-thread key race, the native `DELETE … FOR UPDATE SKIP LOCKED` under two pruners, the outbox claim under two competing pollers, and PostgreSQL's own `lock_timeout` firing on a held flight row. The `build` job's "The PostgreSQL tests ran" step fails the run if any of the three classes skipped a test or left no report. See [CONTRIBUTING.md](CONTRIBUTING.md) for what the skipped count means.
+291 tests exist across the two modules: 282 run without Docker and 9 skip. CI runs all 291 on runners with Docker, and it is the only place the PostgreSQL paths run. Those are Flyway with `ddl-auto=validate`, `SELECT FOR UPDATE` under 20-way contention, a 20-thread key race, the native `DELETE … FOR UPDATE SKIP LOCKED` under two pruners, the outbox claim under two competing pollers, and PostgreSQL's own `lock_timeout` firing on a held flight row. The `build` job's "The PostgreSQL tests ran" step fails the run if any of the three classes skipped a test or left no report. See [CONTRIBUTING.md](CONTRIBUTING.md) for what the skipped count means.
 
 ## Deployment and cost
 
