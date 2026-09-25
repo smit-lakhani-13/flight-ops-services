@@ -96,8 +96,11 @@ changes.
 ## How it would be checked, if it were ever built
 
 An `OracleContainer` on `gvenzl/oracle-free:slim-faststart` in CI, with
-`ddl-auto: validate`; the two concurrency tests from
-`src/test/java/com/smit/flightops/service/OutboxPrunePostgresTest.java`, one
-with two pruners, rewritten to expect the second pruner to wait, and one with
-two pollers; and one more test in which transaction A locks rows 1 to 10 and
-transaction B, with a batch size of 10, must receive rows 11 to 20.
+`ddl-auto: validate`. Of the two concurrency tests in
+`src/test/java/com/smit/flightops/service/OutboxPrunePostgresTest.java`, the
+one with two pollers would carry over with only its container and profile
+changed. The one with two pruners asserts that the second pruner does not wait
+for the first. Pruning on Oracle gives that up, so the Oracle version would
+assert the opposite: the second pruner waits until the first commits. One more
+test: transaction A locks rows 1 to 10, and transaction B, with a batch size
+of 10, must receive rows 11 to 20.
