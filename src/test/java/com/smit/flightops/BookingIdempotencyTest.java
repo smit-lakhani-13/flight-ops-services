@@ -107,7 +107,7 @@ class BookingIdempotencyTest {
     @Order(3)
     @DisplayName("booking 3 seats then replaying the same key 5 times leaves 177 seats and ONE booking")
     void replayingTheSameKeyBooksOnce() {
-        BookingRequest request = new BookingRequest("UA123", "Smit Lakhani", 3, "demo-1");
+        BookingRequest request = new BookingRequest("UA123", "Jane Doe", 3, "demo-1");
 
         BookingDto first = bookingService.book(request);
         assertThat(availableSeats("UA123")).isEqualTo(177);
@@ -143,7 +143,7 @@ class BookingIdempotencyTest {
                 Instant.now().plus(Duration.ofHours(6))));
 
         assertThatThrownBy(() -> bookingService.book(
-                new BookingRequest("UA001", "Smit Lakhani", 3, "oversell-1")))
+                new BookingRequest("UA001", "Jane Doe", 3, "oversell-1")))
                 .isInstanceOf(InsufficientSeatsException.class)
                 .hasMessageContaining("UA001");
 
@@ -159,7 +159,7 @@ class BookingIdempotencyTest {
         flightService.create(new CreateFlightRequest("ua002", "ewr", "sfo", 10,
                 Instant.now().plus(Duration.ofHours(6))));
 
-        bookingService.book(new BookingRequest(" ua002 ", "Smit Lakhani", 1, "norm-1"));
+        bookingService.book(new BookingRequest(" ua002 ", "Jane Doe", 1, "norm-1"));
 
         assertThat(availableSeats("UA002")).isEqualTo(9);
     }
@@ -183,7 +183,7 @@ class BookingIdempotencyTest {
         try {
             List<Callable<BookingDto>> attempts = IntStream.range(0, callers)
                     .<Callable<BookingDto>>mapToObj(i -> () ->
-                            bookingService.book(new BookingRequest("ua003", "Smit Lakhani", 1, "race-1")))
+                            bookingService.book(new BookingRequest("ua003", "Jane Doe", 1, "race-1")))
                     .toList();
 
             List<Future<BookingDto>> futures = startTogether(pool, attempts);
@@ -277,7 +277,7 @@ class BookingIdempotencyTest {
         try {
             List<Callable<BookingDto>> attempts = IntStream.range(0, callers)
                     .<Callable<BookingDto>>mapToObj(i -> () ->
-                            bookingService.book(new BookingRequest("ua005", "Smit Lakhani", 1, "race-last-seat")))
+                            bookingService.book(new BookingRequest("ua005", "Jane Doe", 1, "race-last-seat")))
                     .toList();
 
             List<BookingDto> results = startTogether(pool, attempts).stream().map(f -> {
@@ -325,7 +325,7 @@ class BookingIdempotencyTest {
         try {
             List<Callable<BookingDto>> attempts = IntStream.range(0, callers)
                     .<Callable<BookingDto>>mapToObj(i -> () -> bookingService.book(new BookingRequest(
-                            i % 2 == 0 ? "ua006" : "ua007", "Smit Lakhani", 1, "cross-flight")))
+                            i % 2 == 0 ? "ua006" : "ua007", "Jane Doe", 1, "cross-flight")))
                     .toList();
 
             List<Long> bookedIds = new ArrayList<>();

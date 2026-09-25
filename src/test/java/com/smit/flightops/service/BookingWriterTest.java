@@ -68,7 +68,7 @@ class BookingWriterTest {
     }
 
     private BookingRequest request(int seats, String key) {
-        return new BookingRequest("UA123", "Smit Lakhani", seats, key);
+        return new BookingRequest("UA123", "Jane Doe", seats, key);
     }
 
     @Test
@@ -115,7 +115,7 @@ class BookingWriterTest {
         Flight full = flight();
         full.reserveSeats(180);
         when(flightRepository.findByFlightNumberForUpdate("UA123")).thenReturn(Optional.of(full));
-        Booking winner = new Booking(full, "Smit Lakhani", 2, "raced-key", "fp", CREATED_AT);
+        Booking winner = new Booking(full, "Jane Doe", 2, "raced-key", "fp", CREATED_AT);
         when(bookingRepository.findByIdempotencyKey("raced-key")).thenReturn(Optional.of(winner));
 
         assertThatThrownBy(() -> bookingWriter.insertNewBooking(request(2, "raced-key")))
@@ -133,7 +133,7 @@ class BookingWriterTest {
     void theReCheckIsInsideTheLock() {
         Flight flight = flight();
         when(flightRepository.findByFlightNumberForUpdate("UA123")).thenReturn(Optional.of(flight));
-        Booking winner = new Booking(flight, "Smit Lakhani", 1, "raced-key-2", "fp", CREATED_AT);
+        Booking winner = new Booking(flight, "Jane Doe", 1, "raced-key-2", "fp", CREATED_AT);
         when(bookingRepository.findByIdempotencyKey("raced-key-2")).thenReturn(Optional.of(winner));
 
         assertThatThrownBy(() -> bookingWriter.insertNewBooking(request(1, "raced-key-2")))
@@ -197,7 +197,7 @@ class BookingWriterTest {
         when(flightRepository.findByFlightNumberForUpdate("XX999")).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> bookingWriter.insertNewBooking(
-                new BookingRequest("xx999", "Smit Lakhani", 1, "demo-4")))
+                new BookingRequest("xx999", "Jane Doe", 1, "demo-4")))
                 .isInstanceOf(FlightNotFoundException.class);
 
         verifyNoInteractions(outboxWriter);
@@ -210,13 +210,13 @@ class BookingWriterTest {
         // A real fingerprint: Booking.matchesRequest short-circuits on null, which
         // would pass any fingerprint.
         BookingRequest original = request(3, "raced-key");
-        Booking winner = new Booking(flight, "Smit Lakhani", 3, "raced-key",
+        Booking winner = new Booking(flight, "Jane Doe", 3, "raced-key",
                                      original.fingerprint(), CREATED_AT);
         when(bookingRepository.findByIdempotencyKey("raced-key")).thenReturn(Optional.of(winner));
 
         BookingDto dto = bookingWriter.recoverReplay("raced-key", original.fingerprint());
 
-        assertThat(dto.passengerName()).isEqualTo("Smit Lakhani");
+        assertThat(dto.passengerName()).isEqualTo("Jane Doe");
         assertThat(dto.flightNumber()).isEqualTo("UA123");
         assertThat(dto.seats()).isEqualTo(3);
     }
@@ -250,7 +250,7 @@ class BookingWriterTest {
     void cancellationReleasesSeats() {
         Flight flight = flight();
         flight.reserveSeats(3);
-        Booking booking = new Booking(flight, "Smit Lakhani", 3, "cancel-1", null, CREATED_AT);
+        Booking booking = new Booking(flight, "Jane Doe", 3, "cancel-1", null, CREATED_AT);
 
         when(bookingRepository.findFlightNumberById(7L)).thenReturn(Optional.of("UA123"));
         when(flightRepository.findByFlightNumberForUpdate("UA123")).thenReturn(Optional.of(flight));
@@ -268,7 +268,7 @@ class BookingWriterTest {
     void secondCancellationIsANoOp() {
         Flight flight = flight();
         flight.reserveSeats(3);
-        Booking booking = new Booking(flight, "Smit Lakhani", 3, "cancel-2", null, CREATED_AT);
+        Booking booking = new Booking(flight, "Jane Doe", 3, "cancel-2", null, CREATED_AT);
         booking.cancel(CANCELLED_AT.minusSeconds(60));
 
         when(bookingRepository.findFlightNumberById(8L)).thenReturn(Optional.of("UA123"));
@@ -288,7 +288,7 @@ class BookingWriterTest {
     void cancellationTakesTheLocksInTheDocumentedOrder() {
         Flight flight = flight();
         flight.reserveSeats(1);
-        Booking booking = new Booking(flight, "Smit Lakhani", 1, "cancel-3", null, CREATED_AT);
+        Booking booking = new Booking(flight, "Jane Doe", 1, "cancel-3", null, CREATED_AT);
 
         when(bookingRepository.findFlightNumberById(9L)).thenReturn(Optional.of("UA123"));
         when(flightRepository.findByFlightNumberForUpdate("UA123")).thenReturn(Optional.of(flight));

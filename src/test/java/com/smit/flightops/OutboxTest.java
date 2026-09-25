@@ -100,7 +100,7 @@ class OutboxTest {
                 Instant.now().plus(Duration.ofHours(6))));
 
         BookingDto booking = bookingService.book(
-                new BookingRequest("OB001", "Smit Lakhani", 2, "outbox-1"));
+                new BookingRequest("OB001", "Jane Doe", 2, "outbox-1"));
 
         List<OutboxEvent> events = eventsFor(String.valueOf(booking.bookingId()));
         assertThat(events).hasSize(1);
@@ -132,7 +132,7 @@ class OutboxTest {
         long before = outboxEventRepository.count();
 
         assertThatThrownBy(() -> bookingService.book(
-                new BookingRequest("OB002", "Smit Lakhani", 3, "outbox-oversell")))
+                new BookingRequest("OB002", "Jane Doe", 3, "outbox-oversell")))
                 .isInstanceOf(InsufficientSeatsException.class);
 
         assertThat(outboxEventRepository.count())
@@ -156,7 +156,7 @@ class OutboxTest {
         // Rollback-only stands in for any failure after the event is recorded.
         BookingDto booking = new TransactionTemplate(transactionManager).execute(status -> {
             BookingDto written = bookingWriter.insertNewBooking(
-                    new BookingRequest("OB011", "Smit Lakhani", 2, "outbox-rollback"));
+                    new BookingRequest("OB011", "Jane Doe", 2, "outbox-rollback"));
             assertThat(eventsFor(String.valueOf(written.bookingId())))
                     .as("the event row exists before the rollback")
                     .hasSize(1);
@@ -181,7 +181,7 @@ class OutboxTest {
         flightService.create(new CreateFlightRequest("OB003", "EWR", "LHR", 20,
                 Instant.now().plus(Duration.ofHours(6))));
         BookingDto booking = bookingService.book(
-                new BookingRequest("OB003", "Smit Lakhani", 2, "outbox-snapshot"));
+                new BookingRequest("OB003", "Jane Doe", 2, "outbox-snapshot"));
         String payloadAtBookingTime = eventsFor(String.valueOf(booking.bookingId())).getFirst().getPayload();
 
         bookingService.cancel(booking.bookingId());
@@ -200,7 +200,7 @@ class OutboxTest {
         flightService.create(new CreateFlightRequest("OB004", "EWR", "LHR", 20,
                 Instant.now().plus(Duration.ofHours(6))));
         BookingDto booking = bookingService.book(
-                new BookingRequest("OB004", "Smit Lakhani", 1, "outbox-drain"));
+                new BookingRequest("OB004", "Jane Doe", 1, "outbox-drain"));
         String payload = eventsFor(String.valueOf(booking.bookingId())).getFirst().getPayload();
 
         outboxPublisher.drainOutbox();
@@ -217,7 +217,7 @@ class OutboxTest {
         flightService.create(new CreateFlightRequest("OB005", "EWR", "LHR", 20,
                 Instant.now().plus(Duration.ofHours(6))));
         BookingDto booking = bookingService.book(
-                new BookingRequest("OB005", "Smit Lakhani", 1, "outbox-once"));
+                new BookingRequest("OB005", "Jane Doe", 1, "outbox-once"));
         String payload = eventsFor(String.valueOf(booking.bookingId())).getFirst().getPayload();
 
         outboxPublisher.drainOutbox();
@@ -238,7 +238,7 @@ class OutboxTest {
         flightService.create(new CreateFlightRequest("OB006", "EWR", "LHR", 20,
                 Instant.now().plus(Duration.ofHours(6))));
         BookingDto booking = bookingService.book(
-                new BookingRequest("OB006", "Smit Lakhani", 1, "outbox-retry"));
+                new BookingRequest("OB006", "Jane Doe", 1, "outbox-retry"));
         String id = String.valueOf(booking.bookingId());
 
         doThrow(new IllegalStateException("queue unreachable"))
@@ -269,9 +269,9 @@ class OutboxTest {
         flightService.create(new CreateFlightRequest("OB007", "EWR", "LHR", 20,
                 Instant.now().plus(Duration.ofHours(6))));
         BookingDto poisoned = bookingService.book(
-                new BookingRequest("OB007", "Smit Lakhani", 1, "outbox-poison"));
+                new BookingRequest("OB007", "Jane Doe", 1, "outbox-poison"));
         BookingDto healthy = bookingService.book(
-                new BookingRequest("OB007", "Smit Lakhani", 1, "outbox-healthy"));
+                new BookingRequest("OB007", "Jane Doe", 1, "outbox-healthy"));
 
         String poisonPayload = eventsFor(String.valueOf(poisoned.bookingId())).getFirst().getPayload();
         doThrow(new IllegalStateException("that one specifically"))
@@ -327,7 +327,7 @@ class OutboxTest {
         BookingDto booking;
         try {
             booking = bookingService.book(
-                    new BookingRequest("OB008", "Smit Lakhani", 1, "outbox-trace"));
+                    new BookingRequest("OB008", "Jane Doe", 1, "outbox-trace"));
         } finally {
             span.end();
         }
@@ -355,7 +355,7 @@ class OutboxTest {
                 Instant.now().plus(Duration.ofHours(6))));
 
         BookingDto booking = bookingService.book(
-                new BookingRequest("OB009", "Smit Lakhani", 1, "outbox-untraced"));
+                new BookingRequest("OB009", "Jane Doe", 1, "outbox-untraced"));
 
         OutboxEvent event = eventsFor(String.valueOf(booking.bookingId())).getFirst();
         assertThat(event.getTraceparent()).isNull();
@@ -380,7 +380,7 @@ class OutboxTest {
         BookingDto booking;
         try {
             booking = bookingService.book(
-                    new BookingRequest("OB010", "Smit Lakhani", 1, "outbox-trace-owner"));
+                    new BookingRequest("OB010", "Jane Doe", 1, "outbox-trace-owner"));
         } finally {
             bookingSpan.end();
         }
