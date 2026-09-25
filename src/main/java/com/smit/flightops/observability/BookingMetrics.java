@@ -13,7 +13,7 @@ import org.springframework.stereotype.Component;
  *       releases nothing; {@code already_cancelled} rising means a client thinks its
  *       cancels are not sticking.</li>
  *   <li>{@code bookings.lock_timeout}: a flight row held past the 3s {@code lock_timeout},
- *       the earliest sign of the write path stalling, so it has its own alert.</li>
+ *       the earliest sign of the write path stalling. Nothing alerts on it yet.</li>
  * </ul>
  *
  * <p>Not {@code bookings.created}: {@code _created} is a reserved OpenMetrics suffix

@@ -70,7 +70,7 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
   `CONCURRENT_MODIFICATION`, two codes no test asserted before.
 
 - **The image is built in CI.** A new `image` job builds the `Dockerfile` on
-  every push to `main` and every pull request, starts it with no environment,
+  every push or pull request to `main`, starts it with no environment,
   and fails unless it stops at startup for want of a database. It writes the
   image size to the log and the job summary, holds no cloud or registry
   credentials and never pushes. The deploy job now needs it.
@@ -467,6 +467,18 @@ The other fixes are to documentation only, and change no behaviour.
   `BookingService` and `GlobalExceptionHandler` said the loser of a race on one
   key always got 201. It gets 409 `IDEMPOTENCY_KEY_REUSED` when the two
   requests differ.
+
+- **Wording about what runs where.** The SAM template's description said the
+  service was deployed to EKS, OPERATIONS.md spoke of a demo cluster, ADR 0011
+  of "this deployment" and `compose.yaml` of "the deployed configuration".
+  Nothing is deployed, and each now says so or drops the phrase. SECURITY.md
+  said Trivy scans the image before it is pushed; that scan is in the deploy
+  job, which has never run. The `BookingMetrics` Javadoc gave the lock-timeout
+  counter an alert that does not exist. `up.sh` said CI applies on every push,
+  and now says every push to main. `compose.yaml` and DEPLOYMENT.md said the H2
+  profile lacks `SELECT ... FOR UPDATE` and a lock timeout. It has both, and
+  `LockTimeoutTest` runs them. What it lacks is Flyway and PostgreSQL's own row
+  locks and `lock_timeout`.
 
 ### Security
 

@@ -41,7 +41,7 @@ FAST=0
 bold=$'\033[1m'; dim=$'\033[2m'; grn=$'\033[32m'; red=$'\033[31m'; ylw=$'\033[33m'; off=$'\033[0m'
 
 # The passwords, so the echoed commands can be redacted. When up.sh runs this
-# against the cluster, $AUTH carries a generated production password, and run()
+# against the cluster, $AUTH carries a generated password, and run()
 # would print it on every echoed command, into scrollback that outlives the
 # demo. The commands run with the real value; only the echo is redacted.
 api_secret=""; ops_secret=""

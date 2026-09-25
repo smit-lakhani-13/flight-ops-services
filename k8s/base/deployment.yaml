@@ -7,7 +7,8 @@ metadata:
 spec:
   # No `replicas`: the HPA owns the count (minReplicas: 2, so a rolling update
   # or a node drain is never an outage). A declared count would be reset by
-  # every `kubectl apply`, and CI applies the whole overlay on every push.
+  # every `kubectl apply`, and CI's deploy job, when enabled, applies the whole
+  # overlay on every push to main.
 
   # Keeps `kubectl get rs` readable.
   revisionHistoryLimit: 3
