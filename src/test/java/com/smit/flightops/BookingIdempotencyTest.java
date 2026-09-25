@@ -137,7 +137,7 @@ class BookingIdempotencyTest {
 
     @Test
     @Order(5)
-    @DisplayName("overselling rolls the whole transaction back: no seats debited, no booking row")
+    @DisplayName("overselling is refused before anything is written: no seats debited, no booking row")
     void oversellLeavesNoTrace() {
         flightService.create(new CreateFlightRequest("UA001", "EWR", "LHR", 2,
                 Instant.now().plus(Duration.ofHours(6))));

@@ -91,8 +91,9 @@ class ApiErrorControllerTest {
     }
 
     /**
-     * A 404 is a client mistake and is not logged. The content type is set, not
-     * negotiated, so a caller asking for XML still gets the JSON envelope, not an empty 406.
+     * A 404 is a client mistake and is not logged, even with an exception
+     * attached. The content type is set, not negotiated, so a caller asking for
+     * XML still gets the JSON envelope, not an empty 406.
      */
     @Test
     @DisplayName("a forwarded 404 is not logged, and stays JSON when the caller asks for XML")
@@ -101,7 +102,8 @@ class ApiErrorControllerTest {
 
         mockMvc.perform(get("/error")
                         .accept(MediaType.APPLICATION_XML)
-                        .requestAttr(RequestDispatcher.ERROR_STATUS_CODE, 404))
+                        .requestAttr(RequestDispatcher.ERROR_STATUS_CODE, 404)
+                        .requestAttr(RequestDispatcher.ERROR_EXCEPTION, new IllegalStateException("not found")))
                 .andExpect(status().isNotFound())
                 .andExpect(content().contentType(MediaType.APPLICATION_JSON))
                 .andExpect(jsonPath("$.code").value("RESOURCE_NOT_FOUND"));

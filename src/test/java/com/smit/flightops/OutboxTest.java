@@ -5,8 +5,10 @@ import com.smit.flightops.dto.BookingRequest;
 import com.smit.flightops.dto.CreateFlightRequest;
 import com.smit.flightops.entity.OutboxEvent;
 import com.smit.flightops.exception.InsufficientSeatsException;
+import com.smit.flightops.repository.BookingRepository;
 import com.smit.flightops.repository.OutboxEventRepository;
 import com.smit.flightops.service.BookingService;
+import com.smit.flightops.service.BookingWriter;
 import com.smit.flightops.service.EventPublisher;
 import com.smit.flightops.service.FlightService;
 import com.smit.flightops.service.OutboxPublisher;
@@ -20,6 +22,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.IllegalTransactionStateException;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -61,11 +65,14 @@ import static org.mockito.Mockito.verifyNoInteractions;
 class OutboxTest {
 
     @Autowired private BookingService bookingService;
+    @Autowired private BookingWriter bookingWriter;
     @Autowired private FlightService flightService;
+    @Autowired private BookingRepository bookingRepository;
     @Autowired private OutboxEventRepository outboxEventRepository;
     @Autowired private OutboxPublisher outboxPublisher;
     @Autowired private OutboxWriter outboxWriter;
     @Autowired private Tracer tracer;
+    @Autowired private PlatformTransactionManager transactionManager;
 
     /** Only the transport is mocked, so it can fail on demand; the rest is real. */
     @MockitoBean private EventPublisher eventPublisher;
@@ -112,13 +119,13 @@ class OutboxTest {
     }
 
     /**
-     * The booking fails the seat check and rolls back, and the event row written in
-     * the same transaction goes with it. Otherwise a consumer would hear about a
-     * booking the database has no record of.
+     * The seat check fails before anything is written, so there is no event row
+     * to roll back. {@link #aRolledBackBookingLeavesNoEvent()} covers the
+     * rollback.
      */
     @Test
-    @DisplayName("ATOMICITY: a rolled-back booking leaves no event at all")
-    void aRolledBackBookingLeavesNoEvent() {
+    @DisplayName("an oversell is refused before anything is written, event included")
+    void anOversellWritesNoEvent() {
         flightService.create(new CreateFlightRequest("OB002", "EWR", "LHR", 2,
                 Instant.now().plus(Duration.ofHours(6))));
         long before = outboxEventRepository.count();
@@ -128,8 +135,38 @@ class OutboxTest {
                 .isInstanceOf(InsufficientSeatsException.class);
 
         assertThat(outboxEventRepository.count())
-                .as("the event row rolled back with the booking it described")
+                .as("no event row was written for the refused booking")
                 .isEqualTo(before);
+        verifyNoInteractions(eventPublisher);
+    }
+
+    /**
+     * The booking and its event row are both written, and then the transaction
+     * rolls back. If the event row survived, a consumer would hear about a
+     * booking the database has no record of.
+     */
+    @Test
+    @DisplayName("ATOMICITY: a rolled-back booking leaves no event at all")
+    void aRolledBackBookingLeavesNoEvent() {
+        flightService.create(new CreateFlightRequest("OB011", "EWR", "LHR", 20,
+                Instant.now().plus(Duration.ofHours(6))));
+
+        // insertNewBooking joins this transaction and writes both rows.
+        // Rollback-only stands in for any failure after the event is recorded.
+        BookingDto booking = new TransactionTemplate(transactionManager).execute(status -> {
+            BookingDto written = bookingWriter.insertNewBooking(
+                    new BookingRequest("OB011", "Smit Lakhani", 2, "outbox-rollback"));
+            assertThat(eventsFor(String.valueOf(written.bookingId())))
+                    .as("the event row exists before the rollback")
+                    .hasSize(1);
+            status.setRollbackOnly();
+            return written;
+        });
+
+        assertThat(bookingRepository.findById(booking.bookingId())).isEmpty();
+        assertThat(eventsFor(String.valueOf(booking.bookingId())))
+                .as("the event row rolled back with the booking it described")
+                .isEmpty();
         verifyNoInteractions(eventPublisher);
     }
 

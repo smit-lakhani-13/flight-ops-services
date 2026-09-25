@@ -384,6 +384,10 @@ class ErrorContractTest {
     @Test
     @DisplayName("cancelling a booking returns its seats, and a retried cancel does not return them twice")
     void cancellationReturnsSeatsExactlyOnce() throws Exception {
+        // One seat stays sold throughout. Flight.releaseSeats clamps at
+        // totalSeats, so on an otherwise empty flight a double credit would be
+        // clamped away and the last assertion could not fail.
+        book("UA789", "Ada Lovelace", 1, "contract-cancel-keep-1");
         int before = availableSeats("UA789");
 
         String created = mockMvc.perform(post("/api/v1/bookings")
@@ -404,9 +408,8 @@ class ErrorContractTest {
                 .andExpect(jsonPath("$.cancelledAt").exists());
         assertThat(availableSeats("UA789")).isEqualTo(before);
 
-        // The retry must not credit the seats again. Flight.releaseSeats clamps
-        // at totalSeats, so a double credit only shows on a flight that is not
-        // full, like this one.
+        // The retry must not credit the seats again. With one seat still sold,
+        // a second credit would leave more seats free than before.
         mockMvc.perform(delete("/api/v1/bookings/" + bookingId))
                 .andExpect(status().isOk());
         assertThat(availableSeats("UA789")).isEqualTo(before);

@@ -43,7 +43,8 @@ class BookingEventContractTest {
 
         // A rename on the producer side fails in readValue: a missing string in
         // the record's constructor, a missing seats in FAIL_ON_NULL_FOR_PRIMITIVES.
-        // These assertions also catch a value that binds but is blank or zero.
+        // A blank string or seats below 1 fails in that constructor too, so
+        // these assertions restate what readValue has already checked.
         assertThat(event.bookingId()).as("sort key suffix").isNotBlank();
         assertThat(event.flightNumber()).as("DynamoDB partition key").isNotBlank();
         assertThat(event.seats()).isPositive();
@@ -114,7 +115,10 @@ class BookingEventContractTest {
         }
     }
 
-    /** Pins both ends of the accepted range, so it cannot be widened or narrowed unnoticed. */
+    /**
+     * Pins both ends of the accepted range, so it cannot be narrowed unnoticed.
+     * Nothing tries year 999 or 10000, so a small widening would still pass.
+     */
     @Test
     @DisplayName("the first and last four-digit years are accepted, and produce equal-width keys")
     void theFourDigitYearBoundariesAreAccepted() throws Exception {

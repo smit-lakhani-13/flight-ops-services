@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * {@code @Future} on a departure time judges it against the {@link Clock} bean.
  * Hibernate Validator's own clock is {@code Clock.systemDefaultZone()}, so without
- * the customizer in {@link TimeConfig} a pinned clock would not move it. The context
+ * the customiser in {@link TimeConfig} a pinned clock would not move it. The context
  * holds Boot's validation auto-configuration, {@code TimeConfig}, and a fixed clock
  * marked primary so that it wins over {@code TimeConfig}'s own.
  */

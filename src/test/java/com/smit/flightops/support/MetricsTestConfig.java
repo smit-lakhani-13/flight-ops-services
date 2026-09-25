@@ -8,9 +8,8 @@ import org.springframework.context.annotation.Bean;
 
 /**
  * Gives a {@code @WebMvcTest} slice the real {@link BookingMetrics} on an in-memory
- * registry, since a slice has no metrics auto-configuration. A mock would prove only
- * that a method was called; a {@link SimpleMeterRegistry} lets the test read the counter
- * back by the name and tag an alert would query.
+ * registry, since a slice has no metrics auto-configuration and
+ * {@code GlobalExceptionHandler} takes the bean in its constructor.
  */
 @TestConfiguration
 public class MetricsTestConfig {

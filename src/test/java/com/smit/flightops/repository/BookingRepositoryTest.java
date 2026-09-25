@@ -50,7 +50,7 @@ class BookingRepositoryTest {
     }
 
     @Test
-    @DisplayName("REGRESSION: JOIN FETCH on findByIdempotencyKey too, because the caller reads it after BookingService.book's transaction has closed")
+    @DisplayName("REGRESSION: JOIN FETCH on findByIdempotencyKey too, because BookingService.book holds no transaction")
     void findByIdempotencyKeyAlsoJoinFetchesTheFlight() {
         Flight flight = flight("UA123");
         bookingRepository.saveAndFlush(new Booking(flight, "Smit Lakhani", 3, "demo-1", null, CREATED_AT));

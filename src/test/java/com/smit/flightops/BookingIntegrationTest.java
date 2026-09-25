@@ -149,8 +149,9 @@ class BookingIntegrationTest {
 
     /**
      * A second seeder run, as a second application start would make it. This matters
-     * on PostgreSQL only: H2 is {@code create-drop}, and a duplicate row here makes
-     * every {@code Optional} lookup of that flight throw.
+     * on PostgreSQL only: H2 is {@code create-drop}. A seeder that inserted a
+     * flight again would fail on {@code uk_flights_flight_number}, so the run
+     * itself is part of the check.
      */
     @Test
     @DisplayName("running the seeder twice inserts nothing the second time")
@@ -205,8 +206,9 @@ class BookingIntegrationTest {
                 })
                 .toList();
 
-        // null: no failure is legitimate. Every caller on one key gets the
-        // winner's booking back through BookingWriter.recoverReplay.
+        // null: no failure is legitimate. The winner gets its own booking back.
+        // Every other caller gets the winner's, from the pre-check in
+        // BookingService.book or through BookingWriter.recoverReplay.
         int booked = countSuccesses(attempts, null);
 
         assertThat(booked).as("no caller should see an exception on a raced replay")
@@ -216,7 +218,7 @@ class BookingIntegrationTest {
     }
 
     @Test
-    @DisplayName("an oversell rolls back on PostgreSQL too, leaving seats and rows untouched")
+    @DisplayName("an oversell is refused on PostgreSQL too, before any seat is debited or row written")
     void oversellRollsBack() {
         String flightNumber = createFlight("CC003", 2);
 
