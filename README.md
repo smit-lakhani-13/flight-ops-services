@@ -12,7 +12,7 @@ Flight inventory and booking service: a Spring Boot REST API over PostgreSQL tha
 
 I picked an airline because seat inventory is a real consistency problem: many clients want the same few seats, clients retry, and a mistake sells one seat twice.
 
-**Scope.** This is a demo that has never served production traffic. CI builds both modules and runs every test, including the PostgreSQL integration tests, on every push or pull request to `main`. CI also builds the image from the `Dockerfile` on every push or pull request to `main`, starts it with no database, scans it with Trivy, and never pushes it. `k8s/`, `lambda/template.yaml`, `deploy/aws/` and the deploy job are written, linted and validated offline, but I have never applied them. Their prices and runbook are in [DEPLOYMENT.md](doc/DEPLOYMENT.md), and [Project status](#project-status) shows what has actually run.
+**Scope.** This is a demo that has never served production traffic. CI builds both modules and runs every test, including the PostgreSQL integration tests, on every push or pull request to `main`. CI also builds the image from the `Dockerfile` on every push or pull request to `main`, starts it with no database, scans it with Trivy, and never pushes it. `deploy/k8s/`, `lambda/template.yaml`, `deploy/aws/` and the deploy job are written, linted and validated offline, but I have never applied them. Their prices and runbook are in [DEPLOYMENT.md](doc/DEPLOYMENT.md), and [Project status](#project-status) shows what has actually run.
 
 **Contents:** [Documentation](#documentation) · [Run it](#run-it-in-30-seconds) · [Status](#project-status) · [Architecture](#architecture) · [Layout](#repository-layout) · [Security](#security) · [API](#api) · [Metrics](#metrics) · [Tests](#tests) · [Deployment](#deployment-and-cost) · [Trade-offs](#trade-offs-and-known-limitations) · [Review](#what-i-found-in-review) · [Versions](#versions)
 
@@ -226,14 +226,15 @@ The same picture with method names, plus the booking sequence, the idempotency d
 ├── contracts/                     the event schema both modules test against
 ├── lambda/                        separate parentless Maven module: SQS → DynamoDB consumer,
 │                                  its SAM template and the SQS fixtures for sam local invoke
-├── k8s/                           kustomize: base, aws overlay, Ingress component
-│   ├── base/                      6 manifests true in any environment
-│   ├── overlays/aws/              image, IRSA annotation, queue URL, database URL
-│   └── components/ingress/        separate, because applying it provisions a billed ALB
-├── deploy/aws/                    up / down / cost-check / render, a selftest against
-│                                  stubbed tools, two helpers, two CloudFormation
-│                                  templates, the eksctl cluster definition (version
-│                                  pinned), and the runbook that orders them
+├── deploy/
+│   ├── aws/                       up / down / cost-check / render, a selftest against
+│   │                              stubbed tools, two helpers, two CloudFormation
+│   │                              templates, the eksctl cluster definition (version
+│   │                              pinned), and the runbook that orders them
+│   └── k8s/                       kustomize: base, aws overlay, Ingress component
+│       ├── base/                  6 manifests true in any environment
+│       ├── overlays/aws/          image, IRSA annotation, queue URL, database URL
+│       └── components/ingress/    separate, because applying it provisions a billed ALB
 ├── compose.yaml                   PostgreSQL + the app, for the container path locally
 ├── Dockerfile                     multi-stage: JDK + Maven build → JRE runtime
 └── .github/workflows/             build-and-deploy.yml (build, infra-lint, trivy-fs,
@@ -364,7 +365,7 @@ Nothing in this section has been run against AWS or a cluster. CI runs parts of 
 
 ```bash
 docker compose up --build                       # the whole stack, locally
-kubectl kustomize k8s/overlays/aws               # the EKS manifests, before render-aws.sh fills the ${…} values
+kubectl kustomize deploy/k8s/overlays/aws       # the EKS manifests, before render-aws.sh fills the ${…} values
 ```
 
 The image is built on an amd64 CI runner for amd64 nodes, so the pipeline needs no `--platform` flag. A plain `docker build` on Apple Silicon produces arm64, and the pod crash-loops with `exec /bin/sh: exec format error`, so build locally with `--platform linux/amd64`. The Lambda runs on arm64, so this applies to the service image only.

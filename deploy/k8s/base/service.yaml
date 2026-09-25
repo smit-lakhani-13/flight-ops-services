@@ -1,5 +1,6 @@
 # ClusterIP: reachable only inside the cluster, with no load balancer and
-# nothing billed. The opt-in Ingress in k8s/components/ingress exposes it.
+# nothing billed. The opt-in Ingress in deploy/k8s/components/ingress exposes
+# it.
 # In the cluster: http://flight-ops.flight-ops.svc.cluster.local
 apiVersion: v1
 kind: Service

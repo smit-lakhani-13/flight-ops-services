@@ -1,7 +1,7 @@
 # THIS FILE COSTS MONEY, which is why it is a kustomize component.
 #
-# No overlay here lists it under `components:`; k8s/overlays/aws has the line
-# commented out. up.sh step 11 applies it on its own with -f, so no deploy
+# No overlay here lists it under `components:`; deploy/k8s/overlays/aws has the
+# line commented out. up.sh step 11 applies it on its own with -f, so no deploy
 # creates a public endpoint by accident.
 #
 # Applying it has the AWS Load Balancer Controller create an Application Load

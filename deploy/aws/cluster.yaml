@@ -10,7 +10,7 @@ metadata:
 
   # One region for everything (adr/0010-region-ap-south-1.md). The ConfigMap,
   # the overlay's ECR host, the workflow and deploy/aws/lib.sh must agree:
-  #   git grep -n 'ap-south-1' -- k8s .github deploy
+  #   git grep -n 'ap-south-1' -- .github deploy
   region: ap-south-1
 
   # Pinned as a cost control: past standard support, the control plane bills

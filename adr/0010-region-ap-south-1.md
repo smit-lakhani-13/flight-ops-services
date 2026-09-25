@@ -18,8 +18,8 @@ changed by someone who assumes it was arbitrary.
 * `.github/workflows/build-and-deploy.yml`
 * `deploy/aws/cluster.yaml`
 * `deploy/aws/lib.sh`
-* `k8s/base/configmap.yaml`
-* `k8s/overlays/aws/kustomization.yaml`, in the ECR image name
+* `deploy/k8s/base/configmap.yaml`
+* `deploy/k8s/overlays/aws/kustomization.yaml`, in the ECR image name
 * `src/main/resources/application.yml`, as the default for `AWS_REGION`
 
 `deploy/aws/lib.sh` exports it, so no AWS CLI call in any script depends on the

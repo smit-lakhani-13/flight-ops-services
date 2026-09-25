@@ -125,7 +125,7 @@ for a commit on `main` that got no push run.
 | `build` | "The PostgreSQL tests ran" | `BookingIntegrationTest`, `service/OutboxPrunePostgresTest` or `LockTimeoutPostgresTest` has no readable report, no tests, or a skipped test |
 | `build` | "The SAM template points at the Lambda jar" | `lambda/template.yaml`'s `CodeUri`, which resolves against `lambda/`, is not a built file, or the jar lacks the `Handler` class |
 | `build` | "Both SBOMs exist" | `target/bom.json` or `lambda/target/bom.json` is missing or empty |
-| `infra-lint` | kubeconform | the rendered `k8s/overlays/aws`, `k8s/namespace.yaml` or `k8s/components/ingress/ingress.yaml` is not valid against the Kubernetes 1.36 schemas |
+| `infra-lint` | kubeconform | the rendered `deploy/k8s/overlays/aws`, `deploy/k8s/namespace.yaml` or `deploy/k8s/components/ingress/ingress.yaml` is not valid against the Kubernetes 1.36 schemas |
 | `infra-lint` | `cfn-lint`, `sam validate` | a CloudFormation or SAM template is malformed |
 | `infra-lint` | `shellcheck` v0.11.0, `bash -n` | any tracked `*.sh` has a lint finding or a syntax error |
 | `infra-lint` | `deploy/aws/selftest.sh` | `down.sh`, `cost-check.sh`, `ecr-image-exists.sh` or `up.sh`'s checks in `lib.sh` reach a wrong verdict against stub `aws`, `kubectl`, `helm`, `eksctl`, `sleep` and `mvnw` |

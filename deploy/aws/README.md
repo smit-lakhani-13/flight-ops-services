@@ -31,7 +31,7 @@ reads `—`.
                             │  http (no TLS, see doc/DEPLOYMENT.md)
                      ┌──────▼──────┐
                      │     ALB     │  created by the LB controller
-                     └──────┬──────┘  from k8s/components/ingress
+                     └──────┬──────┘  from deploy/k8s/components/ingress
    ┌────────────────────────▼─────────────────────────┐
    │  EKS, 2 x t3.medium, private subnets             │
    │    flight-ops  x2-4  (HPA on CPU)                │
@@ -148,7 +148,7 @@ its contents.
 | RDS, its subnet group and security group | `data.yaml` | needs eksctl's VPC, so it cannot come earlier |
 | IRSA roles, LB controller, metrics-server | `up.sh` | one-off cluster setup, not per-deploy |
 | Namespace, Secret, EKS access entry | `up.sh` | holds passwords, and grants CI its scoped access |
-| Deployment, Service, HPA, PDB, ConfigMap, ServiceAccount | CI, from `k8s/overlays/aws` | changes every release |
+| Deployment, Service, HPA, PDB, ConfigMap, ServiceAccount | CI, from `deploy/k8s/overlays/aws` | changes every release |
 | Ingress, and therefore the ALB | `up.sh` | optional: without it the app is reachable by port-forward, and the ALB's share of the bill goes |
 
 `up.sh` creates what exists once; CI creates what changes on every commit. The
@@ -220,7 +220,7 @@ still billed at month end.
 | Pods `CrashLoopBackOff`, log shows `APPLICATION FAILED TO START` on `app.security.api-password (API_PASSWORD)` | `API_PASSWORD` (or `OPS_PASSWORD`) is missing from the Secret, or has no `{id}` prefix. The message never shows the value. `kubectl get secret flight-ops-secret -n flight-ops -o jsonpath='{.data}'` should list `DB_PASSWORD`, `API_PASSWORD`, `OPS_PASSWORD` |
 | Pods `CrashLoopBackOff`, Flyway reports `password authentication failed` | `DB_PASSWORD` in the Secret does not match the database |
 | Pods `CrashLoopBackOff`, log shows `app.security.api-password cannot be verified by the configured DelegatingPasswordEncoder` | the password carries an algorithm id no encoder verifies, such as `{bcrpyt}`, and the log adds `There is no password encoder mapped for the id`. An `{argon2}` or `{scrypt}` hash stops startup the same way, because the build leaves out BouncyCastle |
-| Every API call returns 401, log warns `Encoded password does not look like BCrypt` | the Secret still holds `{bcrypt}REPLACE_ME` from `k8s/secret.example.yaml`. Recreate it with a real hash |
+| Every API call returns 401, log warns `Encoded password does not look like BCrypt` | the Secret still holds `{bcrypt}REPLACE_ME` from `deploy/k8s/secret.example.yaml`. Recreate it with a real hash |
 | `kubectl get hpa` shows `<unknown>/70%` | metrics-server is not installed. `aws eks describe-addon --cluster-name flight-ops-cluster --addon-name metrics-server` |
 | `up.sh` stops at step 1 on the JDK | the Maven wrapper does not see JDK 21. Point `JAVA_HOME` at `openjdk@21` |
 | `up.sh` stops at step 1: `up.sh needs eksctl 0.184.0 or later` | an older eksctl installs the cluster's networking addons self-managed, and step 4's re-run looks them up as EKS addons. `brew upgrade eksctl` |
@@ -248,7 +248,7 @@ still billed at month end.
 | `up.sh` | creates everything, in order, idempotently |
 | `down.sh` | deletes everything, in reverse order, then proves it |
 | `cost-check.sh` | daily cost by service, month-to-date, forecast, budget status |
-| `render-aws.sh` | renders `k8s/overlays/aws` with the four environment values filled in; used by CI and by hand |
+| `render-aws.sh` | renders `deploy/k8s/overlays/aws` with the four environment values filled in; used by CI and by hand |
 | `ecr-image-exists.sh` | prints `exists=true` or `exists=false` for one image tag, and fails on any other error; the deploy job's "Is this commit already in ECR?" step runs it |
 | `selftest.sh` | runs `down.sh`, `cost-check.sh`, `ecr-image-exists.sh` and `up.sh`'s checks in `lib.sh` against stub `aws`, `kubectl`, `helm`, `eksctl`, `sleep` and `mvnw` commands; CI's infra-lint job runs it |
 | `foundation.yaml` | ECR, GitHub OIDC provider and role, the SQS publish policy, two budgets |

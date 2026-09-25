@@ -239,9 +239,9 @@ ok "$DB_URL"
 step "7/12  IRSA — the pods' AWS identity, with no access keys"
 # ---------------------------------------------------------------------------
 # --role-only: the ServiceAccount itself is part of the application manifests
-# (k8s/base/serviceaccount.yaml), so eksctl must create the IAM role and the
-# trust policy and stop there. Letting eksctl own the ServiceAccount too means
-# two things claim the same object and `kubectl apply` fights it.
+# (deploy/k8s/base/serviceaccount.yaml), so eksctl must create the IAM role and
+# the trust policy and stop there. Letting eksctl own the ServiceAccount too
+# means two things claim the same object and `kubectl apply` fights it.
 if aws iam get-role --role-name flight-ops-sqs-publisher >/dev/null 2>&1; then
     ok "IRSA role already exists"
 else
@@ -258,8 +258,9 @@ fi
 # ---------------------------------------------------------------------------
 step "8/12  AWS Load Balancer Controller and metrics-server"
 # ---------------------------------------------------------------------------
-# The Ingress in k8s/components/ingress does nothing without this controller:
-# `kubectl get ingress` shows no ADDRESS, forever, with no error anywhere.
+# The Ingress in deploy/k8s/components/ingress does nothing without this
+# controller: `kubectl get ingress` shows no ADDRESS, forever, with no error
+# anywhere.
 LBC_POLICY_ARN="arn:aws:iam::${ACCOUNT_ID}:policy/AWSLoadBalancerControllerIAMPolicy"
 if ! aws iam get-policy --policy-arn "$LBC_POLICY_ARN" >/dev/null 2>&1; then
     # mktemp, not a fixed name in /tmp. Another local user could leave a
@@ -305,7 +306,7 @@ ensure_metrics_server
 # ---------------------------------------------------------------------------
 step "9/12  Namespace and secrets"
 # ---------------------------------------------------------------------------
-kubectl apply -f "$repo/k8s/namespace.yaml"
+kubectl apply -f "$repo/deploy/k8s/namespace.yaml"
 
 if kubectl get secret flight-ops-secret -n "$NAMESPACE" >/dev/null 2>&1; then
     ok "secret already exists — leaving it alone"
@@ -401,8 +402,8 @@ step "11/12  Ingress and the public URL"
 # The Ingress stays out of render-aws.sh, which renders the six resources CI
 # applies on every push to main. This one bills from the moment it exists, so
 # the operator who accepted that cost creates it once. See the header of
-# k8s/components/ingress/kustomization.yaml.
-kubectl apply -f "$repo/k8s/components/ingress/ingress.yaml" -n "$NAMESPACE"
+# deploy/k8s/components/ingress/kustomization.yaml.
+kubectl apply -f "$repo/deploy/k8s/components/ingress/ingress.yaml" -n "$NAMESPACE"
 
 log "waiting for the ALB to be provisioned (2-4 minutes)..."
 ALB_HOST=""

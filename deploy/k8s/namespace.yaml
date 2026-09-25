@@ -1,0 +1,27 @@
+# The unit of teardown: `kubectl delete namespace flight-ops` removes every
+# Deployment, Service, HPA, PDB and Secret in it at once. It is also the
+# boundary for ResourceQuota, LimitRange, NetworkPolicy and RBAC.
+#
+# Apply this first, on its own, and never apply the directory:
+#
+#   kubectl apply -f deploy/k8s/namespace.yaml      # this file
+#   deploy/aws/render-aws.sh | kubectl apply -f -   # the application
+#
+# `kubectl apply -f deploy/k8s/` is not recursive, so it reaches none of the
+# application in deploy/k8s/base or deploy/k8s/overlays. It does reach
+# deploy/k8s/secret.example.yaml, which has the live Secret's name and
+# REPLACE_ME for every value. Nothing fails at once. At the next restart the pod
+# crash-loops on the database password (Flyway: password authentication failed).
+# With that fixed, every API call gets 401, because {bcrypt}REPLACE_ME matches
+# no password.
+#
+# The namespace has to exist before anything in it, and a directory apply goes
+# in alphabetical order without retrying. deploy/aws/up.sh applies this file,
+# then creates the Secret; CI applies the rest.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: flight-ops
+  labels:
+    name: flight-ops
+    project: flight-ops

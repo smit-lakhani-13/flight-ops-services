@@ -250,11 +250,11 @@ described above.
 
 | Path | What it holds |
 |---|---|
-| `k8s/base/` | `configmap`, `serviceaccount`, `deployment`, `service`, `hpa` and `pdb`: everything true in any environment |
-| `k8s/overlays/aws/` | the ECR image, the IRSA role annotation, the queue URL and the database URL |
-| `k8s/components/ingress/` | the Ingress, and so the ALB. It is separate because applying it starts a continuous charge |
-| `k8s/namespace.yaml` | cluster-scoped, so CI's namespace-scoped role cannot apply it. `up.sh` does |
-| `k8s/secret.example.yaml` | a template. `up.sh` generates the real Secret and never writes it to disk |
+| `deploy/k8s/base/` | `configmap`, `serviceaccount`, `deployment`, `service`, `hpa` and `pdb`: everything true in any environment |
+| `deploy/k8s/overlays/aws/` | the ECR image, the IRSA role annotation, the queue URL and the database URL |
+| `deploy/k8s/components/ingress/` | the Ingress, and so the ALB. It is separate because applying it starts a continuous charge |
+| `deploy/k8s/namespace.yaml` | cluster-scoped, so CI's namespace-scoped role cannot apply it. `up.sh` does |
+| `deploy/k8s/secret.example.yaml` | a template. `up.sh` generates the real Secret and never writes it to disk |
 
 CI renders the overlay with
 `AWS_ACCOUNT_ID=… IMAGE_TAG=… SQS_QUEUE_URL=… DB_URL=… ./deploy/aws/render-aws.sh`,
@@ -421,10 +421,11 @@ exports it, so no script depends on the caller's profile. A teardown run
 against the wrong default region would report a clean sweep, because it would
 be looking somewhere empty. [ADR 0010](../adr/0010-region-ap-south-1.md) records
 the choice of region. The files that set it are `deploy/aws/cluster.yaml`,
-`deploy/aws/lib.sh`, `k8s/base/configmap.yaml`,
-`k8s/overlays/aws/kustomization.yaml`, `.github/workflows/build-and-deploy.yml`
-and `src/main/resources/application.yml`. Cross-region drift shows up as an
-IRSA or image-pull error, so set the CLI default to match:
+`deploy/aws/lib.sh`, `deploy/k8s/base/configmap.yaml`,
+`deploy/k8s/overlays/aws/kustomization.yaml`,
+`.github/workflows/build-and-deploy.yml` and
+`src/main/resources/application.yml`. Cross-region drift shows up as an IRSA or
+image-pull error, so set the CLI default to match:
 
 ```bash
 aws configure set region ap-south-1
@@ -532,9 +533,9 @@ still billed at month end, because deleting a resource refunds nothing.
 Reasoned from the configuration, not measured under load, the order would be:
 
 1. **Database connections.** Four pods × a Hikari pool of 10 = 40 connections,
-   against db.t4g.micro's ~112. So `k8s/base/hpa.yaml` caps `maxReplicas` at 4,
-   well below what the cluster could hold. Raise the instance class before the
-   replica count. Otherwise the symptom is "remaining connection slots are
+   against db.t4g.micro's ~112. So `deploy/k8s/base/hpa.yaml` caps `maxReplicas`
+   at 4, well below what the cluster could hold. Raise the instance class before
+   the replica count. Otherwise the symptom is "remaining connection slots are
    reserved", which looks like a database fault but comes from the replica
    count.
 
@@ -582,7 +583,7 @@ are:
    CloudFront can.
 2. Validate it by DNS. Route 53 does this in one click. With another registrar
    you add a CNAME by hand.
-3. Add these annotations to `k8s/components/ingress/ingress.yaml`:
+3. Add these annotations to `deploy/k8s/components/ingress/ingress.yaml`:
    ```yaml
    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80},{"HTTPS":443}]'
    alb.ingress.kubernetes.io/certificate-arn: arn:aws:acm:ap-south-1:…:certificate/…

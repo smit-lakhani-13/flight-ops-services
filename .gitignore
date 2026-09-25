@@ -63,10 +63,11 @@ Desktop.ini
 #  reachable through the API for a while after a force-push. So the rule is
 #  prevention, not cleanup.
 #
-#  k8s/secret.example.yaml IS committed — it holds placeholder values only.
-#  k8s/secret.yaml is the copy with real values, and it stays local.
+#  deploy/k8s/secret.example.yaml IS committed: it holds placeholder values.
+#  A file named secret.yaml, in any folder, is a copy with real values, and it
+#  stays local.
 # ------------------------------------------------------------------------------
-k8s/secret.yaml
+**/secret.yaml
 .env
 .env.*
 !.env.example

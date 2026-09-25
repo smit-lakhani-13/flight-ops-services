@@ -180,10 +180,10 @@ reverse, and the ADR is where to start.
   three touches disk or reaches GitHub.
 
 - **Secrets are only base64-encoded.** They are not encrypted: anyone with
-  `get secret` on the namespace can read them, and `k8s/secret.example.yaml`
-  says so in its header. The production answer is AWS Secrets Manager through
-  the Secrets Store CSI driver. It is not installed here. That is a gap, not a
-  trade-off.
+  `get secret` on the namespace can read them, and
+  `deploy/k8s/secret.example.yaml` says so in its header. The production answer
+  is AWS Secrets Manager through the Secrets Store CSI driver. It is not
+  installed here. That is a gap, not a trade-off.
 
 - **No AWS access keys anywhere.** In the cluster the pods would use IRSA: a
   projected, short-lived token exchanged with STS. The deploy job would use
@@ -196,8 +196,8 @@ reverse, and the ADR is where to start.
 ## Transport
 
 Nothing is deployed, so nothing is on the internet today. This section
-describes what `k8s/components/ingress` would create the day someone applies
-it.
+describes what `deploy/k8s/components/ingress` would create the day someone
+applies it.
 
 That Ingress listens on **port 80 with no TLS**. Basic credentials would cross
 the internet base64-encoded, and anyone who captures them can decode them.
@@ -361,8 +361,8 @@ work is written down. What is missing is a domain.
 6. **A placeholder hash starts.** The startup self-check proves the encoder can
    read a value. It cannot tell a malformed value behind a known prefix from a
    wrong password, because `BCryptPasswordEncoder` returns false for both.
-   `{bcrypt}REPLACE_ME`, the value in `k8s/secret.example.yaml`, passes both
-   checks. The encoder logs `Encoded password does not look like BCrypt` at
+   `{bcrypt}REPLACE_ME`, the value in `deploy/k8s/secret.example.yaml`, passes
+   both checks. The encoder logs `Encoded password does not look like BCrypt` at
    WARN, once at startup for each such value and again on every login. Every
    login as that user gets a 401, and the pod stays Ready.
 

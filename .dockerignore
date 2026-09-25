@@ -25,7 +25,6 @@ mvnw.cmd
 # run the app. `**/*.md`, because a bare `*.md` matches only the root of the
 # context.
 **/*.md
-k8s/
 deploy/
 scripts/
 contracts/
