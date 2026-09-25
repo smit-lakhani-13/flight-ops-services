@@ -263,6 +263,18 @@ still blank.
   `.gitignore` rule for the real Secret is now `**/secret.yaml`, which matches
   that file name in any folder, so it cannot go stale when a folder moves again.
 
+- **The README is rewritten.** It is under 200 lines and starts with what is
+  hard in the design, then what has run and what has not, the quality gates and
+  the defect log. The detail it held moved to the file that owns it: the API,
+  error codes, paging and worked examples to the new `doc/api.md`; tests per
+  layer and versions to CONTRIBUTING; the repository layout and the trade-offs
+  table to `doc/ARCHITECTURE.md`; image and deployment detail to
+  `doc/DEPLOYMENT.md`; metric readings to `doc/OPERATIONS.md`. Every link and
+  comment that named a README section points at the new home.
+  `doc/OPERATIONS.md` and the `OutboxMetrics` comment now say that the registry
+  would report `NaN` for a throwing gauge anyway, so the catch only changes the
+  log line.
+
 ### Removed
 
 - **Queries only tests called.** `FlightRepository` loses the two-argument

@@ -82,7 +82,7 @@ class BookingIdempotencyTest {
 
     @Test
     @Order(1)
-    @DisplayName("the seeder created the three demo flights the README curls against")
+    @DisplayName("the seeder created the three demo flights local runs use")
     void seederRan() {
         assertThat(flightRepository.findByFlightNumber("UA123"))
                 .get()

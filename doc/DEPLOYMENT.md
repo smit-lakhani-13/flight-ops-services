@@ -12,6 +12,12 @@ against stubbed tools, and the manifests validate against Kubernetes 1.36. None
 of that proves they work. When it is run, this line gets the dates, and a new
 last section, Evidence, gets the command output.
 
+I wrote and reviewed the infrastructure on a machine with no container runtime
+and no cluster. CI runs what it can reach: both Maven builds, every test (the
+PostgreSQL integration tests included), and the image, which it builds, starts
+without a database and scans. The rest needs a container registry, a cluster
+or a funded AWS account, and the project has none of the three.
+
 ## Contents
 
 - [1. Three shapes](#1-three-shapes)
@@ -53,8 +59,8 @@ scripts/demo.sh                                    # in another terminal
 ```
 
 This runs on H2 in memory, and the outbox logs its rows instead of sending
-them. Everything in [README.md](../README.md) works, but nothing survives a
-restart.
+them. Every [worked example](api.md#worked-examples) works, but nothing
+survives a restart.
 
 With Docker you also get what the H2 profile lacks: Flyway migrations, and
 PostgreSQL's own row locks and `lock_timeout`.
@@ -66,13 +72,42 @@ docker compose down -v
 ```
 
 [`compose.yaml`](../compose.yaml) sets `SPRING_PROFILES_ACTIVE=postgres`: the
-local database, Flyway and the log publisher. The image itself defaults to
-`prod`, which expects RDS, IRSA and the SQS publisher and has no default
-passwords. Run bare, with no `DB_URL`, it stops at startup with
-`'url' must start with "jdbc"`. It never falls back to H2 and the `{noop}` dev
+local database, Flyway and the log publisher. The `Dockerfile` makes `prod` the
+image's default with `ENV SPRING_PROFILES_ACTIVE=prod`, and
+`deploy/k8s/base/configmap.yaml` selects `prod` as well. That profile expects
+RDS, IRSA and the SQS publisher and has no default passwords. Run bare, with no
+`DB_URL`, the image stops at startup with `'url' must start with "jdbc"`.
+Without that default it would start on in-memory H2 and serve the `{noop}` dev
 passwords. The deploy job checks for that failure before it pushes an image, in
 the step "The image will not start without a database". The `image` job runs
 the same check on every push or pull request to `main`.
+
+### PostgreSQL without compose
+
+To run the app from source against a real database, start PostgreSQL in a
+container and select the `postgres` profile:
+
+```bash
+docker run --name pg -e POSTGRES_PASSWORD=pass -e POSTGRES_DB=flightops \
+  -p 5432:5432 -d postgres:17-alpine
+DB_PASSWORD=pass ./mvnw spring-boot:run -Dspring-boot.run.profiles=postgres
+```
+
+`DB_PASSWORD` has no default. In the `postgres` profile,
+`spring.datasource.password` is plain `${DB_PASSWORD}`, so `application.yml`
+commits no working password, which a scanner would rightly flag in a public
+repository. Leave the variable out and Hikari sends the literal string
+`${DB_PASSWORD}`. Startup then fails at Flyway's first connection with
+`FATAL: password authentication failed`, which names the wrong cause.
+`docker compose up --build` needs none of this, because `compose.yaml` sets
+`DB_PASSWORD`.
+
+The `postgres` profile also changes who owns the schema. Flyway applies the
+migrations in `src/main/resources/db/migration/`, from `V1__init.sql` to
+`V8__drop_unused_active_booking_index.sql`, and Hibernate runs
+`ddl-auto: validate`. An entity that no longer matches the tables, columns or
+column types then fails startup instead of altering them. Validation does not
+compare check constraints or indexes.
 
 ## 3. The async half alone
 
@@ -210,6 +245,35 @@ settle, then re-run. The database password exists only in the shell from step 6
 until step 9 writes the Secret. A run that stops in between stops again at
 step 9, and the message says how to set a new password.
 
+### The service image
+
+CI builds the image on an amd64 runner, and the t3.medium nodes that
+`deploy/aws/cluster.yaml` defines are amd64 too, so the workflow passes no
+`--platform` flag. A plain `docker build` on Apple Silicon produces an arm64
+image, and a pod running it on those nodes would crash-loop with
+`exec /bin/sh: exec format error`. Build locally with `--platform linux/amd64`
+when the image is meant for the cluster. The Lambda runs on arm64, but it
+ships as a jar and not an image, so this applies to the service image only.
+
+The `image` job records the size on every run. In CI run 36032424801 on
+2026-09-24 the image measured 299.5 MB (299477691 bytes), as
+`docker image inspect` reports it on the runner. The image has never been
+pushed, so no registry has reported a size for it. The runtime base,
+`eclipse-temurin:21-jre-alpine`, is a tag and not a digest, so the figure
+moves when that tag is rebuilt or a dependency changes.
+
+### The deploy job, gated off
+
+Merging to `main` does not deploy anything. The
+deploy job is gated on a `DEPLOY_ENABLED` repository variable that has never
+been set. A gate on the branch alone would make the first push to a fresh
+clone assume an IAM role built from an unset `AWS_ACCOUNT_ID` secret, and go
+red for a reason unrelated to the code. So `build`, `infra-lint`, `trivy-fs`,
+`docs-check` and `image` run on every push or pull request to `main`, with
+`dependency-review` on pull requests only. The deploy job reports as skipped
+until someone provisions the role with `up.sh` and sets the variable. Read the
+green build badge as "it builds and the tests pass".
+
 ### The order, and why it is that order
 
 The numbers are `up.sh`'s own steps. Step 1 is the preflight and the cost
@@ -262,6 +326,11 @@ and a person can run the same command. It exits 2 if any of the four is unset
 or empty, and 3 if a `${…}` placeholder survives substitution. So a missing
 value is a failed command, and never a manifest holding the literal
 `${DB_URL}`.
+
+To read the manifests before any value is filled in, run
+`kubectl kustomize deploy/k8s/overlays/aws`. It prints the overlay with the
+`${…}` placeholders still in it, which is what `render-aws.sh` passes to
+`envsubst`.
 
 The pod has three probes. The `startupProbe` allows up to 30 × 10s for the JVM,
 Spring and Flyway to start, so the liveness timeout can stay tight. The
@@ -396,7 +465,9 @@ work.
 | | **$234** ($276 with GST) |
 
 These are 730-hour months, which is why the total is a little above the 30-day
-row in the table before.
+row in the table before. The control plane's $73 accrues even with no worker
+nodes, from creation until the cluster is deleted, so a cluster scaled to zero
+nodes still costs about $0.10 an hour.
 
 Some resources outlive a botched teardown without any error, because nothing
 points at them any more. An orphaned ALB costs $19/month, an unassociated

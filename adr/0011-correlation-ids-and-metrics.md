@@ -5,11 +5,11 @@ outbox counters and gauges in `OutboxMetrics` followed in `a6efc1c`)
 
 ## Context
 
-The README's own "still open" list named the largest operability gap. Logs
-were plain text with nothing joining the lines of one request together, and no
-metric answered a question about bookings. `http_server_requests` counts
-requests by URI and status. It cannot tell a real booking from an idempotent
-replay, because both are a `201` on the same URI.
+When I took this decision, the README's "still open" list named the largest
+operability gap. Logs were plain text with nothing joining the lines of one
+request together, and no metric answered a question about bookings.
+`http_server_requests` counts requests by URI and status. It cannot tell a real
+booking from an idempotent replay, because both are a `201` on the same URI.
 
 The temptation with observability is to add everything at once: an exporter, a
 collector, dashboards. Most of that is infrastructure this repository does not
@@ -65,7 +65,8 @@ I configured no OTLP exporter endpoint.
   someone reading the output by eye.
 
 * Nothing is deployed and nothing scrapes the meters, so they are evidence and
-  drive no alerts. The README says so.
+  drive no alerts.
+  [OPERATIONS.md](../doc/OPERATIONS.md#what-is-not-wired-up) says so.
 
 ## Alternatives considered
 

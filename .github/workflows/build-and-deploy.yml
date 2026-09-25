@@ -492,7 +492,7 @@ jobs:
         run: python3 scripts/linkcheck.py
 
       # The one count that changes by design: a new ADR must come with the
-      # README's record counts and its row in adr/README.md, in the same pull
+      # README's record count and its row in adr/README.md, in the same pull
       # request.
       - name: The README's ADR count matches the tree
         run: scripts/numbers.sh --check-readme
@@ -629,8 +629,9 @@ jobs:
       # name the image it named, and a second push of the same SHA is refused.
       #
       # Runners and t3.medium nodes are both amd64, so no --platform flag is
-      # needed. A plain `docker build` on Apple Silicon produces arm64, and the
-      # pod crash-loops with `exec /bin/sh: exec format error`. See README.
+      # needed. A plain `docker build` on Apple Silicon produces arm64, and a
+      # pod would crash-loop with `exec /bin/sh: exec format error`. See
+      # doc/DEPLOYMENT.md, "The service image".
       #
       # Immutable tags have one sharp edge. If the deploy fails after the push,
       # "Re-run failed jobs" would stop at `docker push` with

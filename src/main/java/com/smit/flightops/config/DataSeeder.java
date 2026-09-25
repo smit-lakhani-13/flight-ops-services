@@ -16,11 +16,12 @@ import java.time.temporal.ChronoUnit;
 import java.util.List;
 
 /**
- * Seeds the three demo flights the README walkthrough uses, skipping any that exist, so
- * a restart against a persistent database neither duplicates nor fails. It is off in
- * {@code prod} because the check-then-insert is not safe for two pods booting at once:
- * the loser hits {@code uk_flights_flight_number} and fails startup. Reference data in a
- * real environment belongs in a migration.
+ * Seeds the three demo flights for local runs, skipping any that exist, so a restart
+ * against a persistent database neither duplicates nor fails. The worked examples in
+ * doc/api.md use two of them. It is off in {@code prod} because the check-then-insert
+ * is not safe for two pods booting at once: the loser hits
+ * {@code uk_flights_flight_number} and fails startup. Reference data in a real
+ * environment belongs in a migration.
  */
 @Component
 @ConditionalOnProperty(name = "app.seed.enabled", havingValue = "true")

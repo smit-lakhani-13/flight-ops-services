@@ -32,7 +32,7 @@ public class ErrorResponseWriter {
     }
 
     /**
-     * @param code a stable machine-readable code from the README's error-code table:
+     * @param code a stable machine-readable code from the error-code table in doc/api.md:
      *        {@code UNAUTHENTICATED} from the entry point, {@code FORBIDDEN} from the
      *        access-denied handler
      * @throws IOException if the servlet output stream cannot be obtained. A write to

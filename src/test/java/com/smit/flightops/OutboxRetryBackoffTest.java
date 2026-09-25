@@ -138,7 +138,7 @@ class OutboxRetryBackoffTest {
 
         doNothing().when(eventPublisher).publish(anyString(), anyString(), anyMap());
 
-        // The statement from doc/OPERATIONS.md, doc/ARCHITECTURE.md and the README, verbatim.
+        // The statement from doc/OPERATIONS.md and doc/ARCHITECTURE.md, verbatim.
         jdbcTemplate.update(
                 "UPDATE outbox_events SET attempts = 0, next_attempt_at = NULL WHERE id = ?",
                 event.getId());

@@ -105,17 +105,18 @@ a database blip restarts every replica at once.
 ## Metrics
 
 `/actuator/prometheus` needs `ops` credentials. On top of everything
-Micrometer provides, the service adds five counters and two gauges.
+Micrometer provides, the service adds five counters and two gauges, from
+`observability/BookingMetrics.java` and `observability/OutboxMetrics.java`.
 
 | Metric | Type | Labels | Reading |
 |---|---|---|---|
-| `bookings_booked_total` | counter | `outcome=created\|replayed` | a high `replayed` share means clients are retrying. That is fine, and useful to know |
-| `bookings_cancelled_total` | counter | `outcome=cancelled\|already_cancelled` | `already_cancelled` is a replay that changed nothing. It is not an error |
-| `bookings_lock_timeout_total` | counter | | a write gave up after 3s waiting for the flight row lock: a booking or a cancellation, or a flight status change or flight cancellation queued behind one. **Non-zero means users are seeing 503s** |
-| `outbox_pending` | gauge | | rows waiting to publish and still within the attempt ceiling. It includes rows the retry backoff is holding back. A transport outage therefore shows here as a plateau for as long as ten attempts take (about 13.5 minutes with the defaults), and only then moves to `outbox_dead` |
-| `outbox_dead` | gauge | | rows that exhausted `OUTBOX_MAX_ATTEMPTS`. **Should always be 0** |
-| `outbox_publish_total` | counter | `result=success\|failure\|exhausted` | |
-| `outbox_pruned_total` | counter | | published rows deleted by retention |
+| `bookings_booked_total` | counter | `outcome=created\|replayed` | a replay and a new booking are both a 201 on the same URI, and only this label separates selling seats from a client stuck in a retry loop. A high `replayed` share means clients are retrying. That is fine, and useful to know |
+| `bookings_cancelled_total` | counter | `outcome=cancelled\|already_cancelled` | `already_cancelled` is a repeated `DELETE`: it returns 200 and releases nothing. It is not an error. If it climbs while `cancelled` stays flat, a client thinks its cancellations are not sticking |
+| `bookings_lock_timeout_total` | counter | | a write gave up after 3s waiting for the flight row lock: a booking or a cancellation, or a flight status change or flight cancellation queued behind one. **Non-zero means users are seeing 503s.** It is the earliest sign of the whole write path stalling |
+| `outbox_pending` | gauge | | rows waiting to publish and still within the attempt ceiling, including rows the retry backoff is holding back. A rising line is publisher lag, and it shows an SQS outage before any consumer notices missing events. Each failing row stays here for as long as its ten attempts take (about 13.5 minutes with the defaults), and only then moves to `outbox_dead` |
+| `outbox_dead` | gauge | | rows that exhausted `OUTBOX_MAX_ATTEMPTS`. **Should always be 0.** A dead row does not come back by itself: the claim never returns it, and its event is never sent until someone re-drives it ([the playbook](#outbox_dead--0-a-poison-row)) |
+| `outbox_publish_total` | counter | `result=success\|failure\|exhausted` | the transport's health. A send that uses up a row's last attempt counts under `failure` as well as `exhausted`, so `failure` is the full error rate. That rate shows a partial outage that `outbox_pending` hides while the backlog still drains faster than it grows |
+| `outbox_pruned_total` | counter | | published rows deleted by retention. Flat at zero while published rows older than `OUTBOX_RETENTION` pile up means the pruner has stopped, and no other series shows it |
 
 The exporter prints one `# HELP` line per meter name, so both series of a
 meter share one description. `BookingMetrics` holds each shared description in
@@ -125,6 +126,17 @@ HTTP metrics cannot express any of these. `http_server_requests` counts a 201
 for a new booking and a 201 for an idempotent replay the same way, because
 both are the same status on the same route. The difference between them is
 the behaviour I most want to watch.
+
+Both gauges query the database on the scrape thread. If the query fails,
+`observability/OutboxMetrics.java#count` logs the error at DEBUG and the gauge
+reports `NaN` instead of throwing. `NaN` says the value is unknown, where a
+stale last value would look like a healthy flat line. The rest of the response
+is unaffected, and that would hold without the catch: in Micrometer 1.17.1,
+the version Boot 4.1.1 manages, the Prometheus registry catches a gauge that
+throws, reports `NaN` for it and logs a WARN with the stack trace the first
+time. I checked this against those jars, with a throwing gauge scraped beside
+a counter. So the catch swaps that one WARN and stack trace for a DEBUG line.
+It is not what keeps the other series in the response.
 
 Useful queries:
 
@@ -409,9 +421,15 @@ operator is left watching a re-drive that appears to do nothing.
 SELECT id, event_type, attempts, last_error, created_at
   FROM outbox_events
  WHERE published_at IS NULL AND attempts >= 10;
-
-UPDATE outbox_events SET attempts = 0, next_attempt_at = NULL WHERE id = 42;
 ```
+
+```sql
+UPDATE outbox_events SET attempts = 0, next_attempt_at = NULL WHERE id = ?
+```
+
+Put the row's id in place of `?`.
+`OutboxPoisonRowTest.java#resettingAttemptsRedrivesTheRow` runs this statement
+verbatim, so the one an operator pastes is a tested one.
 
 The next poll picks it up. Resetting without fixing the cause burns ten more
 attempts.

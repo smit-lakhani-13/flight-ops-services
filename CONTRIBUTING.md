@@ -6,12 +6,20 @@
 `maven-enforcer` stops the build on any other JDK before anything compiles, and
 its message says what to set: `This build needs JDK 21. Point JAVA_HOME at a
 JDK 21 (with Homebrew on macOS: export JAVA_HOME=/opt/homebrew/opt/openjdk@21).`
+Without that rule, a build on 17 would fail later, in the compiler, on
+`release version 21 not supported`.
 
 ```bash
-export JAVA_HOME=/opt/homebrew/opt/openjdk@21      # macOS, Homebrew
+export JAVA_HOME=/opt/homebrew/opt/openjdk@21      # Homebrew, Apple Silicon
+# export JAVA_HOME=/usr/local/opt/openjdk@21       # Homebrew, Intel
 export PATH="$JAVA_HOME/bin:$PATH"
 java -version                                      # must say 21
 ```
+
+On macOS, set `JAVA_HOME` yourself. `/usr/libexec/java_home -v 21` finds only
+the JDKs registered with macOS, and Homebrew's are not registered. When the
+only JDK it knows is 17, it still exits 0 and prints the path of the 17. A
+`JAVA_HOME` set from it then fails the enforcer.
 
 ## Building
 
@@ -38,25 +46,23 @@ Nine tests are in three classes annotated
 `BookingIntegrationTest`, three in `service/OutboxPrunePostgresTest` and one
 in `LockTimeoutPostgresTest`.
 Without a container runtime they skip, and a local build is still green and
-still correct. CI runs them, and that is where the Flyway migrations and the
-outbox's native SQL run against PostgreSQL. The build job's step "The
-PostgreSQL tests ran" fails CI if any of the three classes skips a test or has
-no report.
+still correct.
+
+CI runs them on runners with Docker, so every CI run covers the PostgreSQL
+paths that a laptop without Docker skips: Flyway with `ddl-auto=validate`,
+`SELECT FOR UPDATE` under 20-way contention, a 20-thread key race, the native
+`DELETE … FOR UPDATE SKIP LOCKED` under two pruners, the outbox claim under
+two competing pollers, and PostgreSQL's own `lock_timeout` firing on a held
+flight row. The build job's step "The PostgreSQL tests ran" fails CI if any of
+the three classes skips a test or has no report.
 
 So in CI the Surefire summary reads
 `Tests run: 266, Failures: 0, Errors: 0, Skipped: 0` for the service and
 `Tests run: 25, Failures: 0, Errors: 0, Skipped: 0` for the Lambda. On a laptop
-without Docker the service line ends `Skipped: 9`.
+without Docker the service line ends `Skipped: 9`, and 257 of its tests run.
 
 A new migration is not accepted until CI has gone green on it. The local H2
 profile never sees it, and neither does a laptop with no Docker.
-
-Today the service declares 266 tests and runs 257 of them without Docker, and
-the Lambda runs 25. Do not edit those numbers by hand anywhere:
-
-```bash
-scripts/numbers.sh          # recomputes every count the docs claim
-```
 
 ## Running it
 
@@ -94,11 +100,39 @@ resulting failure blames the property.
 - Use `@MockitoBean`. `@MockBean` was deprecated in Boot 3.4 and removed in
   4.0.
 
+## Tests
+
+The table below breaks the tests in the two builds of [Building](#building)
+down by layer. Every count here comes from `scripts/numbers.sh`, and its
+per-class listing is what the table adds up. Do not edit a count by hand:
+
+```bash
+scripts/numbers.sh          # recomputes every count the docs claim
+```
+
+| Layer | Tests | Tooling |
+|---|---|---|
+| Domain entity | 13 | plain JUnit, with no Spring and no database |
+| Service | 36 | `@ExtendWith(MockitoExtension.class)`, `@Mock`, `@InjectMocks`, `@Captor`, split across `BookingServiceTest` (orchestration, including a failed insert with no winning booking to recover), `BookingWriterTest` (the write path), `FlightServiceTest` and `SqsEventPublisherTest` (what goes on the wire) |
+| Web slice | 66 | `@WebMvcTest` + `@MockitoBean` in the two controller tests: status codes, `Location` headers, error JSON, `Allow` on a 405 and `Accept` on a 415, the 503 for a database that cannot be reached, a YAML body or a missing `Content-Type` refused on each `POST` and `PATCH`, and the rules for flight numbers, airport codes, passenger names, seat counts, status values and departure times. The other 4 have no Spring context. 2 are `exception/ApiErrorControllerTest`: one calls `ApiErrorController` directly and one drives it through a standalone MockMvc, because a full MockMvc never forwards to `/error`. 2 are `security/JsonAccessDeniedHandlerTest`, which builds its request directly so that the path can carry a raw CR and LF |
+| Repository slice | 10 | `@DataJpaTest` + `TestEntityManager`: derived queries, JPQL, `JOIN FETCH`, constraints |
+| Full context (H2) | 86 | `@SpringBootTest`. The idempotency guarantee end to end, with four 10-caller races on one key: same request, different payloads, the last seat, and one key across two flights. The authorisation rules against the real filter chain, with the Basic and Bearer challenges and who sees health components. The outbox with its trace capture, the attempt ceiling and the retention pruner against an embedded database. The OpenAPI document's status codes per operation and its comparison with a real response. The lock timeout, the error contract with the 406 and `ignorecase` on a sort property that is not text, the page overflow and multipart parsing turned off, and a lazy-loading regression with no mocking anywhere in the chain |
+| Event contract | 11 | the producer's and the consumer's `BookingEventContractTest`, both against `contracts/booking-created-v1.json`, as [Writing tests](#writing-tests) describes |
+| Lambda handler | 19 | separate module: batch parsing, partial batch failure and the conditional write. `seats` is refused with no coercion when it is missing, below 1, a string or fractional. Body values are logged on one line and capped at 1,000 characters, and the producer's trace context survives the queue |
+| Configuration and startup checks | 24 | Boot's `Binder` over plain maps: an unresolved `${...}` placeholder is rejected at startup, every outbox bound is enforced and every default is wired. `EventPropertiesTest` also starts the whole application to see a bad `app.events.publisher` named, and `PasswordVerifiabilityTest` runs `SecurityConfig` in a `WebApplicationContextRunner` to see an unverifiable password stop startup. `ValidationClockTest` checks that `@Future` reads the `Clock` bean, and `AwsConfigTest` that the `sts` module, which the credential chain needs for IRSA, is on the classpath |
+| Architecture | 9 | ArchUnit over `target/classes`, one test per rule in [Architecture rules](#architecture-rules). Each rule was seen to fail on a planted violation before it was committed |
+| Observability | 8 | the request-id filter against a hostile inbound header, and the booking meters scraped through a real `PrometheusMeterRegistry`, since a `SimpleMeterRegistry` would accept any name |
+| Run | 282 | 0 failures without Docker (13 + 36 + 66 + 10 + 86 + 11 + 19 + 24 + 9 + 8) |
+| PostgreSQL integration | 9 | `@Testcontainers(disabledWithoutDocker = true)`, skipped without a container runtime; [`Skipped: 9` is correct](#skipped-9-is-correct) names the three classes and what they cover |
+
+So 291 tests exist across the two modules. 282 run without Docker and 9 skip,
+and CI runs all 291.
+
 ## What CI enforces
 
 `.github/workflows/build-and-deploy.yml` defines seven jobs, and not all of them
-run on every event. The workflow runs on a push or pull request to `main`, and
-on a manual run. The jobs run in parallel, so a red square names what broke
+run on every event. The workflow runs on every push or pull request to `main`,
+and on a manual run. The jobs run in parallel, so a red square names what broke
 before you open the log.
 
 | Job | Runs on |
@@ -129,7 +163,7 @@ for a commit on `main` that got no push run.
 | `infra-lint` | `cfn-lint`, `sam validate` | a CloudFormation or SAM template is malformed |
 | `infra-lint` | `shellcheck` v0.11.0, `bash -n` | any tracked `*.sh` has a lint finding or a syntax error |
 | `infra-lint` | `deploy/aws/selftest.sh` | `down.sh`, `cost-check.sh`, `ecr-image-exists.sh` or `up.sh`'s checks in `lib.sh` reach a wrong verdict against stub `aws`, `kubectl`, `helm`, `eksctl`, `sleep` and `mvnw` |
-| `trivy-fs` | Trivy | a CRITICAL/HIGH vulnerability **with a fix available**, or a committed secret |
+| `trivy-fs` | Trivy | a CRITICAL/HIGH vulnerability **with a fix available**, or a committed secret that Trivy rates CRITICAL/HIGH |
 | `dependency-review` | dependency-review | the pull request *adds* a dependency with a high-severity advisory. The job needs the repository's dependency graph. If the graph is switched off, the job names the setting in its summary and passes, because no commit can fix a repository setting. A probe that answers anything other than 200, 403 or 404 (an outage, a token problem) fails the job, so "the API had a bad minute" never looks like "the feature is off" |
 | `docs-check` | `scripts/refcheck.py` | a backticked `path` or `path#symbol` in any Markdown file does not resolve |
 | `docs-check` | `scripts/linkcheck.py` | a relative link or heading anchor is broken |
@@ -195,7 +229,7 @@ input list. Leave it out and every script that sources it reports SC1091.
 | `no_standard_streams` | nothing writes to stdout |
 | `repositories_are_interfaces` | repositories are interfaces named `*Repository` |
 | `transactions_are_opened_only_in_the_service_layer` | `@Transactional` appears only in `service` |
-| `time_comes_from_the_clock` | no `Instant.now()` in main code |
+| `time_comes_from_the_clock` | in main code, no `java.time` `now()` without a `Clock`, no `System.currentTimeMillis()`, no `new Date()` and no `Calendar.getInstance()` |
 | `no_web_types_below_the_controller` | no servlet types in service, entity or repository |
 
 Every class takes time from the injected `Clock`. If you need an exemption,
@@ -206,11 +240,21 @@ discuss it in the pull request before anyone widens the rule.
 Documentation is part of the change and ships with it:
 
 - Cite code as `path#symbol`, never as `path:line`. Line numbers rot on the
-  next commit, and `refcheck.py` can verify symbols but not line numbers.
+  next commit, and `refcheck.py` can verify symbols but not line numbers. It
+  checks a backticked span that ends in a known extension or names
+  `Dockerfile`, `mvnw` or `LICENSE`. A bare filename or a package-relative
+  path, such as `config/SecurityConfig.java`, resolves when exactly one
+  tracked file matches it, and one that names a file at the repository root
+  resolves to that file. A bare filename that matches more than one tracked
+  file and none at the root is accepted without its `#symbol` being checked,
+  so cite a longer path when the name is shared. The script itself lists what
+  it skips.
 - A decision with a real trade-off gets an ADR in `adr/`. The format is in
   [adr/README.md](adr/README.md). Record the decision, the alternatives and
   what it costs.
-- Numbers come from `scripts/numbers.sh`.
+- Numbers come from `scripts/numbers.sh`. Run it without a flag before you
+  edit a count. CI compares only the ADR count with the documents, so any
+  other stale count still passes.
 - British spelling.
 - No emoji in prose.
 
@@ -230,11 +274,54 @@ Documentation is part of the change and ships with it:
 
 - The template asks what breaks if the change is wrong. Answer it.
 
+## Versions
+
+| Component | Version | Set by |
+|---|---|---|
+| Java | 21 (21.0.12.1 in the local builds) | `<java.version>` in `pom.xml` and `<maven.compiler.release>` in `lambda/pom.xml`. CI asks `setup-java` for Temurin 21 with no patch release |
+| Jakarta EE | 11 | Spring Boot (Servlet 6.1, Persistence 3.2, Validation 3.1) |
+| Spring Boot | 4.1.1 | the parent in `pom.xml` |
+| Spring Framework | 7.0.9 | Spring Boot |
+| Spring Security | 7.1.1 | Spring Boot |
+| Tomcat | 11.0.26 | `<tomcat.version>` in `pom.xml`, over Boot's 11.0.24 |
+| Hibernate | 7.4.5 | Spring Boot |
+| Jackson 3 | 3.1.5 | Spring Boot |
+| Jackson 2 | 2.22.2 | `<jackson-2-bom.version>` in `pom.xml`, over Boot's 2.21.5; `<jackson.version>` in `lambda/pom.xml` |
+| Flyway | 12.4.0 | Spring Boot |
+| springdoc-openapi | 3.1.1 | `<springdoc.version>` in `pom.xml` |
+| AWS SDK for Java | 2.55.2 | `<aws.sdk.version>` in both POMs |
+| JUnit | 6.0.3 | Spring Boot in the service; `<junit.version>` in `lambda/pom.xml` |
+| Maven | 3.9.16 | `.mvn/wrapper/maven-wrapper.properties` |
+
+`pom.xml` changes one dependency version that Boot manages: it sets
+`jackson-2-bom.version` to 2.22.2. Boot 4 runs on Jackson 3 and still manages
+the Jackson 2 coordinates at 2.21.5 for libraries that have not moved. The
+OpenAPI document is built by swagger-core, which is one of them and needs at
+least 2.22.1. Boot's dependency management would have handed it the older
+Jackson 2 with no error, and the enforcer's `requireUpperBoundDeps` rule
+refused the build instead. Setting Boot's own property moves the whole
+Jackson 2 line together, and `lambda/pom.xml` keeps the same version, so the
+repository has one Jackson 2 to patch. The enforcer and CycloneDX plugin pins
+in `pom.xml` match the versions Boot manages today; they are there so that a
+Boot upgrade does not move them.
+
+`./mvnw` pins Maven 3.9.16 and its SHA-256, so CI needs no Maven install step
+and a substituted archive fails the build. The wrapper is
+`distributionType=only-script`: two scripts, `mvnw` and `mvnw.cmd`, and a
+properties file, with no `maven-wrapper.jar` committed.
+
+What the Boot 3.5 to 4.1 upgrade broke is in
+[the defect log](doc/DEFECT-LOG.md#the-boot-4-upgrade), and why the service
+moved is in [ADR 0007](adr/0007-spring-boot-4.md). Dependabot proposes
+version bumps, and [Dependabot](#dependabot) says what it leaves to a person
+and how to handle its pull requests.
+
 ## Dependabot
 
 Dependabot runs monthly on both Maven modules, the Actions workflows and the
 Dockerfile base images. `.github/dependabot.yml` sets the interval and the
-grouping.
+grouping. The Lambda module has its own entry, because with no parent POM
+nothing else manages its versions.
 
 - `open-pull-requests-limit` is set on every entry (3, 2, 1 and 2), because the
   default is 5 per entry. The four entries at the default can open twenty pull
@@ -266,4 +353,5 @@ response, and what you expected. Every response the application handles
 carries the request id, 401 and 403 included, and with it the request is one
 `grep` away. Tomcat's own 400 page and a `TRACE` refusal carry none.
 
-Do not report a security issue in a public issue. See [SECURITY.md](SECURITY.md).
+Do not report a security issue in a public issue. See
+[SECURITY.md](SECURITY.md).

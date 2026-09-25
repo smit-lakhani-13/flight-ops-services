@@ -4,8 +4,10 @@ These are the defects I found in this service and how I fixed them. I
 reproduced most of them against a running instance before changing the code.
 Where I found one by reading the code or its documentation instead, the entry
 says so. Each entry says what I saw, why it happened, what I changed, the test
-that pins it where one exists, and the commit the fix landed in. The
-[README](../README.md#what-i-found-in-review) has the short list.
+that pins it where one exists, and the commit the fix landed in. The README's
+[Found in self-review](../README.md#found-in-self-review) section links a few
+of these entries. This log keeps the defects with a lesson in them;
+[CHANGELOG.md](../CHANGELOG.md) records what changed in each release.
 
 Severity: High means an invariant broke, data was wrong or lost, a shared
 resource was destroyed or an operation failed every time; Medium, a wrong
@@ -593,8 +595,8 @@ them landed in `c47729d`.
 `@ConfigurationProperties` binding resolves placeholders with
 `ignoreUnresolvablePlaceholders=true`. `@Value` fails instead. An unset variable
 therefore bound as the literal 15-character string `${API_PASSWORD}`. The
-context started, both probes passed and the pod went Ready. Then every
-authenticated request returned a bodyless 500.
+context started and both probe endpoints reported UP, so a pod would have gone
+Ready. Then every authenticated request returned a bodyless 500.
 
 `DelegatingPasswordEncoder` finds `{` at index 1 instead of 0 and throws
 `IllegalArgumentException`. That is not an `AuthenticationException`, so no
@@ -675,15 +677,16 @@ a zone bug ships green.
 ### The example Secret lacked the passwords
 
 `deploy/k8s/secret.example.yaml` did not carry the two API passwords. Anyone
-following the example deployed a pod with neither set, which is the first bug in
-this section. Both keys are in the example now, with the
+following the example would have started a pod with neither set, which is the
+first bug in this section. Both keys are in the example now, with the
 `htpasswd -bnBC 10 "" 'pw' | tr -d ':\n'` recipe and a note that leaving them
 out fails startup. No test covers the example file.
 
 ## Third review pass
 
-These were the gaps the README listed as open. I had written them down as known
-and unfixed, which is the easiest kind of debt to leave alone.
+These were gaps an earlier version of the README listed as open. I had written
+them down as known and unfixed, which is the easiest kind of debt to leave
+alone.
 
 ### Nothing tied a log line to a request
 
