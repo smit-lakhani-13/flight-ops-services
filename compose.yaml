@@ -1,7 +1,7 @@
 # The whole service on a laptop: PostgreSQL, the application, one command.
 #
 #   docker compose up --build          # http://localhost:8080
-#   ./demo.sh                          # the eight acts, against the container
+#   scripts/demo.sh                    # the eight acts, against the container
 #   docker compose down -v             # -v also drops the database volume
 #
 # Not the deployment (DEPLOYMENT.md). It adds what the H2 default profile

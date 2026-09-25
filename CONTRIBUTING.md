@@ -62,8 +62,8 @@ scripts/numbers.sh          # recomputes every count the docs claim
 
 ```bash
 ./mvnw spring-boot:run       # H2 in memory, seeded, no setup
-./demo.sh                    # the eight acts, with pauses
-./demo.sh --fast             # without
+scripts/demo.sh              # the eight acts, with pauses
+scripts/demo.sh --fast       # without
 ```
 
 Against real PostgreSQL:
@@ -122,7 +122,7 @@ without a line of it changing.
 | `build` | JaCoCo | bundle coverage below 80% line or 50% branch |
 | `build` | ArchUnit | a layering rule is broken (9 rules in `ArchitectureTest`) |
 | `build` | "The PostgreSQL tests ran" | `BookingIntegrationTest`, `service/OutboxPrunePostgresTest` or `LockTimeoutPostgresTest` has no readable report, no tests, or a skipped test |
-| `build` | "The SAM template points at the Lambda jar" | `template.yaml`'s `CodeUri` is not a built file, or the jar lacks the `Handler` class |
+| `build` | "The SAM template points at the Lambda jar" | `lambda/template.yaml`'s `CodeUri`, which resolves against `lambda/`, is not a built file, or the jar lacks the `Handler` class |
 | `build` | "Both SBOMs exist" | `target/bom.json` or `lambda/target/bom.json` is missing or empty |
 | `infra-lint` | kubeconform | the rendered `k8s/overlays/aws`, `k8s/namespace.yaml` or `k8s/components/ingress/ingress.yaml` is not valid against the Kubernetes 1.36 schemas |
 | `infra-lint` | `cfn-lint`, `sam validate` | a CloudFormation or SAM template is malformed |
@@ -139,6 +139,13 @@ without a line of it changing.
 | `deploy` | "The image will not start without a database" | the image, run with no environment, does not stop with `'url' must start with` |
 | `deploy` | Trivy, on the image | the built image has a CRITICAL vulnerability with a fix available. It runs before the push |
 | `deploy` | rollout and smoke test | the rollout does not finish in 12 minutes, or readiness is not `UP`, or `/v3/api-docs` is not served through a port-forward |
+
+No Trivy finding is silenced, and there is no `.trivyignore`. Trivy reads one
+from the repository root if it is ever added. Each entry would carry the CVE
+id, a reason a reviewer can disagree with (why the code is unreachable, or why
+the risk is accepted; never just "false positive") and an expiry date. A CVE
+with no released fix never needs an entry, because every scan here passes
+`ignore-unfixed`; one that is inconvenient to fix needs a dependency bump.
 
 Run the doc gates before you push. They are fast, and they catch real mistakes:
 

@@ -16,8 +16,8 @@ data:
   # by default, ECS JSON logs, and no default passwords.
   SPRING_PROFILES_ACTIVE: "prod"
 
-  # Must match cluster.yaml and the workflow's AWS_REGION. A mismatch shows up
-  # as an IRSA auth error or an ECR image-pull error.
+  # Must match deploy/aws/cluster.yaml and the workflow's AWS_REGION. A
+  # mismatch shows up as an IRSA auth error or an ECR image-pull error.
   AWS_REGION: "ap-south-1"
 
 

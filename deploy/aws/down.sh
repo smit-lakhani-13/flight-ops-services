@@ -197,7 +197,7 @@ else
     log "no $SAM_STACK"
 fi
 
-# template.yaml declares the log group, so the stack delete above normally
+# lambda/template.yaml declares the log group, so the stack delete above normally
 # takes it. This catches a group Lambda created by itself, outside the stack,
 # which never expires.
 if aws logs delete-log-group \

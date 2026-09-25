@@ -16,7 +16,7 @@ changed by someone who assumes it was arbitrary.
 `ap-south-1` (Mumbai), for all of it. The value is set in six places:
 
 * `.github/workflows/build-and-deploy.yml`
-* `cluster.yaml`
+* `deploy/aws/cluster.yaml`
 * `deploy/aws/lib.sh`
 * `k8s/base/configmap.yaml`
 * `k8s/overlays/aws/kustomization.yaml`, in the ECR image name

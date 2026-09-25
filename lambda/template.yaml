@@ -8,12 +8,13 @@ Description: >
   events. deploy/aws/up.sh deploys this stack, which can be deleted on its own.
 
 # Deploy by hand with Maven, not `sam build`: SAM builds in a scratch copy of
-# lambda/, where the tests cannot find ../events and ../contracts. sam deploy
-# prefers an existing .aws-sam/build/template.yaml, so delete .aws-sam/ first.
+# lambda/, where the tests cannot find ../contracts. sam deploy prefers an
+# existing .aws-sam/build/template.yaml, so delete .aws-sam/ first. From the
+# repository root (SAM resolves CodeUri against this file's directory):
 #   ./mvnw -B -f lambda/pom.xml clean package
-#   sam deploy --template-file template.yaml --stack-name flight-ops-lambda \
+#   sam deploy --template-file lambda/template.yaml --stack-name flight-ops-lambda \
 #     --resolve-s3 --capabilities CAPABILITY_IAM
-#   sam local invoke BookingEventFunction -e events/sqs.json
+#   sam local invoke BookingEventFunction -t lambda/template.yaml -e lambda/events/sqs.json
 #   sam logs -n BookingEventFunction --stack-name flight-ops-lambda --tail
 #
 # Tear down with `sam delete --stack-name flight-ops-lambda --region ap-south-1`
@@ -187,7 +188,7 @@ Resources:
         # bookings in the same instant apart, and the key is the same on every
         # redelivery, so the conditional write is an idempotency check.
         # BookingEventHandler#sortKey has the reasoning;
-        # events/sqs-same-instant.json exercises it.
+        # lambda/events/sqs-same-instant.json exercises it.
         - AttributeName: eventTime
           KeyType: RANGE
 
@@ -217,7 +218,7 @@ Resources:
     DependsOn: BookingEventFunctionLogGroup
     Properties:
       # The shaded jar, deployed as built; CI checks it holds the Handler.
-      CodeUri: lambda/target/booking-event-handler.jar
+      CodeUri: target/booking-event-handler.jar
 
       Handler: com.smit.flightops.lambda.BookingEventHandler::handleRequest
 

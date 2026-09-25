@@ -36,9 +36,9 @@ with a dead-letter queue after three receives.
 ## Consequences
 
 * The dead-letter queue is the SQS queue's own `RedrivePolicy`
-  (`template.yaml#RedrivePolicy`, three receives). Partial-batch response is a
-  setting on Lambda's event source mapping
-  (`template.yaml#ReportBatchItemFailures`), which the AWS documentation
+  (`lambda/template.yaml#RedrivePolicy`, three receives). Partial-batch response
+  is a setting on Lambda's event source mapping
+  (`lambda/template.yaml#ReportBatchItemFailures`), which the AWS documentation
   offers for SQS, Kinesis, DynamoDB Streams and Kafka but not for Amazon MQ.
 
 * The consumer is bound to `SQSEvent`. Another transport means another

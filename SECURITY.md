@@ -288,13 +288,13 @@ written down. What is missing is a domain.
 - Multi-stage build. The runtime image has a JRE and one jar, and no compiler,
   Maven or source.
 
-- `cluster.yaml` puts the nodes in private subnets with no public IPs, so
-  inbound traffic would arrive only through the load balancer. No cluster has
-  been created.
+- `deploy/aws/cluster.yaml` puts the nodes in private subnets with no public
+  IPs, so inbound traffic would arrive only through the load balancer. No
+  cluster has been created.
 
-- `cluster.yaml` gives the node instance role no load balancer or autoscaler
-  policy (`withAddonPolicies` sets only `cloudWatch`). A policy on the
-  instance role is available to every pod on the node through the metadata
+- `deploy/aws/cluster.yaml` gives the node instance role no load balancer or
+  autoscaler policy (`withAddonPolicies` sets only `cloudWatch`). A policy on
+  the instance role is available to every pod on the node through the metadata
   service. The load balancer controller would get its own IRSA role.
 
 - `up.sh` gives CI's role `AmazonEKSEditPolicy` **scoped to the `flight-ops`
@@ -314,8 +314,8 @@ written down. What is missing is a domain.
   step fails the job on any error other than `ImageNotFoundException`, so a
   missing permission cannot pass for a missing image.
 
-- The Lambda's role comes from SAM policy templates in `template.yaml`, and it
-  is wider than the handler needs. `DynamoDBWritePolicy` grants `PutItem`,
+- The Lambda's role comes from SAM policy templates in `lambda/template.yaml`,
+  and it is wider than the handler needs. `DynamoDBWritePolicy` grants `PutItem`,
   `UpdateItem` and `BatchWriteItem` on the table and its indexes, and the
   handler calls only `PutItem`. The SQS event adds
   `AWSLambdaSQSQueueExecutionRole`, whose SQS actions are on `Resource: '*'`.

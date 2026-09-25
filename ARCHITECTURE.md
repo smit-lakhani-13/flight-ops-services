@@ -73,8 +73,8 @@ the outbox row in one PostgreSQL transaction. As two services with a database
 each, that becomes a saga: reserve seats in one, insert the booking in the
 other, and release the seats again when the second step fails. The Lambda is
 separate for other reasons: it scales with the queue, up to the five
-concurrent invocations `template.yaml` allows, it can fail without failing a
-booking, and it owns a different store.
+concurrent invocations `lambda/template.yaml` allows, it can fail without
+failing a booking, and it owns a different store.
 [ADR 0008](adr/0008-standalone-lambda-consumer.md) records why it is a plain
 Lambda rather than a second Spring Boot service, which would consume SQS
 around the clock. Inside the service, the boundary between layers is the
@@ -547,8 +547,9 @@ flowchart LR
 ```
 
 The handler never sends to the DLQ. A reported message goes back to the queue,
-and the queue's redrive policy in `template.yaml` (`maxReceiveCount: 3`) moves
-it to `booking-events-dlq` after the third failed receive.
+and the queue's redrive policy in `lambda/template.yaml`
+(`maxReceiveCount: 3`) moves it to `booking-events-dlq` after the third failed
+receive.
 
 - The contract between them is a file, `contracts/booking-created-v1.json`.
   A test on each side asserts against it, and neither test imports the other
@@ -562,8 +563,8 @@ it to `booking-events-dlq` after the third failed receive.
   warm invocations.
 
 - Partial batch failure: the handler returns only the failed message ids.
-  `FunctionResponseTypes: [ReportBatchItemFailures]` in `template.yaml` makes
-  Lambda read that list. Without it, Lambda treats the invocation as a success
+  `FunctionResponseTypes: [ReportBatchItemFailures]` in `lambda/template.yaml`
+  makes Lambda read that list. Without it, Lambda treats the invocation as a success
   and deletes every message in the batch, failures included. With it, one
   poison message does not redeliver the nine beside it that succeeded.
 
@@ -581,8 +582,8 @@ it to `booking-events-dlq` after the third failed receive.
   The contract test parses with the same mapper.
 
 - The sort key is `timestamp#bookingId`. The `bookingId` keeps two bookings on
-  one flight in the same instant apart, and `events/sqs-same-instant.json`
-  covers that case. Both sides format the timestamp with
+  one flight in the same instant apart, and
+  `lambda/events/sqs-same-instant.json` covers that case. Both sides format the timestamp with
   `uuuu-MM-dd'T'HH:mm:ss.SSSSSS'Z'`. DynamoDB sorts range keys as bytes, and
   `Instant.toString()` prints 0, 3, 6 or 9 fractional digits. `…:00Z` would
   then sort after `…:00.000001Z`, because `Z` is `0x5A` and `.` is `0x2E`. The
@@ -597,8 +598,8 @@ it to `booking-events-dlq` after the third failed receive.
   A message attribute is input from anyone who can send to the queue. A
   newline in it would put a fabricated line inside the log entry, and an
   unbounded attribute would be shipped to CloudWatch. A missing or malformed
-  trace never fails a projection. `events/sqs-with-trace.json` carries one
-  message with a trace and one without.
+  trace never fails a projection. `lambda/events/sqs-with-trace.json` carries
+  one message with a trace and one without.
 
 - Values from the body come from the same senders, so they are cleaned before
   they reach the log
@@ -634,17 +635,19 @@ it to `booking-events-dlq` after the third failed receive.
   Joda module across the whole event model. A comment in `lambda/pom.xml` says
   so.
 
-- SnapStart is off, and `template.yaml` says why. No cold start has been
-  measured on this function. The ranges in `lambda/pom.xml` and `template.yaml`
-  are published figures from elsewhere, labelled as such.
+- SnapStart is off, and `lambda/template.yaml` says why. No cold start has
+  been measured on this function. The ranges in `lambda/pom.xml` and
+  `lambda/template.yaml` are published figures from elsewhere, labelled as
+  such.
 
 - Maven builds the package. `deploy/aws/up.sh` step 3 runs
   `./mvnw -B -q -f lambda/pom.xml clean package`, then
-  `sam deploy --template-file template.yaml`. `CodeUri` points at
-  `lambda/target/booking-event-handler.jar`, so there is no `sam build`. SAM
-  builds in a scratch copy of the `CodeUri` directory, where the Lambda tests
-  cannot find `../events` and `../contracts`. A step in CI's `build` job checks
-  that `CodeUri` names a built file and that the file holds the handler class.
+  `sam deploy --template-file lambda/template.yaml`. `CodeUri` is
+  `target/booking-event-handler.jar`, which SAM resolves against the
+  template's directory, so there is no `sam build`. SAM builds in a scratch
+  copy of the `CodeUri` directory, where the Lambda tests cannot find
+  `../contracts`. A step in CI's `build` job checks that `CodeUri` names a
+  built file and that the file holds the handler class.
 
 ---
 

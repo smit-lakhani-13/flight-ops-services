@@ -45,12 +45,13 @@ printf 'k8s overlay patches    %s\n'   "$(k8s_manifests '^k8s/overlays/')"
 printf 'k8s ingress component  %s\n'   "$(k8s_manifests '^k8s/components/')"
 printf 'k8s cluster-scoped     %s (namespace.yaml)\n' "$(k8s_manifests '^k8s/[^/]*\.yaml$')"
 printf 'kustomizations         %s\n'   "$(git ls-files 'k8s/**/kustomization.yaml' | wc -l | tr -d ' ')"
+# cluster.yaml is an eksctl config, not a CloudFormation template.
 printf 'CloudFormation/deploy  %s templates, %s scripts\n' \
-  "$(git ls-files 'deploy/aws/*.yaml' | wc -l | tr -d ' ')" \
+  "$(git ls-files 'deploy/aws/*.yaml' ':!deploy/aws/cluster.yaml' | wc -l | tr -d ' ')" \
   "$(git ls-files 'deploy/aws/*.sh' | wc -l | tr -d ' ')"
 printf 'ADRs                   %s\n' \
   "$(git ls-files 'adr/[0-9]*.md' | wc -l | tr -d ' ')"
-printf 'SQS fixtures           %s\n' "$(git ls-files 'events/*.json' | wc -l | tr -d ' ')"
+printf 'SQS fixtures           %s\n' "$(git ls-files 'lambda/events/*.json' | wc -l | tr -d ' ')"
 
 rule 'Tests that ran'
 count() {  # sums an attribute across every surefire XML under a directory

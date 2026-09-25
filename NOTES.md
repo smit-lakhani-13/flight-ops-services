@@ -815,7 +815,8 @@ I found this by reading, because the deployment has never run against real
 AWS. `template.yaml` had `CodeUri: ./lambda` and `deploy/aws/up.sh` ran
 `sam build`, which builds in a scratch copy where the Lambda tests cannot find
 `../events` and `../contracts`. Maven now builds the jar, `CodeUri` names it,
-and step 3 runs `sam deploy --template-file template.yaml`. Step 10 had a
+and step 3 runs `sam deploy` with the template named explicitly (now
+`lambda/template.yaml`). Step 10 had a
 second bug: `kubectl wait` ran before CI had created the deployment and exited
 at once with NotFound, so `deploy/aws/lib.sh#wait_for_deployment` now waits for
 it to appear first. `deploy/aws/selftest.sh` tests the scripts against stubbed

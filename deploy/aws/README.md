@@ -1,8 +1,9 @@
 # Deploying to AWS
 
-Six scripts, a shared library and two CloudFormation templates. Together
-they create the whole demo (cluster, database, queue, Lambda, load balancer)
-in an empty account, and delete it again with proof that it is gone.
+Six scripts, a shared library, two CloudFormation templates and the eksctl
+cluster definition. Together they create the whole demo (cluster, database,
+queue, Lambda, load balancer) in an empty account, and delete it again with
+proof that it is gone.
 
 Nothing here has been run against a real account. The templates lint, the
 scripts parse and are shellcheck-clean, and `selftest.sh` runs the teardown,
@@ -111,7 +112,7 @@ Variable  DB_URL           jdbc:postgresql://…:5432/flightops
 Put those in the GitHub repository settings and run the workflow. The script
 waits up to 30 minutes for CI to create the deployment, and up to 20 for the
 rollout. Then it creates the Ingress, waits for the load balancer, and finishes
-by running [`demo.sh`](../../demo.sh) against the public URL. The demo is eight
+by running [`scripts/demo.sh`](../../scripts/demo.sh) against the public URL. The demo is eight
 acts over HTTP and never looks at the queue or the table. To see bookings
 arrive in DynamoDB through the queue:
 
@@ -137,7 +138,7 @@ its contents.
 | Resource | Created by | Why there |
 |---|---|---|
 | ECR, GitHub OIDC trust, CI role, budgets | `foundation.yaml` | must exist before CI can push anything |
-| SQS, DLQ, two CloudWatch alarms, DynamoDB, the Lambda | `template.yaml` via `sam deploy`, from the jar Maven builds | SAM owns its own stack; it is also the only half that is useful on its own |
+| SQS, DLQ, two CloudWatch alarms, DynamoDB, the Lambda | `lambda/template.yaml` via `sam deploy`, from the jar Maven builds | SAM owns its own stack; it is also the only half that is useful on its own |
 | Cluster, VPC, NAT, nodes | `cluster.yaml` via `eksctl` | eksctl's VPC layout is what the RDS template reads its subnets from |
 | RDS, its subnet group and security group | `data.yaml` | needs eksctl's VPC, so it cannot come earlier |
 | IRSA roles, LB controller, metrics-server | `up.sh` | one-off cluster setup, not per-deploy |
@@ -247,13 +248,15 @@ still billed at month end.
 | `selftest.sh` | runs `down.sh`, `cost-check.sh`, `ecr-image-exists.sh` and `up.sh`'s checks in `lib.sh` against stub `aws`, `kubectl`, `helm`, `eksctl`, `sleep` and `mvnw` commands; CI's infra-lint job runs it |
 | `foundation.yaml` | ECR, GitHub OIDC provider and role, the SQS publish policy, two budgets |
 | `data.yaml` | RDS PostgreSQL, its subnet group and security group |
+| `cluster.yaml` | the eksctl cluster: Kubernetes version pin, one NAT gateway, OIDC for IRSA, and the managed node group `lib.sh` names; `up.sh` passes it to `eksctl` with `-f` |
 
-`cluster.yaml` and `template.yaml` are at the repository root, where `eksctl`
-and `sam` expect to find them. `up.sh` builds the Lambda with
+`cluster.yaml` sits beside the scripts that use it, because `eksctl` takes its
+config from `-f` and has no default location. The SAM template is
+`lambda/template.yaml`, beside the module it deploys, and SAM resolves its
+`CodeUri` against the template's directory. `up.sh` builds the Lambda with
 `./mvnw -B -q -f lambda/pom.xml clean package` and deploys the jar with
-`sam deploy --template-file template.yaml`, not `sam build`: SAM builds in a
-scratch copy of `lambda/`, where the tests cannot find `../events` and
-`../contracts`.
+`sam deploy --template-file lambda/template.yaml`, not `sam build`: SAM builds
+in a scratch copy of `lambda/`, where the tests cannot find `../contracts`.
 
 The scripts keep their state in `deploy/aws/.state/flight-ops.env`: the account
 id, the ECR repository URI, the queue URL, the JDBC URL and the load balancer
