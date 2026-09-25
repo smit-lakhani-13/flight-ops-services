@@ -49,6 +49,7 @@ describe("runRace", () => {
     expect(JSON.parse(bodies[0]!)).toEqual(BOOKING);
     const ids = seen.map((r) => r.headers.get("x-request-id"));
     expect(new Set(ids).size).toBe(RACE_SIZE);
+    expect(seen).toHaveLength(RACE_SIZE);
     expect(ids.every((id) => id?.startsWith("web-race-"))).toBe(true);
     expect(seen.every((r) => r.headers.get("authorization") === "Basic YXBpOmRldi1zZWNyZXQ=")).toBe(true);
 
@@ -111,6 +112,7 @@ describe("runRace", () => {
       headers: { "Content-Type": "application/json" },
     });
     await runRace(request, { fetch: fetchImpl, baseUrl: BASE });
+    expect(seen).toHaveLength(RACE_SIZE);
     expect(seen.every((r) => r.headers.get("authorization") === null)).toBe(true);
   });
 });

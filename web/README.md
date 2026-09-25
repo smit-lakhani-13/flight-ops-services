@@ -76,6 +76,9 @@ Four request headers go upstream: `Authorization`, `Content-Type`, `Accept` and
 way back only `Content-Type`, `Location`, `Retry-After`, `X-Request-Id`,
 `Allow` and `Accept` pass, and every answer carries `Cache-Control: no-store`.
 `Location` is cut to its path, so a new flight's link opens on the console.
+The API's answer is read in full before it is relayed, so a stall or a dropped
+connection part-way through becomes a `504` or a `502` rather than a cut-off
+body.
 
 `WWW-Authenticate` is dropped on purpose. Passed through, it would make the
 browser open its own Basic dialog on every 401 and remember what was typed for
@@ -89,11 +92,11 @@ shape, with codes that start with `CONSOLE_`:
 | 400 | `CONSOLE_BAD_REQUEST` | The race body is not one JSON object |
 | 403 | `CONSOLE_CROSS_SITE_REFUSED` | The browser marked the request `Sec-Fetch-Site: cross-site` |
 | 404 | `CONSOLE_PATH_REFUSED` | The path is outside the allow-list |
-| 405 | `CONSOLE_METHOD_REFUSED` | A method the path does not take, such as a write under `/actuator` |
-| 413 | `CONSOLE_BODY_TOO_LARGE` | A body over 64 KiB |
+| 405 | `CONSOLE_METHOD_REFUSED` | A method the path does not take, such as a write under `/actuator` or any `PUT` |
+| 413 | `CONSOLE_BODY_TOO_LARGE` | A body over 64 KiB, counted as it arrives, so an endless one is cut off |
 | 500 | `CONSOLE_MISCONFIGURED` | `API_BASE_URL` is not an origin |
-| 502 | `CONSOLE_UPSTREAM_UNREACHABLE` | The API did not accept the connection |
-| 504 | `CONSOLE_UPSTREAM_TIMEOUT` | The API did not answer within 15 s |
+| 502 | `CONSOLE_UPSTREAM_UNREACHABLE` | The API did not accept the connection, or dropped it before its answer was complete |
+| 504 | `CONSOLE_UPSTREAM_TIMEOUT` | The API did not finish its answer within 15 s |
 
 ## Where the credential lives
 
@@ -118,7 +121,7 @@ same booking id, and the flight's seat count down by the seats of one booking.
 |---|---|
 | `npm run lint` | ESLint with Next.js's core web vitals and TypeScript rules, no warnings allowed |
 | `npx tsc --noEmit` | The type-checker, strict, with unchecked index access |
-| `npm test` | Vitest: the proxy and the race against a stubbed `fetch`, the error classifier, the request log, two components in jsdom, and a test that reads `FlightStatus.java` and fails if the console's copy of the transition table drifts from it |
+| `npm test` | Vitest: the proxy, the race and the `/api` route against a stubbed `fetch`, the browser's API client and the sign-in probe, the error classifier, the request log, the resource hook and two components in jsdom, and a test that reads `FlightStatus.java` and fails if the console's copy of the transition table drifts from it |
 | `npm run e2e` | Playwright on Chromium against the built console and a running service: sign-in and sign-out, flights, bookings, replays and the race, validation, the proxy's refusals and the ops pages |
 
 `npm run e2e` starts the console itself on port 3100 and expects the service

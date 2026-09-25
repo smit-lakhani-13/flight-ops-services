@@ -38,14 +38,30 @@ export function uniqueFlightNumber(): string {
   return `W${clock}${counter}`;
 }
 
+/**
+ * A test flight's route: from EWR to three letters hashed from its number.
+ * Each flight so has a route almost no other flight shares, and openFlight
+ * finds it on the list's first page however many flights earlier runs, or
+ * scripts/demo.sh, left on a busy route such as EWR to SFO.
+ */
+export function routeOf(flightNumber: string): { origin: string; destination: string } {
+  let hash = 0x811c9dc5;
+  for (const char of flightNumber) hash = Math.imul(hash ^ char.charCodeAt(0), 0x01000193) >>> 0;
+  let destination = "";
+  for (let i = 0; i < 3; i += 1) {
+    destination += String.fromCharCode(65 + (hash % 26));
+    hash = Math.floor(hash / 26);
+  }
+  return { origin: "EWR", destination };
+}
+
 /** Creates a flight through the console's own proxy, as the pages would. */
 export async function createFlight(request: APIRequestContext, flightNumber: string, totalSeats = 20): Promise<void> {
   const response = await request.post("/api/v1/flights", {
     headers: { Authorization: basic(API_ACCOUNT) },
     data: {
       flightNumber,
-      origin: "EWR",
-      destination: "SFO",
+      ...routeOf(flightNumber),
       totalSeats,
       departureTime: new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString(),
     },
@@ -56,12 +72,12 @@ export async function createFlight(request: APIRequestContext, flightNumber: str
 /** Opens a flight's page through the flights list, keeping the session. */
 export async function openFlight(page: Page, flightNumber: string): Promise<void> {
   await go(page, "Flights");
+  const route = routeOf(flightNumber);
   const search = page.getByRole("form", { name: "Search flights" });
-  await search.getByLabel("Origin").fill("EWR");
-  await search.getByLabel("Destination").fill("SFO");
-  // Every flight these tests create departs a week after it was made, so the
-  // newest one is first when the latest departures come first, however many
-  // earlier runs left behind.
+  await search.getByLabel("Origin").fill(route.origin);
+  await search.getByLabel("Destination").fill(route.destination);
+  // Should an earlier test flight share the route, this one is still first:
+  // each departs a week after it was made, and the latest come first.
   await page.getByLabel("Sort").selectOption("departureTime,desc");
   await search.getByRole("button", { name: "Search" }).click();
   await page.getByTestId("flight-table").getByRole("link", { name: flightNumber, exact: true }).click();

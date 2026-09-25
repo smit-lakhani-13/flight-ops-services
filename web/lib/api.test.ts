@@ -99,4 +99,42 @@ describe("apiRequest", () => {
     expect(result).toMatchObject({ ok: false, status: 0 });
     expect(result.error?.kind).toBe("network");
   });
+
+  it("reports a body that fails after the headers as status 0, and logs it", async () => {
+    const log: LogEntry[] = [];
+    const broken = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"content":['));
+        controller.error(new TypeError("network error"));
+      },
+    });
+    const { fetchImpl } = capture(
+      () => new Response(broken, { status: 200, headers: { "Content-Type": "application/json", "X-Request-Id": "echo" } }),
+    );
+    const result = await apiRequest("GET", "v1/flights", { authorization: "x" }, { fetch: fetchImpl, onLog: (e) => log.push(e) });
+    expect(result).toMatchObject({ ok: false, status: 0, data: null, echoedRequestId: "echo" });
+    expect(result.error?.kind).toBe("network");
+    expect(log).toHaveLength(1);
+    expect(log[0]).toMatchObject({ status: 0, echoedRequestId: "echo" });
+  });
+
+  it("rethrows the caller's own abort, before or during the body", async () => {
+    const abort = () => new DOMException("The operation was aborted.", "AbortError");
+    const before = vi.fn(async () => {
+      throw abort();
+    }) as unknown as typeof fetch;
+    await expect(apiRequest("GET", "v1/flights", { authorization: null }, { fetch: before })).rejects.toMatchObject({
+      name: "AbortError",
+    });
+
+    const aborted = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.error(abort());
+      },
+    });
+    const { fetchImpl: during } = capture(() => new Response(aborted, { status: 200 }));
+    await expect(apiRequest("GET", "v1/flights", { authorization: null }, { fetch: during })).rejects.toMatchObject({
+      name: "AbortError",
+    });
+  });
 });

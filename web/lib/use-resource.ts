@@ -18,9 +18,16 @@ export function useResource<T>(load: () => Promise<T>): {
 
   useEffect(() => {
     let current = true;
-    load().then((next) => {
-      if (current) setValue(next);
-    });
+    load().then(
+      (next) => {
+        if (current) setValue(next);
+      },
+      (error: unknown) => {
+        // apiRequest turns every failure into a result, so a rejection here
+        // is a bug. Report it rather than leave the promise unhandled.
+        if (current) console.error("A console load failed", error);
+      },
+    );
     return () => {
       current = false;
     };

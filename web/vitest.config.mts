@@ -6,7 +6,7 @@ export default defineConfig({
     alias: { "@": fileURLToPath(new URL(".", import.meta.url)) },
   },
   test: {
-    include: ["lib/**/*.test.ts", "components/**/*.test.tsx"],
+    include: ["lib/**/*.test.ts", "components/**/*.test.tsx", "app/**/*.test.ts"],
     exclude: ["e2e/**", "node_modules/**"],
     environment: "node",
     restoreMocks: true,

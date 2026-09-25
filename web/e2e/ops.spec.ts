@@ -11,8 +11,25 @@ test("health, liveness and readiness need no credentials", async ({ page }) => {
   await expect(page.getByRole("form", { name: "Sign in" })).toBeVisible();
 });
 
-test("the ops account sees the components and the booking meter split by outcome", async ({ page, request }) => {
-  // One booking and its replay, so bookings.booked has both outcomes.
+test("the ops account sees the components, and the meter counts a booking and its replay", async ({ page, request }) => {
+  await signIn(page, OPS_ACCOUNT);
+  await go(page, "Ops");
+  const signedIn = page.getByTestId("health-actuator-health-signed-in");
+  await expect(signedIn.getByTestId("health-components")).toContainText("db");
+
+  // Both outcomes are registered at zero from startup, so their elements show
+  // either way; the counts are what prove the per-tag reads work. The specs
+  // run on one worker, so nothing else books meanwhile: each count rises by
+  // exactly one, where a read that lost its tag would rise by two.
+  const whole = page.getByTestId("meter-bookings.booked-COUNT");
+  const created = page.getByTestId("meter-bookings.booked-created");
+  const replayed = page.getByTestId("meter-bookings.booked-replayed");
+  const count = async (meter: typeof created) => {
+    await expect(meter).toHaveText(/^\d+$/);
+    return Number(await meter.textContent());
+  };
+  const before = { created: await count(created), replayed: await count(replayed) };
+
   const flightNumber = uniqueFlightNumber();
   await createFlight(request, flightNumber);
   const booking = { flightNumber, passengerName: "Test Passenger", seats: 1, idempotencyKey: `e2e-${flightNumber}` };
@@ -21,12 +38,10 @@ test("the ops account sees the components and the booking meter split by outcome
     expect(response.status()).toBe(201);
   }
 
-  await signIn(page, OPS_ACCOUNT);
-  await go(page, "Ops");
-  const signedIn = page.getByTestId("health-actuator-health-signed-in");
-  await expect(signedIn.getByTestId("health-components")).toContainText("db");
-  await expect(page.getByTestId("meter-bookings.booked-created")).toBeVisible();
-  await expect(page.getByTestId("meter-bookings.booked-replayed")).toBeVisible();
+  await page.getByRole("button", { name: "Refresh", exact: true }).click();
+  await expect.poll(() => count(created)).toBe(before.created + 1);
+  await expect.poll(() => count(replayed)).toBe(before.replayed + 1);
+  expect((await count(created)) + (await count(replayed))).toBe(await count(whole));
 });
 
 test("the api account gets the actuator's 403 on the meters", async ({ page }) => {

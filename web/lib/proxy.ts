@@ -15,6 +15,9 @@ const METRIC_NAME = /^[a-z][a-z0-9._]*$/;
 
 const API_METHODS: ReadonlySet<string> = new Set(["GET", "HEAD", "POST", "PATCH", "DELETE"]);
 const READ_METHODS: ReadonlySet<string> = new Set(["GET", "HEAD"]);
+// The statuses the Fetch standard gives no body. new Response() throws when
+// handed a body with one of them, even an empty body.
+const NULL_BODY_STATUSES: ReadonlySet<number> = new Set([204, 205, 304]);
 const ACTUATOR_PATHS: ReadonlySet<string> = new Set([
   "health",
   "health/liveness",
@@ -141,7 +144,12 @@ export async function forward(
 
   const url = `${origin}${target.path}${new URL(request.url).search}`;
   const timeoutMs = options.timeoutMs ?? UPSTREAM_TIMEOUT_MS;
+  // The body is read here, under the same signal, rather than streamed on.
+  // A stall or a reset after the headers then becomes a 504 or a 502 in the
+  // envelope, where a streamed body would reach the browser cut short. The
+  // API's bodies are small: a page of flights at most.
   let upstream: Response;
+  let bytes: ArrayBuffer | null = null;
   try {
     upstream = await (options.fetch ?? fetch)(url, {
       method,
@@ -151,14 +159,23 @@ export async function forward(
       redirect: "manual",
       signal: AbortSignal.any([request.signal, AbortSignal.timeout(timeoutMs)]),
     });
+    if (hasBody(method, upstream.status)) {
+      bytes = await upstream.arrayBuffer();
+    } else {
+      await upstream.body?.cancel();
+    }
   } catch (error) {
     return upstreamFailure(error, timeoutMs);
   }
 
-  return relay(upstream, method, origin);
+  return relay(upstream, bytes, origin);
 }
 
-function relay(upstream: Response, method: string, origin: string): Response {
+function hasBody(method: string, status: number): boolean {
+  return method !== "HEAD" && !NULL_BODY_STATUSES.has(status);
+}
+
+function relay(upstream: Response, bytes: ArrayBuffer | null, origin: string): Response {
   const headers = new Headers({ "Cache-Control": "no-store" });
   for (const name of PASSED_RESPONSE_HEADERS) {
     const value = upstream.headers.get(name);
@@ -170,8 +187,7 @@ function relay(upstream: Response, method: string, origin: string): Response {
       headers.set(name, value);
     }
   }
-  const bodyless = method === "HEAD" || upstream.status === 204 || upstream.status === 304;
-  return new Response(bodyless ? null : upstream.body, { status: upstream.status, headers });
+  return new Response(bytes, { status: upstream.status, headers });
 }
 
 /**
@@ -201,11 +217,38 @@ export function refuseCrossSite(request: Request): Response | null {
   return null;
 }
 
+/**
+ * The request's body, or null when it is larger than MAX_BODY_BYTES. A
+ * declared Content-Length over the limit is refused unread. Otherwise the
+ * stream is counted as it arrives, so a body with no length, or a false one,
+ * is cancelled one chunk past the limit instead of being read to its end.
+ */
 export async function readBoundedBody(request: Request): Promise<ArrayBuffer | null> {
   const declared = Number(request.headers.get("content-length") ?? "0");
   if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) return null;
-  const body = await request.arrayBuffer();
-  return body.byteLength > MAX_BODY_BYTES ? null : body;
+  if (request.body === null) return new ArrayBuffer(0);
+
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > MAX_BODY_BYTES) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(value);
+  }
+
+  const body = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return body.buffer;
 }
 
 export function upstreamFailure(error: unknown, timeoutMs: number): Response {

@@ -93,23 +93,22 @@ export async function apiRequest<T>(
       signal: options.signal,
     });
   } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") throw error;
-    const result: ApiResponse<T> = {
-      ok: false,
-      status: 0,
-      data: null,
-      body: null,
-      error: classify(0, null),
-      location: null,
-      requestId,
-      echoedRequestId: null,
-      ms: Math.round(now() - started),
-    };
-    log(transport, method, url, result);
-    return result;
+    if (isAbort(error)) throw error;
+    return unreachable(transport, method, url, requestId, null, Math.round(now() - started));
   }
 
-  const body = method === "HEAD" ? null : await readBody(response);
+  // The headers can arrive and the body still fail: the connection drops, or
+  // the console restarts mid-answer. That is the same failure as no answer.
+  let body: unknown = null;
+  if (method !== "HEAD") {
+    try {
+      body = await readBody(response);
+    } catch (error) {
+      if (isAbort(error)) throw error;
+      return unreachable(transport, method, url, requestId, response.headers.get("x-request-id"), Math.round(now() - started));
+    }
+  }
+
   const ok = response.ok;
   const result: ApiResponse<T> = {
     ok,
@@ -121,6 +120,34 @@ export async function apiRequest<T>(
     requestId,
     echoedRequestId: response.headers.get("x-request-id"),
     ms: Math.round(now() - started),
+  };
+  log(transport, method, url, result);
+  return result;
+}
+
+function isAbort(error: unknown): boolean {
+  return error instanceof DOMException && error.name === "AbortError";
+}
+
+/** Status 0: no usable answer. The caller's own abort is rethrown instead. */
+function unreachable<T>(
+  transport: Transport,
+  method: string,
+  url: string,
+  requestId: string,
+  echoedRequestId: string | null,
+  ms: number,
+): ApiResponse<T> {
+  const result: ApiResponse<T> = {
+    ok: false,
+    status: 0,
+    data: null,
+    body: null,
+    error: classify(0, null),
+    location: null,
+    requestId,
+    echoedRequestId,
+    ms,
   };
   log(transport, method, url, result);
   return result;

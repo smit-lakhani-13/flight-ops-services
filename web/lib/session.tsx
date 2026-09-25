@@ -14,6 +14,13 @@ import { useRequestLog } from "./request-log";
 export interface Session {
   user: string;
   authorization: string;
+  /**
+   * What the sign-in probe found: true when the account may call the API,
+   * false for an account like ops that holds only the actuator's role. The
+   * service matches names without regard to case, so the typed name cannot
+   * tell the two apart.
+   */
+  apiScopes: boolean;
 }
 
 interface SessionValue {
@@ -47,7 +54,7 @@ export function SessionProvider({ children }: { children: ReactNode }) {
       // account is valid and simply holds no API scope.
       const probe = await apiRequest("GET", "v1/flights", { authorization, query: { size: 1 } }, { onLog: record });
       if (probe.ok || probe.status === 403) {
-        setSession({ user: user.trim(), authorization });
+        setSession({ user: user.trim(), authorization, apiScopes: probe.ok });
         return null;
       }
       return probe.error;

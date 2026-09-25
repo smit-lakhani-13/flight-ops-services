@@ -11,18 +11,33 @@ interface Captured {
 // The stub builds a real Request from what forward() passed, so undici
 // validates the init exactly as it would on the wire: a GET with a body, for
 // one, throws here as it would in production.
-function stub(response: () => Response) {
+function stub(response: (init?: RequestInit) => Response) {
   const calls: Captured[] = [];
   const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
     calls.push({ url, request: new Request(url, init) });
-    return response();
+    return response(init);
   });
   return { fetchImpl: fetchImpl as unknown as typeof fetch, calls };
 }
 
 function browserRequest(path: string, init: RequestInit = {}) {
   return new Request(`http://console.test${path}`, init);
+}
+
+const encoder = new TextEncoder();
+
+/** A JSON response whose body sends its first bytes, then `after` decides. */
+function partialBody(init: RequestInit | undefined, after: (controller: ReadableStreamDefaultController<Uint8Array>) => void) {
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(encoder.encode('{"flightNumber":'));
+      // As undici does, an abort errors a body still being read.
+      init?.signal?.addEventListener("abort", () => controller.error(init.signal?.reason));
+      after(controller);
+    },
+  });
+  return new Response(stream, { status: 200, headers: { "Content-Type": "application/json" } });
 }
 
 describe("resolveTarget", () => {
@@ -139,6 +154,18 @@ describe("forward", () => {
     expect(calls[0]!.request.body).toBeNull();
   });
 
+  it("relays each status that carries no body without one", async () => {
+    for (const status of [204, 205, 304]) {
+      const { fetchImpl } = stub(() => new Response(null, { status }));
+      const response = await forward(browserRequest("/api/v1/flights/UA456"), ["v1", "flights", "UA456"], {
+        fetch: fetchImpl,
+        baseUrl: BASE,
+      });
+      expect(response.status, String(status)).toBe(status);
+      expect(response.body, String(status)).toBeNull();
+    }
+  });
+
   it("passes the allow-listed response headers and drops the challenge and cookies", async () => {
     const { fetchImpl } = stub(
       () =>
@@ -200,7 +227,11 @@ describe("forward", () => {
   });
 
   it("forwards HEAD with no body either way", async () => {
-    const { fetchImpl, calls } = stub(() => new Response(null, { status: 200, headers: { "Content-Type": "application/json" } }));
+    // The stub answers with a body the API would never send, to prove the
+    // console drops it rather than relying on there being none.
+    const { fetchImpl, calls } = stub(
+      () => new Response('{"status":"UP"}', { status: 200, headers: { "Content-Type": "application/json" } }),
+    );
     const response = await forward(browserRequest("/api/actuator/health", { method: "HEAD" }), ["actuator", "health"], {
       fetch: fetchImpl,
       baseUrl: BASE,
@@ -208,6 +239,7 @@ describe("forward", () => {
     expect(response.status).toBe(200);
     expect(response.body).toBeNull();
     expect(calls[0]!.request.method).toBe("HEAD");
+    expect(calls[0]!.request.body).toBeNull();
   });
 
   it("refuses a cross-site request", async () => {
@@ -231,6 +263,62 @@ describe("forward", () => {
     );
     expect(response.status).toBe(413);
     expect(calls).toHaveLength(0);
+  });
+
+  it("stops reading a streamed body one chunk past the limit", async () => {
+    const chunk = new Uint8Array(16 * 1024);
+    let pulled = 0;
+    let cancelled = false;
+    // An endless body with no Content-Length, pulled only when read.
+    const endless = new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          pulled += 1;
+          controller.enqueue(chunk);
+        },
+        cancel() {
+          cancelled = true;
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    const { fetchImpl, calls } = stub(() => new Response("{}"));
+    const response = await forward(
+      browserRequest("/api/v1/bookings", { method: "POST", body: endless, duplex: "half" } as RequestInit),
+      ["v1", "bookings"],
+      { fetch: fetchImpl, baseUrl: BASE },
+    );
+    expect(response.status).toBe(413);
+    expect(await response.json()).toMatchObject({ code: "CONSOLE_BODY_TOO_LARGE" });
+    expect(cancelled).toBe(true);
+    expect(pulled).toBe(MAX_BODY_BYTES / chunk.byteLength + 1);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("counts the body rather than trusting a small Content-Length", async () => {
+    const { fetchImpl, calls } = stub(() => new Response("{}"));
+    const response = await forward(
+      browserRequest("/api/v1/bookings", {
+        method: "POST",
+        body: "x".repeat(MAX_BODY_BYTES + 1),
+        headers: { "Content-Length": "2" },
+      }),
+      ["v1", "bookings"],
+      { fetch: fetchImpl, baseUrl: BASE },
+    );
+    expect(response.status).toBe(413);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("forwards a body of exactly the limit", async () => {
+    const { fetchImpl, calls } = stub(() => new Response(null, { status: 201 }));
+    const response = await forward(
+      browserRequest("/api/v1/bookings", { method: "POST", body: "x".repeat(MAX_BODY_BYTES) }),
+      ["v1", "bookings"],
+      { fetch: fetchImpl, baseUrl: BASE },
+    );
+    expect(response.status).toBe(201);
+    expect((await calls[0]!.request.arrayBuffer()).byteLength).toBe(MAX_BODY_BYTES);
   });
 
   it("answers 502 in the envelope when the API is unreachable", async () => {
@@ -258,6 +346,27 @@ describe("forward", () => {
     });
     expect(response.status).toBe(504);
     expect(await response.json()).toMatchObject({ code: "CONSOLE_UPSTREAM_TIMEOUT" });
+  });
+
+  it("answers 504, not a cut-off body, when the API stalls after its headers", async () => {
+    const { fetchImpl } = stub((init) => partialBody(init, () => undefined));
+    const response = await forward(browserRequest("/api/v1/flights/UA123"), ["v1", "flights", "UA123"], {
+      fetch: fetchImpl,
+      baseUrl: BASE,
+      timeoutMs: 20,
+    });
+    expect(response.status).toBe(504);
+    expect(await response.json()).toMatchObject({ code: "CONSOLE_UPSTREAM_TIMEOUT" });
+  });
+
+  it("answers 502, not a cut-off body, when the API's connection drops mid-body", async () => {
+    const { fetchImpl } = stub((init) => partialBody(init, (controller) => controller.error(new TypeError("terminated"))));
+    const response = await forward(browserRequest("/api/v1/flights/UA123"), ["v1", "flights", "UA123"], {
+      fetch: fetchImpl,
+      baseUrl: BASE,
+    });
+    expect(response.status).toBe(502);
+    expect(await response.json()).toMatchObject({ code: "CONSOLE_UPSTREAM_UNREACHABLE" });
   });
 
   it("answers 500 when API_BASE_URL is not an origin", async () => {
