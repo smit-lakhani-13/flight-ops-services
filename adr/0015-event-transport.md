@@ -94,7 +94,11 @@ with a dead-letter queue after three receives.
     test. By Solace's documentation, a queue's `max-redelivery` defaults to 0,
     which means redeliver forever. Left at that, a message that always fails
     never reaches the dead-message queue, so it would be set to match the
-    three receives here.
+    three receives here. The same documentation says that on a broker older
+    than 10.25.10, or one upgraded from such a version and left at its
+    defaults, a message not marked eligible for the dead-message queue is
+    discarded instead. Solace's JMS Javadoc gives the connection factory's
+    `DmqEligible` a default of false, so it would be set to true.
   * On the consuming side, the event source mapping cannot be pointed at the
     broker, because Lambda has no event source for Solace PubSub+ or TIBCO
     EMS. Its broker event sources, by the AWS Lambda documentation, are Amazon
@@ -119,12 +123,12 @@ with a dead-letter queue after three receives.
 * **XA across PostgreSQL and the broker in place of the outbox.** It needs a
   JTA transaction manager to coordinate the two and recovery for in-doubt
   transactions. [ADR 0001](0001-transactional-outbox.md) rejects two-phase
-  commit because SQS has no XA. A JMS broker may offer it, so for a broker the
-  reason is the coordinator and its recovery, not the transport. The outbox
-  keeps the database the only resource that has to commit. A local transacted
-  session on the producer is no substitute: it commits only on the broker, so
-  committing it before or after the database commit is one of the two
-  orderings ADR 0001 rejects.
+  commit because SQS has no XA. Solace's documentation describes XA sessions,
+  so for a broker the reason is the coordinator and its recovery, not the
+  transport. The outbox keeps the database the only resource that has to
+  commit. A local transacted session on the producer is no substitute: it
+  commits only on the broker, so committing it before or after the database
+  commit is one of the two orderings ADR 0001 rejects.
 
 * **EventBridge.** A bus that routes each event by rule to many targets. There
   is one consumer and nothing to route. A Lambda target is invoked
