@@ -146,13 +146,23 @@ stack_ready() {
     esac
 }
 
-# Empty when the stack or the output is missing. The CLI prints the word None
-# for an empty --output text query, and a caller that tests for an empty string
-# would otherwise take "None" as a value.
+# Empty when the stack or the output is missing. Any other error, such as a
+# throttled call or expired credentials, calls die with the CLI's message, as
+# stack_status does, so it is never read as a missing output. The CLI prints
+# the word None for an empty --output text query, and a caller that tests for
+# an empty string would otherwise take "None" as a value.
 stack_output() {
-    aws cloudformation describe-stacks --stack-name "$1" \
-        --query "Stacks[0].Outputs[?OutputKey=='$2'].OutputValue" --output text 2>/dev/null \
-        | sed '/^None$/d'
+    local out
+    if out=$(aws cloudformation describe-stacks --stack-name "$1" \
+            --query "Stacks[0].Outputs[?OutputKey=='$2'].OutputValue" \
+            --output text 2>&1); then
+        printf '%s\n' "$out" | sed '/^None$/d'
+    else
+        case "$out" in
+            *'does not exist'*) ;;
+            *) die "could not read output $2 of stack $1: $out" ;;
+        esac
+    fi
 }
 
 # eksctl writes its own CloudFormation stack; its outputs are the only reliable
@@ -266,6 +276,27 @@ complete_cluster() {
     aws eks describe-nodegroup --region $AWS_REGION --cluster-name $CLUSTER_NAME \\
         --nodegroup-name $NODEGROUP --query nodegroup.health"
     ok "node group $NODEGROUP is ACTIVE"
+}
+
+# The metrics-server addon, which the HPA needs to scale. As in
+# complete_cluster, only "not found" counts as missing, and any other failed
+# call stops the run.
+ensure_metrics_server() {
+    local out
+    if out=$(aws eks describe-addon --cluster-name "$CLUSTER_NAME" \
+            --addon-name metrics-server \
+            --query 'addon.status' --output text 2>&1); then
+        log "addon metrics-server already exists ($out)"
+    else
+        case "$out" in
+            *ResourceNotFoundException*) ;;
+            *) die "could not read addon metrics-server: $out" ;;
+        esac
+        aws eks create-addon --cluster-name "$CLUSTER_NAME" \
+            --addon-name metrics-server >/dev/null \
+            || die "could not create addon metrics-server"
+        ok "metrics-server addon requested"
+    fi
 }
 
 # stack_output prints nothing for a missing output, and render-aws.sh renders
