@@ -36,8 +36,9 @@ import static org.mockito.Mockito.verify;
         properties = {
                 "spring.datasource.url=jdbc:h2:mem:outboxpoison;DB_CLOSE_DELAY=-1",
                 "app.outbox.poll-interval=3600000",
-                // Back-to-back drains with a fixed clock: the V7 backoff would make the
-                // second claim nothing, so it is off here. OutboxRetryBackoffTest pins it.
+                // Back-to-back drains, milliseconds apart on the real clock: the V7
+                // backoff would make the second claim nothing, so it is off here.
+                // OutboxRetryBackoffTest pins it.
                 "app.outbox.retry-backoff=0",
                 "app.outbox.max-attempts=2"
         })

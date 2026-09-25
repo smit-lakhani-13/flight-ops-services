@@ -25,7 +25,3 @@ mvnw          text eol=lf
 *.gif   binary
 *.pdf   binary
 *.zip   binary
-
-# Language statistics on the repo page: infrastructure YAML is real work, but it
-# should not make GitHub label a Java service as a "Dockerfile" project.
-*.java linguist-language=Java

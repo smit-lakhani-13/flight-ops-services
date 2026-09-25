@@ -60,7 +60,8 @@ class ApiSecurityPropertiesValidationTest {
     }
 
     /**
-     * Shapes the encoder would throw on per request. The message must not contain the
+     * Shapes the encoder would throw on per request, or, for {@code {noop}} with nothing
+     * after it, a password no request can match. The message must not contain the
      * value: a plaintext password set without its prefix would otherwise reach the log.
      */
     @ParameterizedTest

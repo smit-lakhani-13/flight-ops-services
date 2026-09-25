@@ -109,8 +109,9 @@ replay_pid*
 *.hprof
 
 # Deployment state. Written by deploy/aws/up.sh, read by down.sh: account id,
-# ECR repository URI, queue URL, JDBC URL, load balancer hostname. No passwords — those go
-# straight into the Kubernetes Secret and are printed once — but an account id
+# ECR repository URI, queue URL, JDBC URL, load balancer hostname. No passwords:
+# up.sh puts the database password and the API passwords' bcrypt hashes in the
+# Kubernetes Secret, and prints the API passwords to the terminal. But an account id
 # and a private RDS endpoint are not things to publish either.
 deploy/aws/.state/
 

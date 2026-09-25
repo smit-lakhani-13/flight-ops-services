@@ -31,8 +31,8 @@ import static org.mockito.Mockito.verify;
  * <p>{@code max-attempts} bounds the first. Counted per one-second tick, ten attempts
  * would take ten seconds, and a short SQS outage would dead-letter every pending event.
  * {@code next_attempt_at} makes the ceiling a bound on time: a failed row waits, the
- * wait doubles, and the re-drive has to clear it. No test sleeps; each moves the retry
- * clock by writing {@code next_attempt_at} into the past.
+ * wait doubles, and the re-drive has to clear it. No test sleeps; where a test needs the
+ * wait to be over, it clears {@code next_attempt_at}, which the claim treats as due now.
  */
 @SpringBootTest(
         webEnvironment = SpringBootTest.WebEnvironment.NONE,
@@ -69,7 +69,7 @@ class OutboxRetryBackoffTest {
         return outboxEventRepository.findById(event.getId()).orElseThrow();
     }
 
-    /** Moves the row's retry clock into the past, which is what waiting would do. */
+    /** Clears next_attempt_at, which the claim treats as due now: the wait has run out. */
     private void makeClaimableNow(OutboxEvent event) {
         jdbcTemplate.update("UPDATE outbox_events SET next_attempt_at = NULL WHERE id = ?",
                 event.getId());

@@ -32,7 +32,7 @@ FENCE = re.compile(r'^\s*(```|~~~)')
 PATH_CHARS = re.compile(r'^[A-Za-z0-9_./#-]+$')
 EXTENSIONS = ('.java', '.yml', '.yaml', '.json', '.sql', '.md', '.sh', '.py',
               '.xml', '.txt', '.properties')
-# Named files that carry no extension, plus directories worth citing by name.
+# Named files that carry no extension.
 BARE_FILES = ('Dockerfile', 'mvnw', 'LICENSE')
 
 # Paths the documentation names although they are not in the repository, each

@@ -225,9 +225,9 @@ Dependabot runs monthly on both Maven modules, the Actions workflows and the
 Dockerfile base images. `.github/dependabot.yml` sets the interval and the
 grouping.
 
-- `open-pull-requests-limit` is set on every ecosystem (3, 2, 1 and 2), because
-  the default is 5 per ecosystem. Four ecosystems at the default can open
-  twenty pull requests the first time Dependabot runs.
+- `open-pull-requests-limit` is set on every entry (3, 2, 1 and 2), because the
+  default is 5 per entry. The four entries at the default can open twenty pull
+  requests the first time Dependabot runs.
 
 - The `ignore` rules cover four artifacts and no more, because an `ignore` also
   suppresses Dependabot's security updates for that dependency. I accept that

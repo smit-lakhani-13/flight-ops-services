@@ -55,8 +55,9 @@ import static org.mockito.Mockito.verifyNoInteractions;
         properties = {
                 "spring.datasource.url=jdbc:h2:mem:outboxtest;DB_CLOSE_DELAY=-1",
                 "app.outbox.poll-interval=3600000",
-                // Back-to-back drains with a fixed clock: the V7 backoff would make the
-                // second claim nothing. Zero switches it off; OutboxRetryBackoffTest pins it.
+                // Back-to-back drains, milliseconds apart on the real clock: the V7
+                // backoff would make the second claim nothing. Zero switches it off;
+                // OutboxRetryBackoffTest pins it.
                 "app.outbox.retry-backoff=0",
                 // Production samples 0.1. Sampling every span here means "no traceparent"
                 // can only mean the code did not capture one.

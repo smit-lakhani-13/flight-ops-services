@@ -75,8 +75,9 @@ server:
 
 management:
   # The OpenTelemetry starter brings a push registry that publishes to
-  # localhost:4318 every minute, collector or not. Metrics are scraped from
-  # /actuator/prometheus instead. Trace export is opt-in already, through
+  # localhost:4318 every minute, collector or not. Metrics are served at
+  # /actuator/prometheus for a scraper to pull instead. Trace export is opt-in
+  # already, through
   # management.opentelemetry.tracing.export.otlp.endpoint.
   otlp:
     metrics:

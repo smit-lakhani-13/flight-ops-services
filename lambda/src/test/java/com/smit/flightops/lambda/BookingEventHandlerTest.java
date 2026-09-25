@@ -289,8 +289,9 @@ class BookingEventHandlerTest {
     @Test
     @DisplayName("REGRESSION: a missing seats field is a failure, not a booking for nought seats")
     void anAbsentSeatsFieldIsNotWritten() {
-        // Jackson passes null for an absent creator parameter and Java unboxes it
-        // to 0, which would be stored as a successful booking for no seats.
+        // Jackson fills an absent int with 0 unless FAIL_ON_NULL_FOR_PRIMITIVES refuses
+        // it, and the handler's mapper enables that. The record's seats check refuses a
+        // 0 as well, so neither guard alone lets a booking for no seats be stored.
         String body = """
                       {"bookingId":"1001","flightNumber":"UA2402",
                        "timestamp":"2026-09-15T09:41:12.481923Z"}
