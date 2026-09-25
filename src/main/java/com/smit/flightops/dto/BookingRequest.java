@@ -16,13 +16,23 @@ import java.util.Locale;
  * @param passengerName free text without control characters. {@code \p{Cc}} is the
  *        Unicode category, so it also refuses U+0080 to U+009F, which Java's
  *        {@code \p{Cntrl}} lets through. PostgreSQL refuses NUL in a text column, and
- *        {@code SEP} must not appear in any field
+ *        {@code SEP} must not appear in any field. An unpaired surrogate such as
+ *        U+D800 is refused too: {@code getBytes(UTF_8)} turns it into {@code ?}, so
+ *        two different names would share a fingerprint. A well-formed pair, such as
+ *        an emoji, is one code point and passes. {@code @NotBlank} lets through a
+ *        name made only of U+00A0 or U+200B, so the last pattern asks for one
+ *        character that is neither whitespace nor a format character. It accepts an
+ *        empty string, like the key's pattern, and leaves that failure to
+ *        {@code @NotBlank}. swagger-core publishes a lone {@code @Pattern} and drops
+ *        repeated ones, so {@code @Schema} states the character rule for the OpenAPI
+ *        document
  * @param seats one to nine. Marked required for the OpenAPI document, which
  *        treats a primitive as optional; Jackson refuses a missing one
  * @param idempotencyKey client-generated; the same key twice is the same
  *        booking, never two. It is written to the log on every replay and
  *        echoed in the 409 message, so it takes the character class
- *        {@code RequestIdFilter} enforces on {@code X-Request-Id}
+ *        {@code RequestIdFilter} enforces on {@code X-Request-Id}. The pattern
+ *        uses {@code *} for the reason {@link CreateFlightRequest} gives
  */
 public record BookingRequest(
     @NotBlank @Size(max = 10)
@@ -31,12 +41,16 @@ public record BookingRequest(
 
     @NotBlank @Size(max = 255)
     @Pattern(regexp = "^[^\\p{Cc}]*$", message = "must not contain control characters")
+    @Pattern(regexp = "^\\P{Cs}*$", message = "must not contain unpaired surrogates")
+    @Pattern(regexp = "^$|^.*[^\\p{Z}\\p{Cf}\\s].*$", flags = Pattern.Flag.DOTALL,
+             message = "must not be blank")
+    @Schema(pattern = "^[^\\p{Cc}\\p{Cs}]*$")
     String passengerName,
 
     @Schema(requiredMode = Schema.RequiredMode.REQUIRED) @Min(1) @Max(9) int seats,
 
     @NotBlank @Size(max = 255)
-    @Pattern(regexp = "^[A-Za-z0-9._:-]+$",
+    @Pattern(regexp = "^[A-Za-z0-9._:-]*$",
              message = "must contain only letters, digits and . _ : -")
     String idempotencyKey
 ) {

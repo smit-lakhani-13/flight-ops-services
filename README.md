@@ -41,7 +41,7 @@ flowchart LR
 
 | What | State |
 |---|---|
-| The service | Built and tested: 267 tests, 9 of them on PostgreSQL 17 through Testcontainers, which run in CI and skip on a machine without Docker. Every endpoint exercised over HTTP against a running instance; `scripts/demo.sh` replays the tour. |
+| The service | Built and tested: 278 tests, 9 of them on PostgreSQL 17 through Testcontainers, which run in CI and skip on a machine without Docker. Every endpoint exercised over HTTP against a running instance; `scripts/demo.sh` replays the tour. |
 | The SQS publisher and the Lambda | Compiled and unit-tested against mocked AWS SDK clients (the Lambda module has 25 tests). Never connected to SQS or DynamoDB, real or emulated. |
 | The container image | Built from the `Dockerfile`, started without a database and scanned by Trivy in CI on every push or pull request to `main`. Never pushed to a registry. The job logs the image size on every run, about 300 MB. |
 | Written and linted, never run against AWS or a cluster | `deploy/k8s/` (kustomize), `lambda/template.yaml` (SAM), the scripts in `deploy/aws/` (CI renders the manifests with `render-aws.sh` and tests the teardown and `up.sh`'s checks against stubbed tools), and the deploy job, which is gated by a `DEPLOY_ENABLED` variable that has never been set. |

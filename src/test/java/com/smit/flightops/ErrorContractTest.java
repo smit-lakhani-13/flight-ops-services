@@ -15,6 +15,7 @@ import org.springframework.web.multipart.MultipartResolver;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
@@ -259,7 +260,44 @@ class ErrorContractTest {
                                 """))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
-                .andExpect(jsonPath("$.fieldErrors.idempotencyKey").exists());
+                .andExpect(jsonPath("$.fieldErrors.idempotencyKey")
+                        .value("must contain only letters, digits and . _ : -"));
+    }
+
+    /**
+     * The empty airport code breaks {@code @NotBlank} and {@code @Size(min = 3)},
+     * "1" breaks {@code @Size} and {@code @Pattern}, and the spaces break
+     * {@code @NotBlank} and {@code @Pattern}. Hibernate Validator reports them in
+     * no fixed order, so the handler ranks them. The empty key breaks only
+     * {@code @NotBlank}, now that its pattern accepts an empty string. The rest of
+     * each body changes from call to call.
+     */
+    @Test
+    @DisplayName("a field that breaks two constraints gets the same message on every call")
+    void aFieldThatBreaksTwoConstraintsGetsTheSameMessageEveryTime() throws Exception {
+        Map<String, String> origins = Map.of("", "must not be blank", "1", "size must be between 3 and 3");
+        for (int i = 0; i < 20; i++) {
+            for (Map.Entry<String, String> origin : origins.entrySet()) {
+                mockMvc.perform(post("/api/v1/flights")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {"flightNumber":"ZZ%d","origin":"%s","destination":"LHR",
+                                         "totalSeats":%d,"departureTime":"2099-01-01T10:00:00Z"}
+                                        """.formatted(i, origin.getKey(), 100 + i)))
+                        .andExpect(status().isBadRequest())
+                        .andExpect(jsonPath("$.fieldErrors.origin").value(origin.getValue()));
+            }
+            for (String key : List.of("", "   ")) {
+                mockMvc.perform(post("/api/v1/bookings")
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                        {"flightNumber":"UA123","passengerName":"Test Passenger",
+                                         "seats":%d,"idempotencyKey":"%s"}
+                                        """.formatted(i % 9 + 1, key)))
+                        .andExpect(status().isBadRequest())
+                        .andExpect(jsonPath("$.fieldErrors.idempotencyKey").value("must not be blank"));
+            }
+        }
     }
 
     // ------------------------------------------------------------------

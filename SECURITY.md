@@ -239,7 +239,10 @@ work is written down. What is missing is a domain.
   `must not contain control characters`. PostgreSQL refuses a NUL in a text
   column. The request fingerprint also joins its fields with U+001F, and a
   separator inside the name could make two different requests hash the same.
-  `BookingControllerTest` covers both.
+  An unpaired UTF-16 surrogate is refused for the same reason, with
+  `must not contain unpaired surrogates`: `getBytes(UTF_8)` turns it into
+  `?`, so two different names would share a fingerprint. `BookingControllerTest`
+  covers all three.
 
 - The writes read JSON only. swagger-core puts a YAML reader on the classpath,
   and none of the `spring.jackson` settings reach it, so each `POST` and `PATCH`

@@ -144,9 +144,9 @@ class FlightControllerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
                 .andExpect(jsonPath("$.fieldErrors.flightNumber").value("must not be blank"))
-                .andExpect(jsonPath("$.fieldErrors.origin").exists())
-                .andExpect(jsonPath("$.fieldErrors.totalSeats").exists())
-                .andExpect(jsonPath("$.fieldErrors.departureTime").exists());
+                .andExpect(jsonPath("$.fieldErrors.origin").value("size must be between 3 and 3"))
+                .andExpect(jsonPath("$.fieldErrors.totalSeats").value("must be greater than or equal to 1"))
+                .andExpect(jsonPath("$.fieldErrors.departureTime").value("must be a future date"));
     }
 
     /**

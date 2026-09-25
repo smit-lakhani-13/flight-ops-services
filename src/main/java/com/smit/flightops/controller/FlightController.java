@@ -113,11 +113,12 @@ public class FlightController {
                     `VALIDATION_FAILED` — a field is blank, out of range or has the wrong characters, \
                     `destination` equals `origin`, or `departureTime` is missing, null or not in the \
                     future; `fieldErrors` names each one. `MALFORMED_REQUEST` — the body is empty, \
-                    not valid JSON or not a JSON object, a field has the wrong JSON type or is too \
-                    large for its type, or `totalSeats` is missing, null, a string, or written with \
-                    a decimal point or an exponent (`2.0` included). The same code \
-                    answers a `departureTime` that is not an ISO-8601 instant with `Z` or an offset, \
-                    such as `2026-09-23T10:00:00Z`. This one has the `{code, message, timestamp}` shape.""",
+                    not valid JSON or not a JSON object, a text field is an array or an object, or \
+                    `totalSeats` has the wrong JSON type, is too large for its type, or is missing, \
+                    null, a string, or written with a decimal point or an exponent (`2.0` included). \
+                    The same code answers a `departureTime` that is not an ISO-8601 instant with `Z` \
+                    or an offset, such as `2026-09-23T10:00:00Z`. This one has the \
+                    `{code, message, timestamp}` shape.""",
                     content = @Content(schema = @Schema(oneOf = {ValidationErrorResponse.class, ErrorResponse.class}))),
             @ApiResponse(responseCode = "401", description = "`UNAUTHENTICATED`",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),

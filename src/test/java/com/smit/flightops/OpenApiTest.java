@@ -143,6 +143,19 @@ class OpenApiTest {
     }
 
     /**
+     * swagger-core publishes a lone {@code @Pattern} and drops repeated ones, so
+     * the passenger name's character rule is restated in {@code @Schema}.
+     */
+    @Test
+    @DisplayName("the passenger name's character rule is in the schema")
+    void thePassengerNameCharacterRuleIsDocumented() throws Exception {
+        JsonNode passengerName = document().get("components").get("schemas")
+                .get("BookingRequest").get("properties").get("passengerName");
+
+        assertThat(passengerName.get("pattern").asString()).isEqualTo("^[^\\p{Cc}\\p{Cs}]*$");
+    }
+
+    /**
      * Compared with a live response, not a written expectation, because Spring
      * Data's page shape has changed between versions.
      */
