@@ -12,7 +12,7 @@ requests by URI and status. It cannot tell a real booking from an idempotent
 replay, because both are a `201` on the same URI.
 
 The temptation with observability is to add everything at once: an exporter, a
-collector, dashboards. Most of that is infrastructure this deployment does not
+collector, dashboards. Most of that is infrastructure this repository does not
 have. Configuration pointing at a collector that does not exist is worse than
 none, because it produces connection-refused noise every minute forever.
 
@@ -64,7 +64,7 @@ I configured no OTLP exporter endpoint.
   (`logging.structured.format.console: ecs`). The default profile is for
   someone reading the output by eye.
 
-* Nothing scrapes Prometheus in this deployment, so the meters are evidence and
+* Nothing is deployed and nothing scrapes the meters, so they are evidence and
   drive no alerts. The README says so.
 
 ## Alternatives considered

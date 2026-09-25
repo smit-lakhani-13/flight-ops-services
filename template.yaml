@@ -2,10 +2,10 @@ AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
 
 Description: >
-  Async side of flight-ops-service. The Spring Boot service (deployed
-  separately to EKS) publishes a BookingCreated event to SQS; this Lambda
+  Async side of flight-ops-service. The Spring Boot service (meant to run
+  separately on EKS) publishes a BookingCreated event to SQS; this Lambda
   consumes the queue and projects each event into a DynamoDB table of flight
-  events. Deployed by deploy/aws/up.sh, and deletable on its own.
+  events. deploy/aws/up.sh deploys this stack, which can be deleted on its own.
 
 # Deploy by hand with Maven, not `sam build`: SAM builds in a scratch copy of
 # lambda/, where the tests cannot find ../events and ../contracts. sam deploy

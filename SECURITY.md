@@ -324,7 +324,7 @@ written down. What is missing is a domain.
 | Upper-bound dependency check | `maven-enforcer` `requireUpperBoundDeps`. A transitive downgrade fails the build |
 | Coverage floor | JaCoCo. The build fails under 80% line or 50% branch coverage |
 | Architecture rules | ArchUnit, 9 rules. A violation fails the build; it is not just reported |
-| Vulnerability and secret scanning | Trivy scans the filesystem on every run, and the image before it is pushed. Both fail the build on a fixable CRITICAL (the filesystem scan on HIGH too). Only the filesystem scan uploads SARIF, and only on a push. A pull request from a fork has a read-only token, so the upload would fail on permissions and say nothing about the code. The image scan reports in the job log, and ECR's own scan-on-push covers the image in the registry |
+| Vulnerability and secret scanning | Trivy scans the filesystem on every run. The deploy job, which is gated off and has never run, would also scan the image before pushing it. Both are set to fail on a fixable CRITICAL (the filesystem scan on HIGH too). Only the filesystem scan uploads SARIF, and only on a push to `main`. A pull request from a fork has a read-only token, so the upload would fail on permissions and say nothing about the code. The image scan would report in the job log, and ECR's own scan-on-push would cover the image in the registry |
 | Static analysis | CodeQL `security-extended`, on a push or pull request to `main`, and weekly |
 | Pinned actions | Every `uses:` is a full commit SHA with the version as a trailing comment, and Dependabot rewrites the comment along with the SHA. A tag is a mutable pointer in someone else's repository. Re-pointing `@v4` at a malicious commit needs no access to this repository, and that is what happened to `tj-actions/changed-files` in March 2025. The cost is a pull request for every patch release |
 
@@ -347,8 +347,8 @@ written down. What is missing is a domain.
    and `./mvnw spring-boot:run` or a bare `java -jar` gets it. The image sets
    `SPRING_PROFILES_ACTIVE=prod`, so a container started with no profile fails
    closed: a bare `docker run` stops with `'url' must start with "jdbc"`. CI
-   checks that on every push to `main` and every pull request, in the `image`
-   job's step "The image will not start without a database". The deploy job
+   checks that on every push or pull request to `main`, in the `image` job's
+   step "The image will not start without a database". The deploy job
    runs the same step before it pushes an image. That job is gated off, so its
    copy has never run. `compose.yaml` selects `postgres`, and the ConfigMap sets
    `prod`.

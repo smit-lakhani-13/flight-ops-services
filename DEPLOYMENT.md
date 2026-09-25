@@ -56,8 +56,8 @@ This runs on H2 in memory, and the outbox logs its rows instead of sending
 them. Everything in [README.md](README.md) works, but nothing survives a
 restart.
 
-With Docker you also get the PostgreSQL behaviour that the H2 profile cannot
-reach: real migrations, `SELECT ... FOR UPDATE` and `SET lock_timeout`.
+With Docker you also get what the H2 profile lacks: Flyway migrations, and
+PostgreSQL's own row locks and `lock_timeout`.
 
 ```bash
 docker compose up --build
@@ -72,7 +72,7 @@ passwords. Run bare, with no `DB_URL`, it stops at startup with
 `'url' must start with "jdbc"`. It never falls back to H2 and the `{noop}` dev
 passwords. The deploy job checks for that failure before it pushes an image, in
 the step "The image will not start without a database". The `image` job runs
-the same check on every push to `main` and every pull request.
+the same check on every push or pull request to `main`.
 
 ## 3. The async half alone
 

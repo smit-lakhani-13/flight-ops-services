@@ -79,9 +79,10 @@ no test shows PostgreSQL's own `lock_timeout` firing.
 `LockTimeoutPostgresTest` now does.
 
 **Addendum (2026-09-25).** The bound on the wait is a PostgreSQL session
-setting, and Oracle has no session setting for row-lock waits
-(`DDL_LOCK_TIMEOUT` covers DDL only). [ADR 0016](0016-oracle-port.md)
-proposes, from documentation, where the bound would move.
+setting. Oracle, by its documentation, has no session setting for row-lock
+waits (`DDL_LOCK_TIMEOUT` covers DDL only); this service has not been run
+against Oracle. [ADR 0016](0016-oracle-port.md) proposes, from that
+documentation and without an Oracle run, where the bound would move.
 
 ## Alternatives considered
 

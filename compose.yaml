@@ -4,10 +4,10 @@
 #   ./demo.sh                          # the eight acts, against the container
 #   docker compose down -v             # -v also drops the database volume
 #
-# Not the deployment (DEPLOYMENT.md). It adds what the H2 test profile lacks:
-# Flyway migrations, `SELECT ... FOR UPDATE`, `SET lock_timeout`. There is no
-# queue. With `APP_EVENTS_PUBLISHER=log`, outbox rows go through every step
-# but the `SendMessage` call, so no LocalStack image is needed.
+# Not the deployment (DEPLOYMENT.md). It adds what the H2 default profile
+# lacks: Flyway migrations, and PostgreSQL's own row locks and `lock_timeout`.
+# There is no queue. With `APP_EVENTS_PUBLISHER=log`, outbox rows go through
+# every step but the `SendMessage` call, so no LocalStack image is needed.
 
 services:
   db:
@@ -70,7 +70,7 @@ services:
       API_PASSWORD: "{bcrypt}$$2y$$10$$AebmD7.ds0witGfY6P.qC.K42KNLCYfOlzD4QPQ5Qo4Kp2wUA.NIW"
       OPS_PASSWORD: "{bcrypt}$$2y$$10$$ekIVCvlYn8UNZ2KYa2J/4.C4/StCIwfKJuVEJNcnAqQEzmYqUkjdq"
 
-      # Chattier than the deployed configuration.
+      # Chattier than the prod profile, which leaves org.hibernate.SQL at WARN.
       SQL_LOG_LEVEL: DEBUG
     ports:
       - "8080:8080"

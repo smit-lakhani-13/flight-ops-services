@@ -397,8 +397,8 @@ step "11/12  Ingress and the public URL"
 # here.
 #
 # The Ingress stays out of render-aws.sh, which renders the six resources CI
-# applies on every push. This one bills from the moment it exists, so the
-# operator who accepted that cost creates it once. See the header of
+# applies on every push to main. This one bills from the moment it exists, so
+# the operator who accepted that cost creates it once. See the header of
 # k8s/components/ingress/kustomization.yaml.
 kubectl apply -f "$repo/k8s/components/ingress/ingress.yaml" -n "$NAMESPACE"
 

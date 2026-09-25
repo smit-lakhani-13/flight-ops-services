@@ -489,9 +489,9 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # The image, on every trigger, never pushed. This proves on every pull request
-  # that the Dockerfile builds and that the image refuses to start without a
-  # database. It logs in to nothing and pushes nothing; the deploy job builds its
-  # own copy on its own runner.
+  # to main that the Dockerfile builds and that the image refuses to start
+  # without a database. It logs in to nothing and pushes nothing; the deploy job
+  # builds its own copy on its own runner.
   image:
     name: image
     runs-on: ubuntu-latest
@@ -670,7 +670,7 @@ jobs:
       #
       # k8s/base/deployment.yaml declares no `replicas`. With the field absent,
       # `apply` leaves the live count alone and the HPA keeps ownership, instead
-      # of being reset on every push.
+      # of being reset on every push to main.
       #
       # render-aws.sh is the one render path: infra-lint validates its output
       # and this step applies it. It leaves out the Namespace (cluster-scoped,
