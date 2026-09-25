@@ -25,6 +25,17 @@ export const FOCUS = "focus-visible:outline-2 focus-visible:outline-offset-2 foc
 /** The touch height below 1280 px and on a coarse pointer, such as a large tablet. */
 export const TOUCH = "max-xl:min-h-11 pointer-coarse:min-h-11";
 
+/**
+ * True when the focus is on `element` or inside it, or on nothing, which is
+ * where a browser leaves it when the focused button goes disabled or away. A
+ * control that moves the focus on checks this first, so it never pulls the
+ * focus back from somewhere the reader has since gone.
+ */
+export function focusIsInOrLost(element: Element | null | undefined): boolean {
+  const active = document.activeElement;
+  return !active || active === document.body || !!element?.contains(active);
+}
+
 type Tone = "primary" | "secondary" | "danger" | "ghost";
 
 // Every tone has a border, transparent where the fill carries the shape, so a

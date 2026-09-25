@@ -123,8 +123,7 @@ function FlightDetail({ flightNumber }: { flightNumber: string }) {
       </Card>
 
       <Card title="Status">
-        {/* Keyed on the status, so a message about the last attempt goes when the status moves. */}
-        <TransitionControl key={f.status} status={f.status} onSend={transition} />
+        <TransitionControl status={f.status} onSend={transition} />
       </Card>
 
       <Card title="Cancel the flight">

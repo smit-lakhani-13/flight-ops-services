@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { classify } from "@/lib/errors";
+import type { FlightStatus } from "@/lib/types";
 import { TransitionControl } from "./TransitionControl";
 
 afterEach(cleanup);
@@ -20,14 +22,70 @@ describe("TransitionControl", () => {
   });
 
   it("sends a refused status anyway and shows the service's 409", async () => {
-    const onSend = vi.fn(async () => classify(409, { code: "ILLEGAL_STATUS_TRANSITION", message: "SCHEDULED cannot become ARRIVED" }));
+    let answer = () => {};
+    const refusal = classify(409, { code: "ILLEGAL_STATUS_TRANSITION", message: "SCHEDULED cannot become ARRIVED" });
+    const onSend = vi.fn(() => new Promise<typeof refusal>((resolve) => (answer = () => resolve(refusal))));
     render(<TransitionControl status="SCHEDULED" onSend={onSend} />);
 
     fireEvent.change(screen.getByLabelText("Send any status:"), { target: { value: "ARRIVED" } });
-    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    const send = screen.getByRole<HTMLButtonElement>("button", { name: "Send" });
+    send.focus();
+    fireEvent.click(send);
+    // Busy rather than disabled, so the focus stays on it while it waits.
+    expect(send.getAttribute("aria-busy")).toBe("true");
+    expect(send.disabled).toBe(false);
 
-    await waitFor(() => expect(screen.getByRole("alert").dataset.code).toBe("ILLEGAL_STATUS_TRANSITION"));
+    await act(async () => answer());
+    expect(screen.getByRole("alert").dataset.code).toBe("ILLEGAL_STATUS_TRANSITION");
     expect(onSend).toHaveBeenCalledWith("ARRIVED");
+    expect(document.activeElement).toBe(send);
+  });
+
+  it("keeps the focus on a busy move, then hands it to the moves that follow", async () => {
+    let answer = () => {};
+    // The flight page in miniature: an accepted move changes the status.
+    function Flight() {
+      const [status, setStatus] = useState<FlightStatus>("SCHEDULED");
+      return (
+        <TransitionControl
+          status={status}
+          onSend={(next) =>
+            new Promise((resolve) => {
+              answer = () => {
+                setStatus(next);
+                resolve(null);
+              };
+            })
+          }
+        />
+      );
+    }
+    render(<Flight />);
+    const move = screen.getByRole<HTMLButtonElement>("button", { name: "Move to BOARDING" });
+    move.focus();
+    fireEvent.click(move);
+
+    expect(move.getAttribute("aria-busy")).toBe("true");
+    expect(move.disabled).toBe(false);
+    expect(document.activeElement).toBe(move);
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Move to DELAYED" }).disabled).toBe(true);
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Send" }).disabled).toBe(true);
+
+    await act(async () => answer());
+    expect(screen.queryByRole("button", { name: "Move to BOARDING" })).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("group", { name: "Allowed transitions" }));
+    expect(screen.getByRole<HTMLButtonElement>("button", { name: "Move to DEPARTED" }).disabled).toBe(false);
+  });
+
+  it("drops a refusal once the status moves some other way", async () => {
+    const onSend = async () => classify(409, { code: "ILLEGAL_STATUS_TRANSITION", message: "no" });
+    const { rerender } = render(<TransitionControl status="SCHEDULED" onSend={onSend} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Send" }));
+    await screen.findByRole("alert");
+    rerender(<TransitionControl status="CANCELLED" onSend={onSend} />);
+
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 
   it("clears the error after a move the service accepts", async () => {

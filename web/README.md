@@ -84,7 +84,10 @@ The request log opens as a drawer over the foot of the page and takes the
 keyboard's focus, since it comes last in the page. Escape inside it closes it
 and hands the focus back to the Requests button, and the page gains room to
 scroll its end clear of the drawer. A button that is busy keeps the focus and
-ignores presses, rather than going disabled and dropping it.
+ignores presses, rather than going disabled and dropping it. A press that takes
+its own button away passes the focus on: an accepted status move to the group
+of moves that follow, and the pager, on reaching its first or last page, to its
+other button.
 
 ![A flight's page at 390 px wide: the header wraps onto three rows and every button, nav link and field is at least 44 px tall](../doc/assets/console-phone.png)
 
@@ -158,7 +161,7 @@ same booking id, and the flight's seat count down by the seats of one booking.
 |---|---|
 | `npm run lint` | ESLint with Next.js's core web vitals and TypeScript rules, no warnings allowed |
 | `npx tsc --noEmit` | The type-checker, strict, with unchecked index access |
-| `npm test` | Vitest: the proxy, the race and the `/api` route against a stubbed `fetch`, the browser's API client and the sign-in probe, the error classifier, the request log, the resource hook, and in jsdom the shared parts in `components/ui.tsx` (button tones and the busy state, field wiring, the seat bar, page titles, links and the Location mapping), the error banner, the booking form's replay comparison and status line, the transition control, and the request log drawer's focus, Escape and copy buttons; and a test that reads `FlightStatus.java` and fails if the console's copy of the transition table drifts from it |
+| `npm test` | Vitest: the proxy, the race and the `/api` route against a stubbed `fetch`, the browser's API client and the sign-in probe, the error classifier, the request log, the resource hook, and in jsdom the shared parts in `components/ui.tsx` (button tones and the busy state, field wiring, the seat bar, page titles, links and the Location mapping), the error banner, the booking form's replay comparison and status line, the transition control and the pager, including where each leaves the focus, and the request log drawer's focus, Escape and copy buttons; and a test that reads `FlightStatus.java` and fails if the console's copy of the transition table drifts from it |
 | `npm run e2e` | Playwright on Chromium against the built console and a running service: sign-in and sign-out, flights, bookings, replays and the race, validation, the proxy's refusals, the ops pages, and the layout of every page at eleven viewports |
 
 `npm run e2e` starts the console itself on port 3100 and expects the service

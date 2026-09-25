@@ -48,13 +48,18 @@ test("a status the service allows moves the flight; any other gets its 409", asy
   await signIn(page);
   await openFlight(page, flightNumber);
 
-  await page.getByRole("button", { name: "Move to BOARDING" }).click();
+  // From the keyboard: the move takes its own button away, and the focus
+  // lands on the moves that follow rather than on the page.
+  await page.getByRole("button", { name: "Move to BOARDING" }).press("Enter");
   await expect(page.getByTestId("flight-status")).toHaveText("BOARDING");
+  await expect(page.getByRole("group", { name: "Allowed transitions" })).toBeFocused();
 
   await page.getByLabel("Send any status:").selectOption("SCHEDULED");
-  await page.getByRole("button", { name: "Send", exact: true }).click();
+  const send = page.getByRole("button", { name: "Send", exact: true });
+  await send.click();
   await expect(page.getByTestId("error-banner")).toHaveAttribute("data-code", "ILLEGAL_STATUS_TRANSITION");
   await expect(page.getByTestId("flight-status")).toHaveText("BOARDING");
+  await expect(send).toBeFocused();
 });
 
 test("cancelling a flight asks first, then marks it CANCELLED and stops sales", async ({ page, request }) => {
