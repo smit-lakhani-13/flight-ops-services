@@ -119,3 +119,18 @@ deploy/aws/.state/
 # Python bytecode, from running the doc checkers
 __pycache__/
 *.pyc
+
+# ------------------------------------------------------------------------------
+#  The console (web/)
+#
+#  package-lock.json IS committed: `npm ci` installs exactly what it names.
+#  Everything below is rebuilt by npm, next build, tsc or Playwright.
+# ------------------------------------------------------------------------------
+web/node_modules/
+web/.next/
+# next build writes it and rewrites it on every build.
+web/next-env.d.ts
+web/playwright-report/
+web/test-results/
+web/coverage/
+*.tsbuildinfo

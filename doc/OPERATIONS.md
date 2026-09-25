@@ -122,6 +122,12 @@ The exporter prints one `# HELP` line per meter name, so both series of a
 meter share one description. `BookingMetrics` holds each shared description in
 a constant.
 
+The console's Ops page reads the same seven meters as `ops`, through
+`/actuator/metrics/{name}` under their dotted names, such as `bookings.booked`
+and `outbox.pending`, and splits each labelled counter by its label, so
+`created` and `replayed` appear side by side
+([web/README.md](../web/README.md#pages)).
+
 HTTP metrics cannot express any of these. `http_server_requests` counts a 201
 for a new booking and a 201 for an idempotent replay the same way, because
 both are the same status on the same route. The difference between them is

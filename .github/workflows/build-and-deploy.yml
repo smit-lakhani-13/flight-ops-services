@@ -1,6 +1,6 @@
 name: build-and-deploy
 
-# One file, seven jobs, and no trigger runs all seven.
+# One file, eight jobs, and no trigger runs all eight.
 #
 #   build              every trigger      both Maven modules, suite, coverage, SBOM
 #   infra-lint         every trigger      the manifests and CloudFormation that nothing compiles
@@ -9,16 +9,18 @@ name: build-and-deploy
 #                                         attribution and privacy sweeps
 #   image              every trigger      docker build, a start with no database, the size,
 #                                         a CRITICAL scan; never pushed
+#   web                every trigger      the console: lint, types, unit tests, build, and
+#                                         Playwright against the service's jar
 #   dependency-review  pull_request only  what a pull request ADDS
 #   deploy             gated push or      render, apply, wait, smoke
 #                      manual run on main
 #
-# A pull request runs six jobs. A push to main or a manual run on main runs
-# five plus a deploy that is skipped unless it is configured. A manual run on
-# any other branch runs five. dependency-review diffs a pull request against its
+# A pull request runs seven jobs. A push to main or a manual run on main runs
+# six plus a deploy that is skipped unless it is configured. A manual run on
+# any other branch runs six. dependency-review diffs a pull request against its
 # base, and a push has no base to diff against.
 #
-# Branch protection is meant to require the five that run on every trigger (a
+# Branch protection is meant to require the six that run on every trigger (a
 # repository setting, outside this file). dependency-review stays advisory: it
 # is the one gate that can pass on a repository setting instead of the code.
 #
@@ -609,6 +611,124 @@ jobs:
           exit-code: '1'
 
   # ---------------------------------------------------------------------------
+  # The console under web/, on every trigger. Lint, types, unit tests and the
+  # production build, then Playwright drives the built console against the
+  # service's own jar on the default H2 profile. It is the longest job, because
+  # it packages the jar and installs a browser. Nothing here is hosted or
+  # pushed.
+  web:
+    name: web
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    defaults:
+      run:
+        working-directory: web
+
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: web/.nvmrc
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # package.json says `>=24 <25` without engine-strict, so npm would only
+      # warn. A wrong major fails here, by name, instead of somewhere later.
+      - name: Node is the major web/.nvmrc names
+        run: |
+          want=$(tr -d '[:space:]' < .nvmrc)
+          have=$(node -p 'process.versions.node.split(".")[0]')
+          if [ "$have" != "$want" ]; then
+            echo "::error::Node $have is running and web/.nvmrc says $want"
+            exit 1
+          fi
+
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      # The build type-checks the app. tsc afterwards covers the tests and
+      # configs too, and needs the next-env.d.ts the build writes.
+      - name: Build
+        run: npm run build
+
+      - name: Type-check
+        run: npx tsc --noEmit
+
+      - name: Unit tests
+        run: npm test
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: maven
+
+      # The build job tests the service. This only packages it, so the SBOM is
+      # skipped with the tests.
+      - name: Package the service
+        working-directory: .
+        run: ./mvnw -B -q -DskipTests -Dcyclonedx.skip=true package
+
+      - name: Start the service
+        working-directory: .
+        run: |
+          jars=(target/flight-ops-service-*.jar)
+          if [ "${#jars[@]}" -ne 1 ] || [ ! -f "${jars[0]}" ]; then
+            echo "::error::expected one service jar in target/, found: ${jars[*]}"
+            exit 1
+          fi
+          nohup java -jar "${jars[0]}" > "$RUNNER_TEMP/service.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/service.pid"
+          for _ in $(seq 1 60); do
+            if curl -fsS http://localhost:8080/actuator/health 2>/dev/null | grep -q '"UP"'; then
+              echo "service is UP"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::the service did not report UP within 120 s"
+          tail -n 50 "$RUNNER_TEMP/service.log"
+          exit 1
+
+      - name: Install the browser
+        run: npx playwright install --with-deps chromium
+
+      - name: End-to-end tests
+        env:
+          API_BASE_URL: http://localhost:8080
+        run: npm run e2e
+
+      - name: Publish the end-to-end report
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: web-e2e
+          path: |
+            web/playwright-report/
+            web/test-results/
+            ${{ runner.temp }}/service.log
+          if-no-files-found: warn
+          retention-days: 5
+
+      - name: Stop the service
+        if: always()
+        working-directory: .
+        run: |
+          if [ -f "$RUNNER_TEMP/service.pid" ]; then
+            kill "$(cat "$RUNNER_TEMP/service.pid")" 2>/dev/null || true
+          fi
+
+  # ---------------------------------------------------------------------------
   # Everything below runs only for a configured push or manual run on main.
   deploy:
     # Says so in the checks list, where a bare "deploy" reads as something
@@ -617,7 +737,7 @@ jobs:
     name: deploy (gated off)
     # Not dependency-review: it is skipped on a push, and a skipped dependency
     # skips everything downstream of it.
-    needs: [build, infra-lint, trivy-fs, docs-check, image]
+    needs: [build, infra-lint, trivy-fs, docs-check, image, web]
 
     # The `env` context is not available in a job-level `if`, so the
     # condition is written out.

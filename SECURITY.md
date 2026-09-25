@@ -20,7 +20,8 @@ Supported: `main`. There is no support branch for older tags.
 
 A demonstration service. It holds seeded data and has never processed a real
 booking. It has run only on a laptop and in CI. The AWS path is written and
-linted, and the deploy job is gated off.
+linted, and the deploy job is gated off. The browser console in `web/` is built
+and tested in CI, never hosted.
 [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md) opens with an `Executed on:` line that
 will carry the date if that changes.
 
@@ -146,6 +147,31 @@ and a day of debugging. See [adr/0006](adr/0006-stateless-sessions-no-csrf.md).
 
 If a browser-facing UI with cookie sessions is ever added, both decisions
 reverse, and the ADR is where to start.
+
+### The console
+
+The console in `web/` is a browser UI with no cookie sessions, and it leaves
+both decisions standing. The browser talks only to the console's own origin,
+and `web/lib/proxy.ts#forward` passes an allow-listed subset on to the API, so
+the API still has no CORS policy ([adr/0017](adr/0017-web-console.md)).
+
+* The credential lives in React state only, never in browser storage or a
+  cookie. The console's server copies it onto the one upstream request and
+  neither logs nor keeps it. A reload signs out.
+* `WWW-Authenticate` and `Set-Cookie` never reach the browser, so it never
+  opens its Basic prompt and never caches a credential for the console's
+  origin. A forged cross-site request to the console carries no credential
+  and meets the API's own 401.
+* Only `Authorization`, `Content-Type`, `Accept` and `X-Request-Id` go
+  upstream. Cookies, `Origin`, `Host` and forwarding headers stay behind.
+* A path outside the allow-list answers 404 without reaching the API; `env`,
+  `prometheus`, the OpenAPI document and Swagger UI are among them. A request
+  the browser marks `Sec-Fetch-Site: cross-site` gets 403, and a body over
+  64 KiB gets 413.
+* Every page is sent with `X-Content-Type-Options: nosniff`,
+  `Referrer-Policy: no-referrer` and `X-Frame-Options: DENY`
+  (`web/next.config.ts`). There is no Content-Security-Policy yet:
+  [Known limitations](#known-limitations) says why.
 
 ## Secrets
 
@@ -344,13 +370,13 @@ work is written down. What is missing is a domain.
 
 | | |
 |---|---|
-| Dependency updates | Dependabot, monthly, on both Maven modules, the Actions workflows and the Dockerfile base images |
+| Dependency updates | Dependabot, monthly, on both Maven modules, the console's npm packages, the Actions workflows and the Dockerfile base images |
 | SBOM | CycloneDX, `target/bom.json` and `lambda/target/bom.json`, on every build, both typed `application`. The service jar also carries the one the Spring Boot parent writes, `target/classes/META-INF/sbom/application.cdx.json` |
 | Upper-bound dependency check | `maven-enforcer` `requireUpperBoundDeps`. A transitive downgrade fails the build |
 | Coverage floor | JaCoCo. The build fails under 80% line or 50% branch coverage |
 | Architecture rules | ArchUnit, 9 rules. A violation fails the build; it is not just reported |
 | Vulnerability and secret scanning | Trivy scans the filesystem for vulnerabilities and committed secrets on every push or pull request to `main`, and fails on a fixable HIGH or CRITICAL. The `image` job scans the image it has just built, on the same triggers, and fails on a fixable CRITICAL. No image has ever been pushed. The deploy job, which is gated off and has never run, would repeat the image scan before a push. Only the filesystem scan uploads SARIF, and only on a push to `main`. A pull request from a fork has a read-only token, so the upload would fail on permissions and say nothing about the code. The image scans report in the job log, and ECR's own scan-on-push would cover the image in the registry |
-| Static analysis | CodeQL `security-extended`, on every push or pull request to `main`, weekly, and by hand |
+| Static analysis | CodeQL `security-extended` on the Java in both modules and the console's TypeScript, on every push or pull request to `main`, weekly, and by hand |
 | Pinned actions | Every `uses:` is a full commit SHA with the version as a trailing comment, and Dependabot rewrites the comment along with the SHA. A tag is a mutable pointer in someone else's repository. Re-pointing `@v4` at a malicious commit needs no access to this repository, and that is what happened to `tj-actions/changed-files` in March 2025. The cost is a pull request for every patch release |
 
 ## Known limitations
@@ -388,3 +414,9 @@ work is written down. What is missing is a domain.
 
 7. **No penetration test.** The claims here come from reading the code and
    from the test suite. No independent party has tried to break it.
+
+8. **No Content-Security-Policy on the console.** Next.js inlines the scripts
+   that start each page, so a policy that allows them needs a nonce per
+   request and dynamic rendering. The console is not hosted and renders no
+   user content as HTML, so it sends the three headers above and no policy.
+   Hosting it would be the moment to add one.
