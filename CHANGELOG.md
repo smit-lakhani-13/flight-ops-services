@@ -379,6 +379,21 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
   `pom.xml` now adds `sts` at runtime scope.
   `AwsConfigTest.java#stsModuleIsOnTheClasspath` fails without it.
 
+- **A failed stack read ended `up.sh` with no message.** `stack_output` in
+  `deploy/aws/lib.sh` threw away the CLI's error, and under `set -e` any failed
+  read, a missing stack included, ended the run silently at step 2, 3 or 6. It
+  now returns nothing for a missing stack or output. On any other error, such
+  as a throttled call, it prints the CLI's message and stops `up.sh`.
+
+- **A failed metrics-server create read as installed.** Step 8 of `up.sh`
+  logged any `create-addon` failure, such as a denied or throttled call, as
+  `metrics-server already installed` and carried on, though without
+  metrics-server the HPA never scales. It now calls `ensure_metrics_server` in
+  `deploy/aws/lib.sh`, which looks the addon up first, as step 4 does for the
+  networking addons. It creates the addon only when EKS reports it missing,
+  and stops on any other failure. The docs said every step checks whether its
+  resource exists; this one now does.
+
 The other fixes are to documentation only, and change no behaviour.
 
 - The README listed 20 error codes, and there were 21. It was missing

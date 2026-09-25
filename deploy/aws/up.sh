@@ -298,12 +298,7 @@ helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-contro
 # The EKS-managed addon rather than the upstream manifest: AWS resolves the
 # version against the cluster version, so there is no pinned URL here to go
 # stale. Without it the HPA reports <unknown>/70% and never scales.
-if aws eks create-addon --cluster-name "$CLUSTER_NAME" \
-        --addon-name metrics-server >/dev/null 2>&1; then
-    ok "metrics-server addon requested"
-else
-    log "metrics-server already installed"
-fi
+ensure_metrics_server
 
 # ---------------------------------------------------------------------------
 step "9/12  Namespace and secrets"

@@ -339,6 +339,21 @@ STUB_STACKS='s' STUB_OUTPUT=vpc-0abc run_lib 'stack_output s VpcId'
 got=$(cat "$OUT")
 if [ "$got" = vpc-0abc ]; then pass "$name"; else fail "$name" "printed '$got'"; fi
 
+# How up.sh calls it, under set -e. Any error but a missing stack must print
+# its message before it ends the run.
+# shellcheck disable=SC2016  # expanded by the shell run_lib starts
+output_probe='vpc=$(stack_output s VpcId); echo "read [$vpc]"'
+
+name="stack_output is empty for a missing stack and stops on any other error"
+STUB_STACKS='' run_lib "$output_probe"
+if expect_status "$name" 0 && expect_out "$name" 'read []'; then
+    STUB_STACKS='s' STUB_DESCRIBE_FAILS=1 run_lib "$output_probe"
+    expect_status "$name" 1 \
+        && expect_out "$name" 'could not read output VpcId of stack s' \
+        && expect_out "$name" 'Rate exceeded' && reject_out "$name" 'read [' \
+        && pass "$name"
+fi
+
 name="stack_status is empty for a missing stack and the status for a real one"
 STUB_STACKS='' run_lib 'stack_status s'
 missing=$(cat "$OUT")
@@ -491,6 +506,33 @@ else
     fail "$name" "cluster.yaml declares '$declared', lib.sh names '$named'"
 fi
 
+# How up.sh step 8 calls it.
+name="ensure_metrics_server creates the addon only when it is missing"
+run_lib ensure_metrics_server
+if expect_status "$name" 0 \
+        && expect_out "$name" 'addon metrics-server already exists (ACTIVE)' \
+        && expect_calls "$name" '^aws eks create-addon' 0; then
+    STUB_ADDONS_MISSING=metrics-server run_lib ensure_metrics_server
+    expect_status "$name" 0 \
+        && expect_out "$name" 'metrics-server addon requested' \
+        && expect_calls "$name" \
+            '^aws eks create-addon .*--addon-name metrics-server$' 1 \
+        && pass "$name"
+fi
+
+name="ensure_metrics_server stops on a failed lookup or create"
+STUB_ADDON_LOOKUP_FAILS=1 run_lib ensure_metrics_server
+if expect_status "$name" 1 \
+        && expect_out "$name" 'could not read addon metrics-server' \
+        && expect_out "$name" 'ThrottlingException' \
+        && expect_calls "$name" '^aws eks create-addon' 0; then
+    STUB_ADDONS_MISSING=metrics-server STUB_ADDON_CREATE_FAILS=1 \
+        run_lib ensure_metrics_server
+    expect_status "$name" 1 \
+        && expect_out "$name" 'could not create addon metrics-server' \
+        && reject_out "$name" 'addon requested' && pass "$name"
+fi
+
 name="require_jdbc_url stops on None and on nothing, and accepts a PostgreSQL URL"
 run_lib 'require_jdbc_url None'
 if expect_status "$name" 1 && expect_out "$name" "no usable JdbcUrl output (got 'None')"; then
@@ -579,7 +621,8 @@ missing_calls=''
 # shellcheck disable=SC2016  # the calls are matched as written, unexpanded
 for call in 'require_jdk21 "$repo/mvnw"' 'require_eksctl' 'complete_cluster "$repo/cluster.yaml"' \
         'grant_namespace_access ' 'if stack_ready "$DATA_STACK"' \
-        'require_jdbc_url "$DB_URL"' 'wait_for_deployment'; do
+        'require_jdbc_url "$DB_URL"' 'ensure_metrics_server' \
+        'wait_for_deployment'; do
     # At the start of a command line, so a comment or a `:` in front does not count.
     awk -v c="$call" '{ sub(/^[ \t]+/, "") } index($0, c) == 1 { f = 1 } END { exit !f }' "$here/up.sh" \
         || missing_calls="$missing_calls [$call]"
