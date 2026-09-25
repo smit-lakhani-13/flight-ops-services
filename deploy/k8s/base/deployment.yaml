@@ -111,15 +111,23 @@ spec:
 
           resources:
             # Over the memory limit a container is OOMKilled.
-            # -XX:MaxRAMPercentage=75.0 in the Dockerfile sizes the heap from
-            # the limit. Worst case for the 768Mi:
-            #   576Mi  heap
+            # -XX:MaxRAMPercentage=50.0 in the Dockerfile sizes the heap from
+            # the limit. Native memory tracking on a laptop JDK 21, default
+            # profile, after scripts/demo.sh and 300 reads, showed about
+            # 260 MiB committed outside the heap before thread stacks; 150 MiB
+            # of it was metaspace, class space and code cache. Worst case for
+            # the 768Mi:
+            #   384Mi  heap, a ceiling (about 120 MiB was committed)
             #    64Mi  the /tmp tmpfs, charged to this container if filled
-            #   128Mi  metaspace, thread stacks, code cache, direct buffers, GC
-            # The last line is tight. Raise the limit with the tmpfs sizeLimit
-            # or with a dependency that allocates direct buffers. To check:
-            #   kubectl exec -n flight-ops deploy/flight-ops -- \
-            #     jcmd 1 VM.native_memory summary
+            #   320Mi  the 260 measured, thread stacks, and the classes the
+            #          prod profile adds (PostgreSQL driver, AWS SDK)
+            # Raise the limit with the tmpfs sizeLimit or with a dependency
+            # that allocates direct buffers. To check a running pod,
+            # `kubectl top pod -n flight-ops` gives the working set to compare
+            # with the limit, and the ops user can read the non-heap part at
+            #   /actuator/metrics/jvm.memory.committed?tag=area:nonheap
+            # That sum counts class space twice, because the Metaspace pool
+            # already includes the Compressed Class Space pool.
             requests:
               # Memory request equals the limit, so the pod never uses more than
               # it reserved. Under node pressure the kubelet evicts pods over

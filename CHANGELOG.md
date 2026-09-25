@@ -99,6 +99,26 @@ still blank.
   Trivy's results apart, because code scanning keeps each tool's results
   separately. Dependabot can move the build stage's JDK within Maven 3, and it
   is the enforcer that stops such a bump, by failing the image job.
+- **The memory budget gave half of what the JVM uses outside the heap.** The
+  deployment's comment allowed 128Mi for everything outside the heap. Native
+  memory tracking on a laptop JDK 21, default profile, measured about 260 MiB
+  committed there before thread stacks. At `MaxRAMPercentage=75.0` a heap near
+  its 576Mi ceiling would push the container past its 768Mi limit, and the
+  kernel would kill it with no `OutOfMemoryError` to log. The `Dockerfile` now
+  gives the heap half the limit, and the comment shows the measurement. Its
+  check was wrong too: native memory tracking is off in the image, so the
+  comment now points at `kubectl top pod` and the actuator's non-heap figure.
+- **The teardown's stack sweep missed a stack still deleting.** When the
+  waiter gave up, `down.sh` said step 9 would list the stack, but the sweep
+  asked only for five finished states. It now lists every state but
+  `DELETE_COMPLETE`, and `deploy/aws/selftest.sh` has a case for it.
+- **The up.sh hand-off, and the connection limit the documents gave.** The
+  `up.sh` hand-off now says to rename the deploy job before `DEPLOY_ENABLED`
+  is set, as the runbooks do. `deploy/k8s/base/hpa.yaml`, `doc/DEPLOYMENT.md`
+  and `doc/OPERATIONS.md` said db.t4g.micro allows about 112 connections.
+  It allows fewer than that, because `DBInstanceClassMemory` leaves out what
+  the OS and RDS reserve, and they now say to read the limit with
+  `SHOW max_connections`.
 
 ## 1.2.0 — 2026-09-26
 

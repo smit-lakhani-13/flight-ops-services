@@ -191,7 +191,7 @@ if stack_exists "$SAM_STACK"; then
     if aws cloudformation wait stack-delete-complete --stack-name "$SAM_STACK" 2>/dev/null; then
         ok "$SAM_STACK deleted"
     else
-        warn "$SAM_STACK did not finish deleting; the sweep in step 9 will list it"
+        warn "$SAM_STACK did not finish deleting; the sweep in step 9 will list it until it has gone"
     fi
 else
     log "no $SAM_STACK"
@@ -302,7 +302,7 @@ elif stack_exists "$FOUNDATION_STACK"; then
     if aws cloudformation wait stack-delete-complete --stack-name "$FOUNDATION_STACK" 2>/dev/null; then
         ok "$FOUNDATION_STACK deleted"
     else
-        warn "$FOUNDATION_STACK did not finish deleting; the sweep in step 9 will list it"
+        warn "$FOUNDATION_STACK did not finish deleting; the sweep in step 9 will list it until it has gone"
     fi
 else
     log "no $FOUNDATION_STACK"
@@ -389,8 +389,21 @@ stack_query="StackSummaries[?contains(StackName, 'flight-ops')].StackName"
 if [ "$KEEP_FOUNDATION" = 1 ]; then
     stack_query="StackSummaries[?contains(StackName, 'flight-ops') && StackName!='$FOUNDATION_STACK'].StackName"
 fi
+# Every status but DELETE_COMPLETE, so a stack still deleting, or one whose
+# delete or rollback failed, is listed, as steps 4 and 8 promise when the
+# waiter gives up.
+live_stack_statuses=(
+    CREATE_IN_PROGRESS CREATE_FAILED CREATE_COMPLETE
+    ROLLBACK_IN_PROGRESS ROLLBACK_FAILED ROLLBACK_COMPLETE
+    DELETE_IN_PROGRESS DELETE_FAILED
+    UPDATE_IN_PROGRESS UPDATE_COMPLETE_CLEANUP_IN_PROGRESS UPDATE_COMPLETE
+    UPDATE_FAILED UPDATE_ROLLBACK_IN_PROGRESS UPDATE_ROLLBACK_FAILED
+    UPDATE_ROLLBACK_COMPLETE_CLEANUP_IN_PROGRESS UPDATE_ROLLBACK_COMPLETE
+    REVIEW_IN_PROGRESS IMPORT_IN_PROGRESS IMPORT_COMPLETE
+    IMPORT_ROLLBACK_IN_PROGRESS IMPORT_ROLLBACK_FAILED IMPORT_ROLLBACK_COMPLETE
+)
 check "CloudFormation stacks" "$(q cloudformation list-stacks \
-    --stack-status-filter CREATE_COMPLETE UPDATE_COMPLETE ROLLBACK_COMPLETE UPDATE_ROLLBACK_COMPLETE DELETE_FAILED \
+    --stack-status-filter "${live_stack_statuses[@]}" \
     --query "$stack_query" --output text)"
 check "log groups" "$(q logs describe-log-groups \
     --query "logGroups[?contains(logGroupName, 'flight-ops') || contains(logGroupName, 'booking-event')].logGroupName" \
@@ -462,7 +475,8 @@ warn "$FAILURES check(s) failed — something is still billing."
 cat <<'FAILED'
 
   Re-run this script: most failures are ordering, and a second pass succeeds
-  once the thing that was blocking has finished deleting. If a check fails
+  once the thing that was blocking has finished deleting. A stack still in
+  DELETE_IN_PROGRESS fails the stacks check until it has gone. If a check fails
   twice, delete it by hand in the console — the ARN is printed above — and
   look for a dependency: a security group referenced by another group, a
   network interface still attached, a stack in DELETE_FAILED with a reason

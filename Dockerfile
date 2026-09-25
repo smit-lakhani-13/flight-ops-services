@@ -54,8 +54,11 @@ EXPOSE 8080
 
 # The heap is sized from the memory limit. A fixed -Xmx equal to the limit
 # leaves nothing for metaspace, thread stacks or buffers, and ends in an
-# OOMKill. After an OutOfMemoryError the JVM exits and the pod is replaced.
-ENV JAVA_OPTS="-XX:MaxRAMPercentage=75.0 -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError"
+# OOMKill. Half, because on a laptop, on the default profile, this JVM
+# committed about 260 MiB outside the heap (deploy/k8s/base/deployment.yaml
+# has the measurement). After an OutOfMemoryError the JVM exits and the pod
+# is replaced.
+ENV JAVA_OPTS="-XX:MaxRAMPercentage=50.0 -XX:+UseG1GC -XX:+ExitOnOutOfMemoryError"
 
 # prod unless told otherwise. The default profile is in-memory H2 with {noop}
 # dev passwords; under prod, a container with no DB_URL stops at startup. The

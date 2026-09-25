@@ -376,7 +376,11 @@ cat <<HANDOFF
   The infrastructure is ready. CI builds and deploys the application, because
   the image tag must be the commit SHA and CI is what knows it.
 
-  In the GitHub repository settings, set:
+  First merge a change that renames the deploy job in
+  .github/workflows/build-and-deploy.yml from 'deploy (gated off)' to 'deploy',
+  so the first real deploy does not show as gated off; CONTRIBUTING.md quotes
+  the name, so change it in the same commit. Then, in the GitHub repository
+  settings, set:
 
     Secret    AWS_ACCOUNT_ID   $ACCOUNT_ID
     Variable  DEPLOY_ENABLED   true

@@ -16,10 +16,12 @@ spec:
     name: flight-ops
   minReplicas: 2
   # The limit is the database. Each pod's Hikari pool holds up to 10
-  # connections, and db.t4g.micro allows about 112 (DBInstanceClassMemory /
-  # 9531392 on 1 GiB). Four pods use 40, leaving room for a migration, a psql
-  # session and a rolling update's extra pod. Raise the instance class or lower
-  # the pool before raising this.
+  # connections, and db.t4g.micro allows fewer than 112: the default is
+  # DBInstanceClassMemory / 9531392, and DBInstanceClassMemory is less than the
+  # 1 GiB class size, because it leaves out what the OS and RDS reserve. Read it
+  # with SHOW max_connections. Four pods use 40, leaving room for a migration, a
+  # psql session and a rolling update's extra pod. Raise the instance class or
+  # lower the pool before raising this.
   maxReplicas: 4
   metrics:
     - type: Resource
