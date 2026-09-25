@@ -15,8 +15,8 @@ import java.time.Duration;
  *                        dedicated drainer pod sets it false on the other replicas.
  * @param pollInterval    milliseconds between drains; roughly the most a healthy event waits (1s).
  * @param batchSize       rows claimed per drain; bounds how long one replica holds locks.
- * @param maxAttempts     failures before a row is no longer claimed (10). Stops one bad
- *                        row from heading every batch of the {@code ORDER BY id} claim.
+ * @param maxAttempts     failures before a row is no longer claimed (10). Without it the
+ *                        {@code ORDER BY id} claim would retry a bad row first, forever.
  * @param retention       how long published rows are kept, so "did it publish?" can still
  *                        be answered (7d, at least 1h).
  * @param pruneInterval   how often the pruner runs (1h). Each run deletes about an hour's

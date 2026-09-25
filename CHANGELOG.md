@@ -104,8 +104,9 @@ still blank.
 
 - **Two SQS alarms.** `template.yaml` gains `BookingEventDLQAlarm`, for any
   message on the dead-letter queue, and `BookingEventBacklogAlarm`, for an
-  oldest message older than ten minutes. Neither has a notification target
-  yet. Both are linted in CI and have never been deployed.
+  oldest message that stays older than ten minutes for five minutes in a row.
+  Neither has a notification target yet. Both are linted in CI and have never
+  been deployed.
 
 - **The cancellation's 503 has a test.** `LockTimeoutTest` now holds the
   flight row while a booking is cancelled, and gets 503 `LOCK_TIMEOUT` with
@@ -492,6 +493,12 @@ The other fixes are to documentation only, and change no behaviour.
   is 810 seconds, about thirteen and a half minutes. The comment in
   `V7__outbox_next_attempt_at.sql` still says twenty, because an applied
   migration cannot be edited without changing its Flyway checksum.
+
+- The `max-attempts` comment in `application.yml`, the `OutboxProperties`
+  Javadoc and the `OutboxPoisonRowTest` Javadoc said that without the ceiling
+  a failing row heads every batch, and the test's said one such row stops all
+  publishing. The row would be retried first each time its backoff ends,
+  forever, and the rows behind it still publish.
 
 - The comment in `V2__seat_and_route_invariants.sql` says `FlightService`
   rejects an origin equal to the destination. The check is `@DistinctEndpoints`

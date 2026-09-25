@@ -144,7 +144,7 @@ Resources:
     Type: AWS::CloudWatch::Alarm
     Properties:
       AlarmName: booking-events-backlog
-      AlarmDescription: The oldest booking event has waited more than ten minutes for the Lambda.
+      AlarmDescription: The oldest booking event has waited more than ten minutes for the Lambda, for five minutes in a row.
       Namespace: AWS/SQS
       MetricName: ApproximateAgeOfOldestMessage
       Dimensions:

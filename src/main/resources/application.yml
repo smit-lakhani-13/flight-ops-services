@@ -139,8 +139,9 @@ app:
     # Rows claimed per drain; bounds how long one replica holds the row locks.
     batch-size: ${OUTBOX_BATCH_SIZE:100}
     # Failures before a row stops being claimed. The claim is ORDER BY id, so a row
-    # that always fails would otherwise head every batch. It then counts in the
-    # outbox.dead gauge, and this brings it back:
+    # that always fails would otherwise be retried first each time its backoff ends,
+    # forever. A row past the limit counts in the outbox.dead gauge, and this brings
+    # it back:
     #   UPDATE outbox_events SET attempts = 0, next_attempt_at = NULL WHERE id = ?
     max-attempts: ${OUTBOX_MAX_ATTEMPTS:10}
     # The first retry delay, doubling up to the ceiling. Ten attempts then span about
