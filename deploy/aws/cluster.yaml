@@ -1,7 +1,7 @@
 # eksctl cluster definition. deploy/aws/up.sh creates it at step 4, then adds
 # what this file cannot express: the STANDARD upgrade policy, CI's
 # namespace-scoped access entry and the VPC lookup for the database.
-# deploy/aws/down.sh deletes it. It bills from creation (DEPLOYMENT.md).
+# deploy/aws/down.sh deletes it. It bills from creation (doc/DEPLOYMENT.md).
 apiVersion: eksctl.io/v1alpha5
 kind: ClusterConfig
 
@@ -56,7 +56,7 @@ managedNodeGroups:
 
     # Private IPs only; inbound traffic comes through the ALB. This decides
     # node placement, not the NAT gateway: dropping NAT takes this set to false
-    # and `vpc.nat.gateway: Disable`. DEPLOYMENT.md prices that variant.
+    # and `vpc.nat.gateway: Disable`. doc/DEPLOYMENT.md prices that variant.
     privateNetworking: true
 
     iam:

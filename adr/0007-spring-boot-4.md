@@ -47,8 +47,9 @@ later, in `d18f58b` (see [ADR 0011](0011-correlation-ids-and-metrics.md)).
   commercial support was left. Staying would also have made the repository a
   snapshot of the previous generation. The upgrade is the kind of work I want
   the repository to show. It needed renames of dependencies, packages and
-  types, and [NOTES.md](../NOTES.md) lists them. The Jackson 2 conflict came
-  later, when springdoc was added in `82ea9b4`, and the enforcer caught it.
+  types, and [the defect log](../doc/DEFECT-LOG.md) lists them. The Jackson 2
+  conflict came later, when springdoc was added in `82ea9b4`, and the enforcer
+  caught it.
 
 * **Boot 4.0.** 4.1.0 had been the current line since 10 June 2026, three
   months before the first commit, so there was no reason to pin to the older

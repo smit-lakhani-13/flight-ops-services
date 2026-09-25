@@ -22,7 +22,7 @@ Description: >
 # unless you pass --delete-sam-bucket.
 #
 # Everything here but the two alarms is pay-per-use and idles at about $0
-# (DEPLOYMENT.md section 5). The alarms bill per alarm-month whether or not
+# (doc/DEPLOYMENT.md section 5). The alarms bill per alarm-month whether or not
 # they fire, after the ten standard alarms CloudWatch does not charge an
 # account for. X-Ray stays inside its free tier at this volume: 100,000 traces
 # recorded and 1,000,000 retrieved a month.

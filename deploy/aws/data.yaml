@@ -5,7 +5,7 @@ Description: >-
   Demo-shaped: Single-AZ, no backups, no read replica, no Performance
   Insights, deletion policy Delete. Each is wrong for a system with users and
   right for a stack that lives a week and must leave nothing behind.
-  DEPLOYMENT.md describes the production shape.
+  doc/DEPLOYMENT.md describes the production shape.
 
   Created after the cluster and deleted before it: its security group lives in
   the VPC eksctl owns, and eksctl cannot delete a VPC that still contains one.

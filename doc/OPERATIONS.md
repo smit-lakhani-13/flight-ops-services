@@ -1,8 +1,8 @@
 # Operations
 
-What to set, what to watch, and what to do at three in the morning.
+What to set, what to watch, and what to do when it breaks.
 
-I took the metric names from `/actuator/prometheus` on a running instance and
+The metric names come from `/actuator/prometheus` on a running instance and
 the environment variables from `application.yml`. The log lines are copied from
 real output.
 
@@ -172,7 +172,7 @@ A caller can bring its own id:
 curl -si -u api:dev-secret -H 'X-Request-Id: ticket-4471' \
   -X POST localhost:8080/api/v1/bookings \
   -H 'Content-Type: application/json' \
-  -d '{"flightNumber":"UA123","passengerName":"Smit","seats":2,"idempotencyKey":"k1"}' \
+  -d '{"flightNumber":"UA123","passengerName":"Test Passenger","seats":2,"idempotencyKey":"k1"}' \
   | grep -i x-request-id
 # X-Request-Id: ticket-4471
 ```
@@ -258,6 +258,10 @@ In the order they matter:
 | 7 | RDS `DatabaseConnections` above 50 | more than the service's own pools can open: 4 pods × 10, or 5 × 10 during a rollout surge. Something else is connecting, or `maxReplicas` went up without a bigger instance class (about 112 connections). See [DEPLOYMENT.md §7](DEPLOYMENT.md#7-what-breaks-first) |
 
 ## Playbooks
+
+None of these playbooks has been followed on a cluster, because nothing here
+has run in AWS. The log excerpts come from local runs, and
+`OutboxPoisonRowTest` runs the re-drive `UPDATE` verbatim.
 
 ### Pods CrashLoopBackOff, logs mention a password
 
@@ -353,7 +357,7 @@ logs it once at startup for each such value, and every login logs it again. A WA
 means a stored value is not a bcrypt hash, before anyone has tried to log in.
 Set a real hash, as in
 [Rotating the API or ops password](#rotating-the-api-or-ops-password).
-[SECURITY.md](SECURITY.md#known-limitations) lists this as a known limit.
+[SECURITY.md](../SECURITY.md#known-limitations) lists this as a known limit.
 
 ### Events stop arriving; `outbox_pending` climbs
 
@@ -467,7 +471,7 @@ at the old ones.
 ### `up.sh` stops, or CI stops before the deploy
 
 The table in
-[deploy/aws/README.md](deploy/aws/README.md#when-something-goes-wrong) maps
+[deploy/aws/README.md](../deploy/aws/README.md#when-something-goes-wrong) maps
 each stop to its cause. For `up.sh` that is step 1 on the JDK or eksctl, and
 step 4 while it finishes a cluster that already exists. It is also step 5 on
 `AmazonEKSEditPolicy`, step 6 on the data stack's status, and step 9 when the

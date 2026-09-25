@@ -12,7 +12,7 @@ Flight inventory and booking service: a Spring Boot REST API over PostgreSQL tha
 
 I picked an airline because seat inventory is a real consistency problem: many clients want the same few seats, clients retry, and a mistake sells one seat twice.
 
-**Scope.** This is a demo that has never served production traffic. CI builds both modules and runs every test, including the PostgreSQL integration tests, on every push or pull request to `main`. CI also builds the image from the `Dockerfile` on every push or pull request to `main`, starts it with no database, scans it with Trivy, and never pushes it. `k8s/`, `lambda/template.yaml`, `deploy/aws/` and the deploy job are written, linted and validated offline, but I have never applied them. Their prices and runbook are in [DEPLOYMENT.md](DEPLOYMENT.md), and [Project status](#project-status) shows what has actually run.
+**Scope.** This is a demo that has never served production traffic. CI builds both modules and runs every test, including the PostgreSQL integration tests, on every push or pull request to `main`. CI also builds the image from the `Dockerfile` on every push or pull request to `main`, starts it with no database, scans it with Trivy, and never pushes it. `k8s/`, `lambda/template.yaml`, `deploy/aws/` and the deploy job are written, linted and validated offline, but I have never applied them. Their prices and runbook are in [DEPLOYMENT.md](doc/DEPLOYMENT.md), and [Project status](#project-status) shows what has actually run.
 
 **Contents:** [Documentation](#documentation) · [Run it](#run-it-in-30-seconds) · [Status](#project-status) · [Architecture](#architecture) · [Layout](#repository-layout) · [Security](#security) · [API](#api) · [Metrics](#metrics) · [Tests](#tests) · [Deployment](#deployment-and-cost) · [Trade-offs](#trade-offs-and-known-limitations) · [Review](#what-i-found-in-review) · [Versions](#versions)
 
@@ -22,11 +22,11 @@ On every CI run, the `docs-check` job runs four scripts. `scripts/refcheck.py` c
 
 | Document | What it answers |
 |---|---|
-| [NOTES.md](NOTES.md) | The bugs I found in this service, why each happened, and the test and commit that pin each fix |
-| [ARCHITECTURE.md](ARCHITECTURE.md) | How the pieces fit: the booking sequence naming every method it passes through, the idempotency decision table, the lock order, the outbox, the status state machine, the ER diagram, and the module boundaries the build enforces |
+| [doc/DEFECT-LOG.md](doc/DEFECT-LOG.md) | The bugs I found in this service, why each happened, and the test and commit that pin each fix |
+| [doc/ARCHITECTURE.md](doc/ARCHITECTURE.md) | How the pieces fit: the booking sequence naming every method it passes through, the idempotency decision table, the lock order, the outbox, the status state machine, the ER diagram, and the module boundaries the build enforces |
 | [adr/](adr/README.md) | Why each decision went the way it did, and what I rejected: 16 records covering the outbox, pessimistic locking, ids, the request fingerprint, the security model, Boot 4, the Lambda, the IaC choice, the region, observability, OpenAPI, the outbox bounds, the quality gates, the event transport and a proposal for an Oracle port, written from documentation and never run |
-| [DEPLOYMENT.md](DEPLOYMENT.md) | Three ways to run it, the runbook for each, what each costs for 7, 10 and 15 days, what breaks first under load, and how to tear it all down with proof |
-| [OPERATIONS.md](OPERATIONS.md) | Every environment variable, the metrics and what they mean, how to follow one booking across the queue, what to alert on, the playbooks, and what is not wired up |
+| [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md) | Three ways to run it, the runbook for each, what each costs for 7, 10 and 15 days, what breaks first under load, and how to tear it all down with proof |
+| [doc/OPERATIONS.md](doc/OPERATIONS.md) | Every environment variable, the metrics and what they mean, how to follow one booking across the queue, what to alert on, the playbooks, and what is not wired up |
 | [SECURITY.md](SECURITY.md) | The auth model, what is exposed and what is not, how secrets are handled, and the known limitations |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | The JDK trap, both build commands, what `Skipped: 9` means, and what CI enforces |
 | [CHANGELOG.md](CHANGELOG.md) | What changed in each release, the response field 1.1.0 removed, and why it is 1.1.0 and not 2.0.0 |
@@ -107,7 +107,7 @@ curl -s -u api:dev-secret -X POST localhost:8080/api/v1/bookings \
 curl -s -u api:dev-secret localhost:8080/api/v1/flights/UA456           # availableSeats unchanged
 ```
 
-`PATCH /api/v1/flights/{n}/status` with body `{"status":"DEPARTED"}` moves a flight through the state machine. `SCHEDULED`, `BOARDING` and `DELAYED` sell seats, and `DEPARTED`, `ARRIVED` and `CANCELLED` return 409. `BOARDING → ARRIVED` is `409 ILLEGAL_STATUS_TRANSITION`, because an aircraft cannot land without departing, and `CANCELLED` and `ARRIVED` are terminal. I added the cancelled-flight refusal after a probe of a running instance found it missing ([NOTES.md](NOTES.md#seats-sold-on-a-cancelled-flight)).
+`PATCH /api/v1/flights/{n}/status` with body `{"status":"DEPARTED"}` moves a flight through the state machine. `SCHEDULED`, `BOARDING` and `DELAYED` sell seats, and `DEPARTED`, `ARRIVED` and `CANCELLED` return 409. `BOARDING → ARRIVED` is `409 ILLEGAL_STATUS_TRANSITION`, because an aircraft cannot land without departing, and `CANCELLED` and `ARRIVED` are terminal. I added the cancelled-flight refusal after a probe of a running instance found it missing ([the defect log](doc/DEFECT-LOG.md#seats-sold-on-a-cancelled-flight)).
 
 ### Against real PostgreSQL
 
@@ -192,7 +192,7 @@ What the repository does not claim:
                        └──────────────────────────────────────────────┘
 ```
 
-The same picture with method names, plus the booking sequence, the idempotency decision table, the lock order, the outbox drain, the `FlightStatus` state machine and the ER diagram, is in [ARCHITECTURE.md](ARCHITECTURE.md). Each decision has its own file in [adr/](adr/README.md).
+The same picture with method names, plus the booking sequence, the idempotency decision table, the lock order, the outbox drain, the `FlightStatus` state machine and the ER diagram, is in [ARCHITECTURE.md](doc/ARCHITECTURE.md). Each decision has its own file in [adr/](adr/README.md).
 
 `app.events.publisher: log | sqs` picks the implementation with `@ConditionalOnProperty`, and `log` is the default, so nothing tries to reach AWS on a laptop. `EventProperties` refuses any other value at startup and names the property. `@Primary` and `@Qualifier` only choose which bean is injected, and still build every candidate, including an SQS client on a machine with no credentials. `@ConditionalOnProperty` decides whether the bean exists at all. There is no Solace implementation. One would need no change to `EventPublisher`, which takes a serialised payload and headers, but it would need a publisher class, a `ConnectionFactory` bean and the vendor's client library, a mode, a test and a new consumer, because the Lambda reads `SQSEvent`. [ADR 0015](adr/0015-event-transport.md) sets out that cost from Solace's documentation, not from a run here.
 
@@ -216,9 +216,8 @@ The same picture with method names, plus the booking sequence, the idempotency d
 │   ├── application.yml            profiles: default (H2), postgres, prod
 │   └── db/migration/              Flyway V1–V8, which owns the PostgreSQL schema
 ├── src/test/java/                 35 test classes (37 with the Lambda's)
-├── NOTES.md                       the bugs I found and fixed
-├── ARCHITECTURE.md                the diagrams and the method-by-method request path
-├── DEPLOYMENT.md                  three shapes, the runbook, the cost of each, the teardown
+├── doc/                           the defect log, the architecture, the deployment
+│                                  runbook and costs, and operations
 ├── CHANGELOG.md                   1.0.0, 1.1.0, the unreleased work, and the response field 1.1.0 removed
 ├── adr/                           16 decision records, 0001–0016
 ├── scripts/                       CI runs refcheck.py, linkcheck.py, sweeps.sh and
@@ -313,7 +312,7 @@ Jackson and Hibernate exception text names internal classes, tables and columns,
 
 ## Metrics
 
-Every log line carries the service name, `traceId`, `spanId` and `requestId`. `RequestIdFilter` returns the request id as `X-Request-Id` on every response the application handles, 401 and 403 included, so a support call can start from an id on the user's screen. See [OPERATIONS.md](OPERATIONS.md) to follow one booking across the queue.
+Every log line carries the service name, `traceId`, `spanId` and `requestId`. `RequestIdFilter` returns the request id as `X-Request-Id` on every response the application handles, 401 and 403 included, so a support call can start from an id on the user's screen. See [OPERATIONS.md](doc/OPERATIONS.md) to follow one booking across the queue.
 
 `/actuator/prometheus` needs `ops` credentials. Beside the Micrometer defaults it carries seven meters the HTTP metrics cannot express, from `observability/BookingMetrics` and `observability/OutboxMetrics`:
 
@@ -376,7 +375,7 @@ The image measured 299.5 MB (299477691 bytes) in CI run 36032424801 on 2026-09-2
 
 The Lambda's SQS event in `lambda/template.yaml` caps the consumer at five concurrent invocations with `ScalingConfig.MaximumConcurrency: 5` (valid from 2 to 1000). It reserves nothing from the account's concurrency pool and limits only the poller.
 
-The EKS control plane bills about $0.10 an hour (about $73 a month) with no worker nodes, until it is deleted. On demand in `ap-south-1` the whole stack costs $7.72 a day: $54 for 7 days, $116 for 15 and $232 for 30, or $64, $137 and $273 with the 18% GST AWS India invoices. See [DEPLOYMENT.md](DEPLOYMENT.md) for the breakdown, three cheaper shapes (one is a single EC2 instance at $0.80 a day) and the runbook. `deploy/aws/down.sh` ends with fourteen checks and fails if any finds something or if a query itself fails.
+The EKS control plane bills about $0.10 an hour (about $73 a month) with no worker nodes, until it is deleted. On demand in `ap-south-1` the whole stack costs $7.72 a day: $54 for 7 days, $116 for 15 and $232 for 30, or $64, $137 and $273 with the 18% GST AWS India invoices. See [DEPLOYMENT.md](doc/DEPLOYMENT.md) for the breakdown, three cheaper shapes (one is a single EC2 instance at $0.80 a day) and the runbook. `deploy/aws/down.sh` ends with fourteen checks and fails if any finds something or if a query itself fails.
 
 ## Trade-offs and known limitations
 
@@ -403,25 +402,25 @@ Each row is a choice I made, set against what a production system would do.
 
 ## What I found in review
 
-I reproduced most of these against a running instance before fixing them. The teardown bugs came from reading `deploy/aws/down.sh` the way an operator would, since there is no AWS account to run it against. Each story, with its test and commit, is in [NOTES.md](NOTES.md).
+I reproduced most of these against a running instance before fixing them. The teardown bugs came from reading `deploy/aws/down.sh` the way an operator would, since there is no AWS account to run it against. Each story, with its test and commit, is in [the defect log](doc/DEFECT-LOG.md).
 
-- [Seats sold on a cancelled flight](NOTES.md#seats-sold-on-a-cancelled-flight). `Flight.reserveSeats` checked the seat count and ignored the status, and every test passed.
+- [Seats sold on a cancelled flight](doc/DEFECT-LOG.md#seats-sold-on-a-cancelled-flight). `Flight.reserveSeats` checked the seat count and ignored the status, and every test passed.
 
-- [A Location header that led to a 404](NOTES.md#a-location-header-that-led-to-a-404). The test checked the header's text and never followed it.
+- [A Location header that led to a 404](doc/DEFECT-LOG.md#a-location-header-that-led-to-a-404). The test checked the header's text and never followed it.
 
-- [One idempotency key, two answers](NOTES.md#one-idempotency-key-two-answers). Ten racing replays of one booking got a mix of 201 and 409.
+- [One idempotency key, two answers](doc/DEFECT-LOG.md#one-idempotency-key-two-answers). Ten racing replays of one booking got a mix of 201 and 409.
 
-- [A booking lookup that failed on every call](NOTES.md#a-booking-lookup-that-failed-on-every-call). A lazy association was read after its session had closed.
+- [A booking lookup that failed on every call](doc/DEFECT-LOG.md#a-booking-lookup-that-failed-on-every-call). A lazy association was read after its session had closed.
 
-- [The outbox and a slow queue](NOTES.md#the-outbox-and-a-slow-queue). An SQS call with no timeout ran inside the booking transaction, and the fix grew into an outbox.
+- [The outbox and a slow queue](doc/DEFECT-LOG.md#the-outbox-and-a-slow-queue). An SQS call with no timeout ran inside the booking transaction, and the fix grew into an outbox.
 
-- [Metrics under the wrong names](NOTES.md#metrics-under-the-wrong-names). `bookings.created` exported as `bookings_total`, with no warning.
+- [Metrics under the wrong names](doc/DEFECT-LOG.md#metrics-under-the-wrong-names). `bookings.created` exported as `bookings_total`, with no warning.
 
-- [A teardown that could pass on an error](NOTES.md#a-teardown-that-could-pass-on-an-error). An expired token made every check in `deploy/aws/down.sh` print PASS.
+- [A teardown that could pass on an error](doc/DEFECT-LOG.md#a-teardown-that-could-pass-on-an-error). An expired token made every check in `deploy/aws/down.sh` print PASS.
 
-- [Three review passes](NOTES.md#first-review-pass) over my own code found more, from a readiness probe that ignored the database to `@Lob` on PostgreSQL.
+- [Three review passes](doc/DEFECT-LOG.md#first-review-pass) over my own code found more, from a readiness probe that ignored the database to `@Lob` on PostgreSQL.
 
-- [A fourth review pass](NOTES.md#fourth-review-pass) audited every file. It found a fractional seat count accepted as a whole one, first in JSON and then again in YAML, and a status sent as a number read as the enum constant at that position. It also found a flight number with a slash that broke the `Location` header, and a page number that overflowed to a 500. Among the rest were a publisher setting whose check never ran and a Lambda template that `sam build` could not build.
+- [A fourth review pass](doc/DEFECT-LOG.md#fourth-review-pass) audited every file. It found a fractional seat count accepted as a whole one, first in JSON and then again in YAML, and a status sent as a number read as the enum constant at that position. It also found a flight number with a slash that broke the `Location` header, and a page number that overflowed to a 500. Among the rest were a publisher setting whose check never ran and a Lambda template that `sam build` could not build.
 
 ## Versions
 
@@ -433,7 +432,7 @@ Build and test: Maven 3.9.16 · JUnit 6.0.3.
 
 One Boot-managed version is overridden in `pom.xml`: `jackson-2-bom.version` is set to 2.22.2. Boot 4 runs on Jackson 3 and still manages the Jackson 2 coordinates at 2.21.5 for libraries that have not moved. The OpenAPI document is built by swagger-core, which is one of them and needs at least 2.22.1. Maven's nearest-wins would have handed it the older Jackson 2 with no error, and the enforcer's `requireUpperBoundDeps` rule refused the build instead.
 
-Built and tested on macOS arm64 with `JAVA_HOME=/opt/homebrew/opt/openjdk@21`. What the Boot 3.5 to 4.1 upgrade broke is in [NOTES.md](NOTES.md#the-boot-4-upgrade).
+Built and tested on macOS arm64 with `JAVA_HOME=/opt/homebrew/opt/openjdk@21`. What the Boot 3.5 to 4.1 upgrade broke is in [the defect log](doc/DEFECT-LOG.md#the-boot-4-upgrade).
 
 `./mvnw` pins Maven 3.9.16 and its SHA-256, so CI needs no Maven install step and a substituted archive fails the build. The wrapper is `distributionType=only-script`: two shell scripts and a properties file, with no `maven-wrapper.jar` committed.
 

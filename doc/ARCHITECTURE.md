@@ -7,8 +7,8 @@ where in the source each claim can be checked. On every CI run,
 document behind fails the `docs-check` job.
 
 Each decision where I weighed alternatives has its own file in
-[`adr/`](adr/README.md), with the options I rejected. This document is the map,
-and the ADRs hold the reasoning.
+[`adr/`](../adr/README.md), with the options I rejected. This document is the
+map, and the ADRs hold the reasoning.
 
 ## Contents
 
@@ -63,7 +63,7 @@ That dotted line is the only asynchronous edge, and I kept it that way.
 Everything a caller is told in a response has already committed to PostgreSQL,
 and no response depends on SQS being up. That property is what the outbox
 buys. It is the most important structural decision in the service, and
-[ADR 0001](adr/0001-transactional-outbox.md) explains it.
+[ADR 0001](../adr/0001-transactional-outbox.md) explains it.
 
 Bookings and flights are one service because the seat count and the booking
 commit together.
@@ -75,7 +75,7 @@ other, and release the seats again when the second step fails. The Lambda is
 separate for other reasons: it scales with the queue, up to the five
 concurrent invocations `lambda/template.yaml` allows, it can fail without
 failing a booking, and it owns a different store.
-[ADR 0008](adr/0008-standalone-lambda-consumer.md) records why it is a plain
+[ADR 0008](../adr/0008-standalone-lambda-consumer.md) records why it is a plain
 Lambda rather than a second Spring Boot service, which would consume SQS
 around the clock. Inside the service, the boundary between layers is the
 ArchUnit rule `layers_are_respected`, not a network hop.
@@ -241,7 +241,7 @@ Optimistic locking is the better default when contention is low, and seat sales
 are the case it handles worst. The last few seats on a popular flight are where
 every request collides. There, `@Version` turns each collision into a retry
 storm at the moment the system is busiest. Pessimistic locking serialises those
-requests instead. See [ADR 0002](adr/0002-pessimistic-locking.md).
+requests instead. See [ADR 0002](../adr/0002-pessimistic-locking.md).
 
 What keeps the lock from becoming an outage:
 
@@ -250,7 +250,7 @@ What keeps the lock from becoming an outage:
   and `prod` profiles of `src/main/resources/application.yml`. No Java code
   issues it, so every lock the service takes gets the same bound, native SQL
   included. No query can forget a hint.
-  [ADR 0002](adr/0002-pessimistic-locking.md) explains why I did not use a
+  [ADR 0002](../adr/0002-pessimistic-locking.md) explains why I did not use a
   per-query hint. A request that cannot get the lock fails within seconds with
   `503 LOCK_TIMEOUT`. Without the bound it would hold a connection until the
   pool was empty. H2 gets the same bound, spelled `SET LOCK_TIMEOUT 3000`.
@@ -354,7 +354,7 @@ For a JMS broker it is a publisher class behind `@ConditionalOnProperty`, a
 `ConnectionFactory` bean and the vendor's client library, a mode in
 `src/main/java/com/smit/flightops/config/EventProperties.java#MODES`, a test,
 and a new consumer, because the Lambda reads `SQSEvent`.
-[ADR 0015](adr/0015-event-transport.md) sets out that cost from the vendors'
+[ADR 0015](../adr/0015-event-transport.md) sets out that cost from the vendors'
 documentation; none of it has been built or run here.
 
 `app.events.publisher` picks the implementation, `log` or `sqs`.
@@ -658,9 +658,9 @@ costs:
 
 | Seam | Swap in | Cost |
 |---|---|---|
-| `EventPublisher` | A JMS broker (Solace PubSub+, TIBCO EMS), Kafka, EventBridge | `EventPublisher` itself does not change, because the payload is already serialised. For a JMS broker the cost is more than one class: a publisher behind `@ConditionalOnProperty`, a `ConnectionFactory` bean and the vendor's client library, a mode in `src/main/java/com/smit/flightops/config/EventProperties.java#MODES`, a test, and a new consumer, because the Lambda reads `SQSEvent` and Lambda has no event source for Solace or EMS. Kafka and EventBridge cost something different. [ADR 0015](adr/0015-event-transport.md) sets out each from the vendors' documentation; none has been built or run here |
+| `EventPublisher` | A JMS broker (Solace PubSub+, TIBCO EMS), Kafka, EventBridge | `EventPublisher` itself does not change, because the payload is already serialised. For a JMS broker the cost is more than one class: a publisher behind `@ConditionalOnProperty`, a `ConnectionFactory` bean and the vendor's client library, a mode in `src/main/java/com/smit/flightops/config/EventProperties.java#MODES`, a test, and a new consumer, because the Lambda reads `SQSEvent` and Lambda has no event source for Solace or EMS. Kafka and EventBridge cost something different. [ADR 0015](../adr/0015-event-transport.md) sets out each from the vendors' documentation; none has been built or run here |
 | `spring.security.oauth2.resourceserver.jwt.issuer-uri` and `.audiences` | Cognito, Okta, Entra | Configuration: set both. `issuer-uri` alone accepts a token the issuer minted for another client in the tenant. The rules already treat a JWT scope and a Basic authority identically |
 | `Clock` (`src/main/java/com/smit/flightops/config/TimeConfig.java`) | A fixed clock in a test | Already used everywhere |
 | `management.opentelemetry.tracing.export.otlp.endpoint` | An OTLP collector | An environment variable. Ids are already generated and already on every log line |
 | The outbox poller | Debezium reading the WAL | A replication slot, a connector to operate, and a disk that fills if the consumer stops. I considered it and rejected it at this size |
-| The database | Oracle | Two native outbox queries rewritten, the session-wide lock-wait bound narrowed to per-query hints, and a second set of migrations. [ADR 0016](adr/0016-oracle-port.md) sets this out from documentation, as a proposal; none of it has been built or run |
+| The database | Oracle | Two native outbox queries rewritten, the session-wide lock-wait bound narrowed to per-query hints, and a second set of migrations. [ADR 0016](../adr/0016-oracle-port.md) sets this out from documentation, as a proposal; none of it has been built or run |

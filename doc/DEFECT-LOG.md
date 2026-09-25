@@ -1,27 +1,33 @@
-# Bugs I found and fixed
+# Defect log
 
 These are the defects I found in this service and how I fixed them. I
 reproduced most of them against a running instance before changing the code.
 Where I found one by reading the code or its documentation instead, the entry
 says so. Each entry says what I saw, why it happened, what I changed, the test
 that pins it where one exists, and the commit the fix landed in. The
-[README](README.md#what-i-found-in-review) has the short list.
+[README](../README.md#what-i-found-in-review) has the short list.
 
-| Section | What broke |
-|---|---|
-| [Seats sold on a cancelled flight](#seats-sold-on-a-cancelled-flight) | `reserveSeats` checked the seat count and ignored the flight status |
-| [A Location header that led to a 404](#a-location-header-that-led-to-a-404) | a test checked the header's text and never followed it |
-| [One idempotency key, two answers](#one-idempotency-key-two-answers) | racing replays got 201 or 409 for one booking |
-| [A booking lookup that failed on every call](#a-booking-lookup-that-failed-on-every-call) | a lazy association read after the session closed |
-| [Paging that could skip a row](#paging-that-could-skip-a-row) | a bad sort was a 500, and a tied sort was unstable |
-| [The outbox and a slow queue](#the-outbox-and-a-slow-queue) | an SQS call with no timeout, then a poison row and a ceiling measured in seconds |
-| [Metrics under the wrong names](#metrics-under-the-wrong-names) | `bookings.created` exported as `bookings_total` |
-| [A teardown that could pass on an error](#a-teardown-that-could-pass-on-an-error) | an expired token read like an empty account |
-| [The Boot 4 upgrade](#the-boot-4-upgrade) | what the 3.5 to 4.1 bump broke |
-| [First review pass](#first-review-pass) | the rest of the first read-through |
-| [Second review pass](#second-review-pass) | failures that stay green on a laptop |
-| [Third review pass](#third-review-pass) | the gaps I had listed as open |
-| [Fourth review pass](#fourth-review-pass) | input that reached a URL, a log line or a count unchecked, startup checks that passed a bad password or blamed the wrong setting, and a deploy path that could not build |
+Severity: High means an invariant broke, data was wrong or lost, a shared
+resource was destroyed or an operation failed every time; Medium, a wrong
+status, header, name or bound that a client or an alert relies on, or a
+dependency change that broke the build; Low, a message or a check that was
+weaker than it looked. A section or a review pass lists its highest item.
+
+| Section | Area | Severity | What broke |
+|---|---|---|---|
+| [Seats sold on a cancelled flight](#seats-sold-on-a-cancelled-flight) | Booking rules | High | `reserveSeats` checked the seat count and ignored the flight status |
+| [A Location header that led to a 404](#a-location-header-that-led-to-a-404) | HTTP contract | Medium | a test checked the header's text and never followed it |
+| [One idempotency key, two answers](#one-idempotency-key-two-answers) | Idempotency | High | racing replays got 201 or 409 for one booking |
+| [A booking lookup that failed on every call](#a-booking-lookup-that-failed-on-every-call) | Persistence | High | a lazy association read after the session closed |
+| [Paging that could skip a row](#paging-that-could-skip-a-row) | HTTP contract | Medium | a bad sort was a 500, and a tied sort was unstable |
+| [The outbox and a slow queue](#the-outbox-and-a-slow-queue) | Outbox | High | an SQS call with no timeout, then a poison row and a ceiling measured in seconds |
+| [Metrics under the wrong names](#metrics-under-the-wrong-names) | Observability | Medium | `bookings.created` exported as `bookings_total` |
+| [A teardown that could pass on an error](#a-teardown-that-could-pass-on-an-error) | Deployment scripts | High | an expired token read like an empty account |
+| [The Boot 4 upgrade](#the-boot-4-upgrade) | Build | Medium | what the 3.5 to 4.1 bump broke |
+| [First review pass](#first-review-pass) | Several | High | the rest of the first read-through |
+| [Second review pass](#second-review-pass) | Several | High | failures that stay green on a laptop |
+| [Third review pass](#third-review-pass) | Outbox, logs | Medium | the gaps I had listed as open |
+| [Fourth review pass](#fourth-review-pass) | Several | High | input that reached a URL, a log line or a count unchecked, startup checks that passed a bad password or blamed the wrong setting, and a deploy path that could not build |
 
 ---
 
@@ -109,10 +115,10 @@ String location = mockMvc.perform(post("/api/v1/bookings")...)
 mockMvc.perform(get(location)).andExpect(status().isOk());       // this would have 404'd
 ```
 
-This is the cancelled-flight lesson again. A test that asserts the mechanism
-passes, and a test that asserts the consequence catches things. I found both
-bugs by probing a running instance, and both now have tests that follow through
-to the outcome.
+This is the same failure shape as the cancelled-flight defect. A test that
+asserts the mechanism passes, and a test that asserts the consequence catches
+things. I found both bugs by probing a running instance, and both now have tests
+that follow through to the outcome.
 
 Both `Location` headers are now built from the returned DTO. `FlightService`
 normalises flight numbers (trim and upper-case), so `POST /api/v1/flights` with
@@ -161,8 +167,10 @@ them. That split is the fix. While `book` was `@Transactional`, the recovery
 read ran inside the transaction PostgreSQL had already marked aborted. It got
 `current transaction is aborted` instead of the winner's row. Now `book` sits
 outside any transaction, and Spring has rolled the failed one back before the
-catch block runs. `REQUIRES_NEW` on `recoverReplay` is insurance for the day
-`book` becomes transactional again.
+catch block runs. `REQUIRES_NEW` on `recoverReplay` would keep the recovery
+read out of an aborted transaction if `book` ever became transactional again.
+It would not make that safe: the shared transaction would still be marked
+rollback-only, and a loser owed a 201 would get a 500.
 
 `BookingIdempotencyTest.racingTenCallersOnTheSameKeyAllGetTheSameBooking` pins
 it. Ten threads send one key, every caller gets the same booking id back, one
@@ -263,7 +271,7 @@ against a list each endpoint publishes, and it appends `id` as a tie-breaker
 when the caller did not sort on it. The list leaves out `idempotencyKey`,
 because sorting on it would hand back other people's keys one bit at a time.
 `ErrorContractTest.idempotencyKeyIsNotSortable` pins the list. `SortPolicy`
-landed in `50e8871`. I have not written a test that pins the tie-breaker yet.
+landed in `50e8871`. No test pins the tie-breaker yet.
 
 ## The outbox and a slow queue
 
@@ -290,7 +298,7 @@ Neither shows up in a test that does not kill the process at the wrong moment.
 `OutboxWriter.recordBookingCreated` now inserts the event into `outbox_events`
 in the booking's transaction, on the same connection. A `@Scheduled` poller
 publishes it afterwards. That landed in `e83d846`, and
-[adr/0001](adr/0001-transactional-outbox.md) records the decision.
+[adr/0001](../adr/0001-transactional-outbox.md) records the decision.
 
 The writer is `@Transactional(propagation = MANDATORY)`. Called outside a
 transaction it would otherwise work, and throw away the atomicity it exists
@@ -379,8 +387,9 @@ and would have passed for any name at all.
 
 Every counter is now registered in the constructor, on startup. A series that
 does not exist yet returns no data, and most alerting rules treat no data as
-neither firing nor resolved. The alert written to catch the first lock timeout
-would have stayed silent for the first lock timeout.
+neither firing nor resolved. A rule on `bookings_lock_timeout_total` would have
+stayed silent for the very first lock timeout, which is the one it exists to
+catch.
 `BookingMetricsTest.metersAreRegisteredEagerly` pins it.
 
 Two counters shared a meter name with different descriptions. The exporter
@@ -469,7 +478,7 @@ what it took, in the order the compiler found it:
   between the modules.
 
 The JDK was never the blocker, because Boot 4 needs Java 17 or later. The
-upgrade is `7b45b5b`, and [adr/0007](adr/0007-spring-boot-4.md) records the
+upgrade is `7b45b5b`, and [adr/0007](../adr/0007-spring-boot-4.md) records the
 decision.
 
 ## First review pass
@@ -499,7 +508,9 @@ booker until the JDBC socket gave up. A Hikari `connection-init-sql` now runs
 `Retry-After`. It is a connection-level setting. Every lock the service takes,
 native SQL included, gets the same bound, and no query can forget a hint.
 `LockTimeoutTest.contendedFlightRowGives503` pins the 503 and `Retry-After` on
-H2, with a 250 ms timeout. No test fires PostgreSQL's own `lock_timeout`.
+H2, with a 250 ms timeout. `LockTimeoutPostgresTest.postgresLockTimeoutGives503`
+fires PostgreSQL's own `lock_timeout` against PostgreSQL 17 and checks the same
+503, `Retry-After` and SQLSTATE `55P03`.
 
 ### A sort key that sorted wrong
 

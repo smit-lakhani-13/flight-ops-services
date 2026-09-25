@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Every number the README claims, recomputed from the tree, so the counts are
-# read off a command instead of remembered.
+# Every number the documentation claims, recomputed from the tree, so the
+# counts are read off a command instead of remembered.
 #
 # Test totals come from the surefire XML, so they count what ran. They need a
 # build first:

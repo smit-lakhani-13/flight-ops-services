@@ -6,8 +6,8 @@ how to create it and, more importantly, how to destroy it.
 
 **Executed on: —**
 
-That line is blank because I have never run any of this against a real AWS
-account. The templates lint, the scripts pass shellcheck and a self-test
+The line is blank because none of this has been run against an AWS account.
+The templates lint, the scripts pass shellcheck and a self-test
 against stubbed tools, and the manifests validate against Kubernetes 1.36. None
 of that proves they work. When it is run, this line gets the dates, and a new
 last section, Evidence, gets the command output.
@@ -53,7 +53,7 @@ scripts/demo.sh                                    # in another terminal
 ```
 
 This runs on H2 in memory, and the outbox logs its rows instead of sending
-them. Everything in [README.md](README.md) works, but nothing survives a
+them. Everything in [README.md](../README.md) works, but nothing survives a
 restart.
 
 With Docker you also get what the H2 profile lacks: Flyway migrations, and
@@ -65,7 +65,7 @@ scripts/demo.sh
 docker compose down -v
 ```
 
-[`compose.yaml`](compose.yaml) sets `SPRING_PROFILES_ACTIVE=postgres`: the
+[`compose.yaml`](../compose.yaml) sets `SPRING_PROFILES_ACTIVE=postgres`: the
 local database, Flyway and the log publisher. The image itself defaults to
 `prod`, which expects RDS, IRSA and the SQS publisher and has no default
 passwords. Run bare, with no `DB_URL`, it stops at startup with
@@ -124,15 +124,15 @@ queue.
 
 Delete the stack with
 `sam delete --stack-name flight-ops-lambda --region ap-south-1`, or with
-[`deploy/aws/down.sh`](deploy/aws/down.sh). Neither removes the
+[`deploy/aws/down.sh`](../deploy/aws/down.sh). Neither removes the
 `aws-sam-cli-managed-default` bucket that `--resolve-s3` created, because every
 SAM project in the account and region shares it. `down.sh --delete-sam-bucket`
 removes it once you are sure nothing else uses it.
 
 ## 4. The full thing on AWS
 
-The detailed runbook is [deploy/aws/README.md](deploy/aws/README.md). The short
-version:
+The detailed runbook is [deploy/aws/README.md](../deploy/aws/README.md). The
+short version:
 
 ```bash
 brew install awscli eksctl kubernetes-cli helm aws-sam-cli openjdk@21
@@ -189,11 +189,11 @@ Deployment that refers to the Secret by name.
 
 Before it builds, the deploy job asks ECR whether the commit's image is already
 there, in the step "Is this commit already in ECR?". It runs
-[`deploy/aws/ecr-image-exists.sh`](deploy/aws/ecr-image-exists.sh), which calls
-`ecr:DescribeImages` and reports the image missing only on
+[`deploy/aws/ecr-image-exists.sh`](../deploy/aws/ecr-image-exists.sh), which
+calls `ecr:DescribeImages` and reports the image missing only on
 `ImageNotFoundException`. Any other error fails the job. Guessing "missing"
-would rebuild the image and then fail at the push, because the repository's
-tags are immutable.
+would rebuild the image and then fail at the push, because the repository's tags
+are immutable.
 
 Every step checks whether its resource exists before creating it. To resume an
 interrupted run, run the same command again. If eksctl stopped part way through
@@ -401,7 +401,7 @@ row in the table before.
 Some resources outlive a botched teardown without any error, because nothing
 points at them any more. An orphaned ALB costs $19/month, an unassociated
 Elastic IP $3.60/month each, and an unattached EBS volume $1.80/month per 20 GB.
-The final sweep in [`down.sh`](deploy/aws/down.sh) checks for all three: the
+The final sweep in [`down.sh`](../deploy/aws/down.sh) checks for all three: the
 load balancer by name, and the Elastic IPs and volumes by the
 `Project=flight-ops` tag.
 
@@ -416,10 +416,10 @@ Read the forecast instead of today's total.
 
 ### Cost safety
 
-[`deploy/aws/lib.sh`](deploy/aws/lib.sh) pins the region to `ap-south-1` and
+[`deploy/aws/lib.sh`](../deploy/aws/lib.sh) pins the region to `ap-south-1` and
 exports it, so no script depends on the caller's profile. A teardown run
 against the wrong default region would report a clean sweep, because it would
-be looking somewhere empty. [ADR 0010](adr/0010-region-ap-south-1.md) records
+be looking somewhere empty. [ADR 0010](../adr/0010-region-ap-south-1.md) records
 the choice of region. The files that set it are `deploy/aws/cluster.yaml`,
 `deploy/aws/lib.sh`, `k8s/base/configmap.yaml`,
 `k8s/overlays/aws/kustomization.yaml`, `.github/workflows/build-and-deploy.yml`
@@ -529,7 +529,7 @@ still billed at month end, because deleting a resource refunds nothing.
 
 ## 7. What breaks first
 
-Under load, in the order it happens:
+Reasoned from the configuration, not measured under load, the order would be:
 
 1. **Database connections.** Four pods × a Hikari pool of 10 = 40 connections,
    against db.t4g.micro's ~112. So `k8s/base/hpa.yaml` caps `maxReplicas` at 4,

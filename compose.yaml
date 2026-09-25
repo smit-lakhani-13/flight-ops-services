@@ -4,7 +4,7 @@
 #   scripts/demo.sh                    # the eight acts, against the container
 #   docker compose down -v             # -v also drops the database volume
 #
-# Not the deployment (DEPLOYMENT.md). It adds what the H2 default profile
+# Not the deployment (doc/DEPLOYMENT.md). It adds what the H2 default profile
 # lacks: Flyway migrations, and PostgreSQL's own row locks and `lock_timeout`.
 # There is no queue. With `APP_EVENTS_PUBLISHER=log`, outbox rows go through
 # every step but the `SendMessage` call, so no LocalStack image is needed.

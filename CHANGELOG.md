@@ -9,23 +9,24 @@ with the qualifications below.
 **On 1.1.0 not being 2.0.0.** This release removes a field from an API response
 (`idempotencyKey`, from `BookingDto`). Under strict semantic versioning a
 removed response field is a breaking change to consumers, which would make this
-a major release. I made it 1.1.0 because 1.0.0 was never tagged, never
+a major release. It is 1.1.0 because 1.0.0 was never tagged, never
 published and never consumed, so no client anywhere could break. From this
 release on, a change to what the documented contract returns for a request it
 accepts is a major, whether it is a response field, a status or an error code.
 Starting to reject input the contract never allowed, such as a fractional seat
 count or a flight number with a slash, is a fix.
 
-**On the dates.** 1.0.0 was never tagged, so I wrote its entry afterwards from
-the history and dated it by its last commit. All dates are IST. I split the two
-entries by theme (the service, then the hardening pass that followed) and not
-at a single commit. So 1.1.0 lists some fixes committed before 2026-09-22, and
-its Boot 4.1.1 upgrade came before some of the work in 1.0.0. The whole history
-is eight days long, and the second half of it made the first half checkable.
+**On the dates.** 1.0.0 was never tagged, so its entry was written afterwards
+from the history and dated by its last commit. All dates are IST. The two
+entries are split by theme (the service, then the hardening pass that
+followed) and not at a single commit. So 1.1.0 lists some fixes committed
+before 2026-09-22, and its Boot 4.1.1 upgrade came before some of the work in
+1.0.0.
 
 **What "released" means here.** A version number in `pom.xml` and a git tag. It
 does not mean deployed. Nothing in this repository has ever run in AWS, and
-[DEPLOYMENT.md](DEPLOYMENT.md) records that in a dated line that is still blank.
+[doc/DEPLOYMENT.md](doc/DEPLOYMENT.md) records that in a dated line that is
+still blank.
 
 ## Unreleased
 
@@ -247,6 +248,14 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
   so the rule changed nothing, and its comment, which said it kept the
   repository from being labelled a Dockerfile project, described an effect it
   never had.
+
+- **The deep documents moved under `doc/`.** `ARCHITECTURE.md`,
+  `DEPLOYMENT.md` and `OPERATIONS.md` moved into `doc/`, and NOTES.md became
+  `doc/DEFECT-LOG.md`, whose index gains an Area and a Severity column. Every
+  link and comment that named them points at the new path, except one comment
+  in the V7 migration, which is never edited. The Markdown files left at the
+  root are README, CHANGELOG, CONTRIBUTING and SECURITY, which readers and
+  GitHub expect to find there.
 
 ### Removed
 
@@ -478,7 +487,7 @@ The other fixes are to documentation only, and change no behaviour.
 
 - Comments and Javadoc across the code were trimmed and checked against the
   behaviour above, and every Markdown document was rewritten in plain language.
-  The bug stories moved to `NOTES.md`.
+  The bug stories moved to NOTES.md, now `doc/DEFECT-LOG.md`.
 
 - **Transport cost understated.** `ARCHITECTURE.md` said a new transport took
   one class and a mode; for a JMS broker it also takes a connection factory, a
@@ -603,6 +612,12 @@ The other fixes are to documentation only, and change no behaviour.
   said `up.sh` puts the API and ops passwords in the Kubernetes Secret, where
   it stores their bcrypt hashes, and CONTRIBUTING.md called Dependabot's four
   entries four ecosystems.
+
+- **The defect log was behind the tests.** It said no test fires
+  PostgreSQL's own `lock_timeout`; `LockTimeoutPostgresTest` does, and the log
+  now names it. It also called `REQUIRES_NEW` on `recoverReplay` insurance in
+  case `book` became transactional again. As `doc/ARCHITECTURE.md` explains,
+  it would not be enough, and the log now says so.
 
 ### Security
 

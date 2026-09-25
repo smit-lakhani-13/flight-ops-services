@@ -142,7 +142,7 @@ aws budgets describe-budgets --account-id "$ACCOUNT_ID" \
 cat <<NOTE
 
   Expected, for the EKS shape, once everything is up: about \$7.72/day
-  (DEPLOYMENT.md section 5 has the breakdown).
+  (doc/DEPLOYMENT.md section 5 has the breakdown).
 
   Materially higher usually means one of three things:
     - a second NAT gateway (one per AZ if cluster.yaml's nat.gateway is not Single)
