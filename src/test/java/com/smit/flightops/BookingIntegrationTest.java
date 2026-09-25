@@ -69,7 +69,7 @@ class BookingIntegrationTest {
     /**
      * {@code @ServiceConnection} contributes a {@code JdbcConnectionDetails} bean,
      * which outranks the profile's localhost URL. PostgreSQL 17, the major version
-     * {@code compose.yaml} and {@code deploy/aws/data.yaml} run, because this is
+     * {@code compose.yaml} and {@code deploy/aws/data.yaml} pin, because this is
      * where the migrations are accepted or refused.
      */
     @Container

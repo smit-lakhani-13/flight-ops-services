@@ -9,10 +9,11 @@ import java.util.Set;
  * The event transport mode, bound from {@code app.events.publisher}.
  *
  * <p>{@code @ConditionalOnProperty} on {@code LoggingEventPublisher} and
- * {@code SqsEventPublisher} picks the bean, so no SQS client is built without
- * credentials. A third value matches neither condition, and the failure would be
- * a missing {@code EventPublisher} bean. This record rejects it first, naming the
- * property and the legal values; {@code OutboxPublisher} injects it for that reason.
+ * {@code SqsEventPublisher} picks the bean, and the same condition on
+ * {@code AwsConfig} means a run in {@code log} mode builds no SQS client. A third
+ * value matches neither condition, and the failure would be a missing
+ * {@code EventPublisher} bean. This record rejects it first, naming the property
+ * and the legal values; {@code OutboxPublisher} injects it for that reason.
  *
  * @param publisher {@code log} or {@code sqs}. The default {@code log} has to agree
  *                  with {@code matchIfMissing = true} on {@code LoggingEventPublisher}.

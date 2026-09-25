@@ -3,9 +3,9 @@
 #
 # Two things to know before editing:
 #
-# 1. Every ecosystem sets open-pull-requests-limit. The default is 5 per
-#    ecosystem, so four ecosystems could open twenty pull requests on the first
-#    run. Groups and explicit limits keep a monthly run to a handful.
+# 1. Every entry sets open-pull-requests-limit. The default is 5 per entry,
+#    so the four entries could open twenty pull requests on the first run.
+#    Groups and explicit limits keep a monthly run to a handful.
 #
 # 2. The ignore rules name four artifacts, because an ignore condition also
 #    stops Dependabot's security updates for that dependency. Each one is a
@@ -42,7 +42,7 @@ updates:
       # Test-only dependencies cannot reach production, so they move and are
       # reviewed together.
       test:
-        patterns: ["org.junit*:*", "org.mockito:*", "org.testcontainers:*"]
+        patterns: ["org.junit*:*", "org.mockito:*", "org.testcontainers:*", "com.tngtech.archunit:*"]
     ignore:
       - dependency-name: "org.springframework.boot:spring-boot-starter-parent"
         update-types: ["version-update:semver-major"]

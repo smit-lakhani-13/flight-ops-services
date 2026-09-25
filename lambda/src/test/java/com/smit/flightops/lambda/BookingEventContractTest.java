@@ -100,7 +100,7 @@ class BookingEventContractTest {
      * with a sign and sort ahead of every other item in the partition.
      */
     @Test
-    @DisplayName("a year outside the fixed-width range is rejected, not written under a shorter-sorting key")
+    @DisplayName("a year outside the fixed-width range is rejected, not written under a key that sorts first")
     void anExpandedYearIsRejected() throws Exception {
         for (String outOfRange : List.of("+12026-09-15T10:00:00Z", "-0044-03-15T10:00:00Z")) {
             String odd = contractJson().replace("2026-09-15T10:00:00.000000Z", outOfRange);

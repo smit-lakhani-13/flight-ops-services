@@ -96,7 +96,7 @@ case "$probe" in
 esac
 
 # ── seed the flights the narration names ─────────────────────────────────────
-# DataSeeder creates UA123 and UA456 on the default profile only. The prod
+# DataSeeder creates UA123 and UA456 in every profile but prod. The prod
 # profile sets app.seed.enabled: false (DataSeeder's javadoc has the race), so
 # against a deployment every act naming them would 404. Two requests fix that.
 #

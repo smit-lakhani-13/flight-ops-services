@@ -7,10 +7,12 @@ import java.util.regex.Pattern;
 /**
  * Encoded passwords for the two HTTP Basic identities, bound from {@code app.security.*}.
  * Each value carries a {@code DelegatingPasswordEncoder} prefix such as {@code {bcrypt}},
- * so a deployment hands the service a hash, never a plaintext password. Binding leaves an
- * unset {@code API_PASSWORD} as the literal {@code ${API_PASSWORD}}, and this check is
- * what stops that pod starting. It throws from the constructor rather than using Bean
- * Validation, whose startup report prints the rejected value.
+ * which names the algorithm. A deployment passes a {@code {bcrypt}} hash. The check does
+ * not refuse {@code {noop}}, which marks a value that is not hashed and is what the
+ * default profile ships. Binding leaves an unset {@code API_PASSWORD} as the literal
+ * {@code ${API_PASSWORD}}, and this check is what stops that pod starting. It throws
+ * from the constructor rather than using Bean Validation, whose startup report prints
+ * the rejected value.
  *
  * @param apiPassword encoded password for the {@code api} user, used for {@code /api/v1/**}
  * @param opsPassword encoded password for the {@code ops} user, used for the actuator

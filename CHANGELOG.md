@@ -208,6 +208,16 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
   trade-offs table gives the reason (a cancelled booking keeps its key) and
   what a retention window would change for clients.
 
+- **ArchUnit in the test group.** Dependabot's root `test` group now includes
+  `com.tngtech.archunit:*`, so an ArchUnit bump arrives with the other
+  test-only updates instead of in a pull request of its own.
+
+- **Linguist rule removed.** `.gitattributes` no longer sets
+  `*.java linguist-language=Java`. GitHub already counts Java files as Java,
+  so the rule changed nothing, and its comment, which said it kept the
+  repository from being labelled a Dockerfile project, described an effect it
+  never had.
+
 ### Removed
 
 - **Queries only tests called.** `FlightRepository` loses the two-argument
@@ -545,6 +555,24 @@ The other fixes are to documentation only, and change no behaviour.
   with a leading space; and that nothing but building the image and starting
   it with no database had been executed, where CI also renders the overlay and
   runs `deploy/aws/selftest.sh`.
+
+- **More comments that disagreed with the code.** `EventProperties` credited
+  the two publishers with keeping the SQS client out of a `log` run; the
+  condition on `AwsConfig` does that. `ApiSecurityProperties` said a deployment
+  never hands the service a plaintext password, but the check accepts `{noop}`,
+  which the default profile ships. `FlightService#search` said all four
+  branches can use an index; only the two with an origin can use
+  `idx_origin_dest`. Test comments said Jackson passes null for an absent
+  `int` (it supplies 0, or throws when `FAIL_ON_NULL_FOR_PRIMITIVES` is on),
+  that the outbox tests drain on a fixed clock (they use the real one), and
+  that the retry tests move `next_attempt_at` into the past (they clear it).
+  `demo.sh` said the seed data exists on the default profile only; every
+  profile but `prod` seeds it. `pom.xml` and `application.yml` said
+  Prometheus scrapes the service; the metrics are served at
+  `/actuator/prometheus`, and nothing scrapes them. The deploy job's comments
+  said `up.sh` puts the API and ops passwords in the Kubernetes Secret, where
+  it stores their bcrypt hashes, and CONTRIBUTING.md called Dependabot's four
+  entries four ecosystems.
 
 ### Security
 

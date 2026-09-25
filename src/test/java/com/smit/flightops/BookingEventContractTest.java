@@ -72,11 +72,13 @@ class BookingEventContractTest {
 
         // The values too. The 'Z' in WIRE_TIME is a quoted literal, so a zone change
         // to systemDefault() keeps every shape assertion green while each event
-        // shifts by the host's offset. Only the whole-document comparison sees it.
+        // shifts by the host's offset. Only the whole-document comparison and
+        // theWireTimestampIsUtcWhateverTheHostZone see it.
         assertThat(produced)
                 .as("the serialised event must equal the contract document for the "
-                        + "contract's own inputs - a zone, source-field or value change "
-                        + "is invisible to every other assertion in this class")
+                        + "contract's own inputs - a source-field change, or a changed "
+                        + "bookingId, flightNumber or seats value, is invisible to every "
+                        + "other assertion in this class")
                 .isEqualTo(contract(objectMapper));
     }
 

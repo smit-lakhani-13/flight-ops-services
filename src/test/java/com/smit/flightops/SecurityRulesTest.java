@@ -30,9 +30,11 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * The authorisation matrix, run through the real filter chain with real credentials.
  * The {@code @WebMvcTest} slices run without filters and {@code ErrorContractTest} runs
- * as a pre-authenticated principal, so this is the only class that enforces
- * {@code SecurityConfig}: deleting it would let the service ship unprotected with every
- * other test green. {@code BearerTokenChallengeTest} covers the JWT-enabled context.
+ * as a pre-authenticated principal, so this is the only class that tests the whole
+ * matrix. {@code OpenApiTest} checks that the document is public, that anonymous calls get
+ * 401 and that the api user can read flights, so without this class a loosened scope, a
+ * lost HEAD rule or a lost role rule would ship with every other test green.
+ * {@code BearerTokenChallengeTest} covers the JWT-enabled context.
  *
  * <p>Its own H2 database, because it books a seat and other contexts count rows.
  */

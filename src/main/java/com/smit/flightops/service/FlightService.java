@@ -37,8 +37,9 @@ public class FlightService {
     }
 
     /**
-     * Paged search on any combination of origin and destination. Four explicit branches,
-     * each a query the planner can index, instead of a null-tolerant predicate.
+     * Paged search on any combination of origin and destination. Four explicit branches
+     * instead of a null-tolerant predicate, which PostgreSQL cannot type; the two with an
+     * origin can use {@code idx_origin_dest}.
      */
     public Page<FlightDto> search(String origin, String destination, Pageable pageable) {
         String o = normalise(origin);

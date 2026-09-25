@@ -112,7 +112,7 @@
             ClassNotFoundException: org.joda.time.DateTime
           The three EventLoader tests in BookingEventHandlerTest catch that.
           Re-adding it at test scope would make them pass on a classpath the
-          deployed jar does not have.
+          shaded jar does not have.
         -->
         <dependency>
             <groupId>com.amazonaws</groupId>
@@ -266,7 +266,7 @@
             </plugin>
 
             <!--
-              Shade inlines every dependency, so the deployed jar has no
+              Shade inlines every dependency, so the shaded jar has no
               dependency list of its own; this SBOM is that list. There is no
               JaCoCo gate: the module is one class, and its tests target the
               behaviours that can go wrong. scripts/numbers.sh prints the count.

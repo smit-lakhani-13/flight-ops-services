@@ -550,7 +550,8 @@ jobs:
     #   gh variable set DB_URL         --body <jdbc url>
     # Anyone who can read the repository can read a `vars` value, so the
     # account ID is a secret. GitHub holds no password: up.sh writes the
-    # database, API and ops passwords straight into a Kubernetes Secret.
+    # database password and the bcrypt hashes of the API and ops passwords
+    # into a Kubernetes Secret.
     if: >-
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
       && github.ref == 'refs/heads/main'
@@ -562,7 +563,7 @@ jobs:
     permissions:
       # For OIDC: GitHub mints a short-lived signed token, AWS trusts GitHub's
       # provider, and STS returns temporary credentials. No access key is
-      # stored anywhere. The role's trust policy pins aud and
+      # stored anywhere. The role's trust policy pins aud = sts.amazonaws.com and
       # sub = repo:<owner>/<repo>:ref:refs/heads/main; without the sub pin any
       # GitHub repository could assume it. deploy/aws/foundation.yaml writes
       # the pinned form.

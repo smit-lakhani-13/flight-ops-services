@@ -115,10 +115,11 @@ public class BookingService {
 
     /**
      * The read behind the {@code Location} header that {@code POST /api/v1/bookings}
-     * returns. {@code readOnly = true} is required: {@code findById} is the inherited
-     * method with no {@code JOIN FETCH}, and {@code BookingDto.from} reads the lazy
-     * {@code Booking.flight}. Without a transaction that throws
-     * {@code LazyInitializationException} (see {@code BookingFindByIdLazyLoadingTest}).
+     * returns. It needs a transaction, read-only because nothing is written:
+     * {@code findById} is the inherited method with no {@code JOIN FETCH}, and
+     * {@code BookingDto.from} reads the lazy {@code Booking.flight}. Without a
+     * transaction that throws {@code LazyInitializationException} (see
+     * {@code BookingFindByIdLazyLoadingTest}).
      */
     @Transactional(readOnly = true)
     public BookingDto findById(Long bookingId) {
