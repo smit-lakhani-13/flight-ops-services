@@ -210,9 +210,9 @@ class FlightControllerTest {
                 .andExpect(jsonPath("$.code").value("DUPLICATE_FLIGHT"));
     }
 
-    /** Both writes accept JSON only, for the reason {@code BookingControllerTest#yamlBodyReturns415} gives. */
+    /** The two writes with a body accept JSON only, for the reason {@code BookingControllerTest#yamlBodyReturns415} gives. */
     @Test
-    @DisplayName("a YAML body is 415 on both flight writes")
+    @DisplayName("a YAML body is 415 on the create and the status change")
     void yamlBodyReturns415() throws Exception {
         mockMvc.perform(post("/api/v1/flights")
                         .contentType("application/yaml")

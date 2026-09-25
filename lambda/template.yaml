@@ -8,14 +8,24 @@ Description: >
   events. deploy/aws/up.sh deploys this stack, which can be deleted on its own.
 
 # Deploy by hand with Maven, not `sam build`: SAM builds in a scratch copy of
-# lambda/, where the tests cannot find ../contracts. sam deploy prefers an
-# existing .aws-sam/build/template.yaml, so delete .aws-sam/ first. From the
-# repository root (SAM resolves CodeUri against this file's directory):
+# lambda/, where the tests cannot find ../contracts. --template-file names this
+# file, so sam deploy never reads a .aws-sam/build left by an earlier
+# `sam build`. From the repository root (SAM resolves CodeUri against this
+# file's directory), in the region deploy/aws/lib.sh pins:
+#   export AWS_REGION=ap-south-1 AWS_DEFAULT_REGION=ap-south-1
 #   ./mvnw -B -f lambda/pom.xml clean package
 #   sam deploy --template-file lambda/template.yaml --stack-name flight-ops-lambda \
 #     --resolve-s3 --capabilities CAPABILITY_IAM
-#   sam local invoke BookingEventFunction -t lambda/template.yaml -e lambda/events/sqs.json
+#   DDB_TABLE=flight-status-events sam local invoke BookingEventFunction \
+#     -t lambda/template.yaml -e lambda/events/sqs.json
 #   sam logs -n BookingEventFunction --stack-name flight-ops-lambda --tail
+#
+# sam local invoke resolves `!Ref FlightEventsTable` to the logical ID, so on
+# its own it hands the handler DDB_TABLE=FlightEventsTable. A shell variable
+# overrides a variable the template declares, which is what the DDB_TABLE=
+# prefix does. Run the invoke after the deploy: before it no table exists, and
+# the invoke shows only the parsing and both messages reported back as batch
+# item failures.
 #
 # Tear down with `sam delete --stack-name flight-ops-lambda --region ap-south-1`
 # or ./deploy/aws/down.sh. The shared bucket `--resolve-s3` creates is kept

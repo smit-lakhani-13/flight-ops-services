@@ -97,9 +97,9 @@ No credentials, or credentials that do not verify, get `401 UNAUTHENTICATED`.
 Valid credentials without the authority get `403 FORBIDDEN`. The filter that
 rejects a password or token answers the 401 itself. Past that point, Spring's
 `ExceptionTranslationFilter` picks between the two by whether the
-authentication is anonymous. A 401 tells a client to retry with credentials. A 403 tells it
-that retrying will not help. Collapsing the two sends a correct client into a
-credential refresh loop over a permissions problem.
+authentication is anonymous. A 401 tells a client to retry with credentials.
+A 403 tells it that retrying will not help. Collapsing the two sends a correct
+client into a credential refresh loop over a permissions problem.
 
 The 401's `WWW-Authenticate` challenge follows the credential that failed. A
 rejected bearer token gets
@@ -171,18 +171,19 @@ reverse, and the ADR is where to start.
   such as `{BCRYPT}` or a misspelt `{bcrpyt}`, stops startup there. The log
   names the property, then gives the encoder's reason:
   `app.security.api-password cannot be verified by the configured DelegatingPasswordEncoder`.
-  An argon2 or scrypt hash stops it the same way, on a
-  `NoClassDefFoundError`. Without the checks, the pod would report itself healthy
+  An argon2 or scrypt hash stops it the same way, on a `NoClassDefFoundError`.
+  Without the checks, the pod would report itself healthy
   and answer every login as that user with a 500. The id is case-sensitive, so
   write `{bcrypt}`. `PasswordVerifiabilityTest` covers the self-check. Its
   limit is listed under [Known limitations](#known-limitations).
 
 - **No password in the log.** The prefix check throws from the
   record's constructor, and its message ends with `API_PASSWORD is not set`
-  (or `OPS_PASSWORD is not set`) or `the value is not shown`. Bean Validation would have printed the rejected
-  value on a `Value:` line of Boot's startup report, so a plaintext password
-  set without its prefix would have reached the pod log. For an unknown id,
-  the self-check's message names the id and not the hash.
+  (or `OPS_PASSWORD is not set`) or `the value is not shown`. Bean Validation
+  would have printed the rejected value on a `Value:` line of Boot's startup
+  report, so a plaintext password set without its prefix would have reached the
+  pod log. For an unknown id, the self-check's message names the id and not the
+  hash.
 
 - **Generated passwords.** `deploy/aws/up.sh` generates three passwords with
   `openssl rand`. The database password goes, unhashed, into the RDS stack (a
@@ -226,8 +227,10 @@ work is written down. What is missing is a domain.
 ## Data exposure
 
 - `BookingDto` does **not** carry `idempotencyKey`. It used to. An idempotency
-  key is a client's private token, and leaking it on a list endpoint would let
-  any reader replay another client's booking.
+  key is a client-chosen token, and leaking it on a list endpoint would let any
+  reader replay another client's booking. It is not a secret, though:
+  `BookingService` logs it on a replay, on a reuse it finds before the insert
+  and on a race it recovers, so a client must not put anything private in it.
 
 - `passengerName` **is** returned on the list endpoint. That is a scope
   decision: this is an internal operations API, and the operator is
@@ -253,8 +256,8 @@ work is written down. What is missing is a domain.
   on, a multipart `Content-Type` with no boundary was a 500 and an ERROR stack
   trace on every path, the public ones included. In JSON, a whole number sent as
   text, a status sent as a number and a departure time that is not an ISO-8601
-  instant are each `400 MALFORMED_REQUEST`. None of them is converted into a value the
-  client did not write.
+  instant are each `400 MALFORMED_REQUEST`. None of them is converted into a
+  value the client did not write.
 
 - Error responses are `{code, message, timestamp}`, or
   `{code, fieldErrors, timestamp}` for a validation failure. They never carry
@@ -331,9 +334,9 @@ work is written down. What is missing is a domain.
   missing permission cannot pass for a missing image.
 
 - The Lambda's role comes from SAM policy templates in `lambda/template.yaml`,
-  and it is wider than the handler needs. `DynamoDBWritePolicy` grants `PutItem`,
-  `UpdateItem` and `BatchWriteItem` on the table and its indexes, and the
-  handler calls only `PutItem`. The SQS event adds
+  and it is wider than the handler needs. `DynamoDBWritePolicy` grants
+  `PutItem`, `UpdateItem` and `BatchWriteItem` on the table and its indexes, and
+  the handler calls only `PutItem`. The SQS event adds
   `AWSLambdaSQSQueueExecutionRole`, whose SQS actions are on `Resource: '*'`.
   A hand-written role would narrow both.
 

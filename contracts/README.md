@@ -66,9 +66,10 @@ would be shipped to CloudWatch on every invocation. Values from the body
 come from the same senders. Before the handler logs a booking id or an
 exception message, it replaces control, format and line-separator
 characters with `?` and caps the text at 1,000 characters. A missing or
-malformed trace never fails a projection. See `BookingEventHandlerTest#theProducersTraceReachesTheLog`
-and `#aHostileTraceparentIsIgnored`, and `lambda/events/sqs-with-trace.json`,
-which carries one message with a trace and one without.
+malformed trace never fails a projection. See
+`BookingEventHandlerTest#theProducersTraceReachesTheLog` and
+`#aHostileTraceparentIsIgnored`, and `lambda/events/sqs-with-trace.json`, which
+carries one message with a trace and one without.
 
 ## Changing a contract
 

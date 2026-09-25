@@ -40,7 +40,10 @@ later, in `d18f58b` (see [ADR 0011](0011-correlation-ids-and-metrics.md)).
 
 * The enforcer pins Java 21 (`requireJavaVersion [21,22)`). A build on 17 or 25
   fails at once with a readable message. Without the pin, a build on 17 would
-  fail later, in the compiler, on `release version 21 not supported`.
+  fail later, in the compiler, on `release version 21 not supported`. The upper
+  bound is for reproducibility, not a known failure on 25: CI, the image and the
+  Lambda runtime all use 21, so a build on 25 would be one that CI never
+  checked.
 
 ## Alternatives considered
 

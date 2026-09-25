@@ -64,10 +64,12 @@ still blank.
   MockMvc never writes the session cookie, so the old `Set-Cookie` check could
   not catch a session. The PostgreSQL replay race checks that every caller
   gets the same booking back, as its name says.
+
 - **Tests with an expiry date.** `ErrorContractTest` created flights departing
   in 2030 and 2031 against the real clock, so six of its tests would have
   started failing then. They now depart in 2099, like the suite's other fixed
   departure dates.
+
 - **A field that broke two rules got a different message from call to call.**
   Hibernate Validator returns violations in no fixed order, and the handler
   kept whichever came first, so an empty idempotency key or airport code got
@@ -75,30 +77,36 @@ still blank.
   `GlobalExceptionHandler#handleValidation` now keeps the most basic one: null,
   then blank, then size or range, then pattern. The idempotency key's pattern
   accepts an empty string, like the others, so an empty key is only blank.
+
 - **Names that broke the idempotency check.** A `passengerName` with an
   unpaired UTF-16 surrogate, such as U+D800, was stored, and the request
   fingerprint turned it into `?`, so a name that differed only there, sent on
   the same key, was answered as a replay instead of a 409. It now gets
   `must not contain unpaired surrogates`. A name made only of no-break or
   zero-width spaces passed `@NotBlank` and now gets `must not be blank`.
+
 - **The 400 descriptions in the OpenAPI document.** Both writes said a field
   with the wrong JSON type got `MALFORMED_REQUEST`, but Jackson turns a
   number or `true` sent for a text field into text, which then goes through
   the same validation as any other. The descriptions now name the seat count,
   and a text field sent as an array or an object, which Jackson still refuses.
+
 - **The SBOMs described two applications as libraries.** The CycloneDX plugin
   types a module `library` unless told otherwise, and neither pom told it, so
   both `target/bom.json` files did. Both are typed `application` now. The
   service module also stops attaching its SBOM over the one the Spring Boot
   parent embeds in the jar, which logged a replace warning on every build.
+
 - **infra-lint no longer floats with the SAM CLI.** `sam validate --lint` runs
   the cfn-lint bundled with the SAM CLI, and setup-sam installed the latest
   release on every run, so a new release could turn a required check red with
   no template changed. The workflow pins it at 1.166.2.
+
 - **Two CI comments that misstated behaviour.** The CodeQL category never kept
   Trivy's results apart, because code scanning keeps each tool's results
   separately. Dependabot can move the build stage's JDK within Maven 3, and it
   is the enforcer that stops such a bump, by failing the image job.
+
 - **The memory budget gave half of what the JVM uses outside the heap.** The
   deployment's comment allowed 128Mi for everything outside the heap. Native
   memory tracking on a laptop JDK 21, default profile, measured about 260 MiB
@@ -108,10 +116,12 @@ still blank.
   gives the heap half the limit, and the comment shows the measurement. Its
   check was wrong too: native memory tracking is off in the image, so the
   comment now points at `kubectl top pod` and the actuator's non-heap figure.
+
 - **The teardown's stack sweep missed a stack still deleting.** When the
   waiter gave up, `down.sh` said step 9 would list the stack, but the sweep
   asked only for five finished states. It now lists every state but
   `DELETE_COMPLETE`, and `deploy/aws/selftest.sh` has a case for it.
+
 - **The up.sh hand-off, and the connection limit the documents gave.** The
   `up.sh` hand-off now says to rename the deploy job before `DEPLOY_ENABLED`
   is set, as the runbooks do. `deploy/k8s/base/hpa.yaml`, `doc/DEPLOYMENT.md`
@@ -119,6 +129,39 @@ still blank.
   It allows fewer than that, because `DBInstanceClassMemory` leaves out what
   the OS and RDS reserve, and they now say to read the limit with
   `SHOW max_connections`.
+
+- **The SAM recipe in `lambda/template.yaml` is corrected.** It sets the
+  region to `ap-south-1`, the one its teardown names, before the deploy. Its
+  `sam local invoke` sets `DDB_TABLE=flight-status-events`, because SAM resolves
+  `!Ref FlightEventsTable` to the logical ID locally, and it says to run the
+  invoke after a deploy, since no table exists before one, as ADR 0009 now
+  notes. The template, `up.sh` and `doc/DEPLOYMENT.md` said `sam deploy` reads
+  `.aws-sam`; with `--template-file` it never does. The template drops its step
+  that deleted it, and `up.sh` and `doc/DEPLOYMENT.md` keep the removal only so
+  that a later bare `sam deploy` cannot pick up a stale build. The recipe has
+  still never been run.
+
+- **Documents that said more than the code does.** `SECURITY.md` called the
+  idempotency key a client's private token, but the service logs it on a
+  replay; it is now a client-chosen key that must hold nothing private. The
+  enforcer's upper JDK bound had no stated reason, and `CONTRIBUTING.md`,
+  ADR 0007 and both poms now say it keeps builds on the 21 that CI, the image
+  and the Lambda runtime use. The outbox drain and the pruner share one
+  scheduler thread, and `application.yml` now says so and why that is
+  acceptable. The ADR index now marks 0016, the Oracle port, as a proposal
+  from documentation, never built or run.
+
+- **Wrong counts and stale references in the documents.** `doc/OPERATIONS.md`
+  promised one `grep` and showed two searches. The defect log gave the poisoned
+  sort key as 29 characters, the length of its timestamp half, and said CI's UTC
+  zone lets a zone bug ship green without noting that both Surefire runs now pin
+  `Asia/Kolkata`. `scripts/demo.sh` cited defect numbers the log does not have,
+  and now names its entries; its Act 8 now counts `/error` among the anonymous
+  paths. The ADR index gives the dates its records were written in one sentence
+  instead of timing each one, and the binding row in `doc/ARCHITECTURE.md` names
+  the passenger name checks above. Markdown prose lines over 80 columns are
+  rewrapped where they can break, except in `README.md` and the released
+  sections here.
 
 ## 1.2.0 — 2026-09-26
 

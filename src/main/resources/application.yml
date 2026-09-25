@@ -152,6 +152,14 @@ app:
     # How long a published row is kept before OutboxPruner deletes it. Unpublished
     # rows are never pruned.
     retention: ${OUTBOX_RETENTION:7d}
+    # The pruner and the drain are both fixed-delay jobs. The application defines no
+    # TaskScheduler, and Boot's default runs fixed-delay jobs on one thread, with
+    # virtual threads on or off. So on one replica a prune run can delay the next
+    # drain by up to its own length, and a slow drain can delay the prune. That is
+    # acceptable here: a run is at most OutboxPruner.MAX_BATCHES_PER_RUN DELETEs of
+    # prune-batch-size rows, each its own short transaction that skips locked rows
+    # instead of waiting, and in steady state it is one short batch. A late prune
+    # only keeps rows past the retention window a little longer.
     prune-interval: ${OUTBOX_PRUNE_INTERVAL:1h}
     # Rows per DELETE, so a backlog is pruned in small statements that neither lock
     # the poller out nor write a WAL burst.

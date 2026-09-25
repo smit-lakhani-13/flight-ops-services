@@ -260,9 +260,11 @@
         <plugins>
             <!--
               With no parent, this is the only JDK check, and it fails at validate
-              with a sentence about the JDK. requireUpperBoundDeps matters more here
-              than in the service: this module imports two BOMs by hand, and shade
-              flattens whatever they resolve to into one jar.
+              with a sentence about the JDK. The upper bound matches the java21
+              runtime in template.yaml and CI's JDK, not a known failure on 25.
+              requireUpperBoundDeps matters more here than in the service: this
+              module imports two BOMs by hand, and shade flattens whatever they
+              resolve to into one jar.
             -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

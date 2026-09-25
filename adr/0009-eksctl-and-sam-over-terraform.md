@@ -50,9 +50,10 @@ Controller, which is published as a chart. The application has no chart.
   `sam deploy --template-file lambda/template.yaml` uploads the jar and deploys
   the stack. The `Events` shorthand and a policy template wire the queue, the
   event source mapping and the IAM role in a few lines. `sam local invoke` runs
-  the handler against a fixture before anything is deployed. Terraform would
-  need each of those as a separate resource, and the jar would come from Maven
-  either way.
+  the handler against a fixture before anything is deployed. No table exists
+  then, so it shows only the parsing and the batch-failure report. Terraform
+  would need each of those as a separate resource, and the jar would come from
+  Maven either way.
 
 * **CloudFormation for the rest.** The two remaining stacks are plain
   CloudFormation. That keeps the tool count at one for everything eksctl and
