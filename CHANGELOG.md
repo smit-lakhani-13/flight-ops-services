@@ -372,6 +372,13 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
   the node group. Step 9 prints the commands to set a new database password
   when the run that created the data stack stopped before writing it.
 
+- **The `sts` module was missing.** `DefaultCredentialsProvider` needs it to
+  use the web identity token that IRSA gives the pod, and `sqs`, until now the
+  service's only AWS SDK dependency, does not bring it in. On EKS the chain
+  would skip that token, so SQS sends would lack the pod's role and fail.
+  `pom.xml` now adds `sts` at runtime scope.
+  `AwsConfigTest.java#stsModuleIsOnTheClasspath` fails without it.
+
 The other fixes are to documentation only, and change no behaviour.
 
 - The README listed 20 error codes, and there were 21. It was missing
@@ -412,6 +419,12 @@ The other fixes are to documentation only, and change no behaviour.
   `SqsEventPublisher` as the publisher "in AWS", which reads as if the service
   ran there. It has never run in AWS. The sentence now names the `prod`
   profile, which selects it by default.
+
+- **What automount turns off.** `k8s/base/serviceaccount.yaml` said that
+  setting `automountServiceAccountToken` to false removes the token volume IRSA
+  reads, and the 1.1.0 Security notes gave that as the reason to leave it on.
+  Setting it to false removes only the Kubernetes API token; the EKS pod
+  identity webhook adds its own volume. The comment now says so.
 
 ### Security
 
