@@ -175,6 +175,18 @@
             <groupId>software.amazon.awssdk</groupId>
             <artifactId>sqs</artifactId>
         </dependency>
+        <!--
+          IRSA. DefaultCredentialsProvider swaps the pod's web identity token
+          for credentials with code it loads from this module by reflection.
+          Without it that step fails and the chain moves on, so SQS sends never
+          get the pod's role. No main code imports it, hence runtime scope;
+          AwsConfigTest fails if it goes.
+        -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>sts</artifactId>
+            <scope>runtime</scope>
+        </dependency>
 
         <dependency>
             <groupId>org.postgresql</groupId>
