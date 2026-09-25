@@ -9,8 +9,24 @@
 #   scripts/numbers.sh
 #
 # Everything else is computed from git, so it is correct in a clean clone.
+#
+#   scripts/numbers.sh --check-readme
+#
+# prints the same, then exits 1 unless every README line that names adr/ and
+# gives a count ("N records" or "N decision records") gives the number of
+# records in adr/, and adr/README.md's index links each record exactly once and
+# nothing else. docs-check runs it, so a pull request that adds a record without
+# updating both fails.
+# Test totals are not checked: they need a build.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+
+check_readme=0
+case "${1:-}" in
+  '') ;;
+  --check-readme) check_readme=1 ;;
+  *) echo "usage: scripts/numbers.sh [--check-readme]" >&2; exit 2 ;;
+esac
 
 rule() { printf '\n%s\n%s\n' "$1" "$(printf '%.0s-' $(seq ${#1}))"; }
 
@@ -49,8 +65,8 @@ printf 'kustomizations         %s\n'   "$(git ls-files 'k8s/**/kustomization.yam
 printf 'CloudFormation/deploy  %s templates, %s scripts\n' \
   "$(git ls-files 'deploy/aws/*.yaml' ':!deploy/aws/cluster.yaml' | wc -l | tr -d ' ')" \
   "$(git ls-files 'deploy/aws/*.sh' | wc -l | tr -d ' ')"
-printf 'ADRs                   %s\n' \
-  "$(git ls-files 'adr/[0-9]*.md' | wc -l | tr -d ' ')"
+adrs=$(git ls-files 'adr/[0-9]*.md' | wc -l | tr -d ' ')
+printf 'ADRs                   %s\n' "$adrs"
 printf 'SQS fixtures           %s\n' "$(git ls-files 'lambda/events/*.json' | wc -l | tr -d ' ')"
 
 rule 'Tests that ran'
@@ -91,3 +107,33 @@ printf 'Spring Boot            %s\n' \
 printf 'Java release           %s\n' \
   "$(sed -n 's/.*<java.version>\(.*\)<\/java.version>.*/\1/p' pom.xml)"
 echo
+
+if [ "$check_readme" -eq 1 ]; then
+  rule 'README check'
+  # Only lines that name adr/, so "8 records" about the dto/ package never
+  # counts. Every distinct figure, so two phrases that disagree fail as well as
+  # one that is wrong.
+  claimed=$(grep -F 'adr/' README.md | grep -o -E '[0-9]+ (decision )?records' \
+    | cut -d' ' -f1 | sort -u || true)
+  # The index's link targets against the files, both sorted and not deduplicated,
+  # so a missing, extra or repeated row fails, not only a wrong count.
+  indexed=$(grep -o -E '^\| \[[0-9]{4}\]\([0-9]{4}-[^)]*\.md\)' adr/README.md \
+    | sed -E 's/.*\((.*)\)$/adr\/\1/' | sort || true)
+  records=$(git ls-files 'adr/[0-9]*.md' | sort)
+  indexed_n=$(printf '%s' "$indexed" | grep -c . || true)
+  if [ -z "$claimed" ]; then
+    echo "README.md: no line names adr/ with an 'N records' count; adr/ holds $adrs"
+    exit 1
+  elif [ "$(printf '%s\n' "$claimed" | wc -l | tr -d ' ')" -ne 1 ]; then
+    echo "README.md: more than one ADR count ($(printf '%s' "$claimed" | paste -sd, -)); adr/ holds $adrs"
+    exit 1
+  elif [ "$claimed" != "$adrs" ]; then
+    echo "README.md says $claimed records; adr/ holds $adrs"
+    exit 1
+  elif [ "$indexed" != "$records" ]; then
+    echo "adr/README.md's index does not link each record in adr/ once (< index, > adr/):"
+    diff <(printf '%s\n' "$indexed") <(printf '%s\n' "$records") | grep '^[<>]' || true
+    exit 1
+  fi
+  echo "README.md says $claimed records, adr/README.md indexes $indexed_n, and adr/ holds $adrs"
+fi

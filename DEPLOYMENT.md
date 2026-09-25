@@ -164,6 +164,12 @@ infrastructure, and the run then stops twice for you:
 | Variable | `SQS_QUEUE_URL` | from the SAM stack |
 | Variable | `DB_URL` | from the data stack |
 
+Before you set `DEPLOY_ENABLED`, merge the change that readies the first
+deploy, and have it rename the deploy job in
+`.github/workflows/build-and-deploy.yml` from `deploy (gated off)` to `deploy`.
+Otherwise the first real deploy shows in the checks list under the gated-off
+name.
+
 Set those, run the workflow or push to `main`, then type `done`. The script
 waits up to 30 minutes for CI to create `deployment/flight-ops`, then up to 20
 for it to become available. The deploy job is skipped unless `DEPLOY_ENABLED`

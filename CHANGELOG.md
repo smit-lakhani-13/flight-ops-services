@@ -76,6 +76,17 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
   image size to the log and the job summary, holds no cloud or registry
   credentials and never pushes. The deploy job now needs it.
 
+- **The image is scanned in CI.** The `image` job ends with a Trivy scan of
+  the image it built, and fails on a CRITICAL vulnerability with a fix
+  available. Until now only the deploy job, which has never run, scanned an
+  image.
+
+- **The README's ADR count is checked.** `scripts/numbers.sh --check-readme`
+  fails when a README count of decision records differs from the ADR files in
+  `adr/`, or when the `adr/README.md` index does not link each of them exactly
+  once, and the docs-check job runs it. The other counts are still compared by
+  hand.
+
 - **PostgreSQL's lock timeout has a test.** `LockTimeoutPostgresTest` holds a
   flight row on PostgreSQL 17 until the profile's own 3 s `lock_timeout`
   fires. It checks SQLSTATE `55P03`, the 503 with `Retry-After`, the elapsed
@@ -118,6 +129,16 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
   `.trivyignore` is gone, with both `trivyignores` inputs: Trivy still reads
   one from the root if it is ever added, and `CONTRIBUTING.md` says what an
   entry must carry. Acts 2 and 4 of the demo book as `Test Passenger`.
+
+- **Runner images pinned.** Every job in both workflows runs on
+  `ubuntu-24.04`, not `ubuntu-latest`, which moves to Ubuntu 26.04 between
+  19 October and 19 November 2026. That move gets a pull request of its own.
+
+- **The deploy job's name.** It shows as `deploy (gated off)` in the checks
+  list, where a bare `deploy` read as something that ran.
+
+- **CodeQL can be started by hand.** `codeql.yml` gains a `workflow_dispatch`
+  trigger, for a commit on `main` that got no push run.
 
 - **Stricter request fields.** A value that breaks one of these rules gets a
   400 `VALIDATION_FAILED` whose body maps the field to the message shown.

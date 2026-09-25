@@ -23,7 +23,8 @@
 
 - [ ] `deploy/aws/selftest.sh` passes if anything under `deploy/aws/` changed
 
-- [ ] Counts in the Markdown files match `scripts/numbers.sh`
+- [ ] Counts in the Markdown files match `scripts/numbers.sh`, and
+  `scripts/numbers.sh --check-readme` passes
 
 - [ ] A decision with a real trade-off has an ADR in `adr/`
 

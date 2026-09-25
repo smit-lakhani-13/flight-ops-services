@@ -109,12 +109,13 @@ before you open the log.
 | `docs-check` | every trigger |
 | `image` | every trigger. It builds and starts the image and never pushes it |
 | `dependency-review` | **pull requests only**. It diffs what the PR adds against the base, and a push has no base to diff against |
-| `deploy` | gated off: a push or manual run on `main` **and** `vars.DEPLOY_ENABLED == 'true'`. That variable is unset, so the job reports as skipped |
+| `deploy` | gated off: a push or manual run on `main` **and** `vars.DEPLOY_ENABLED == 'true'`. That variable is unset, so the job reports as skipped. Its display name, `deploy (gated off)`, says so in the checks list |
 
-A separate `codeql.yml` workflow analyses both modules on a push or pull
-request to `main`, and weekly. The weekly run is there because CodeQL ships new queries,
-and code that was clean when it merged can be found vulnerable months later
-without a line of it changing.
+A separate `codeql.yml` workflow analyses both modules on every push or pull
+request to `main`, weekly, and by hand. The weekly run is there because CodeQL
+ships new queries, and code that was clean when it merged can be found
+vulnerable months later without a line of it changing. The manual trigger is
+for a commit on `main` that got no push run.
 
 | Job | Gate | Fails when |
 |---|---|---|
@@ -132,9 +133,11 @@ without a line of it changing.
 | `dependency-review` | dependency-review | the pull request *adds* a dependency with a high-severity advisory. The job needs the repository's dependency graph. If the graph is switched off, the job names the setting in its summary and passes, because no commit can fix a repository setting. A probe that answers anything other than 200, 403 or 404 (an outage, a token problem) fails the job, so "the API had a bad minute" never looks like "the feature is off" |
 | `docs-check` | `scripts/refcheck.py` | a backticked `path` or `path#symbol` in any Markdown file does not resolve |
 | `docs-check` | `scripts/linkcheck.py` | a relative link or heading anchor is broken |
+| `docs-check` | `scripts/numbers.sh --check-readme` | a README line that names `adr/` gives a count of records other than the number of ADR files in `adr/` (or no such line exists, or two disagree), or the index in `adr/README.md` does not link each ADR file exactly once (a missing, extra or repeated row) |
 | `docs-check` | `scripts/sweeps.sh` | a co-author trailer line or an appended "Generated with" signature appears in a tracked file or in a commit message on any ref, an absolute home-directory path appears in a tracked file, a pattern from the `SWEEP_PATTERNS` secret matches a tracked file path, a file's contents or a commit message, or `SWEEP_PATTERNS` is empty on a push or a manual run |
 | `image` | `docker build` | the `Dockerfile` does not build |
 | `image` | "The image will not start without a database" | the image, run with no environment, does not stop with `'url' must start with` |
+| `image` | Trivy, on the image | the image the job built has a CRITICAL vulnerability with a fix available |
 | `deploy` | "Is this commit already in ECR?" | `describe-images` fails with anything other than `ImageNotFoundException` |
 | `deploy` | "The image will not start without a database" | the image, run with no environment, does not stop with `'url' must start with` |
 | `deploy` | Trivy, on the image | the built image has a CRITICAL vulnerability with a fix available. It runs before the push |
@@ -150,7 +153,8 @@ with no released fix never needs an entry, because every scan here passes
 Run the doc gates before you push. They are fast, and they catch real mistakes:
 
 ```bash
-python3 scripts/refcheck.py && python3 scripts/linkcheck.py && scripts/sweeps.sh
+python3 scripts/refcheck.py && python3 scripts/linkcheck.py \
+  && scripts/numbers.sh --check-readme && scripts/sweeps.sh
 ```
 
 They have already caught errors in this repository's own documentation: a

@@ -109,6 +109,11 @@ Variable  SQS_QUEUE_URL    https://sqs.ap-south-1.amazonaws.com/…/booking-even
 Variable  DB_URL           jdbc:postgresql://…:5432/flightops
 ```
 
+Before you set `DEPLOY_ENABLED`, rename the deploy job in
+`.github/workflows/build-and-deploy.yml` from `deploy (gated off)` to `deploy`,
+in the change that readies the first deploy. Otherwise the first real deploy
+shows in the checks list under the gated-off name.
+
 Put those in the GitHub repository settings and run the workflow. The script
 waits up to 30 minutes for CI to create the deployment, and up to 20 for the
 rollout. Then it creates the Ingress, waits for the load balancer, and finishes
