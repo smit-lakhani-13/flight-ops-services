@@ -281,14 +281,16 @@ PID 1, so it receives SIGTERM. Without it the shell is PID 1 and forwards
 nothing, and the pod dies by SIGKILL at the end of the grace period.
 
 The Dockerfile says `USER 1001:1001` and the pod says `runAsUser: 1001`. The
-kubelet verifies non-root by reading the UID from the image config, and it
-cannot resolve a user name. A name fails the pod with
+kubelet verifies non-root against `runAsUser` when the pod sets it. A pod
+without it is checked against the user in the image config, and the kubelet
+cannot resolve a name there. An image with `USER spring` fails such a pod with
 `CreateContainerConfigError`.
 
 `readOnlyRootFilesystem: true` comes with a `medium: Memory` `emptyDir` at
 `/tmp`, with `sizeLimit: 64Mi`. Tomcat's work directory and `hsperfdata` both
-need `/tmp`. Code running inside the container cannot write a binary to disk,
-overwrite the jar, or leave anything that outlives the pod.
+need `/tmp`. Code running inside the container cannot overwrite the jar or
+leave anything that outlives the pod. It can still write a binary to `/tmp`
+and run it, because an `emptyDir` has no `noexec` option.
 
 `podAntiAffinity` is `preferred`. Two replicas on one node make one node loss a
 full outage, and a PDB does nothing about a node dying. `required` would leave

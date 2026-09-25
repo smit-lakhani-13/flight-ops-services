@@ -480,6 +480,14 @@ The other fixes are to documentation only, and change no behaviour.
   `LockTimeoutTest` runs them. What it lacks is Flyway and PostgreSQL's own row
   locks and `lock_timeout`.
 
+- **Container hardening overstated.** `SECURITY.md`, `DEPLOYMENT.md` and the
+  comments in the `Dockerfile` and `k8s/base/deployment.yaml` said the kubelet
+  checks `runAsNonRoot` against the image's user, so `USER spring` would fail
+  the pod. The pod sets `runAsUser: 1001`, which the kubelet checks instead;
+  the image's user counts only when `runAsUser` is unset. The manifest and
+  `DEPLOYMENT.md` also said code in the container could not drop a binary. It
+  can write one to the `/tmp` `emptyDir` and run it.
+
 ### Security
 
 - **Log lines from rejected input.** `GlobalExceptionHandler.printable`

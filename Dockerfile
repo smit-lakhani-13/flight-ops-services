@@ -39,8 +39,9 @@ LABEL org.opencontainers.image.title="flight-ops-service" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.base.name="eclipse-temurin:21-jre-alpine"
 
-# A numeric UID. The pod sets `runAsNonRoot: true`, and the kubelet checks the
-# UID in the image config without reading /etc/passwd. A user name fails with
+# A numeric UID. The pod's `runAsNonRoot: true` is checked against its
+# `runAsUser: 1001`. A pod without runAsUser is checked against the image's
+# USER, and the kubelet does not read /etc/passwd, so a user name fails with
 #   Error: container has runAsNonRoot and image has non-numeric user (spring),
 #   cannot verify user is non-root
 RUN addgroup -g 1001 -S spring && adduser -u 1001 -S spring -G spring

@@ -271,9 +271,11 @@ written down. What is missing is a domain.
 
 ## Container and pod
 
-- Non-root, with an explicit **numeric** UID (1001). The kubelet enforces
-  `runAsNonRoot` by reading the UID from the image config and cannot resolve a
-  username, so `USER spring` would fail the pod at start.
+- Non-root, with an explicit **numeric** UID (1001) in the image and in the
+  pod's `runAsUser`. The kubelet checks `runAsNonRoot` against `runAsUser`
+  when the pod sets it. Otherwise it checks the user in the image config and
+  cannot resolve a username, so an image with `USER spring` would fail a pod
+  that leaves `runAsUser` out.
 
 - `readOnlyRootFilesystem: true`, with a 64 MiB in-memory `emptyDir` at `/tmp`
   for Tomcat's work directory and `hsperfdata`.

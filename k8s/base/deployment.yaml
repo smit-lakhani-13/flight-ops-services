@@ -43,8 +43,9 @@ spec:
       serviceAccountName: flight-ops-sa
 
       securityContext:
-        # The kubelet checks the numeric UID from the image, which is why the
-        # Dockerfile says `USER 1001:1001`, not a user name.
+        # With runAsUser set, the kubelet checks runAsNonRoot against it and
+        # ignores the image's USER. The Dockerfile's `USER 1001:1001` is the
+        # same UID, and a pod without runAsUser needs it to be numeric.
         runAsNonRoot: true
         runAsUser: 1001
         runAsGroup: 1001
@@ -93,8 +94,9 @@ spec:
           securityContext:
             allowPrivilegeEscalation: false
             # With an emptyDir at /tmp for Tomcat's work directory and the JVM's
-            # hsperfdata. Code execution in the container cannot drop a binary
-            # or overwrite the jar, and a dependency that writes elsewhere fails
+            # hsperfdata. Code execution in the container cannot overwrite the
+            # jar, but it can write a binary to /tmp and run it: an emptyDir
+            # has no noexec option. A dependency that writes elsewhere fails
             # with EROFS in the logs.
             readOnlyRootFilesystem: true
             capabilities:
