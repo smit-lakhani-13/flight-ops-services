@@ -68,7 +68,9 @@ cat <<COST
    30 days  ≈ \$232  (\$273 ≈ ₹26,200)   <- the number that matters if you forget
 
   Budgets will alert $ALERT_EMAIL at 50/80/100% of \$60/month, when the
-  month's forecast passes \$60, and at 80% of \$12/day.
+  month's forecast passes \$60 (once AWS Budgets has about five weeks of
+  history to forecast from), and at 80% of \$8/day, which the stack passes
+  on every full day it runs.
   Confirm the subscription email when it arrives, or the alerts never fire.
 
   Tear it all down with:  $here/down.sh

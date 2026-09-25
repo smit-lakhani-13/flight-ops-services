@@ -48,12 +48,13 @@ Parameters:
 
   DailyBudgetUsd:
     Type: Number
-    Default: 12
+    Default: 8
     MinValue: 1
     Description: >-
       Daily ceiling. For a demo that runs a week, the monthly budget fires at
-      80% after the money is spent. The daily one catches a cluster left
-      running.
+      80% after the money is spent. The daily one alerts at 80% of $8, which
+      is $6.40, under the $7.72 the stack costs a day, so a cluster left
+      running passes it every full day.
 
 Conditions:
   CreateOidcProvider: !Equals [!Ref ExistingOidcProviderArn, '']
@@ -264,8 +265,9 @@ Resources:
           Subscribers:
             - SubscriptionType: EMAIL
               Address: !Ref AlertEmail
-        # FORECASTED: this one fires on day two of a forgotten cluster, before
-        # the month's money is gone.
+        # FORECASTED: AWS Budgets makes a forecast only once the account has
+        # about five weeks of cost history, so in a new account this one
+        # stays silent at first. DailyBudget is the early warning.
         - Notification:
             NotificationType: FORECASTED
             ComparisonOperator: GREATER_THAN

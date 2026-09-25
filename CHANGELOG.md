@@ -400,6 +400,13 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
   and stops on any other failure. The docs said every step checks whether its
   resource exists; this one now does.
 
+- **The daily budget could not fire.** `DailyBudgetUsd` defaulted to $12 and
+  alerts at 80%, which is $9.60, above the $7.72 a day the stack costs, so a
+  cluster left running would never have tripped it. It is now $8, which
+  alerts at $6.40. The forecast comment no longer promises an alert on day
+  two: AWS Budgets forecasts only once an account has about five weeks of cost
+  history.
+
 The other fixes are to documentation only, and change no behaviour.
 
 - The README listed 20 error codes, and there were 21. It was missing

@@ -107,7 +107,7 @@ case "$service $op" in
             exit 254
         }
         echo '[]' ;;
-    'budgets describe-budgets') echo 'flight-ops-daily  12  0.00  0.00' ;;
+    'budgets describe-budgets') echo 'flight-ops-daily  8  0.00  0.00' ;;
     'logs delete-log-group'|'ecr delete-repository'|'iam get-policy')
         echo 'An error occurred (NotFound)' >&2; exit 254 ;;
     *) ;;  # every describe and list: nothing left
