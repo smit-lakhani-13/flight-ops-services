@@ -65,12 +65,13 @@ public class BookingController {
                     Reserves seats on a flight, or replays the booking a previous call \
                     with this `idempotencyKey` created.
 
-                    **A replay answers 201, not 200.** The body is byte-for-byte the \
-                    original booking, so a client that retried after a timeout cannot \
-                    tell whether it or its earlier attempt did the work — which is the \
-                    property idempotency exists to provide. Re-using a key with a \
-                    *different* body is a client bug rather than a retry, and is refused \
-                    with `IDEMPOTENCY_KEY_REUSED`.
+                    **A replay answers 201, not 200.** The body is the booking the key \
+                    created, and matches the first response until the booking is \
+                    cancelled, when `cancelledAt` is set. A client that retried after a \
+                    timeout cannot tell whether it or its earlier attempt did the work — \
+                    which is the property idempotency exists to provide. Re-using a key \
+                    with a *different* body is a client bug rather than a retry, and is \
+                    refused with `IDEMPOTENCY_KEY_REUSED`.
 
                     Seats are taken under `SELECT … FOR UPDATE` on the flight row, so \
                     two requests for the last seat serialise instead of overselling. A \

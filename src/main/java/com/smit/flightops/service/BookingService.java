@@ -76,7 +76,9 @@ public class BookingService {
             // 3. A lost race. On one flight, insertNewBooking's re-read under the row
             //    lock throws LostIdempotencyRaceException. The same key on two flights
             //    locks two rows and reaches uk_bookings_idempotency_key instead. Either
-            //    way the winner has committed, so its booking is the answer: 201.
+            //    way the winner has committed. recoverReplay returns its booking (201)
+            //    when the fingerprints match and throws the 409 when they differ, as
+            //    they always do across two flights.
             BookingDto winner;
             try {
                 winner = bookingWriter.recoverReplay(request.idempotencyKey(), fingerprint);

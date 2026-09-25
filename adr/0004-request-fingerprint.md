@@ -22,7 +22,9 @@ I store a SHA-256 of the normalised request alongside the key
 `src/main/resources/db/migration/V3__booking_request_fingerprint.sql`) and
 compare it on every replay:
 
-* same key, same fingerprint → replay the original response, `201`
+* same key, same fingerprint → replay the booking the key created, `201` (the
+  body matches the first response until the booking is cancelled, when
+  `cancelledAt` is set)
 * same key, different fingerprint → `409 IDEMPOTENCY_KEY_REUSED`
 
 `src/main/java/com/smit/flightops/dto/BookingRequest.java#fingerprint` computes
@@ -38,7 +40,8 @@ it.
 
 * The column is nullable. Rows written before V3 have no fingerprint, and a hash
   of a request nobody kept cannot be backfilled. A null fingerprint counts as
-  "cannot prove a mismatch", which fails open for legacy rows only.
+  "cannot prove a mismatch", which fails open for legacy rows, and would for a
+  row whose fingerprint was cleared on erasure (see the last bullet).
 
 * Normalisation is part of the contract. Two requests that differ only in field
   order or in whitespace must hash the same, or clients see spurious 409s. This
@@ -62,7 +65,7 @@ confirm a guess, as the bullet now says.
   message, and it puts passenger names in a second place forever. I rejected it
   on privacy and size.
 
-* **Compare the parsed fields directly.** Equivalent for today's four fields,
+* **Compare the parsed fields directly.** Equivalent for today's three fields,
   and one more column for every field added later. The hash keeps the schema
   stable.
 
