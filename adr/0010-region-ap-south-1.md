@@ -33,8 +33,9 @@ caller's profile default.
 
 * **Cost.** Mumbai is slightly more expensive than `us-east-1`: t3.medium is
   $0.0448/hour against $0.0416, and EKS is the same $0.10 everywhere. The whole
-  demo costs about 4% more than it would in Virginia. Against the latency, that
-  is not a close call.
+  demo costs 8 to 9% more than it would in Virginia, about 60 cents a day,
+  most of it the NAT gateway and the database. Against the latency, that is
+  not a close call.
 
 * **Data residency.** Booking records are personal data. Keeping them in the
   country is the answer that needs no further explanation to anyone who asks.

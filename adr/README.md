@@ -8,7 +8,7 @@ room will propose them again a year later.
 I wrote every accepted record after the decision it records; 0016 is a proposal,
 and no decision has been taken. The "Taken in" column names the commit in which
 the decision landed. The first commit, `4a9a5b9`, is from 15 September 2026.
-0001–0014 were written on 22 September:
+0001–0014 were written on 22 September, and 0015 and 0016 on 25 September:
 
 * 0001–0008 and 0011–0014 were written together in `040c3be`. For 0001–0008
   that was between about eight hours and seven days after the code. For
@@ -29,8 +29,9 @@ changes gets a new record that supersedes the old one. The old one stays,
 because the reasoning that was true at the time explains the code someone is
 reading today. I correct wrong facts in place. Where a correction changes the
 reasoning, a dated note says what the record used to claim, as in 0002, 0003,
-0004, 0006, 0007, 0009 and 0012. The retry backoff in 0013 and the annotation
-scope in 0012 were changed in place, and each record's status line says so.
+0004, 0006, 0007, 0008, 0009 and 0012. The retry backoff in 0013 and the
+annotation scope in 0012 were changed in place, and each record's status line
+says so.
 
 | # | Decision | Status | Taken in |
 |---|---|---|---|

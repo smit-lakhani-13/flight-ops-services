@@ -15,8 +15,8 @@ service already written, but it would get no more free patches.
 
 On 22 September I upgraded to Spring Boot 4.1.1 on Java 21 (`pom.xml`). That
 included the move from `com.fasterxml.jackson` to `tools.jackson` in the
-application, and the new `spring-boot-starter-opentelemetry` observability
-stack.
+application. The `spring-boot-starter-opentelemetry` observability stack came
+later, in `d18f58b` (see [ADR 0011](0011-correlation-ids-and-metrics.md)).
 
 ## Consequences
 
@@ -38,8 +38,8 @@ stack.
   it.
 
 * The enforcer pins Java 21 (`requireJavaVersion [21,22)`). A build on 17 or 25
-  fails at once with a readable message. Without the pin it would fail two
-  minutes later with a class-file version error.
+  fails at once with a readable message. Without the pin, a build on 17 would
+  fail later, in the compiler, on `release version 21 not supported`.
 
 ## Alternatives considered
 

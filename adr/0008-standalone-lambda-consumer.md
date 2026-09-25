@@ -57,6 +57,14 @@ returns only the ids that failed.
   parse failures onto a quarantine queue is the production refinement, and I
   have not done it here.
 
+**Correction (2026-09-25).** Two of the bullets above changed on 23 September
+without a note. The arm64 bullet used to say that a local `docker build` on
+Apple Silicon matches the deployment target. The Lambda is a jar, not an image,
+so that reason never applied. The HTTP-client bullet used to say that the SDK
+brings in three HTTP clients, and that naming the client matters because jar
+ordering in a shaded jar would otherwise decide. It brings two, and the SDK
+picks by a fixed priority that ranks Apache 5 above URLConnection.
+
 ## Alternatives considered
 
 * **Spring Cloud Function.** Familiar programming model, a container start per

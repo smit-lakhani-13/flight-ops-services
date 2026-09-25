@@ -10,8 +10,8 @@ transactional. The queue send cannot be, because SQS has no way to join a
 PostgreSQL transaction.
 
 The first version sent the message from the service method, inside the
-transaction. That arrangement has two failure modes, and they are not
-symmetrical:
+transaction. Moving the send does not help: each order of send and commit has
+a failure mode, and they are not symmetrical:
 
 * **Send first, commit afterwards.** The message goes out inside the
   transaction, the commit fails, and a consumer now knows about a booking that

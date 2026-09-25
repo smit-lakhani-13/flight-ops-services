@@ -1,7 +1,8 @@
 # 12. The OpenAPI document is public; the API it describes is not
 
 Status: accepted (recorded 2026-09-22, decision taken in commit `82ea9b4`; the
-annotation scope was widened in `ccad5b4` and recorded in place on 2026-09-23)
+annotation scope was widened in `ccad5b4` and `2fb66de`, and recorded in place
+on 2026-09-23)
 
 ## Context
 

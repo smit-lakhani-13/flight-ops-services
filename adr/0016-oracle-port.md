@@ -71,7 +71,8 @@ changes.
 ## Consequences
 
 * The port is two rewritten queries, a session-wide lock-wait bound replaced
-  by per-query hints and a second set of migrations, not a driver swap.
+  by per-query hints, two service methods moved onto the locking query and a
+  second set of migrations, not a driver swap.
 * Pruning on Oracle would give up `SKIP LOCKED`, so two replicas pruning at
   once would wait for each other.
 * Nothing here has run. Every sentence is from documentation until the CI run

@@ -79,9 +79,10 @@ resulting failure blames the property.
 ## Writing tests
 
 - The `@WebMvcTest` slices run with `addFilters = false`. A slice does not load
-  `SecurityConfig`, so with the filters on, every controller test would pass
-  against Boot's default chain. `SecurityRulesTest` tests the real rules once,
-  with real credentials and the real 401 and 403 bodies.
+  `SecurityConfig`, so with the filters on, every controller test would run
+  against Boot's default chain instead of the application's. `SecurityRulesTest`
+  tests the real rules once, with real credentials and the real 401 and 403
+  bodies.
 
 - The contract tests share no jar, because a shared module would make the
   producer and consumer deploy together. Both read
@@ -128,7 +129,7 @@ without a line of it changing.
 | `infra-lint` | `shellcheck` v0.11.0, `bash -n` | any tracked `*.sh` has a lint finding or a syntax error |
 | `infra-lint` | `deploy/aws/selftest.sh` | `down.sh`, `cost-check.sh`, `ecr-image-exists.sh` or `up.sh`'s checks in `lib.sh` reach a wrong verdict against stub `aws`, `kubectl`, `helm`, `eksctl`, `sleep` and `mvnw` |
 | `trivy-fs` | Trivy | a CRITICAL/HIGH vulnerability **with a fix available**, or a committed secret |
-| `dependency-review` | dependency-review | the pull request *adds* a dependency with a high-severity advisory. The job needs the repository's dependency graph. If the graph is switched off, the job names the setting in its summary and passes, because no commit can fix a repository setting. A probe that answers anything other than 403 or 404 (an outage, a token problem) fails the job, so "the API had a bad minute" never looks like "the feature is off" |
+| `dependency-review` | dependency-review | the pull request *adds* a dependency with a high-severity advisory. The job needs the repository's dependency graph. If the graph is switched off, the job names the setting in its summary and passes, because no commit can fix a repository setting. A probe that answers anything other than 200, 403 or 404 (an outage, a token problem) fails the job, so "the API had a bad minute" never looks like "the feature is off" |
 | `docs-check` | `scripts/refcheck.py` | a backticked `path` or `path#symbol` in any Markdown file does not resolve |
 | `docs-check` | `scripts/linkcheck.py` | a relative link or heading anchor is broken |
 | `docs-check` | `scripts/sweeps.sh` | a co-author trailer line or an appended "Generated with" signature appears in a tracked file or in a commit message on any ref, an absolute home-directory path appears in a tracked file, a pattern from the `SWEEP_PATTERNS` secret matches a tracked file path, a file's contents or a commit message, or `SWEEP_PATTERNS` is empty on a push or a manual run |

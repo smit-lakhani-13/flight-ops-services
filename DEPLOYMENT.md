@@ -541,7 +541,7 @@ Under load, in the order it happens:
    poller, and `template.yaml` explains the trade-off. Messages over the cap
    wait in the queue, and their receive count is not raised, so a long backlog
    is slow and does not reach the DLQ. An account pool that runs dry can still
-   throttle, and that does raise the count toward `maxReceiveCount: 3`. Raise
+   throttle, and that does raise the count towards `maxReceiveCount: 3`. Raise
    the cap before raising traffic; AWS accepts 2 to 1000.
 
 5. **Node IP addresses, not CPU.** With the VPC CNI each pod takes a real VPC

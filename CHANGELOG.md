@@ -46,7 +46,8 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
 
 - **Unhandled 500s logged.** `ApiErrorController` logs a 5xx that carries an
   exception at ERROR, as `Unhandled failure on <method> <uri>`. It puts the
-  request id back into the MDC first, so the id in the 500 body finds the line.
+  request id back into the MDC first, so the id in the 500's `X-Request-Id`
+  header finds the line.
 
 - **New CI gates.** The build job gains "The PostgreSQL tests ran", which fails
   unless `BookingIntegrationTest` and `OutboxPrunePostgresTest` ran with nothing
@@ -487,6 +488,23 @@ The other fixes are to documentation only, and change no behaviour.
   the image's user counts only when `runAsUser` is unset. The manifest and
   `DEPLOYMENT.md` also said code in the container could not drop a binary. It
   can write one to the `/tmp` `emptyDir` and run it.
+
+- **Records that disagreed with the code.** The README said a test scrapes
+  every meter through a real `PrometheusMeterRegistry`; it scrapes only the
+  booking meters. CONTRIBUTING.md said the dependency-graph probe fails on
+  anything but 403 or 404, but a 200 passes. OPERATIONS.md said
+  `deploy/aws/data.yaml` reads the eksctl outputs; `up.sh` does, and passes
+  them only when it creates the data stack. ADR 0001 described two orders of
+  send and commit as two failure modes of the first version. ADR 0002 said the
+  lock timeout takes one line of configuration, when the `postgres` and `prod`
+  profiles each carry it, and that a cancellation modifies only the booking
+  row. ADR 0003 said the id is in every URL, but flight URLs carry the flight
+  number. ADR 0007 said the Boot upgrade brought OpenTelemetry, which came in
+  `d18f58b`, and that a JDK 17 build without the enforcer fails two minutes in
+  with a class-file version error. It fails in the compiler, on
+  `release version 21 not supported`. ADR 0010 put the Mumbai premium at about
+  4%; it is 8 to 9%. ADR 0008 gains a dated note for two reasons rewritten in
+  place on 23 September.
 
 ### Security
 
