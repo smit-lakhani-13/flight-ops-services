@@ -52,14 +52,14 @@ class BookingServiceTest {
     }
 
     private BookingRequest request(int seats, String key) {
-        return new BookingRequest("UA123", "Smit Lakhani", seats, key);
+        return new BookingRequest("UA123", "Jane Doe", seats, key);
     }
 
     @Test
     @DisplayName("no existing row -> delegates straight to the writer")
     void firstTimeBookingDelegatesToTheWriter() {
         when(bookingRepository.findByIdempotencyKey("demo-1")).thenReturn(Optional.empty());
-        BookingDto written = new BookingDto(1L, "UA123", "Smit Lakhani", 3, Instant.now(), null);
+        BookingDto written = new BookingDto(1L, "UA123", "Jane Doe", 3, Instant.now(), null);
         when(bookingWriter.insertNewBooking(any())).thenReturn(written);
 
         BookingDto dto = bookingService.book(request(3, "demo-1"));
@@ -73,7 +73,7 @@ class BookingServiceTest {
     void replayIsServedFromTheExistingBooking() {
         Flight flight = flight();
         flight.reserveSeats(3);
-        Booking original = new Booking(flight, "Smit Lakhani", 3, "demo-1",
+        Booking original = new Booking(flight, "Jane Doe", 3, "demo-1",
                                        request(3, "demo-1").fingerprint(), CREATED_AT);
         when(bookingRepository.findByIdempotencyKey("demo-1")).thenReturn(Optional.of(original));
 
@@ -89,7 +89,7 @@ class BookingServiceTest {
     void racingTheWriterRecoversTheWinner() {
         when(bookingRepository.findByIdempotencyKey("raced-key")).thenReturn(Optional.empty());
         when(bookingWriter.insertNewBooking(any())).thenThrow(new DataIntegrityViolationException("dup"));
-        BookingDto winner = new BookingDto(2L, "UA123", "Smit Lakhani", 3, Instant.now(), null);
+        BookingDto winner = new BookingDto(2L, "UA123", "Jane Doe", 3, Instant.now(), null);
         when(bookingWriter.recoverReplay(eq("raced-key"), any())).thenReturn(winner);
 
         BookingDto dto = bookingService.book(request(3, "raced-key"));
@@ -106,7 +106,7 @@ class BookingServiceTest {
         when(bookingRepository.findByIdempotencyKey("raced-key")).thenReturn(Optional.empty());
         when(bookingWriter.insertNewBooking(any()))
                 .thenThrow(new LostIdempotencyRaceException("raced-key"));
-        BookingDto winner = new BookingDto(7L, "UA123", "Smit Lakhani", 3, Instant.now(), null);
+        BookingDto winner = new BookingDto(7L, "UA123", "Jane Doe", 3, Instant.now(), null);
         when(bookingWriter.recoverReplay(eq("raced-key"), any())).thenReturn(winner);
 
         BookingDto dto = bookingService.book(request(3, "raced-key"));
@@ -146,7 +146,7 @@ class BookingServiceTest {
         when(bookingWriter.insertNewBooking(any())).thenThrow(new FlightNotFoundException("XX999"));
 
         assertThatThrownBy(() -> bookingService.book(
-                new BookingRequest("xx999", "Smit Lakhani", 1, "demo-4")))
+                new BookingRequest("xx999", "Jane Doe", 1, "demo-4")))
                 .isInstanceOf(FlightNotFoundException.class);
 
         verify(bookingWriter, never()).recoverReplay(any(), any());
@@ -155,12 +155,12 @@ class BookingServiceTest {
     @Test
     @DisplayName("findById maps the entity to a DTO")
     void findByIdReturnsTheBooking() {
-        Booking booking = new Booking(flight(), "Smit Lakhani", 3, "demo-6", null, CREATED_AT);
+        Booking booking = new Booking(flight(), "Jane Doe", 3, "demo-6", null, CREATED_AT);
         when(bookingRepository.findById(1L)).thenReturn(Optional.of(booking));
 
         BookingDto dto = bookingService.findById(1L);
 
-        assertThat(dto.passengerName()).isEqualTo("Smit Lakhani");
+        assertThat(dto.passengerName()).isEqualTo("Jane Doe");
         assertThat(dto.flightNumber()).isEqualTo("UA123");
         assertThat(dto.seats()).isEqualTo(3);
     }
@@ -178,7 +178,7 @@ class BookingServiceTest {
     @Test
     @DisplayName("a cancellation that released seats is counted as one, outside the writer's transaction")
     void cancellationIsCountedOnceItHasCommitted() {
-        BookingDto cancelled = new BookingDto(1L, "UA123", "Smit Lakhani", 3, Instant.now(), Instant.now());
+        BookingDto cancelled = new BookingDto(1L, "UA123", "Jane Doe", 3, Instant.now(), Instant.now());
         when(bookingWriter.cancelBooking(1L))
                 .thenReturn(new BookingWriter.Cancellation(cancelled, true));
 
@@ -193,7 +193,7 @@ class BookingServiceTest {
     void retriedCancellationIsCountedAsANoOp() {
         // Both outcomes return a booking carrying a cancelledAt; only the
         // boolean tells this layer which one happened.
-        BookingDto alreadyCancelled = new BookingDto(1L, "UA123", "Smit Lakhani", 3, Instant.now(), Instant.now());
+        BookingDto alreadyCancelled = new BookingDto(1L, "UA123", "Jane Doe", 3, Instant.now(), Instant.now());
         when(bookingWriter.cancelBooking(1L))
                 .thenReturn(new BookingWriter.Cancellation(alreadyCancelled, false));
 

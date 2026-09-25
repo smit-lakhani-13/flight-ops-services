@@ -223,7 +223,7 @@ class BookingIntegrationTest {
         String flightNumber = createFlight("CC003", 2);
 
         assertThatThrownBy(() -> bookingService.book(
-                new BookingRequest(flightNumber, "Smit Lakhani", 3, "pg-oversell")))
+                new BookingRequest(flightNumber, "Jane Doe", 3, "pg-oversell")))
                 .isInstanceOf(InsufficientSeatsException.class);
 
         assertThat(availableSeats(flightNumber)).isEqualTo(2);

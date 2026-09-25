@@ -56,7 +56,7 @@ class BookingControllerTest {
     @MockitoBean private BookingService bookingService;
 
     private static final String VALID_BODY = """
-            {"flightNumber":"UA123","passengerName":"Smit Lakhani","seats":3,"idempotencyKey":"demo-1"}
+            {"flightNumber":"UA123","passengerName":"Jane Doe","seats":3,"idempotencyKey":"demo-1"}
             """;
 
     private String body(String flightNumber, String passengerName, int seats) {
@@ -65,7 +65,7 @@ class BookingControllerTest {
     }
 
     private BookingDto dto() {
-        return new BookingDto(1L, "UA123", "Smit Lakhani", 3,
+        return new BookingDto(1L, "UA123", "Jane Doe", 3,
                               Instant.parse("2026-09-15T10:00:00Z"), null);
     }
 
@@ -203,7 +203,7 @@ class BookingControllerTest {
     @DisplayName("a seat count with a decimal point or an exponent, a string, null or missing is 400 MALFORMED_REQUEST")
     void seatsMustBeAWholeNumber(String seats) throws Exception {
         String body = """
-                {"flightNumber":"UA123","passengerName":"Smit Lakhani",%s"idempotencyKey":"demo-1"}
+                {"flightNumber":"UA123","passengerName":"Jane Doe",%s"idempotencyKey":"demo-1"}
                 """.formatted(seats);
 
         mockMvc.perform(post("/api/v1/bookings")
@@ -292,7 +292,7 @@ class BookingControllerTest {
         mockMvc.perform(get(location))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.bookingId").value(1))
-                .andExpect(jsonPath("$.passengerName").value("Smit Lakhani"));
+                .andExpect(jsonPath("$.passengerName").value("Jane Doe"));
     }
 
     @Test
@@ -376,7 +376,7 @@ class BookingControllerTest {
     @Test
     @DisplayName("cancelling a booking is 200 with the cancelled record")
     void cancelReturnsTheCancelledBooking() throws Exception {
-        BookingDto cancelled = new BookingDto(1L, "UA123", "Smit Lakhani", 3,
+        BookingDto cancelled = new BookingDto(1L, "UA123", "Jane Doe", 3,
                                               Instant.parse("2026-09-15T10:00:00Z"),
                                               Instant.parse("2026-09-15T11:00:00Z"));
         when(bookingService.cancel(1L)).thenReturn(cancelled);

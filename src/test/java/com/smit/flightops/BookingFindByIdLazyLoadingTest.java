@@ -36,7 +36,7 @@ class BookingFindByIdLazyLoadingTest {
         flightRepository.saveAndFlush(new Flight("UA900", "EWR", "LHR", 180, SOON));
 
         BookingDto created = bookingService.book(
-                new BookingRequest("UA900", "Smit Lakhani", 2, "lazy-load-repro-1"));
+                new BookingRequest("UA900", "Jane Doe", 2, "lazy-load-repro-1"));
 
         assertThatCode(() -> bookingService.findById(created.bookingId()))
                 .as("BookingService.findById needs a transaction open while BookingDto.from " +

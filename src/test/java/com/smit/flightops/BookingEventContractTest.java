@@ -59,7 +59,7 @@ class BookingEventContractTest {
     @Test
     @DisplayName("the serialised event has the contract's fields, no more and no fewer")
     void theWireFormatMatchesTheContractExactly() throws Exception {
-        BookingDto booking = new BookingDto(1L, "UA123", "Smit Lakhani", 3,
+        BookingDto booking = new BookingDto(1L, "UA123", "Jane Doe", 3,
                 Instant.parse("2026-09-15T10:00:00Z"), null);
 
         JsonNode produced = objectMapper.readTree(
@@ -108,7 +108,7 @@ class BookingEventContractTest {
     @Test
     @DisplayName("the JSON types match the contract too, not just the field names")
     void theWireTypesMatchTheContract() throws Exception {
-        BookingDto booking = new BookingDto(42L, "UA456", "Smit Lakhani", 2,
+        BookingDto booking = new BookingDto(42L, "UA456", "Jane Doe", 2,
                 Instant.parse("2026-09-15T10:00:00Z"), null);
 
         JsonNode produced = objectMapper.readTree(

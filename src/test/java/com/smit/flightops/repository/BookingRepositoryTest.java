@@ -40,7 +40,7 @@ class BookingRepositoryTest {
     @Test
     void findByIdempotencyKeyReturnsTheBooking() {
         Flight flight = flight("UA123");
-        bookingRepository.saveAndFlush(new Booking(flight, "Smit Lakhani", 3, "demo-1", null, CREATED_AT));
+        bookingRepository.saveAndFlush(new Booking(flight, "Jane Doe", 3, "demo-1", null, CREATED_AT));
 
         assertThat(bookingRepository.findByIdempotencyKey("demo-1"))
                 .get()
@@ -53,7 +53,7 @@ class BookingRepositoryTest {
     @DisplayName("REGRESSION: JOIN FETCH on findByIdempotencyKey too, because BookingService.book holds no transaction")
     void findByIdempotencyKeyAlsoJoinFetchesTheFlight() {
         Flight flight = flight("UA123");
-        bookingRepository.saveAndFlush(new Booking(flight, "Smit Lakhani", 3, "demo-1", null, CREATED_AT));
+        bookingRepository.saveAndFlush(new Booking(flight, "Jane Doe", 3, "demo-1", null, CREATED_AT));
         entityManager.clear();
 
         Booking found = bookingRepository.findByIdempotencyKey("demo-1").orElseThrow();
@@ -69,7 +69,7 @@ class BookingRepositoryTest {
     @DisplayName("the unique index rejects a second row with the same key, whatever the service checked")
     void duplicateIdempotencyKeyIsRejectedByTheDatabase() {
         Flight flight = flight("UA123");
-        bookingRepository.saveAndFlush(new Booking(flight, "Smit Lakhani", 3, "demo-1", null, CREATED_AT));
+        bookingRepository.saveAndFlush(new Booking(flight, "Jane Doe", 3, "demo-1", null, CREATED_AT));
 
         assertThatThrownBy(() ->
                 bookingRepository.saveAndFlush(new Booking(flight, "Someone Else", 1, "demo-1", null, CREATED_AT)))
@@ -80,7 +80,7 @@ class BookingRepositoryTest {
     @DisplayName("JOIN FETCH loads the flight eagerly, so listing bookings has no N+1")
     void joinFetchInitialisesTheFlight() {
         Flight flight = flight("UA123");
-        bookingRepository.saveAndFlush(new Booking(flight, "Smit Lakhani", 3, "demo-1", null, CREATED_AT));
+        bookingRepository.saveAndFlush(new Booking(flight, "Jane Doe", 3, "demo-1", null, CREATED_AT));
         bookingRepository.saveAndFlush(new Booking(flight, "Someone Else", 1, "demo-2", null, CREATED_AT));
         // Detach everything, so the flight can only be present if the query fetched it.
         entityManager.clear();
@@ -91,7 +91,7 @@ class BookingRepositoryTest {
         assertThat(bookings).hasSize(2);
         assertThat(bookings)
                 .extracting(Booking::getPassengerName)
-                .containsExactlyInAnyOrder("Smit Lakhani", "Someone Else");
+                .containsExactlyInAnyOrder("Jane Doe", "Someone Else");
         assertThat(Hibernate.isInitialized(bookings.get(0).getFlight()))
                 .as("@ManyToOne is LAZY, so an initialised proxy proves the JOIN FETCH ran")
                 .isTrue();
@@ -101,7 +101,7 @@ class BookingRepositoryTest {
     @Test
     void findByFlightNumberIgnoresOtherFlights() {
         bookingRepository.saveAndFlush(
-                new Booking(flight("UA123"), "Smit Lakhani", 3, "demo-1", null, CREATED_AT));
+                new Booking(flight("UA123"), "Jane Doe", 3, "demo-1", null, CREATED_AT));
         bookingRepository.saveAndFlush(
                 new Booking(flight("UA456"), "Someone Else", 1, "demo-2", null, CREATED_AT));
 
