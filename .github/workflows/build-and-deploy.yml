@@ -129,11 +129,12 @@ jobs:
       - name: Build and test the Lambda consumer
         run: ./mvnw -B -f lambda/pom.xml clean verify
 
-      # template.yaml deploys the shaded jar as it is, with no `sam build`, so
-      # its CodeUri must name the file the build above wrote, and that file
-      # must hold the handler class. A renamed artefact or handler fails here
-      # instead of at `sam deploy`.
+      # lambda/template.yaml deploys the shaded jar as it is, with no
+      # `sam build`, so its CodeUri (relative to the template) must name the
+      # file the build above wrote, and that file must hold the handler class.
+      # A renamed artefact or handler fails here instead of at `sam deploy`.
       - name: The SAM template points at the Lambda jar
+        working-directory: lambda
         run: |
           code_uri=$(sed -n 's/^ *CodeUri: *//p' template.yaml)
           handler=$(sed -n 's/^ *Handler: *//p' template.yaml)
@@ -208,8 +209,8 @@ jobs:
       KUBECONFORM_VERSION: v0.8.0
       # From the CHECKSUMS file published beside the v0.8.0 release.
       KUBECONFORM_SHA256: 9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883
-      # The version cluster.yaml pins, not "master": the development schemas
-      # accept fields the cluster this repository creates does not have.
+      # The version deploy/aws/cluster.yaml pins, not "master": the development
+      # schemas accept fields the cluster this repository creates does not have.
       KUBERNETES_VERSION: 1.36.0
       CFN_LINT_VERSION: 1.57.0
       # Pinned because the runner image's shellcheck drifts, and versions
@@ -278,7 +279,7 @@ jobs:
         run: |
           pipx install "cfn-lint==${CFN_LINT_VERSION}"
           cfn-lint --version
-          cfn-lint template.yaml deploy/aws/foundation.yaml deploy/aws/data.yaml
+          cfn-lint lambda/template.yaml deploy/aws/foundation.yaml deploy/aws/data.yaml
 
       - name: Set up the SAM CLI
         uses: aws-actions/setup-sam@89ddb14d60e682855e3fea4be85b3c56485de310 # v3
@@ -288,7 +289,7 @@ jobs:
       # --region, because the SAM translator needs one to resolve pseudo
       # parameters. No credentials are used or needed: this reads a file.
       - name: Validate the SAM template
-        run: sam validate --lint --region "$AWS_REGION"
+        run: sam validate --lint --region "$AWS_REGION" --template-file lambda/template.yaml
 
       # `bash -n` as well: shellcheck finds unquoted expansions and bash 3.2
       # array traps, and `bash -n` finds an unbalanced heredoc that shellcheck
@@ -354,7 +355,6 @@ jobs:
           format: sarif
           output: trivy-fs.sarif
           exit-code: '0'
-          trivyignores: .trivyignore
 
       # Push only: a pull request from a fork has a read-only token.
       - name: File the findings in the Security tab
@@ -366,7 +366,8 @@ jobs:
 
       # The gate. `ignore-unfixed` and CRITICAL/HIGH only: a CVE with no
       # released fix is nothing this build can act on, and a gate that blocks
-      # on it gets disabled.
+      # on it gets disabled. Trivy reads ./.trivyignore if one is added. None
+      # exists, and CONTRIBUTING.md says what an entry would have to carry.
       - name: Fail on fixable CRITICAL or HIGH findings
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -377,7 +378,6 @@ jobs:
           ignore-unfixed: true
           format: table
           exit-code: '1'
-          trivyignores: .trivyignore
 
       # Advisory. The misconfiguration rules are written for a production
       # cluster and flag documented decisions here, such as no NetworkPolicy

@@ -12,7 +12,7 @@ Flight inventory and booking service: a Spring Boot REST API over PostgreSQL tha
 
 I picked an airline because seat inventory is a real consistency problem: many clients want the same few seats, clients retry, and a mistake sells one seat twice.
 
-**Scope.** This is a demo that has never served production traffic. CI builds both modules and runs every test, including the PostgreSQL integration tests, on every push or pull request to `main`. CI also builds the image from the `Dockerfile` on every push or pull request to `main`, starts it with no database, and never pushes it. `k8s/`, `template.yaml`, `deploy/aws/` and the deploy job are written, linted and validated offline, but I have never applied them. Their prices and runbook are in [DEPLOYMENT.md](DEPLOYMENT.md), and [Project status](#project-status) shows what has actually run.
+**Scope.** This is a demo that has never served production traffic. CI builds both modules and runs every test, including the PostgreSQL integration tests, on every push or pull request to `main`. CI also builds the image from the `Dockerfile` on every push or pull request to `main`, starts it with no database, and never pushes it. `k8s/`, `lambda/template.yaml`, `deploy/aws/` and the deploy job are written, linted and validated offline, but I have never applied them. Their prices and runbook are in [DEPLOYMENT.md](DEPLOYMENT.md), and [Project status](#project-status) shows what has actually run.
 
 **Contents:** [Documentation](#documentation) · [Run it](#run-it-in-30-seconds) · [Status](#project-status) · [Architecture](#architecture) · [Layout](#repository-layout) · [Security](#security) · [API](#api) · [Metrics](#metrics) · [Tests](#tests) · [Deployment](#deployment-and-cost) · [Trade-offs](#trade-offs-and-known-limitations) · [Review](#what-i-found-in-review) · [Versions](#versions)
 
@@ -64,8 +64,8 @@ Without `-u` you get `401 {"code":"UNAUTHENTICATED"}`. With `api` on an `ops` en
 With the app running, in a second terminal:
 
 ```bash
-./demo.sh          # pauses between acts, so you can talk over it
-./demo.sh --fast   # no pauses
+scripts/demo.sh          # pauses between acts, so you can talk over it
+scripts/demo.sh --fast   # no pauses
 ```
 
 Eight acts run over HTTP: the paged API and the normalised `Location` header, idempotent replay, and the error codes with the cancelled-flight refusal. Ten callers then race on one key. With one payload all ten get the same booking, and with ten payloads nine are told the key is taken. The last acts show `BOARDING → ARRIVED` refused, the 401/403 split and the actuator surface Kubernetes probes. The script checks the app and the credentials first, and uses `python3 -m json.tool` if `jq` is absent. Restart the app to reset its in-memory state.
@@ -130,7 +130,7 @@ This table bounds every claim in this README.
 | **Built, tested, and exercised over HTTP** | The whole app module. Every endpoint hit with `curl` against a running instance. Every status code in the tables below observed over HTTP or in a test, including the 401 and 403 bodies, except one 503 that no test covers: the health 503 during a database outage. `LockTimeoutTest` holds the flight row and gets the 503 end to end, for a booking and for a booking cancellation. The flight status change and cancellation get theirs only in a slice test with a mocked service (`FlightControllerTest#flightWriteBehindARowLockReturns503`), and `DATABASE_UNAVAILABLE` likewise, on a flight read (`FlightControllerTest#noDatabaseConnectionReturns503`). The Lambda module, via 25 tests: 19 for the handler and 6 for the consumer side of the event contract. |
 | **Verified against real PostgreSQL in CI** | The 9 Testcontainers integration tests: 5 in `BookingIntegrationTest`, 3 in `service/OutboxPrunePostgresTest` and 1 in `LockTimeoutPostgresTest`. CI runs all 291 tests, and these 9 are the only ones on PostgreSQL. The 9 apply the Flyway migrations to an empty database and check `ddl-auto: validate` against the schema those migrations produced. They run `SELECT … FOR UPDATE` under 20 threads competing for 5 seats, replay the same idempotency key from 20 threads at once, and hold a flight row until PostgreSQL's own 3 s `lock_timeout` fires with SQLSTATE `55P03`. The runners have Docker, so these execute there and skip on a laptop without one, and the `build` job fails if any of the three classes is skipped or missing. |
 | **Built and started in CI, never pushed** | The container image. The `image` job builds it from the `Dockerfile` on every push or pull request to `main`, starts it with no environment, and fails unless it stops at startup for want of a database. It has never been pushed to a registry, never run against a database and never served a request. |
-| **Authored and reviewed, never executed** | `sam deploy` and `sam local invoke`; there is no `sam build`, because Maven builds the jar that `template.yaml` names. Every `kubectl` and `eksctl` step. The deploy half of the GitHub Actions workflow, which is gated off (see below). |
+| **Authored and reviewed, never executed** | `sam deploy` and `sam local invoke`; there is no `sam build`, because Maven builds the jar that `lambda/template.yaml` names. Every `kubectl` and `eksctl` step. The deploy half of the GitHub Actions workflow, which is gated off (see below). |
 | **Not implemented** | A Solace binding. Trace **export** from the service: ids are generated and logged, but there is no collector to send spans to. The Lambda's `Tracing: Active` has X-Ray record a sample of its invocations, and those traces do not carry the service's trace id. Rate limiting. |
 
 **Warning.** Nothing here has ever been deployed, and merging to `main` does not deploy it.
@@ -141,7 +141,7 @@ The deploy job is gated on a `DEPLOY_ENABLED` repository variable that has never
 
 What the repository does not claim:
 
-- I wrote `events/*.json` by hand, and none of it is captured queue traffic. Their `md5OfBody` values are placeholders, and nothing in the code reads that field.
+- I wrote `lambda/events/*.json` by hand, and none of it is captured queue traffic. Their `md5OfBody` values are placeholders, and nothing in the code reads that field.
 
 ## Architecture
 
@@ -222,19 +222,18 @@ The same picture with method names, plus the booking sequence, the idempotency d
 ├── CHANGELOG.md                   1.0.0, 1.1.0, the unreleased work, and the response field 1.1.0 removed
 ├── adr/                           16 decision records, 0001–0016
 ├── scripts/                       refcheck.py, linkcheck.py and sweeps.sh run in CI;
-│                                  numbers.sh recomputes the counts
+│                                  numbers.sh recomputes the counts; demo.sh is the tour
 ├── contracts/                     the event schema both modules test against
-├── lambda/                        separate parentless Maven module: SQS → DynamoDB consumer
+├── lambda/                        separate parentless Maven module: SQS → DynamoDB consumer,
+│                                  its SAM template and the SQS fixtures for sam local invoke
 ├── k8s/                           kustomize: base, aws overlay, Ingress component
 │   ├── base/                      6 manifests true in any environment
 │   ├── overlays/aws/              image, IRSA annotation, queue URL, database URL
 │   └── components/ingress/        separate, because applying it provisions a billed ALB
 ├── deploy/aws/                    up / down / cost-check / render, a selftest against
 │                                  stubbed tools, two helpers, two CloudFormation
-│                                  templates, and the runbook that orders them
-├── events/                        SQS fixtures for sam local invoke
-├── cluster.yaml                   eksctl cluster definition, version pinned
-├── template.yaml                  SAM template for the Lambda
+│                                  templates, the eksctl cluster definition (version
+│                                  pinned), and the runbook that orders them
 ├── compose.yaml                   PostgreSQL + the app, for the container path locally
 ├── Dockerfile                     multi-stage: JDK + Maven build → JRE runtime
 └── .github/workflows/             build-and-deploy.yml (build, infra-lint, trivy-fs,
@@ -374,7 +373,7 @@ The `Dockerfile` sets `SPRING_PROFILES_ACTIVE=prod`, so a bare `docker run` with
 
 The image measured 299.5 MB (299477691 bytes) in CI run 36032424801 on 2026-09-24, as `docker image inspect` reports it on the runner. It has never been pushed, so no registry has reported a size for it. The runtime base is a tag rather than a digest, so the figure moves when `eclipse-temurin:21-jre-alpine` is rebuilt or a dependency changes.
 
-The Lambda's SQS event in `template.yaml` caps the consumer at five concurrent invocations with `ScalingConfig.MaximumConcurrency: 5` (valid from 2 to 1000). It reserves nothing from the account's concurrency pool and limits only the poller.
+The Lambda's SQS event in `lambda/template.yaml` caps the consumer at five concurrent invocations with `ScalingConfig.MaximumConcurrency: 5` (valid from 2 to 1000). It reserves nothing from the account's concurrency pool and limits only the poller.
 
 The EKS control plane bills about $0.10 an hour (about $73 a month) with no worker nodes, until it is deleted. On demand in `ap-south-1` the whole stack costs $7.72 a day: $54 for 7 days, $116 for 15 and $232 for 30, or $64, $137 and $273 with the 18% GST AWS India invoices. See [DEPLOYMENT.md](DEPLOYMENT.md) for the breakdown, three cheaper shapes (one is a single EC2 instance at $0.80 a day) and the runbook. `deploy/aws/down.sh` ends with fourteen checks and fails if any finds something or if a query itself fails.
 
@@ -393,7 +392,7 @@ Each row is a choice I made, set against what a production system would do.
 | Contract tests share a JSON file | Pact, with a broker and a `can-i-deploy` gate in CI | The file catches the change that breaks the consumer, which is the whole job at two modules in one repository. A broker pays off when the consumers are other teams' services. |
 | The service's traces are generated and not exported; the trace id crosses into the Lambda as a log line | an OTLP collector on both sides, so the queue hop is one waterfall | The ids are on every log line and response, and `BookingEventHandler` logs the producer's `traceparent`, so two log greps follow one booking end to end. A waterfall needs a collector, and an exporter in a function whose whole point is a small package (10.3 MiB, with a 34 KB HTTP client) and a fast cold start. |
 | H2 uses `create-drop` | Flyway + `validate`, as PostgreSQL already has | Migrations on a throwaway in-memory database buy nothing. |
-| `events/*.json` `md5OfBody` values are placeholders | real captured messages | Nothing reads the field, but it is not real traffic. |
+| `lambda/events/*.json` `md5OfBody` values are placeholders | real captured messages | Nothing reads the field, but it is not real traffic. |
 
 ### Still open
 

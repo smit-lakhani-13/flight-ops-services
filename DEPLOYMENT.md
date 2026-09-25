@@ -49,7 +49,7 @@ subnets with no NAT gateway cost $6.42/day. A single EC2 instance running
 ```bash
 export JAVA_HOME=/opt/homebrew/opt/openjdk@21      # or wherever your JDK 21 is
 ./mvnw spring-boot:run
-./demo.sh                                          # in another terminal
+scripts/demo.sh                                    # in another terminal
 ```
 
 This runs on H2 in memory, and the outbox logs its rows instead of sending
@@ -61,7 +61,7 @@ PostgreSQL's own row locks and `lock_timeout`.
 
 ```bash
 docker compose up --build
-./demo.sh
+scripts/demo.sh
 docker compose down -v
 ```
 
@@ -81,7 +81,7 @@ export AWS_REGION=ap-south-1 AWS_DEFAULT_REGION=ap-south-1   # what deploy/aws/l
 rm -rf .aws-sam
 ./mvnw -B -q -f lambda/pom.xml clean package
 sam deploy \
-  --template-file template.yaml \
+  --template-file lambda/template.yaml \
   --stack-name flight-ops-lambda \
   --resolve-s3 \
   --capabilities CAPABILITY_IAM \
@@ -90,14 +90,15 @@ sam deploy \
   --tags Project=flight-ops
 ```
 
-These are the commands step 3 of `up.sh` runs, in the region
-`deploy/aws/lib.sh` pins, and they need JDK 21. Maven
-builds the jar, and `sam build` is not used. SAM builds in a scratch copy of
-the `CodeUri` directory, where the Lambda tests cannot find `../events` and
-`../contracts`. So `template.yaml` points `CodeUri` at the shaded jar,
-`lambda/target/booking-event-handler.jar`. `sam deploy` prefers the template
-in `.aws-sam/build` when one exists, so the first line removes a stale build
-left by an earlier `sam build`.
+These are the commands step 3 of `up.sh` runs, from the repository root, in
+the region `deploy/aws/lib.sh` pins, and they need JDK 21. Maven builds the
+jar, and `sam build` is not used. SAM builds in a scratch copy of the
+`CodeUri` directory, where the Lambda tests cannot find `../contracts`. So
+`lambda/template.yaml` points `CodeUri` at the shaded jar,
+`target/booking-event-handler.jar`, which SAM resolves against the template's
+directory. `sam deploy` prefers the template in `.aws-sam/build` when one
+exists, so the second line removes a stale build left by an earlier
+`sam build`.
 
 This takes two minutes and creates the queue, the DLQ, two CloudWatch alarms
 on them with no notification target, the DynamoDB table and the Lambda. Then
@@ -168,9 +169,9 @@ waits up to 30 minutes for CI to create `deployment/flight-ops`, then up to 20
 for it to become available. The deploy job is skipped unless `DEPLOY_ENABLED`
 is `true` and the run is on `main`, so a missing variable shows up as the
 30-minute wait running out. The script then creates the Ingress, waits for the
-load balancer, and finishes by running `demo.sh` against the public URL. It
-skips `demo.sh` when the Secret came from an earlier run, because it no longer
-knows the passwords.
+load balancer, and finishes by running `scripts/demo.sh` against the public
+URL. It skips the demo when the Secret came from an earlier run, because it
+no longer knows the passwords.
 
 CI deploys the application, and the script does not. The image tag is the
 commit SHA, and only the job that built the image knows it. A laptop build
@@ -360,7 +361,7 @@ anything.
 | | What changes | $/day | 15 days with GST |
 |---|---|---|---|
 | **A. As designed** | nothing | 7.72 | $137 |
-| A′. Public subnets | `privateNetworking: false` and `vpc.nat.gateway: Disable` in `cluster.yaml`; no NAT gateway; nodes get public IPs | 6.42 | $114 |
+| A′. Public subnets | `privateNetworking: false` and `vpc.nat.gateway: Disable` in `deploy/aws/cluster.yaml`; no NAT gateway; nodes get public IPs | 6.42 | $114 |
 | B. EKS Fargate | no node group; CoreDNS and the controller also move to Fargate; more setup | 7.12 | $126 |
 | **C. One EC2 t3.small** | `compose.yaml` on a single instance, plus the SAM stack. No EKS, no ALB, no RDS | **0.80** | **$14** |
 | D. Prepare only | nothing created | 0 | $0 |
@@ -413,7 +414,7 @@ Read the forecast instead of today's total.
 exports it, so no script depends on the caller's profile. A teardown run
 against the wrong default region would report a clean sweep, because it would
 be looking somewhere empty. [ADR 0010](adr/0010-region-ap-south-1.md) records
-the choice of region. The files that set it are `cluster.yaml`,
+the choice of region. The files that set it are `deploy/aws/cluster.yaml`,
 `deploy/aws/lib.sh`, `k8s/base/configmap.yaml`,
 `k8s/overlays/aws/kustomization.yaml`, `.github/workflows/build-and-deploy.yml`
 and `src/main/resources/application.yml`. Cross-region drift shows up as an
@@ -426,9 +427,9 @@ aws configure set region ap-south-1
 The three stacks `up.sh` deploys itself (the foundation, the data stack and
 the Lambda) carry the tag `Project=flight-ops`. It passes
 `--tags Project=flight-ops` to each one, and CloudFormation copies stack tags
-to the resources that take them. `cluster.yaml` puts the same tag on what
-eksctl creates from it: the cluster, its VPC and NAT gateway, and the node
-group. A few things are left untagged: the four EKS addons, the two IAM roles
+to the resources that take them. `deploy/aws/cluster.yaml` puts the same tag
+on what eksctl creates from it: the cluster, its VPC and NAT gateway, and the
+node group. A few things are left untagged: the four EKS addons, the two IAM roles
 made by `eksctl create iamserviceaccount`, the load balancer controller's IAM
 policy, and the shared SAM bucket. None of them bills more than cents. The
 addons and the roles go with the cluster, and `down.sh` deletes the policy by
@@ -447,8 +448,8 @@ expired token returns the same empty string as a clean account.
 The Kubernetes version is a cost control too. A version in extended support
 bills $0.60 per cluster-hour, and standard support bills $0.10. Extended
 support is on by default, so an aged-out version keeps running at six times
-the price. `cluster.yaml` pins `1.36`, and `up.sh` sets the upgrade policy to
-`STANDARD` right after creation. On 22 September 2026, standard support covered
+the price. `deploy/aws/cluster.yaml` pins `1.36`, and `up.sh` sets the upgrade
+policy to `STANDARD` right after creation. On 22 September 2026, standard support covered
 1.36, 1.35 and 1.34, and extended support covered 1.33 and older. Re-check
 with:
 
@@ -462,8 +463,8 @@ The filter field is `versionStatus`. The older `status` field is deprecated in
 the EKS API, and `clusterVersionStatus` does not exist and returns an empty
 list.
 
-No AWS account id is hard-coded anywhere. The files under `events/` use the
-placeholder `123456789012`, and the workflow reads
+No AWS account id is hard-coded anywhere. The files under `lambda/events/` use
+the placeholder `123456789012`, and the workflow reads
 `${{ secrets.AWS_ACCOUNT_ID }}`. No access key is stored either.
 `DefaultCredentialsProvider` in `AwsConfig` reads `~/.aws` on a laptop and the
 projected service-account token under IRSA. The deploy job, which is gated
@@ -545,7 +546,7 @@ Under load, in the order it happens:
 4. **Lambda concurrency.** The SQS event source sets
    `ScalingConfig.MaximumConcurrency: 5`, so a backlog runs at most five
    invocations. It reserves nothing from the account pool and limits only the
-   poller, and `template.yaml` explains the trade-off. Messages over the cap
+   poller, and `lambda/template.yaml` explains the trade-off. Messages over the cap
    wait in the queue, and their receive count is not raised, so a long backlog
    is slow and does not reach the DLQ. An account pool that runs dry can still
    throttle, and that does raise the count towards `maxReceiveCount: 3`. Raise

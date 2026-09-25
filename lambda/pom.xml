@@ -42,7 +42,7 @@
           `release`, not source/target: it compiles against the Java 21 API, so a
           call to a newer method fails the build instead of throwing
           NoSuchMethodError inside Lambda. It must match `Runtime: java21` in
-          ../template.yaml, and the two move together. I kept 21 when Lambda
+          template.yaml, and the two move together. I kept 21 when Lambda
           added java25, so both modules build with one JDK.
         -->
         <maven.compiler.release>21</maven.compiler.release>
@@ -203,7 +203,7 @@
             <scope>test</scope>
         </dependency>
 
-        <!-- EventLoader: reads the SQS event files in ../events the way Lambda would. -->
+        <!-- EventLoader: reads the SQS event files in events/ the way Lambda would. -->
         <dependency>
             <groupId>com.amazonaws</groupId>
             <artifactId>aws-lambda-java-tests</artifactId>
@@ -217,8 +217,8 @@
         <finalName>booking-event-handler</finalName>
 
         <!--
-          ../events is on the test classpath, so the tests and
-          `sam local invoke -e events/sqs.json` read the same fixture files.
+          events/ is on the test classpath, so the tests and
+          `sam local invoke -e lambda/events/sqs.json` read the same fixture files.
           Declaring <testResources> replaces the default, which is why
           src/test/resources is listed again.
         -->
@@ -227,7 +227,7 @@
                 <directory>src/test/resources</directory>
             </testResource>
             <testResource>
-                <directory>../events</directory>
+                <directory>events</directory>
             </testResource>
         </testResources>
 

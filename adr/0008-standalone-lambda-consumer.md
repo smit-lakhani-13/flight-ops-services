@@ -16,7 +16,7 @@ standard queues are at-least-once by design.
 I wrote the consumer as a separate, parentless Maven module (`lambda/pom.xml`)
 containing one plain `RequestHandler`
 (`lambda/src/main/java/com/smit/flightops/lambda/BookingEventHandler.java`).
-SAM deploys it (`template.yaml`) on the `java21` runtime, on `arm64`.
+SAM deploys it (`lambda/template.yaml`) on the `java21` runtime, on `arm64`.
 
 Idempotency is a conditional write: `attribute_not_exists(bookingId)` on
 `PutItem`. The sort key `timestamp#bookingId` is derived entirely from the

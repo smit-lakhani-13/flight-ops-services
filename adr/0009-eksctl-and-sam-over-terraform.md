@@ -27,8 +27,8 @@ shell script orchestrates them.
 | Layer | Tool | File |
 |---|---|---|
 | Account-level: ECR, GitHub OIDC, CI role, budgets | CloudFormation | `deploy/aws/foundation.yaml` |
-| Cluster, VPC, node group, IRSA | eksctl | `cluster.yaml` |
-| Queue, DLQ, table, Lambda | AWS SAM | `template.yaml` |
+| Cluster, VPC, node group, IRSA | eksctl | `deploy/aws/cluster.yaml` |
+| Queue, DLQ, table, Lambda | AWS SAM | `lambda/template.yaml` |
 | Database | CloudFormation | `deploy/aws/data.yaml` |
 | Kubernetes manifests | kustomize | `k8s/base`, `k8s/overlays/aws` |
 | Order, idempotency, secrets, teardown | bash | `deploy/aws/up.sh`, `down.sh` |
@@ -46,12 +46,12 @@ Controller, which is published as a chart. The application has no chart.
   fewer than half of them are comments.
 
 * **SAM understands Lambda's wiring.** Maven builds the shaded jar, and
-  `CodeUri` in `template.yaml` points at it.
-  `sam deploy --template-file template.yaml` uploads the jar and deploys the
-  stack. The `Events` shorthand and a policy template wire the queue, the event
-  source mapping and the IAM role in a few lines. `sam local invoke` runs the
-  handler against a fixture before anything is deployed. Terraform would need
-  each of those as a separate resource, and the jar would come from Maven
+  `CodeUri` in `lambda/template.yaml` points at it.
+  `sam deploy --template-file lambda/template.yaml` uploads the jar and deploys
+  the stack. The `Events` shorthand and a policy template wire the queue, the
+  event source mapping and the IAM role in a few lines. `sam local invoke` runs
+  the handler against a fixture before anything is deployed. Terraform would
+  need each of those as a separate resource, and the jar would come from Maven
   either way.
 
 * **CloudFormation for the rest.** The two remaining stacks are plain
@@ -79,12 +79,12 @@ Controller, which is published as a chart. The application has no chart.
 
 **Correction (2026-09-23).** The second bullet used to say that `sam build`
 compiles the Java module and packages it. It could not produce the handler jar.
-SAM builds in a scratch copy of `lambda/`, where the Lambda tests cannot find
-`../events` and `../contracts`. The deploy path now builds with Maven
-(`deploy/aws/up.sh` step 3), and the bullet gives the reason that is left. The
-old bullet, and the Terraform entry below, also counted the build against
-Terraform. Both tools now take the jar from Maven, so neither does. The
-decision stands on the other reasons. Only the build reason was wrong.
+SAM builds in a scratch copy of `lambda/`, where the Lambda tests could not find
+`../contracts` or the SQS fixtures, which were then in the root. The deploy path
+now builds with Maven (`deploy/aws/up.sh` step 3), and the bullet gives the
+reason that is left. The old bullet, and the Terraform entry below, also counted
+the build against Terraform. Both tools now take the jar from Maven, so neither
+does. The decision stands on the other reasons. Only the build reason was wrong.
 
 ## Alternatives considered
 

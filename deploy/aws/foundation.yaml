@@ -213,7 +213,7 @@ Resources:
           # One action on one queue. The service only calls SendMessage, with
           # the queue URL from configuration, so it needs neither GetQueueUrl
           # nor GetQueueAttributes. The Lambda consumes under its own role from
-          # template.yaml.
+          # lambda/template.yaml.
           - Effect: Allow
             Action:
               - sqs:SendMessage

@@ -3,8 +3,8 @@
 # Live demo of flight-ops-service over real HTTP.
 #
 #   Terminal 1:  ./mvnw spring-boot:run
-#   Terminal 2:  ./demo.sh                # pauses between acts so you can talk
-#                ./demo.sh --fast         # no pauses
+#   Terminal 2:  scripts/demo.sh          # pauses between acts so you can talk
+#                scripts/demo.sh --fast   # no pauses
 #
 # The default profile is in-memory H2 seeded with 3 flights, so there is
 # nothing to install or clean up. Restarting the app resets all state.
@@ -67,7 +67,7 @@ jq_or_cat() { if command -v jq >/dev/null 2>&1; then jq .; else python3 -m json.
 if ! curl -fsS -o /dev/null "$BASE/actuator/health" 2>/dev/null; then
   echo "${red}The app is not responding at $BASE${off}"
   echo "Start it first, in another terminal:"
-  echo "    cd $(dirname "$0") && ./mvnw spring-boot:run"
+  echo "    cd $(cd "$(dirname "$0")/.." && pwd) && ./mvnw spring-boot:run"
   exit 1
 fi
 echo "${grn}App is up at $BASE${off}"
@@ -81,7 +81,7 @@ case "$probe" in
   401)
     echo "${red}Health is up, but the API did not accept these credentials (401).${off}"
     echo "The default profile expects api/dev-secret. Override with:"
-    echo "    AUTH='-u someone:something' ./demo.sh"
+    echo "    AUTH='-u someone:something' scripts/demo.sh"
     exit 1
     ;;
   403)
@@ -150,7 +150,7 @@ pause
 act "ACT 2: idempotency"
 say "POST a booking. 201, with a Location header."
 POST_BOOKING="curl -s -i $AUTH -X POST '$API/bookings' -H 'Content-Type: application/json' \\
-  -d '{\"flightNumber\":\"UA123\",\"passengerName\":\"Smit Lakhani\",\"seats\":2,\"idempotencyKey\":\"demo-key-$RUN\"}'"
+  -d '{\"flightNumber\":\"UA123\",\"passengerName\":\"Test Passenger\",\"seats\":2,\"idempotencyKey\":\"demo-key-$RUN\"}'"
 echo "${ylw}\$ $(redact "$POST_BOOKING") | head -4${off}"
 HDRS=$(eval "$POST_BOOKING")
 printf '%s\n' "$HDRS" | head -4
@@ -174,7 +174,7 @@ pause
 say "Now replay the same idempotency key. Still 201, same bookingId,"
 say "and the seat count does not move. A retry after a timeout is safe."
 run "curl -s $AUTH -X POST '$API/bookings' -H 'Content-Type: application/json' \\
-  -d '{\"flightNumber\":\"UA123\",\"passengerName\":\"Smit Lakhani\",\"seats\":2,\"idempotencyKey\":\"demo-key-$RUN\"}' | jq_or_cat"
+  -d '{\"flightNumber\":\"UA123\",\"passengerName\":\"Test Passenger\",\"seats\":2,\"idempotencyKey\":\"demo-key-$RUN\"}' | jq_or_cat"
 run "curl -s $AUTH '$API/flights/UA123' | jq_or_cat"
 pause
 
@@ -211,7 +211,7 @@ echo "${ylw}\$ seq 1 10 | xargs -P 10 ... POST /bookings  (all with idempotencyK
 TMP=$(mktemp -d)
 seq 1 10 | xargs -P 10 -I{} curl -s "${AUTH_ARGS[@]}" -o "$TMP/{}.json" -w "%{http_code}\n" \
   -X POST "$API/bookings" -H 'Content-Type: application/json' \
-  -d "{\"flightNumber\":\"$RACE_A\",\"passengerName\":\"Smit Lakhani\",\"seats\":1,\"idempotencyKey\":\"race-demo-1-$RUN\"}" \
+  -d "{\"flightNumber\":\"$RACE_A\",\"passengerName\":\"Test Passenger\",\"seats\":1,\"idempotencyKey\":\"race-demo-1-$RUN\"}" \
   | sort | uniq -c | sed 's/^/   /'
 
 echo

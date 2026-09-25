@@ -497,7 +497,7 @@ fi
 
 name="lib.sh names the node group cluster.yaml declares"
 : > "$OUT"
-declared=$(sed -n '/^managedNodeGroups:/,/^[^ #]/s/^  - name: //p' "$here/../../cluster.yaml")
+declared=$(sed -n '/^managedNodeGroups:/,/^[^ #]/s/^  - name: //p' "$here/cluster.yaml")
 # shellcheck disable=SC2016  # expanded by the inner shell, after lib.sh is sourced
 named=$(bash -c '. "$1"; printf %s "${NODEGROUP:-}"' _ "$tmp/deploy/aws/lib.sh")
 if [ -n "$declared" ] && [ "$declared" = "$named" ]; then
@@ -619,7 +619,7 @@ name="up.sh runs each of those checks"
 : > "$OUT"
 missing_calls=''
 # shellcheck disable=SC2016  # the calls are matched as written, unexpanded
-for call in 'require_jdk21 "$repo/mvnw"' 'require_eksctl' 'complete_cluster "$repo/cluster.yaml"' \
+for call in 'require_jdk21 "$repo/mvnw"' 'require_eksctl' 'complete_cluster "$here/cluster.yaml"' \
         'grant_namespace_access ' 'if stack_ready "$DATA_STACK"' \
         'require_jdbc_url "$DB_URL"' 'ensure_metrics_server' \
         'wait_for_deployment'; do

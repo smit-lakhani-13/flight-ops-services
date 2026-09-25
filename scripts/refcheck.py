@@ -135,7 +135,7 @@ def main():
                         continue
                     elif '/' not in path and len(basenames.get(path, [])) == 1:
                         # A bare filename is accepted when it is unambiguous:
-                        # `cluster.yaml` means the one in the root.
+                        # `cluster.yaml` means deploy/aws/cluster.yaml.
                         resolved = basenames[path][0]
                     elif '/' not in path and path in basenames:
                         checked += 1

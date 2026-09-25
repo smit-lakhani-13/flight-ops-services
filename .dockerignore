@@ -21,16 +21,16 @@ mvnw.cmd
 .vscode/
 .DS_Store
 
-# Docs and infrastructure: not needed to run the app. `**/*.md`, because a
-# bare `*.md` matches only the root of the context.
+# Docs, infrastructure, scripts and contract fixtures: not needed to build or
+# run the app. `**/*.md`, because a bare `*.md` matches only the root of the
+# context.
 **/*.md
 k8s/
 deploy/
-cluster.yaml
-template.yaml
+scripts/
+contracts/
 .github/
 lambda/
-events/
 # The build recipe itself is not an input to the build.
 Dockerfile
 .dockerignore

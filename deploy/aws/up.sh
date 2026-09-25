@@ -121,16 +121,16 @@ step "3/12  Lambda stack — SQS, DLQ, DynamoDB, the consumer"
 # cluster needs its queue URL.
 #
 # Maven builds the jar, not `sam build`. SAM copies only the CodeUri directory
-# into a scratch directory, and the Lambda tests read ../events and
-# ../contracts, so they fail there. template.yaml points CodeUri at the shaded
-# jar. sam deploy prefers .aws-sam/build/template.yaml when one exists, so a
-# stale build from an earlier `sam build` is removed first.
+# into a scratch directory, and the Lambda tests read ../contracts, so they
+# fail there. lambda/template.yaml points CodeUri at the shaded jar, relative
+# to itself. sam deploy prefers .aws-sam/build/template.yaml when one exists,
+# so a stale build from an earlier `sam build` is removed first.
 (
     cd "$repo"
     rm -rf .aws-sam
     ./mvnw -B -q -f lambda/pom.xml clean package
     sam deploy \
-        --template-file template.yaml \
+        --template-file lambda/template.yaml \
         --stack-name "$SAM_STACK" \
         --resolve-s3 \
         --capabilities CAPABILITY_IAM \
@@ -148,9 +148,9 @@ step "4/12  EKS cluster — this is the ~20 minute step"
 # ---------------------------------------------------------------------------
 if eksctl get cluster --name "$CLUSTER_NAME" >/dev/null 2>&1; then
     ok "cluster already exists — checking its addons, OIDC provider and node group"
-    complete_cluster "$repo/cluster.yaml"
+    complete_cluster "$here/cluster.yaml"
 else
-    eksctl create cluster -f "$repo/cluster.yaml"
+    eksctl create cluster -f "$here/cluster.yaml"
 fi
 
 # eksctl does not always set the upgrade policy, and the default on some paths
@@ -442,7 +442,7 @@ ok "health check passes through the load balancer"
 step "12/12  Proving it works, over the internet"
 # ---------------------------------------------------------------------------
 if [ "$API_PASSWORD_PLAIN" = '(unchanged — see your earlier run)' ]; then
-    warn "skipping demo.sh — the API password is from an earlier run and is not known here"
+    warn "skipping scripts/demo.sh — the API password is from an earlier run and is not known here"
 else
     # `|| warn`: the deployment has already succeeded, so a failing act must
     # not fail the run or stop the summary below from printing. A command
@@ -450,8 +450,8 @@ else
     BASE="http://$ALB_HOST" \
     AUTH="-u api:$API_PASSWORD_PLAIN" \
     OPS_AUTH="-u ops:$OPS_PASSWORD_PLAIN" \
-        "$repo/demo.sh" --fast \
-        || warn "demo.sh did not finish cleanly. The infrastructure is up and the
+        "$repo/scripts/demo.sh" --fast \
+        || warn "scripts/demo.sh did not finish cleanly. The infrastructure is up and the
     credentials were printed in step 9; investigate with:
         curl -i -u api:<password> http://$ALB_HOST/api/v1/flights"
 fi

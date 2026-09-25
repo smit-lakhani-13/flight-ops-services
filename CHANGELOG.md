@@ -110,6 +110,15 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
   from `main` no longer reports itself as 1.1.0 in `/actuator/info` and the
   OpenAPI document.
 
+- **Layout.** The SAM template and its SQS fixtures moved into the module they
+  deploy (`lambda/template.yaml`, `lambda/events/`), the eksctl file beside
+  the scripts that use it (`deploy/aws/cluster.yaml`), and the demo into
+  `scripts/demo.sh`. `CodeUri` is relative to the template now, and CI's
+  CodeUri check, `cfn-lint` and `sam validate` name the new path. The empty
+  `.trivyignore` is gone, with both `trivyignores` inputs: Trivy still reads
+  one from the root if it is ever added, and `CONTRIBUTING.md` says what an
+  entry must carry. The demo books as `Test Passenger`.
+
 - **Stricter request fields.** A value that breaks one of these rules gets a
   400 `VALIDATION_FAILED` whose body maps the field to the message shown.
   `flightNumber` on `CreateFlightRequest` and `BookingRequest` matches
