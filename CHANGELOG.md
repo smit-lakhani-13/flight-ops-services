@@ -17,9 +17,9 @@ Starting to reject input the contract never allowed, such as a fractional seat
 count or a flight number with a slash, is a fix.
 
 **On the dates.** 1.0.0 was never tagged, so its entry was written afterwards
-from the history and dated by its last commit. All dates are IST. The two
-entries are split by theme (the service, then the hardening pass that
-followed) and not at a single commit. So 1.1.0 lists some fixes committed
+from the history and dated by its last commit. All dates are IST. 1.0.0 and
+1.1.0 are split by theme (the service, then the hardening pass that followed)
+and not at a single commit. So 1.1.0 lists some fixes committed
 before 2026-09-22, and its Boot 4.1.1 upgrade came before some of the work in
 1.0.0.
 
@@ -28,500 +28,324 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
 [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md) records that in a dated line that is
 still blank.
 
-## Unreleased
+## 1.2.0 — 2026-09-26
+
+The [fourth review pass](doc/DEFECT-LOG.md#fourth-review-pass), a full audit
+of the service, the scripts and every document. Most of the fixes deal with
+input the service misread or answered with a 500, a script that could fail
+without saying so, or a sentence that disagreed with the code.
+
+Two changes under Changed refuse requests that 1.1.0 served. Request fields
+are stricter: a flight number with anything but letters and digits (padding is
+still trimmed), an airport code with anything but letters, or a passenger name
+with a control character now gets a 400. The 1.1.0 schema checked only their
+length, but no real flight number, airport code or name needs those
+characters, so this is a fix under the rule above. And the API is JSON only: a
+YAML `Accept` gets a 406 where it used to get YAML, and a `POST` or `PATCH`
+whose `Content-Type` is not `application/json` gets a 415. The 1.1.0 OpenAPI
+document listed only `application/json` for request and response bodies, so
+this too refuses only requests that contract never allowed. Some fixes change
+a response too.
+Misread input, such as a fractional or quoted seat count, now gets a 400, and
+a request that finds no database gets a 503 `DATABASE_UNAVAILABLE` where it
+used to get a 500. Each replaces a wrong answer or an unplanned 500, so each
+is a fix.
+
+The deep documents moved under `doc/`, beside a new `doc/api.md` and a new
+defect log, `doc/DEFECT-LOG.md`, which now holds the bug stories the 1.1.0
+README told. The README was rewritten to point at the file that owns each
+subject.
 
 ### Added
 
-- **Password self-check.** At startup, `SecurityConfig.assertVerifiable` runs
-  the encoder once on each configured hash and stops with, for example,
-  `app.security.api-password cannot be verified by the configured DelegatingPasswordEncoder`.
-  A misspelt id such as `{bcrpyt}`, or an `{argon2}` hash without BouncyCastle,
-  used to pass startup and fail every login with a 500
-  (`PasswordVerifiabilityTest`).
+- **Password self-check.** `SecurityConfig.assertVerifiable` stops startup on a
+  hash it cannot verify, where logins got a 500 (`PasswordVerifiabilityTest`).
 
-- **Bearer challenge.** `JsonAuthenticationEntryPoint` answers an
-  `OAuth2AuthenticationException` with
-  `WWW-Authenticate: Bearer realm="flight-ops-service", error="<code>"`. Every
-  other 401 still gets `Basic realm="flight-ops-service"`
-  (`BearerTokenChallengeTest`).
+- **Bearer challenge.** `JsonAuthenticationEntryPoint` answers a bad token with
+  `WWW-Authenticate: Bearer`, other 401s `Basic` (`BearerTokenChallengeTest`).
 
-- **Unhandled 500s logged.** `ApiErrorController` logs a 5xx that carries an
-  exception at ERROR, as `Unhandled failure on <method> <uri>`. It puts the
-  request id back into the MDC first, so the id in the 500's `X-Request-Id`
-  header finds the line.
+- **Unhandled 500s logged.** `ApiErrorController` logs a 5xx with an exception
+  at ERROR, under the id in the 500's `X-Request-Id` header.
 
-- **New CI gates.** The build job gains "The PostgreSQL tests ran", which fails
-  unless `BookingIntegrationTest` and `OutboxPrunePostgresTest` ran with nothing
-  skipped, and "The SAM template points at the Lambda jar". The deploy job gains
-  "The image will not start without a database", and infra-lint runs
+- **New CI gates.** Steps fail unless all three PostgreSQL test classes ran
+  with nothing skipped, and fail if the SAM template misses the Lambda jar or
+  the image starts without a database. The infra-lint job runs
   `deploy/aws/selftest.sh` against stubbed tools.
 
 - **Race tests.** `BookingIdempotencyTest#oneKeyRacedAcrossTwoFlightsBooksOnce`
-  races one key across two flights, and every race test in
-  `BookingIdempotencyTest` releases its callers through the `startTogether`
-  latch. The PostgreSQL race tests in `BookingIntegrationTest` still start
-  through `invokeAll`.
-  `OutboxPrunePostgresTest#concurrentClaimsAreDisjointAndSkipRowsNotYetDue`
-  runs two outbox claims at once on PostgreSQL.
+  races one key across two flights, and every race test in that class starts
+  through the `startTogether` latch. `OutboxPrunePostgresTest` races two
+  outbox claims on PostgreSQL.
 
-- **Other tests.** `FlightControllerTest#flightNumberRaceReturns409` replaces
-  the misnamed `BookingControllerTest#concurrentDuplicateKeyReturns409`.
-  `SecurityRulesTest#readScopeCannotWrite` now also sends a PATCH with the read
-  scope. `FlightControllerTest#existingFlightNumberReturns409` and
-  `#staleFlightWriteReturns409` cover `DUPLICATE_FLIGHT` and
-  `CONCURRENT_MODIFICATION`, two codes no test asserted before.
+- **Other tests.** `FlightControllerTest#existingFlightNumberReturns409` and
+  `#staleFlightWriteReturns409` are the first to assert a response carrying
+  `DUPLICATE_FLIGHT` and `CONCURRENT_MODIFICATION`, and
+  `#flightNumberRaceReturns409` replaces the misnamed
+  `concurrentDuplicateKeyReturns409`, deleted from `BookingControllerTest`.
+  `SecurityRulesTest#readScopeCannotWrite` also sends a PATCH.
 
 - **The image is built in CI.** A new `image` job builds the `Dockerfile` on
-  every push or pull request to `main`, starts it with no environment,
-  and fails unless it stops at startup for want of a database. It writes the
-  image size to the log and the job summary, holds no cloud or registry
-  credentials and never pushes. The deploy job now needs it.
+  every push or pull request to `main`, fails unless it stops for want of a
+  database, and logs the image size. It has no cloud or registry credentials
+  and never pushes. The deploy job now needs it.
 
-- **The image is scanned in CI.** The `image` job ends with a Trivy scan of
-  the image it built, and fails on a CRITICAL vulnerability with a fix
-  available. Until now only the deploy job, which has never run, scanned an
-  image.
+- **The image is scanned in CI.** The `image` job's Trivy scan fails on a
+  fixable CRITICAL vulnerability; only the never-run deploy job scanned an
+  image before.
 
-- **The README's ADR count is checked.** `scripts/numbers.sh --check-readme`
-  fails when a README count of decision records differs from the ADR files in
-  `adr/`, or when the `adr/README.md` index does not link each of them exactly
-  once, and the docs-check job runs it. The other counts are still compared by
-  hand.
+- **The README's ADR count is checked.** The docs-check job runs
+  `scripts/numbers.sh --check-readme`, which fails when the README or
+  `adr/README.md` disagrees with the files in `adr/`.
 
-- **PostgreSQL's lock timeout has a test.** `LockTimeoutPostgresTest` holds a
-  flight row on PostgreSQL 17 until the profile's own 3 s `lock_timeout`
-  fires. It checks SQLSTATE `55P03`, the 503 with `Retry-After`, the elapsed
-  time and the counter. It runs in CI, and the guard step names it as a third
-  class.
+- **PostgreSQL's lock timeout has a test.** `LockTimeoutPostgresTest` waits out
+  the 3 s `lock_timeout` on PostgreSQL 17 and checks `55P03` and the 503.
 
-- **Event transport decision.** [ADR 0015](adr/0015-event-transport.md) records
-  why events go to an SQS standard queue and what a JMS broker would cost, from
-  documentation and without running one.
+- **Event transport decision.** [ADR 0015](adr/0015-event-transport.md) says why
+  events go to an SQS standard queue and what a JMS broker would cost; the
+  broker side is from documentation and was never built or run.
 
-- **What an Oracle port would change.** [ADR 0016](adr/0016-oracle-port.md)
-  is a proposal written from Oracle's and Hibernate's documentation and never
-  run: two outbox queries, the lock-wait bound and the migration spellings.
+- **An Oracle port from documentation, never built or run.**
+  [ADR 0016](adr/0016-oracle-port.md) is a proposal from Oracle's and
+  Hibernate's documentation, never built or run: two outbox queries, the
+  lock-wait bound and the migration spellings.
 
-- **Two SQS alarms.** `template.yaml` gains `BookingEventDLQAlarm`, for any
-  message on the dead-letter queue, and `BookingEventBacklogAlarm`, for an
-  oldest message that stays older than ten minutes for five minutes in a row.
-  Neither has a notification target yet. Both are linted in CI and have never
-  been deployed.
+- **Two SQS alarms.** `BookingEventDLQAlarm` and `BookingEventBacklogAlarm` in
+  `lambda/template.yaml` watch the dead-letter queue and the backlog. Neither
+  has a notification target; both are linted in CI and have never been
+  deployed.
 
-- **The cancellation's 503 has a test.** `LockTimeoutTest` now holds the
-  flight row while a booking is cancelled, and gets 503 `LOCK_TIMEOUT` with
-  `Retry-After`, as a new booking does.
+- **The cancellation's 503 has a test.** `LockTimeoutTest` gets 503
+  `LOCK_TIMEOUT` with `Retry-After` for a cancellation on a held row.
 
-- **The outbox rollback has a test.**
-  `OutboxTest#aRolledBackBookingLeavesNoEvent` writes a booking and its event
-  row in one transaction, marks it rollback-only, and finds neither row
-  afterwards.
+- **Outbox rollback tested.** `OutboxTest#aRolledBackBookingLeavesNoEvent` finds
+  no booking or event row after a rollback.
 
 ### Changed
 
-- **Version.** Both poms say `1.2.0-SNAPSHOT` until the next tag, so a build
-  from `main` no longer reports itself as 1.1.0 in `/actuator/info` and the
-  OpenAPI document.
+- **Layout.** The SAM template and its SQS fixtures moved into `lambda/`, the
+  eksctl file into `deploy/aws/` and the demo into `scripts/demo.sh`, and CI's
+  SAM checks name the new path. The empty `.trivyignore` is gone, with both
+  `trivyignores` inputs in CI.
 
-- **Layout.** The SAM template and its SQS fixtures moved into the module they
-  deploy (`lambda/template.yaml`, `lambda/events/`), the eksctl file beside
-  the scripts that use it (`deploy/aws/cluster.yaml`), and the demo into
-  `scripts/demo.sh`. `CodeUri` is relative to the template now, and CI's
-  CodeUri check, `cfn-lint` and `sam validate` name the new path. The empty
-  `.trivyignore` is gone, with both `trivyignores` inputs: Trivy still reads
-  one from the root if it is ever added, and `CONTRIBUTING.md` says what an
-  entry must carry. Acts 2 and 4 of the demo book as `Test Passenger`.
+- **Runner images pinned.** Jobs run on `ubuntu-24.04`, since `ubuntu-latest`
+  moves to Ubuntu 26.04 between 19 October and 19 November 2026.
 
-- **Runner images pinned.** Every job in both workflows runs on
-  `ubuntu-24.04`, not `ubuntu-latest`, which moves to Ubuntu 26.04 between
-  19 October and 19 November 2026. That move gets a pull request of its own.
+- **The deploy job's name.** It reads `deploy (gated off)`, not a bare `deploy`.
 
-- **The deploy job's name.** It shows as `deploy (gated off)` in the checks
-  list, where a bare `deploy` read as something that ran.
+- **CodeQL can be started by hand.** `codeql.yml` gains `workflow_dispatch`.
 
-- **CodeQL can be started by hand.** `codeql.yml` gains a `workflow_dispatch`
-  trigger, for a commit on `main` that got no push run.
+- **Stricter request fields.** Flight numbers take only letters and digits
+  (`CreateFlightRequest.FLIGHT_NUMBER`, trimmed), airport codes only letters
+  and passenger names no control characters, else 400 `VALIDATION_FAILED`.
 
-- **Stricter request fields.** A value that breaks one of these rules gets a
-  400 `VALIDATION_FAILED` whose body maps the field to the message shown.
-  `flightNumber` on `CreateFlightRequest` and `BookingRequest` matches
-  `CreateFlightRequest.FLIGHT_NUMBER` (`^\s*[A-Za-z0-9]*\s*$`, padding the
-  service trims): "must contain only letters and digits". `origin` and
-  `destination` match `^[A-Za-z]*$`: "must contain only letters".
-  `BookingRequest.passengerName` matches `^[^\p{Cc}]*$`, which also refuses
-  the C1 controls U+0080 to U+009F: "must not contain control characters".
-  Together with the flight number pattern, this keeps the fingerprint separator
-  out of every hashed field.
+- **JSON only.** `FlightController` and `BookingController` produce only
+  `application/json`: an XML or YAML `Accept` gets 406 `REQUEST_REJECTED`. The
+  three writes with a body also read only JSON (see Fixed).
 
-- **JSON only.** `FlightController` and `BookingController` declare
-  `produces = application/json`, so an XML or YAML `Accept` gets 406
-  `REQUEST_REJECTED` in JSON. The three writes also declare
-  `consumes = application/json` (see Fixed). `/v3/api-docs.yaml` still
-  returns 200.
+- **OpenAPI failure responses.** Every operation documents 401 and 403, each
+  write with a body 415 and each write to an existing flight row 503
+  (`OpenApiTest#theDocumentCoversTheApiAndItsFailures`).
 
-- **Complete OpenAPI responses.** Every operation has `@Operation` and
-  `@ApiResponses`, 401 and 403 included, and the flight status change and
-  cancel document 503 `LOCK_TIMEOUT`. Each write with a body documents 415.
-  `OpenApiTest#theDocumentCoversTheApiAndItsFailures` pins each operation's
-  documented codes.
+- **Password prefixes.** `ApiSecurityProperties` accepts any `{id}` without
+  braces or spaces, such as `{pbkdf2@SpringSecurity_v5_8}`.
 
-- **Password prefixes.** `ApiSecurityProperties` accepts any `{id}` prefix
-  without braces or spaces, so an id with `@`, `-` or `_`
-  (`{pbkdf2@SpringSecurity_v5_8}`) now passes. The check moved from Bean
-  Validation into the record's constructor.
-
-- **Health details for ops.** `management.endpoint.health.roles: OPS` replaces
-  the prod-only `show-details: never`. The components show to ops on every
-  profile and to no one else.
+- **Health details for ops.** `management.endpoint.health.roles: OPS` shows the
+  components to ops on every profile and to no one else.
 
 - **Log lines.** `logging.include-application-name: false` prints the service
-  name once in a plain-text line. The `JsonAccessDeniedHandler` WARN now reads
-  `Denied {} {} for an authenticated caller: no rule grants this method and path to its authorities`.
+  name once; the `JsonAccessDeniedHandler` WARN is reworded.
 
-- **Configuration trimmed.** `spring.jpa.properties.hibernate.order_inserts`
-  is gone, because IDENTITY ids turn insert batching off.
-  `SecurityConfig.DOC_PATHS` drops the literal `/v3/api-docs`, which
-  `/v3/api-docs/**` already matches.
+- **Configuration trimmed.** `spring.jpa.properties.hibernate.order_inserts`,
+  useless with IDENTITY ids, is gone, as is the `/v3/api-docs` entry in
+  `SecurityConfig.DOC_PATHS`, which `/v3/api-docs/**` already covers.
 
-- **Seat counts required in the schema.** `seats` on `BookingRequest` and
-  `totalSeats` on `CreateFlightRequest` are in the served OpenAPI document's
-  `required` lists (`OpenApiTest#seatCountsAreRequired`). The 400, 415 and
-  `/error` descriptions name more of the cases the code answers, such as a body
-  that is not a JSON object, `destination` equal to `origin` and a missing
-  `Content-Type`.
+- **Seat counts required in the schema.** `seats` and `totalSeats` are
+  `required` in the served document (`OpenApiTest#seatCountsAreRequired`), and
+  its 400, 415 and `/error` descriptions name more of the cases the code
+  answers.
 
-- **Wall-clock rule.** `Booking` takes `createdAt` from `BookingWriter`'s
-  `Clock`, so `time_comes_from_the_clock` in `ArchitectureTest` has no
-  exemption. 1.1.0 exempted the whole `entity` package. The rule also matches
-  any `java.time` `now()` that takes no `Clock`, `new Date()` and
-  `Calendar.getInstance()`. In 1.1.0 the rule was
-  `the_wall_clock_is_read_only_by_entities`, and it named only the no-argument
-  `now()` of `Instant`, `LocalDate` and `LocalDateTime`, so
-  `OffsetDateTime.now()` and `LocalDate.now(ZoneOffset.UTC)` passed.
+- **Wall-clock rule.** `time_comes_from_the_clock` in `ArchitectureTest` exempts
+  nothing, as `Booking` now gets `createdAt` from `BookingWriter`'s `Clock`,
+  and flags any `java.time` `now()` without a `Clock`, `new Date()` and
+  `Calendar.getInstance()`. It replaces 1.1.0's
+  `the_wall_clock_is_read_only_by_entities`.
 
-- **Test builds.** Both poms pin the Surefire JVM to
-  `-Duser.timezone=Asia/Kolkata`, so a test that leans on the system zone fails
-  on a UTC runner too. The PostgreSQL tests import Testcontainers 2's
-  `org.testcontainers.postgresql.PostgreSQLContainer` in place of the
-  deprecated `org.testcontainers.containers.PostgreSQLContainer`, and
-  `migrationRanAndSchemaValidates` checks that Flyway applied every file from V1
-  to V8.
+- **Test builds.** Surefire runs with `-Duser.timezone=Asia/Kolkata`, so a test
+  leaning on the system zone fails on a UTC runner too. The PostgreSQL tests use
+  `org.testcontainers.postgresql.PostgreSQLContainer`, and
+  `BookingIntegrationTest#migrationRanAndSchemaValidates` checks V1 to V8.
 
-- **Lambda concurrency.** `ScalingConfig.MaximumConcurrency: 5` on the SQS event
-  in `template.yaml` replaces `ReservedConcurrentExecutions: 10`. It caps only
-  the poller and reserves nothing from the account pool.
+- **Lambda concurrency.** `ScalingConfig.MaximumConcurrency: 5` replaces
+  `ReservedConcurrentExecutions: 10`; it caps the poller and reserves nothing.
 
-- **`up.sh` preflight.** Step 1 stops unless `./mvnw -v` reports JDK 21 and
-  `eksctl version` reports 0.184.0 or later, and `envsubst` is no longer
-  required. The step logic lives in `deploy/aws/lib.sh`
-  functions, which `deploy/aws/selftest.sh` checks against stubbed tools.
+- **`up.sh` preflight.** Step 1 checks for JDK 21 and eksctl 0.184.0 or later
+  and no longer needs `envsubst`. The checks are `deploy/aws/lib.sh` functions
+  that `deploy/aws/selftest.sh` tests in CI against stubbed tools.
 
-- **`down.sh` catch-all.** It leaves the GitHub OIDC provider out in both
-  modes, since the foundation stack keeps it. The query runs in ap-south-1, and
-  AWS reports IAM resources from us-east-1, so it lists no IAM resource. A
-  leftover IAM role or OIDC provider passes the sweep, and IAM bills nothing.
+- **`down.sh` catch-all.** It leaves out the OIDC provider the foundation keeps.
+  Run in ap-south-1, it lists no IAM resource, which AWS reports from
+  us-east-1, so a leftover IAM role passes.
 
-- **Sweep patterns from a secret.** `scripts/sweeps.sh` keeps its built-in
-  checks, trailer lines and appended signatures, and adds absolute
-  home-directory paths. Any further patterns come from `SWEEP_PATTERNS`, which
-  CI fills from a repository secret of that name. A push or a manual run
-  without the secret fails; a local run without the variable, and a pull
-  request from a fork or Dependabot, skips that part and says so.
+- **Sweep patterns from a secret.** `scripts/sweeps.sh` no longer carries its
+  own privacy patterns and adds a built-in check for absolute home-directory
+  paths. The privacy patterns come from `SWEEP_PATTERNS`, which CI fills from a
+  secret: a push or manual run without it fails; a pull request from a fork or
+  Dependabot, and a local run without the variable, skip that part.
 
-- **`demo.sh` dates.** It books flights departing 30 days ahead, computed with
-  BSD or GNU `date`, where a fixed date would have expired. Act 8 names every
-  anonymous path, and the H2 reset line prints only against localhost.
+- **`demo.sh`.** It books flights 30 days ahead with BSD or GNU `date`, where a
+  fixed date would have expired. Acts 2 and 4 book as `Test Passenger`, Act 8
+  also names the OpenAPI document and Swagger UI as anonymous, and the H2 reset
+  line prints only against localhost.
 
-- **Why one service.** `ARCHITECTURE.md` says why bookings and flights share a
-  service and the Lambda does not, and the README and the pom call it a service
-  rather than a microservice.
+- **Why one service.** `doc/ARCHITECTURE.md` says why bookings and flights
+  share a service and the Lambda does not, and the README and the pom say
+  service, not microservice.
 
-- **Idempotency keys never expire, and the README now says so.** The
-  trade-offs table gives the reason (a cancelled booking keeps its key) and
-  what a retention window would change for clients.
+- **Idempotency keys never expire, and the README now says so.** The trade-offs
+  table gives the reason and what a retention window would change.
 
 - **ArchUnit in the test group.** Dependabot's root `test` group now includes
-  `com.tngtech.archunit:*`, so an ArchUnit bump arrives with the other
-  test-only updates instead of in a pull request of its own.
+  `com.tngtech.archunit:*`.
 
 - **Linguist rule removed.** `.gitattributes` no longer sets
-  `*.java linguist-language=Java`. GitHub already counts Java files as Java,
-  so the rule changed nothing, and its comment, which said it kept the
-  repository from being labelled a Dockerfile project, described an effect it
-  never had.
+  `*.java linguist-language=Java`, which changed nothing.
 
-- **The deep documents moved under `doc/`.** `ARCHITECTURE.md`,
-  `DEPLOYMENT.md` and `OPERATIONS.md` moved into `doc/`, and NOTES.md became
-  `doc/DEFECT-LOG.md`, whose index gains an Area and a Severity column. Every
-  link and comment that named them points at the new path, except one comment
-  in the V7 migration, which is never edited. The Markdown files left at the
-  root are README, CHANGELOG, CONTRIBUTING and SECURITY, which readers and
-  GitHub expect to find there.
+- **The deep documents moved under `doc/`.** The bug stories the 1.1.0 README
+  held are now in `doc/DEFECT-LOG.md`; README, CHANGELOG, CONTRIBUTING and
+  SECURITY stay put.
 
-- **The kustomize tree moved under `deploy/`.** `k8s/` is now `deploy/k8s/`,
-  beside `deploy/aws/`, and every script, workflow step, comment and document
-  that named it follows, except the released sections of this changelog. The
-  `.gitignore` rule for the real Secret is now `**/secret.yaml`, which matches
-  that file name in any folder, so it cannot go stale when a folder moves again.
+- **The kustomize tree moved under `deploy/`.** `k8s/` is now `deploy/k8s/`; the
+  real Secret's `.gitignore` rule is `**/secret.yaml`, safe from moves.
 
-- **The README is rewritten.** It is under 200 lines and starts with what is
-  hard in the design, then what has run and what has not, the quality gates and
-  the defect log. The detail it held moved to the file that owns it: the API,
-  error codes, paging and worked examples to the new `doc/api.md`; tests per
-  layer and versions to CONTRIBUTING; the repository layout and the trade-offs
-  table to `doc/ARCHITECTURE.md`; image and deployment detail to
-  `doc/DEPLOYMENT.md`; metric readings to `doc/OPERATIONS.md`. Every link and
-  comment that named a README section points at the new home.
-  `doc/OPERATIONS.md` and the `OutboxMetrics` comment now say that the registry
-  would report `NaN` for a throwing gauge anyway, so the catch only changes the
-  log line.
+- **The README is rewritten.** Under 200 lines, it leads with what is hard in
+  the design and what has run; detail moved to the file that owns it.
 
 ### Removed
 
-- **Queries only tests called.** `FlightRepository` loses the two-argument
-  `findByOriginAndDestination`, `findByStatusAndDepartureTimeBetween`, both
-  `findBookable` overloads and the native `findNextTen`, and `FlightStatus`
-  loses `bookableStatuses`, whose only caller was `findBookable`. Three of
-  their tests go, and the fourth now checks the paged search the service
-  uses. A method only a test calls is a test of nothing.
+- **Queries only tests called.** `FlightRepository` loses five queries, among
+  them `findBookable` and `findNextTen`, and `FlightStatus` loses
+  `bookableStatuses`: a method only a test calls is a test of nothing. Three of
+  their tests go, and the fourth now checks the paged search.
 
 ### Fixed
 
-- **Fractional numbers were truncated.** Jackson read `"seats": 2.7` as 2, so
-  the booking was for two seats. In `src/main/resources/application.yml`,
-  `accept-float-as-int: false` under `spring.jackson.deserialization` now
-  rejects a fractional value for any whole-number field in a JSON body. The
-  response is a 400 `MALFORMED_REQUEST`.
+- **Fractional numbers were truncated.** `"seats": 2.7` booked two seats;
+  `accept-float-as-int: false` in `application.yml` makes it a 400.
 
-- **YAML bodies skipped the settings.** swagger-core puts a YAML reader on
-  the classpath, and no `spring.jackson` setting reaches it, so `seats: 2.5` in
-  an `application/yaml` body still booked two seats. The three writes declare
-  `consumes = application/json` and answer any other body with 415
-  `UNSUPPORTED_MEDIA_TYPE` (`BookingControllerTest#yamlBodyReturns415`,
-  `FlightControllerTest#yamlBodyReturns415`).
+- **YAML bodies skipped the settings.** `spring.jackson` never reached YAML, so
+  a `POST` or `PATCH` sent as anything but `application/json` is now a 415
+  (`BookingControllerTest#yamlBodyReturns415`).
 
-- **Quoted numbers, numbered enums.** `allow-coercion-of-scalars: false`
-  under `spring.jackson.mapper` rejects `"seats": "2"`, and
-  `fail-on-numbers-for-enums: true` under `spring.jackson.datatype.enum`
-  rejects `"status": 4`, which used to cancel the flight. Both are 400
-  `MALFORMED_REQUEST` (`FlightControllerTest#statusAsANumberReturns400`).
+- **Quoted numbers, numbered enums.** `"seats": "2"` and `"status": 4`, which
+  cancelled flights, are 400 (`FlightControllerTest#statusAsANumberReturns400`).
 
-- **Epoch departure times.** `CreateFlightRequest.departureTime` reads through
-  `IsoInstantDeserializer`, which accepts only an ISO-8601 instant. A number
-  used to be read as epoch seconds, so a value in milliseconds landed in the
-  year 58971 and passed `@Future`
-  (`FlightControllerTest#departureTimeMustBeAnIsoString`). An offset such as
-  `+05:30` still works (`FlightControllerTest#departureTimeWithAnOffsetIsRead`).
+- **Epoch departure times.** Numbers, once read as epoch seconds, are refused
+  (`FlightControllerTest#departureTimeMustBeAnIsoString`).
 
-- **Departure times past the microsecond.** A `departureTime` of
-  `.123456789Z` came back in full in the 201, and as the stored `.123457Z` in a
-  later GET. `Flight` now truncates it to the microseconds the column keeps, so
-  both return `.123456Z` (`FlightTest#departureTimeIsTruncatedToMicroseconds`).
+- **Departure times past the microsecond.** A 201 and a later GET disagreed;
+  `Flight` now truncates (`FlightTest#departureTimeIsTruncatedToMicroseconds`).
 
-- **A missing `Content-Type` was named `'null'`.** A `POST` or `PATCH` with no
-  `Content-Type` got `Content-Type 'null' is not supported.` It now gets
-  `The request has no Content-Type. Send application/json.`
-  (`BookingControllerTest#missingContentTypeReturns415`).
+- **A missing `Content-Type` was named `'null'`.** The 415 now says there is
+  none (`BookingControllerTest#missingContentTypeReturns415`).
 
-- **A multipart `Content-Type` was a 500.** `DispatcherServlet` parsed any
-  multipart body before routing, so one with no boundary got a 500
-  `INTERNAL_ERROR` and an ERROR stack trace on every path, `/actuator/health`
-  included. The API takes no uploads, so
-  `spring.servlet.multipart.enabled: false` turns the parser off
+- **A multipart `Content-Type` with no boundary was a 500.**
+  `DispatcherServlet` parsed it on every path, so the parser is off
   (`ErrorContractTest#multipartParsingIsOff`).
 
-- **`@Future` read the JVM clock.** Hibernate Validator judged `departureTime`
-  against `Clock.systemDefaultZone()`, not the `Clock` bean, so a pinned test
-  clock did not move it. `TimeConfig.validationClock` hands the validator the
-  bean (`ValidationClockTest`).
+- **`@Future` read the JVM clock.** `TimeConfig.validationClock` hands Hibernate
+  Validator the `Clock` bean (`ValidationClockTest`).
 
 - **Unencoded `Location` headers.** `FlightController#create` and
-  `BookingController#book` now build `Location` with `UriComponentsBuilder`, so
-  the value is always encoded.
+  `BookingController#book` build them with `UriComponentsBuilder`.
 
-- **Page overflow was a 500.** `SortPolicy.stable` rejects `page * size` past
-  `Integer.MAX_VALUE` before any query, as 400 `MALFORMED_REQUEST` with
-  `page * size must not exceed 2147483647.`
+- **Page overflow was a 500.** `SortPolicy.stable` makes it a 400
   (`ErrorContractTest#pagePastTheLastAddressableRowIsABadRequest`).
 
-- **`ignorecase` on a number or a time was a 500.** The bookings list sorts
-  inside a declared `@Query`, where Spring Data applies `ignorecase` by
-  wrapping the column in `lower()`, and Hibernate refuses `lower()` on
-  anything that is not a string. So `?sort=seats,desc,ignorecase` was a 500.
-  `SortPolicy.stable` now drops `ignorecase` on every sortable property the
-  controller does not list as text, and the sort runs as asked. The flights
-  list was not affected, because its criteria query checks the type
+- **`ignorecase` on a number or a time was a 500 on the bookings list.**
+  `SortPolicy.stable` drops it on non-text sorts
   (`ErrorContractTest#ignoreCaseOnANonTextPropertyIsDropped`).
 
-- **Departure years past 9999.** `Instant.parse` accepts
-  `+300000-01-01T00:00:00Z`, and PostgreSQL stores nothing after 294276 AD, so
-  the insert failed and the client got a 409 that told it to retry.
-  `IsoInstantDeserializer` now refuses anything after
-  `9999-12-31T23:59:59.999999Z` as 400 `MALFORMED_REQUEST`
+- **Departure years past 9999.** A year past 294276 AD, which PostgreSQL
+  cannot store, drew a 409 that said retry. Any year past 9999 is now a 400
   (`FlightControllerTest#departureTimeAfterYear9999IsRejected`).
 
-- **No database was a 500.** When the pool stayed empty for its whole
-  connection timeout, or the database did not answer, the request was a 500
-  with a stack trace logged per caller. It is now 503 `DATABASE_UNAVAILABLE`
-  with `Retry-After: 1`, logged at WARN, for the same reason as
-  `LOCK_TIMEOUT`: the request was valid and can succeed later
-  (`FlightControllerTest#noDatabaseConnectionReturns503`).
+- **No database was a 500.** It is now 503 `DATABASE_UNAVAILABLE` with
+  `Retry-After: 1` (`FlightControllerTest#noDatabaseConnectionReturns503`).
 
-- **405 and 415 headers.** `GlobalExceptionHandler` copies the framework's
-  headers in `handleSpringWebError`, so a 405 carries `Allow` and a 415 carries
-  `Accept`.
+- **A 405 without `Allow`, a 415 without `Accept`.** `GlobalExceptionHandler`
+  copies the framework's headers in `handleSpringWebError`.
 
-- **Errors without a JSON type.** Every `GlobalExceptionHandler` and
-  `ApiErrorController` response sets `Content-Type: application/json`. `/error`
-  with an XML `Accept` used to answer an empty 406, and now returns its 404 in
-  JSON.
+- **Errors without a JSON type.** Each error response is now `application/json`,
+  and `/error` no longer answers an XML `Accept` with an empty 406.
 
-- **Unknown publisher, unclear failure.** An unknown `app.events.publisher`
-  stopped startup with `NoSuchBeanDefinitionException`. `EventProperties` now
-  fails first with `app.events.publisher must be one of [log, sqs], not "<value>"`
-  (`EventPropertiesTest#applicationStartupNamesTheProperty`).
+- **Unknown publisher, unclear failure.** `OutboxPublisher` now takes
+  `EventProperties` first, so an unknown `app.events.publisher` stops startup
+  on that record's message, which names the property, not on a missing
+  `EventPublisher` bean
+  (`EventPropertiesTest#applicationStartupNamesTheProperty`). It also logs
+  `Outbox publisher started with event transport '<mode>'` at INFO.
 
-- **Lost-race recovery hid errors.** When `BookingService.book` finds no
-  booking holding the key after a failed insert, it now rethrows the original
-  violation with the `IllegalStateException` attached as suppressed. It logs a
-  WARN ending `not a lost race`
+- **Lost-race recovery hid errors.** A violation with no winner is rethrown
   (`BookingServiceTest#aViolationWithNoWinnerIsRethrown`).
 
-- **Lambda seat counts.** The `BookingEvent` constructor rejects `seats` below 1
-  with `booking event has <n> for 'seats'; expected at least 1`, and the mapper
-  disables `ACCEPT_FLOAT_AS_INT` and `ALLOW_COERCION_OF_SCALARS`. A `"2"`,
-  `2.9`, `0` or `-3` now becomes a batch item failure and reaches the DLQ.
+- **Lambda seat counts were checked only for presence.** The `BookingEvent`
+  constructor and the mapper now refuse `"2"`, `2.9`, `0` and `-3`, which reach
+  the DLQ.
 
-- **Contract test mapper.** The Lambda's `BookingEventContractTest` now reads
-  through `BookingEventHandler.MAPPER`, so the contract file runs against the
-  handler's own configuration.
+- **The contract test used its own mapper.** The Lambda's
+  `BookingEventContractTest` reads through `BookingEventHandler.MAPPER`.
 
-- **`sam build` failed.** SAM builds in a scratch copy of `lambda/`, where the
-  tests' `../contracts` is missing. `lambda/template.yaml` now points `CodeUri`
-  at the shaded jar, `target/booking-event-handler.jar`, which `up.sh` builds
-  with `./mvnw` before `sam deploy --template-file lambda/template.yaml`.
+- **`sam build` could not build the Lambda.** Its scratch copy lacks
+  `../contracts`, so `CodeUri` names the shaded jar that `up.sh` builds first.
 
-- **The ECR lookup failed open.** "Is this commit already in ECR?" read any
-  error, a missing permission included, as `exists=false`. It now runs
-  `deploy/aws/ecr-image-exists.sh`, which says `exists=false` only for
-  `ImageNotFoundException`, and `deploy/aws/foundation.yaml` grants the CI role
-  `ecr:DescribeImages`.
+- **The ECR lookup failed open.** Any error read as `exists=false`;
+  `deploy/aws/ecr-image-exists.sh` says so only for `ImageNotFoundException`,
+  and `deploy/aws/foundation.yaml` grants the CI role `ecr:DescribeImages`.
 
-- **`up.sh` gave up early.** Step 10 ran `kubectl wait` at once, which fails
-  while `deployment/flight-ops` does not exist. It now waits up to 30 minutes
-  for CI to create it, then up to 20 for the rollout, and the timeout names
-  `DEPLOY_ENABLED` and `main`.
+- **`up.sh` gave up early.** Step 10 waits up to 30 minutes for CI to create
+  `deployment/flight-ops` before it waits for the rollout.
 
-- **`up.sh` stack checks.** Step 6 stops with the commands to run when the data
-  stack is in `ROLLBACK_COMPLETE`, another unusable state or still in progress.
-  `stack_status` fails closed on a read error, and the `JdbcUrl` output must
-  start with `jdbc:postgresql://`, where a missing output used to come back as
-  the string `None`.
+- **`up.sh` took an unusable data stack.** Step 6 stops on `ROLLBACK_COMPLETE`
+  and other bad states, `stack_status` fails closed on a read error, and a
+  missing `JdbcUrl` is no longer read as `None`.
 
 - **The access policy was assumed.** `grant_namespace_access` in
-  `deploy/aws/lib.sh` reads the association back with
-  `list-associated-access-policies`, and stops unless `AmazonEKSEditPolicy` is
-  scoped to the namespace. Before, the ok line followed a call whose failure the
-  script tolerated.
+  `deploy/aws/lib.sh` reads the association back before it reports ok.
 
-- **`down.sh` used the caller's kubeconfig.** It now writes a temporary one for
-  every `kubectl` and `helm` call, and removes it on exit. When the cluster is
-  unreachable, it skips the controller and namespace steps.
+- **`down.sh` used the caller's kubeconfig.** It writes a temporary one, removes
+  it on exit, and skips the controller and namespace steps when the cluster is
+  unreachable.
 
-- **Unconfirmed deletes in `down.sh`.** Each stack and the cluster print
-  `✓ … deleted` only after the wait succeeds, and warn otherwise. With
-  `--keep-foundation`, the stacks check and the tag catch-all leave out the
-  foundation's own resources, so a kept foundation no longer fails the sweep.
+- **Unconfirmed deletes in `down.sh`.** Each stack and the cluster are reported
+  deleted only after the wait succeeds, and a kept foundation no longer fails
+  the sweep.
 
-- **`cost-check.sh` stopped early.** The first Cost Explorer pipeline ends in
-  `|| true`, so the tagged, forecast and Budgets sections still run.
+- **`cost-check.sh` stopped early.** Its first Cost Explorer pipeline ends in
+  `|| true`, so the later sections still run.
 
-- **Dead credentials.** `down.sh`, `up.sh` and `cost-check.sh` stop at once
-  with `AWS credentials are not usable`. `down.sh` used to run every delete
-  step and fail only at the sweep.
+- **`down.sh` found dead credentials late.** It ran every delete step and
+  failed only at the sweep. Now it stops at once with
+  `AWS credentials are not usable`, as `up.sh` and `cost-check.sh`, which run
+  under `set -e`, already did.
 
-- **An interrupted cluster create.** eksctl creates the control plane first,
-  then the networking addons, the OIDC provider and the node group. A run that
-  stopped in between found the cluster on its re-run and went on without them.
-  Step 4 now creates whichever of those is missing, and waits for vpc-cni and
-  the node group. Step 9 prints the commands to set a new database password
-  when the run that created the data stack stopped before writing it.
+- **An interrupted `up.sh` run.** A re-run would have gone on without the
+  missing addons, OIDC provider or node group; step 4 creates them. Step 9
+  prints the commands to set a new database password when the run that created
+  the data stack stopped before writing it.
 
-- **The `sts` module was missing.** `DefaultCredentialsProvider` needs it to
-  use the web identity token that IRSA gives the pod, and `sqs`, until now the
-  service's only AWS SDK dependency, does not bring it in. On EKS the chain
-  would skip that token, so SQS sends would lack the pod's role and fail.
-  `pom.xml` now adds `sts` at runtime scope.
-  `AwsConfigTest.java#stsModuleIsOnTheClasspath` fails without it.
+- **The `sts` module was missing.** The credential chain needs it for IRSA's
+  token; `pom.xml` adds it (`AwsConfigTest#stsModuleIsOnTheClasspath`).
 
-- **A failed stack read ended `up.sh` with no message.** `stack_output` in
-  `deploy/aws/lib.sh` threw away the CLI's error, and under `set -e` any failed
-  read, a missing stack included, ended the run silently at step 2, 3 or 6. It
-  now returns nothing for a missing stack or output. On any other error, such
-  as a throttled call, it prints the CLI's message and stops `up.sh`.
+- **A failed stack read ended `up.sh` with no message.** `stack_output` prints
+  the CLI's error and stops, and returns nothing for a missing stack.
 
-- **A failed metrics-server create read as installed.** Step 8 of `up.sh`
-  logged any `create-addon` failure, such as a denied or throttled call, as
-  `metrics-server already installed` and carried on, though without
-  metrics-server the HPA never scales. It now calls `ensure_metrics_server` in
-  `deploy/aws/lib.sh`, which looks the addon up first, as step 4 does for the
-  networking addons. It creates the addon only when EKS reports it missing,
-  and stops on any other failure. The docs said every step checks whether its
-  resource exists; this one now does.
+- **A failed metrics-server create read as installed.** `ensure_metrics_server`
+  looks the addon up first, creates it only when EKS reports it missing, and
+  stops on any other failure.
 
-- **The daily budget could not fire.** `DailyBudgetUsd` defaulted to $12 and
-  alerts at 80%, which is $9.60, above the $7.72 a day the stack costs, so a
-  cluster left running would never have tripped it. It is now $8, which
-  alerts at $6.40. The forecast comment no longer promises an alert on day
-  two: AWS Budgets forecasts only once an account has about five weeks of cost
-  history.
-
-The other fixes are to documentation only, and change no behaviour.
-
-- The README listed 20 error codes, and there were 21. It was missing
-  `BAD_REQUEST`, which `ApiErrorController` returns for any other client error
-  forwarded to `/error`. Its `UNKNOWN_SORT_PROPERTY` entry still described the
-  behaviour from before `SortPolicy`.
-
-- ADR 0002, ARCHITECTURE.md, the README and `application.yml` said the
-  PostgreSQL dialect discards a JPA lock-timeout hint. Hibernate 7.4.5 applies
-  it with `SET LOCAL lock_timeout`. The decision stands on a different reason,
-  and ADR 0002 carries a dated correction.
-
-- The outbox retry window was described as about twenty minutes, and once as
-  ten seconds. Two seconds doubling to a five-minute ceiling over ten attempts
-  is 810 seconds, about thirteen and a half minutes. The comment in
-  `V7__outbox_next_attempt_at.sql` still says twenty, because an applied
-  migration cannot be edited without changing its Flyway checksum.
-
-- The `max-attempts` comment in `application.yml`, the `OutboxProperties`
-  Javadoc and the `OutboxPoisonRowTest` Javadoc said that without the ceiling
-  a failing row heads every batch, and the test's said one such row stops all
-  publishing. The row would be retried first each time its backoff ends,
-  forever, and the rows behind it still publish.
-
-- The comment in `V2__seat_and_route_invariants.sql` says `FlightService`
-  rejects an origin equal to the destination. The check is `@DistinctEndpoints`
-  on `CreateFlightRequest`, and the comment stays for the same checksum reason.
-
-- The build-log note in the README called Hibernate's duplicate-key lines
-  ERRORs. They are WARNs.
-
-- The CI workflow comments said Flyway V1–V6 (it is V1–V8) and described branch
-  protection as already enforced.
-
-- Comments and Javadoc across the code were trimmed and checked against the
-  behaviour above, and every Markdown document was rewritten in plain language.
-  The bug stories moved to NOTES.md, now `doc/DEFECT-LOG.md`.
-
-- **Transport cost understated.** `ARCHITECTURE.md` said a new transport took
-  one class and a mode; for a JMS broker it also takes a connection factory, a
-  client library, a test and a new consumer.
-
-- **"In AWS" in the transport paragraph.** `ARCHITECTURE.md` described
-  `SqsEventPublisher` as the publisher "in AWS", which reads as if the service
-  ran there. It has never run in AWS. The sentence now names the `prod`
-  profile, which selects it by default.
+- **The daily budget could not fire.** `DailyBudgetUsd` in
+  `deploy/aws/foundation.yaml` defaulted to $12, which alerted at $9.60, above
+  the $7.72 a day the stack would cost; at $8 it alerts at $6.40.
 
 - **What automount turns off.** `deploy/k8s/base/serviceaccount.yaml` said that
   setting `automountServiceAccountToken` to false removes the token volume IRSA
@@ -529,120 +353,36 @@ The other fixes are to documentation only, and change no behaviour.
   Setting it to false removes only the Kubernetes API token; the EKS pod
   identity webhook adds its own volume. The comment now says so.
 
-- **Tests that claimed more than they checked.** In 1.1.0 the oversell tests
-  in `OutboxTest`, `BookingIdempotencyTest` and `BookingIntegrationTest` were
-  named for a rollback, but an oversell is refused before anything is written.
-  Their display names now say so. The `OutboxTest` one is also renamed
-  `anOversellWritesNoEvent`, and its old name now belongs to the new rollback
-  test. `ErrorContractTest#cancellationReturnsSeatsExactlyOnce` could not see a
-  second seat credit, because `Flight.releaseSeats` clamps at `totalSeats` and
-  no other seat on the flight was sold. It now keeps one seat sold.
-  `FlightServiceTest#searchChoosesTheRightQuery` now runs the destination-only
-  search, and other test names and comments now match their assertions.
+- **Tests that claimed more than they checked.** Oversell tests whose display
+  names spoke of a rollback now say the oversell is refused before anything is
+  written, and the `OutboxTest` one is renamed `anOversellWritesNoEvent`.
+  `ErrorContractTest#cancellationReturnsSeatsExactlyOnce` now keeps a seat
+  sold, and `FlightServiceTest#searchChoosesTheRightQuery` runs the
+  destination-only search.
 
 - **Replays were said to repeat the first response.** The OpenAPI description
-  of `POST /api/v1/bookings` called a replay's body byte-for-byte the original,
-  and ADR 0004 and the ARCHITECTURE.md sequence diagram said a replay returns
-  the original response. It returns the booking the key created as it is now,
-  so after a cancellation it carries `cancelledAt`
-  (`ErrorContractTest#replayAfterCancellationDoesNotRebook`). ADR 0004 also
-  counted four fingerprinted fields, where the hash covers three. Comments in
-  `BookingService` and `GlobalExceptionHandler` said the loser of a race on one
-  key always got 201. It gets 409 `IDEMPOTENCY_KEY_REUSED` when the two
-  requests differ.
+  of `POST /api/v1/bookings` and ADR 0004 now say a replay returns the booking
+  as it is now, `cancelledAt` included
+  (`ErrorContractTest#replayAfterCancellationDoesNotRebook`).
 
-- **Wording about what runs where.** The SAM template's description said the
-  service was deployed to EKS, OPERATIONS.md spoke of a demo cluster, ADR 0011
-  of "this deployment" and `compose.yaml` of "the deployed configuration".
-  Nothing is deployed, and each now says so or drops the phrase. SECURITY.md
-  said Trivy scans the image before it is pushed; that scan is in the deploy
-  job, which has never run. The `BookingMetrics` Javadoc gave the lock-timeout
-  counter an alert that does not exist. `up.sh` said CI applies on every push,
-  and now says every push to main. `compose.yaml` and DEPLOYMENT.md said the H2
-  profile lacks `SELECT ... FOR UPDATE` and a lock timeout. It has both, and
-  `LockTimeoutTest` runs them. What it lacks is Flyway and PostgreSQL's own row
-  locks and `lock_timeout`.
+- **`.dockerignore` missed nested Markdown.** It lists `**/*.md` and leaves out
+  `deploy/`; the image is unchanged.
 
-- **Container hardening overstated.** `SECURITY.md`, `DEPLOYMENT.md` and the
-  comments in the `Dockerfile` and `deploy/k8s/base/deployment.yaml` said the
-  kubelet checks `runAsNonRoot` against the image's user, so `USER spring` would
-  fail the pod. The pod sets `runAsUser: 1001`, which the kubelet checks
-  instead; the image's user counts only when `runAsUser` is unset. The manifest
-  and `DEPLOYMENT.md` also said code in the container could not drop a binary.
-  It can write one to the `/tmp` `emptyDir` and run it.
+- **The link check dropped every underscore.** `scripts/linkcheck.py` built
+  anchors without them, so it reported a link to a heading such as
+  `outbox_dead > 0` in `doc/OPERATIONS.md` as broken where GitHub resolves it.
+  It now drops only the underscores that mark emphasis.
 
-- **Records that disagreed with the code.** The README said a test scrapes
-  every meter through a real `PrometheusMeterRegistry`; it scrapes only the
-  booking meters. CONTRIBUTING.md said the dependency-graph probe fails on
-  anything but 403 or 404, but a 200 passes. OPERATIONS.md said
-  `deploy/aws/data.yaml` reads the eksctl outputs; `up.sh` does, and passes
-  them only when it creates the data stack. ADR 0001 described two orders of
-  send and commit as two failure modes of the first version. ADR 0002 said the
-  lock timeout takes one line of configuration, when the `postgres` and `prod`
-  profiles each carry it, and that a cancellation modifies only the booking
-  row. ADR 0003 said the id is in every URL, but flight URLs carry the flight
-  number. ADR 0007 said the Boot upgrade brought OpenTelemetry, which came in
-  `d18f58b`, and that a JDK 17 build without the enforcer fails two minutes in
-  with a class-file version error. It fails in the compiler, on
-  `release version 21 not supported`. ADR 0010 put the Mumbai premium at about
-  4%; it is 8 to 9%. ADR 0008 gains a dated note for two reasons rewritten in
-  place on 23 September.
+- **Documents that disagreed with the code.** The README, SECURITY.md,
+  CONTRIBUTING.md, `deploy/aws/README.md`, `doc/`, several ADRs and the SAM
+  template's `Description` no longer miscount, overstate the code or speak of
+  a deployment that does not exist. The OpenAPI description of the flight
+  status change now names `DELAYED` and a departure without `BOARDING`, which
+  the 1.1.0 text left out. No behaviour changes.
 
-- **Build context and code comments.** `.dockerignore` listed `*.md`, which
-  matches only the root, so the ADRs and the other nested Markdown stayed in
-  the build context. It now lists `**/*.md`, and leaves out `deploy/` as well.
-  The image is unchanged, because the Dockerfile copies only `pom.xml` and
-  `src/`. Comments from 1.1.0 that misstated behaviour now match the code.
-  Among them: a new controller under `/api` is reachable with the scope as
-  soon as it ships, for GET, HEAD, POST, PATCH and DELETE; and plain
-  `FOR UPDATE` would make the outbox replicas take turns, not publish an event
-  twice.
-
-- **Documents that claimed more than the code does.** ADR 0005, and the README
-  after it, said `anyRequest().denyAll()` leaves any new endpoint unreachable
-  until it has a rule. A controller under `/api/**` is covered by the scope
-  rules on the day it ships, for GET, HEAD, POST, PATCH and DELETE; only one
-  outside `/api/**`, or a method the rules do not name, is refused.
-  SECURITY.md said the OIDC trust policy pins the audience to the repository
-  and branch. The audience is `sts.amazonaws.com`, and only the `sub` claim
-  names the repository. SECURITY.md and DEPLOYMENT.md also described the
-  cluster and the deploy job's credentials in the present tense, as if they
-  existed. DEPLOYMENT.md and `deploy/aws/README.md` said `up.sh` writes the
-  generated passwords into the Kubernetes Secret. It writes the database
-  password and the bcrypt hashes of the API and ops passwords, and prints
-  those two passwords to the terminal. ARCHITECTURE.md labelled the client's
-  call HTTPS, though neither the service nor the ingress serves TLS, and drew
-  a Prometheus scrape that nothing performs. The README said refcheck resolves
-  every file and symbol the documents cite, where it checks backticked paths
-  with a known extension and the symbol in each `path#symbol`; that curl
-  ignores a `-u` option passed as one argument, where it reads the user name
-  with a leading space; and that nothing but building the image and starting
-  it with no database had been executed, where CI also renders the overlay and
-  runs `deploy/aws/selftest.sh`.
-
-- **More comments that disagreed with the code.** `EventProperties` credited
-  the two publishers with keeping the SQS client out of a `log` run; the
-  condition on `AwsConfig` does that. `ApiSecurityProperties` said a deployment
-  never hands the service a plaintext password, but the check accepts `{noop}`,
-  which the default profile ships. `FlightService#search` said all four
-  branches can use an index; only the two with an origin can use
-  `idx_origin_dest`. Test comments said Jackson passes null for an absent
-  `int` (it supplies 0, or throws when `FAIL_ON_NULL_FOR_PRIMITIVES` is on),
-  that the outbox tests drain on a fixed clock (they use the real one), and
-  that the retry tests move `next_attempt_at` into the past (they clear it).
-  `demo.sh` said the seed data exists on the default profile only; every
-  profile but `prod` seeds it. `pom.xml` and `application.yml` said
-  Prometheus scrapes the service; the metrics are served at
-  `/actuator/prometheus`, and nothing scrapes them. The deploy job's comments
-  said `up.sh` puts the API and ops passwords in the Kubernetes Secret, where
-  it stores their bcrypt hashes, and CONTRIBUTING.md called Dependabot's four
-  entries four ecosystems.
-
-- **The defect log was behind the tests.** It said no test fires
-  PostgreSQL's own `lock_timeout`; `LockTimeoutPostgresTest` does, and the log
-  now names it. It also called `REQUIRES_NEW` on `recoverReplay` insurance in
-  case `book` became transactional again. As `doc/ARCHITECTURE.md` explains,
-  it would not be enough, and the log now says so.
+- **Comments that disagreed with the code.** Comments and Javadoc in the code,
+  the workflows, the `Dockerfile`, `compose.yaml` and the manifests now match
+  the code, bar the V2 and V7 migrations, which Flyway checksums freeze.
 
 ### Security
 
@@ -653,41 +393,28 @@ The other fixes are to documentation only, and change no behaviour.
   service does not use, since Spring Security authenticates. The current patch
   release, 11.0.26, fixes twelve more.
 
-- **The 403 log line.** `JsonAccessDeniedHandler` logs the request path through
-  `security/JsonAccessDeniedHandler.java#printable`, which replaces anything
-  outside visible ASCII, CR and LF included, with `?`. The default profile logs
-  plain text, one record per line, so a line break in the path could otherwise
-  start a forged line (`JsonAccessDeniedHandlerTest`).
+- **Forgeable 403 log line.** `JsonAccessDeniedHandler.printable` masks
+  anything outside visible ASCII (`JsonAccessDeniedHandlerTest`).
 
-- **Log lines from rejected input.** `GlobalExceptionHandler.printable`
-  replaces control, format and line-separator characters with `?` and caps the
-  value at 1,000 characters, as the Lambda does. It covers Jackson's message,
-  an unknown sort property and a constraint violation's database message, so a
-  newline in a request cannot forge a WARN line
-  (`FlightControllerTest#rejectedValueCannotForgeALogLine`).
+- **Log lines from rejected input.** `GlobalExceptionHandler.printable` masks
+  control, format and line-separator characters
+  (`FlightControllerTest#rejectedValueCannotForgeALogLine`) and cuts a value
+  at 1,000 characters plus `...`.
 
-- **Lambda log lines.** `BookingEventHandler.printable` replaces control, format
-  and line-separator characters with `?`, and caps a value at 1,000 characters
-  plus `...`. It guards the `bookingId` on the success line and the exception
-  message on the `FAILED` line.
+- **Lambda log lines.** `BookingEventHandler.printable` does the same for the
+  `bookingId` and the `FAILED` line's message.
 
-- **LB controller policy file.** Step 8 downloaded the IAM policy to a fixed
-  path in `/tmp`, where another local user could plant a file first. It now
-  uses a private `mktemp` file and removes it afterwards.
+- **LB controller policy file.** Step 8 of `up.sh` downloads the IAM policy to
+  a private `mktemp` file, not a fixed `/tmp` path another user could plant.
 
 - **No password in the log.** `ApiSecurityProperties` checks the prefix in its
-  constructor, so Boot's failure report no longer echoes a rejected value. The
-  message names the property and ends with `<VAR> is not set` (`API_PASSWORD`
-  or `OPS_PASSWORD`) or `the value is not shown`.
+  constructor, so Boot's failure report no longer echoes the value.
 
 - **Narrower publish policy.** `SqsPublishPolicy` in
-  `deploy/aws/foundation.yaml` grants `sqs:SendMessage` only, the one SQS call
-  the service makes. It dropped `sqs:GetQueueUrl` and `sqs:GetQueueAttributes`.
+  `deploy/aws/foundation.yaml` grants `sqs:SendMessage` only.
 
-- **The image fails closed.** Built from the old `Dockerfile`, a bare
-  `docker run` would have served H2 with the dev passwords. No image was ever
-  built from it. The `Dockerfile` now sets `SPRING_PROFILES_ACTIVE=prod`, so the
-  image stops with `'url' must start with "jdbc"` until it gets a database.
+- **The image fails closed.** `Dockerfile` sets `SPRING_PROFILES_ACTIVE=prod`,
+  so the image needs a database, where the old one would have served H2.
 
 ## 1.1.0 — 2026-09-23
 
