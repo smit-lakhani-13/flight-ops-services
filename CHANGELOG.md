@@ -116,9 +116,10 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
   `CreateFlightRequest.FLIGHT_NUMBER` (`^\s*[A-Za-z0-9]*\s*$`, padding the
   service trims): "must contain only letters and digits". `origin` and
   `destination` match `^[A-Za-z]*$`: "must contain only letters".
-  `BookingRequest.passengerName` matches `^[^\p{Cntrl}]*$`: "must not contain
-  control characters". Together with the flight number pattern, this keeps the
-  fingerprint separator out of every hashed field.
+  `BookingRequest.passengerName` matches `^[^\p{Cc}]*$`, which also refuses
+  the C1 controls U+0080 to U+009F: "must not contain control characters".
+  Together with the flight number pattern, this keeps the fingerprint separator
+  out of every hashed field.
 
 - **JSON only.** `FlightController` and `BookingController` declare
   `produces = application/json`, so an XML or YAML `Accept` gets 406
