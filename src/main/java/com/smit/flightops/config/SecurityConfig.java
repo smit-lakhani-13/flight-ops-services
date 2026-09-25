@@ -27,7 +27,9 @@ import org.springframework.security.web.SecurityFilterChain;
  * so sessions, CSRF and form login are off. HTTP Basic is always on, and a JWT resource
  * server joins it when Boot has a {@link JwtDecoder}; a token's scopes and the Basic
  * {@code api} user carry the same authority strings, so one rule set covers both. The
- * last rule is {@code denyAll()}, so a new controller is unreachable until it has a rule.
+ * last rule is {@code denyAll()}, so a request that no rule above matches is denied,
+ * such as a {@code PUT} under {@code /api/**}. A new controller there is covered by the
+ * scope rules as soon as it ships, for GET, HEAD, POST, PATCH and DELETE.
  *
  * @see "SECURITY.md, and adr/0005 and adr/0006"
  */

@@ -145,7 +145,8 @@ public class BookingWriter {
      * is a no-op. {@code Flight.releaseSeats} clamps to {@code totalSeats}, which
      * bounds a double credit but does not prevent it.
      *
-     * <p>No counters here: {@code Flight}'s {@code @Version} can still fail the
+     * <p>No counters here: the commit can still fail, although not on
+     * {@code Flight}'s {@code @Version}, because the row is locked from read to
      * commit. There is no {@code BookingCancelled} event either. It would need a
      * second event type and a second branch in the Lambda.
      */

@@ -16,7 +16,7 @@ import java.util.Objects;
 @Table(name = "flights", indexes = {
     @Index(name = "idx_origin_dest", columnList = "origin,destination")
 })
-// The four checks V2__seat_and_route_invariants.sql adds to PostgreSQL, declared so
+// The four checks V2__seat_and_route_invariants.sql adds to flights, declared so
 // the create-drop H2 schema has them too and a test cannot pass by breaking one. V2
 // is the source of truth; this list only shapes the H2 schema. ddl-auto: validate does
 // not compare check constraints, so nothing catches this list drifting from V2;

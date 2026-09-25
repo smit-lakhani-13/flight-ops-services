@@ -69,7 +69,11 @@
         -->
         <jackson-2-bom.version>2.22.2</jackson-2-bom.version>
 
-        <!-- Boot's parent does not manage these three plugins, so they are pinned for a reproducible build. -->
+        <!--
+          JaCoCo is pinned for a reproducible build, because Boot's parent does not
+          manage it. Boot's parent does manage the enforcer and CycloneDX; these two
+          pins override its versions, so a Boot upgrade does not move them.
+        -->
         <maven.enforcer.plugin.version>3.6.3</maven.enforcer.plugin.version>
         <jacoco.plugin.version>0.8.15</jacoco.plugin.version>
         <cyclonedx.plugin.version>2.9.3</cyclonedx.plugin.version>
@@ -267,10 +271,11 @@
             </plugin>
 
             <!--
-              The toolchain gate: a JDK 17 build of this tree fails mid-compilation on a
-              language feature, so this names the version first. requireUpperBoundDeps flags a
-              dependency resolved below what something in the tree asked for; the stricter
-              dependencyConvergence would flag dozens of versions the BOMs already settle.
+              The toolchain gate: a JDK 17 build of this tree would otherwise stop in the
+              compiler on "release version 21 not supported"; this names the JDK to use
+              and how to set it. requireUpperBoundDeps flags a dependency resolved below
+              what something in the tree asked for; the stricter dependencyConvergence
+              would flag dozens of versions the BOMs already settle.
             -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
@@ -373,7 +378,7 @@
 
             <!--
               A CycloneDX software bill of materials, target/bom.json, so the versions in
-              the shipped artifact have a written answer. Test scope is not in the artifact.
+              the shipped artefact have a written answer. Test scope is not in the artefact.
             -->
             <plugin>
                 <groupId>org.cyclonedx</groupId>

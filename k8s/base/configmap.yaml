@@ -12,8 +12,8 @@ kind: ConfigMap
 metadata:
   name: flight-ops-config
 data:
-  # The `prod` profile: Flyway on, ddl-auto=validate, seeder off, health
-  # details hidden.
+  # The `prod` profile: Flyway on, ddl-auto=validate, seeder off, SQS publisher
+  # by default, ECS JSON logs, and no default passwords.
   SPRING_PROFILES_ACTIVE: "prod"
 
   # Must match cluster.yaml and the workflow's AWS_REGION. A mismatch shows up

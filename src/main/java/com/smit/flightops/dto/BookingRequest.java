@@ -57,7 +57,8 @@ public record BookingRequest(
      *
      * <p>The flight number is upper-cased because {@code BookingWriter} books the
      * same seat for {@code ua123} and {@code UA123}, so a retry that changed
-     * case must hash the same; the name is trimmed for the same reason. All 64
+     * case must hash the same. The name is trimmed so a retry that changed only
+     * its padding is the same request; the stored name is the one first sent. All 64
      * hex characters are stored, in {@code bookings.request_fingerprint VARCHAR(64)}.
      */
     public String fingerprint() {

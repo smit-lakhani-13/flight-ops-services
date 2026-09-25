@@ -506,6 +506,16 @@ The other fixes are to documentation only, and change no behaviour.
   4%; it is 8 to 9%. ADR 0008 gains a dated note for two reasons rewritten in
   place on 23 September.
 
+- **Build context and code comments.** `.dockerignore` listed `*.md`, which
+  matches only the root, so the ADRs and the other nested Markdown stayed in
+  the build context. It now lists `**/*.md`, and leaves out `deploy/` as well.
+  The image is unchanged, because the Dockerfile copies only `pom.xml` and
+  `src/`. Comments from 1.1.0 that misstated behaviour now match the code.
+  Among them: a new controller under `/api` is reachable with the scope as
+  soon as it ships, for GET, HEAD, POST, PATCH and DELETE; and plain
+  `FOR UPDATE` would make the outbox replicas take turns, not publish an event
+  twice.
+
 ### Security
 
 - **Log lines from rejected input.** `GlobalExceptionHandler.printable`

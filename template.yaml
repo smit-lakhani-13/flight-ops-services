@@ -28,10 +28,10 @@ Description: >
 
 Globals:
   Function:
-    # Must match maven.compiler.release in lambda/pom.xml, or every invocation
-    # is an UnsupportedClassVersionError. 21, not java25: it is the main
-    # service's LTS, so one JDK builds both modules and there is one JAVA_HOME
-    # to get right.
+    # Must match maven.compiler.release in lambda/pom.xml. A runtime older
+    # than it fails every invocation with UnsupportedClassVersionError. 21,
+    # not java25: it is the main service's LTS, so one JDK builds both modules
+    # and there is one JAVA_HOME to get right.
     Runtime: java21
 
     # arm64: about 20% cheaper per GB-second than x86_64. Safe because the jar
@@ -76,8 +76,12 @@ Resources:
 
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt BookingEventDLQ.Arn
-        # Enough to ride out a throttle; each extra try at a poison message is
-        # a paid invocation that cannot succeed.
+        # AWS advises at least 5 for a queue Lambda reads, to give Lambda a few
+        # retries before the DLQ. 3 on purpose: each extra try at a poison
+        # message is a paid invocation that cannot succeed. The cost: if the
+        # account pool runs dry, three throttles are enough to dead-letter a
+        # message. The backlog alarm's 600 s threshold sits just above
+        # 3 x 180 s, so change the two together.
         maxReceiveCount: 3
 
       Tags:
@@ -114,7 +118,7 @@ Resources:
     Type: AWS::CloudWatch::Alarm
     Properties:
       AlarmName: booking-events-dlq-not-empty
-      AlarmDescription: A booking event failed three times and is on the dead-letter queue.
+      AlarmDescription: A booking event is on the dead-letter queue after three receives without success, usually three Lambda failures.
       Namespace: AWS/SQS
       MetricName: ApproximateNumberOfMessagesVisible
       Dimensions:
@@ -164,7 +168,7 @@ Resources:
       TableName: flight-status-events
 
       # On-demand: $0 when idle and no throttling under a burst. Provisioned
-      # wins above very roughly a 15-20% duty cycle.
+      # wins above very roughly a 30% duty cycle.
       BillingMode: PAY_PER_REQUEST
 
       # Key attributes only; the other item fields need no declaration.
@@ -282,7 +286,7 @@ Outputs:
     Value: !Ref BookingEventDLQAlarm
 
   BacklogAlarmName:
-    Description: Alarm on the oldest queued message passing 600 s. No notification target - aws cloudwatch describe-alarms --alarm-names <this>
+    Description: Alarm on the oldest queued message staying above 600 s for five minutes. No notification target - aws cloudwatch describe-alarms --alarm-names <this>
     Value: !Ref BookingEventBacklogAlarm
 
   FunctionName:

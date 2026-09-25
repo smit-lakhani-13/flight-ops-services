@@ -21,7 +21,11 @@ public interface BookingRepository extends JpaRepository<Booking, Long> {
     @Query("SELECT b FROM Booking b JOIN FETCH b.flight WHERE b.idempotencyKey = :key")
     Optional<Booking> findByIdempotencyKey(@Param("key") String idempotencyKey);
 
-    /** JOIN FETCH, so mapping N bookings to DTOs does not fire N extra SELECTs. */
+    /**
+     * JOIN FETCH: {@code BookingService.findByFlightNumber} maps the page to DTOs with
+     * no transaction open, so a lazy {@code Booking.flight} would throw
+     * {@code LazyInitializationException}.
+     */
     @Query(value = "SELECT b FROM Booking b JOIN FETCH b.flight f WHERE f.flightNumber = :fn",
            countQuery = "SELECT count(b) FROM Booking b WHERE b.flight.flightNumber = :fn")
     Page<Booking> findByFlightNumber(@Param("fn") String flightNumber, Pageable pageable);

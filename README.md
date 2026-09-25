@@ -199,7 +199,7 @@ The same picture with method names, plus the booking sequence, the idempotency d
 ## Repository layout
 
 ```
-├── src/main/java/com/smit/flightops/       57 files, 3,943 lines
+├── src/main/java/com/smit/flightops/       57 files, 3,958 lines
 │   ├── controller/     HTTP only: bind, validate, map to DTO, choose the status code
 │   ├── service/        orchestration, transaction boundaries, the outbox drain and pruner
 │   ├── entity/         Flight, Booking, FlightStatus, OutboxEvent: the invariants
