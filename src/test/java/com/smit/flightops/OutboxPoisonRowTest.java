@@ -26,10 +26,10 @@ import static org.mockito.Mockito.verify;
 /**
  * What happens to an event the transport will never accept.
  *
- * <p>The claim is {@code ORDER BY id}, so without the attempt ceiling the oldest failing
- * row heads every batch and one malformed row stops all publishing. These tests cover
- * what an operator needs: the row drops out, it is visible while out, and it can be
- * brought back. {@code max-attempts} is two here so the class stays short.
+ * <p>The claim is {@code ORDER BY id}, so without the attempt ceiling a failing row
+ * would be retried first each time its backoff ends, forever. These tests cover what an
+ * operator needs: the row drops out, it is visible while out, and it can be brought
+ * back. {@code max-attempts} is two here so the class stays short.
  */
 @SpringBootTest(
         webEnvironment = SpringBootTest.WebEnvironment.NONE,
