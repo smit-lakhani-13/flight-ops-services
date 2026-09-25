@@ -117,7 +117,7 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
   CodeUri check, `cfn-lint` and `sam validate` name the new path. The empty
   `.trivyignore` is gone, with both `trivyignores` inputs: Trivy still reads
   one from the root if it is ever added, and `CONTRIBUTING.md` says what an
-  entry must carry. The demo books as `Test Passenger`.
+  entry must carry. Acts 2 and 4 of the demo book as `Test Passenger`.
 
 - **Stricter request fields.** A value that breaks one of these rules gets a
   400 `VALIDATION_FAILED` whose body maps the field to the message shown.
@@ -348,9 +348,9 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
   handler's own configuration.
 
 - **`sam build` failed.** SAM builds in a scratch copy of `lambda/`, where the
-  tests' `../events` and `../contracts` are missing. `template.yaml` now points
-  `CodeUri` at `lambda/target/booking-event-handler.jar`, which `up.sh` builds
-  with `./mvnw` before `sam deploy --template-file template.yaml`.
+  tests' `../contracts` is missing. `lambda/template.yaml` now points `CodeUri`
+  at the shaded jar, `target/booking-event-handler.jar`, which `up.sh` builds
+  with `./mvnw` before `sam deploy --template-file lambda/template.yaml`.
 
 - **The ECR lookup failed open.** "Is this commit already in ECR?" read any
   error, a missing permission included, as `exists=false`. It now runs

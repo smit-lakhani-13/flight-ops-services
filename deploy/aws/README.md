@@ -1,8 +1,9 @@
 # Deploying to AWS
 
-Six scripts, a shared library and two CloudFormation templates. Together
-they create the whole demo (cluster, database, queue, Lambda, load balancer)
-in an empty account, and delete it again with proof that it is gone.
+Six scripts, a shared library, two CloudFormation templates and the eksctl
+cluster definition. Together they create the whole demo (cluster, database,
+queue, Lambda, load balancer) in an empty account, and delete it again with
+proof that it is gone.
 
 Nothing here has been run against a real account. The templates lint, the
 scripts parse and are shellcheck-clean, and `selftest.sh` runs the teardown,

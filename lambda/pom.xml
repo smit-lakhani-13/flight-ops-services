@@ -217,8 +217,9 @@
         <finalName>booking-event-handler</finalName>
 
         <!--
-          events/ is on the test classpath, so the tests and
-          `sam local invoke -e lambda/events/sqs.json` read the same fixture files.
+          events/ is on the test classpath, so the tests and, from the root,
+          `sam local invoke -t lambda/template.yaml -e lambda/events/sqs.json`
+          read the same fixture files.
           Declaring <testResources> replaces the default, which is why
           src/test/resources is listed again.
         -->
