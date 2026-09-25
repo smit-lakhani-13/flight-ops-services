@@ -62,7 +62,7 @@
           both sides. Kept at the version of <jackson-2-bom.version> in ../pom.xml,
           so the repository has one Jackson 2 to patch.
         -->
-        <jackson.version>2.22.2</jackson.version>
+        <jackson.version>2.22.3</jackson.version>
 
         <!-- The service's JUnit major, so both suites share assertions and output. -->
         <junit.version>6.0.3</junit.version>
