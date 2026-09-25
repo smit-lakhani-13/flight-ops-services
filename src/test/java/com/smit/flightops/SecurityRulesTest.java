@@ -13,6 +13,7 @@ import org.springframework.http.MediaType;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic;
@@ -224,12 +225,13 @@ class SecurityRulesTest {
     }
 
     /**
-     * jwt() injects an already-validated token, so this proves only the join: a token's
-     * scopes map to the authority strings the rules are written against. Real decoding is
-     * in {@code BearerTokenChallengeTest}.
+     * jwt().authorities() hands the rules a finished {@code SCOPE_} authority and converts
+     * no scope claim, so this proves only that the rules accept those strings from a JWT
+     * authentication. {@code BearerTokenChallengeTest#aSignedTokensScopeMapsOntoTheRules}
+     * decodes a signed token and maps its scope for real.
      */
     @Test
-    @DisplayName("a bearer token carrying the same scopes is authorised identically")
+    @DisplayName("the rules accept SCOPE_ authority strings on a JWT authentication")
     void jwtScopesMapOntoTheSameRules() throws Exception {
         mockMvc.perform(get("/api/v1/flights/UA123")
                         .with(jwt().authorities(new SimpleGrantedAuthority(SecurityConfig.SCOPE_READ))))
@@ -277,13 +279,22 @@ class SecurityRulesTest {
                 .andExpect(header().exists("X-Request-Id"));
     }
 
-    /** STATELESS, shown by its consequence: no Set-Cookie, so no JSESSIONID for CSRF to protect. */
+    /**
+     * No session, asserted on the request itself, so there is no JSESSIONID for CSRF to
+     * protect. It fails with the policy switched to ALWAYS; under IF_REQUIRED it would
+     * still pass, so it catches a session being forced on, not every policy change.
+     * MockMvc never writes the container's session cookie, so the Set-Cookie check alone
+     * could not catch a session; it stays to catch a cookie the application sets itself.
+     */
     @Test
-    @DisplayName("no session is ever created — nothing sets a cookie")
+    @DisplayName("an authenticated request creates no session and sets no cookie")
     void authenticationCreatesNoSession() throws Exception {
-        mockMvc.perform(get("/api/v1/flights/UA123").with(httpBasic(API_USER, API_PASSWORD)))
+        MvcResult result = mockMvc.perform(get("/api/v1/flights/UA123").with(httpBasic(API_USER, API_PASSWORD)))
                 .andExpect(status().isOk())
-                .andExpect(header().doesNotExist("Set-Cookie"));
+                .andExpect(header().doesNotExist("Set-Cookie"))
+                .andReturn();
+
+        assertThat(result.getRequest().getSession(false)).isNull();
     }
 
     /**

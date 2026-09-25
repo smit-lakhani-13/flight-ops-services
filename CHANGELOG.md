@@ -36,6 +36,22 @@ still blank.
   from `main` no longer reports itself as 1.2.0 in `/actuator/info` and the
   OpenAPI document.
 
+### Fixed
+
+- **Tests that proved less than their names said.**
+  `BearerTokenChallengeTest#aSignedTokensScopeMapsOntoTheRules` signs an RS256
+  token with the `flights:read` scope and checks that it can read a flight but
+  cannot book or read metrics. Before, no test decoded a valid token, so a
+  change to how the resource server turns scopes into authorities still passed
+  the build. The no-session test now asserts that the request has no session:
+  MockMvc never writes the session cookie, so the old `Set-Cookie` check could
+  not catch a session. The PostgreSQL replay race checks that every caller
+  gets the same booking back, as its name says.
+- **Tests with an expiry date.** `ErrorContractTest` created flights departing
+  in 2030 and 2031 against the real clock, so six of its tests would have
+  started failing then. They now depart in 2099, like the suite's other fixed
+  departure dates.
+
 ## 1.2.0 — 2026-09-26
 
 The [fourth review pass](doc/DEFECT-LOG.md#fourth-review-pass), a full audit
