@@ -69,6 +69,12 @@
         <mockito.version>5.23.0</mockito.version>
         <assertj.version>3.27.7</assertj.version>
 
+        <!--
+          The version Boot's BOM gives ../pom.xml, which pins no version of its
+          own. Keep the two in step on a Boot upgrade.
+        -->
+        <testcontainers.version>2.0.5</testcontainers.version>
+
         <maven.enforcer.plugin.version>3.6.3</maven.enforcer.plugin.version>
         <cyclonedx.plugin.version>2.9.3</cyclonedx.plugin.version>
         <maven.compiler.plugin.version>3.16.0</maven.compiler.plugin.version>
@@ -208,6 +214,25 @@
             <groupId>com.amazonaws</groupId>
             <artifactId>aws-lambda-java-tests</artifactId>
             <version>${aws.lambda.tests.version}</version>
+            <scope>test</scope>
+        </dependency>
+
+        <!--
+          DynamoDB Local in a container, for BookingEventHandlerDynamoDbLocalTest.
+          The junit-jupiter module brings @Testcontainers(disabledWithoutDocker),
+          which skips the class on a machine with no container runtime, as in
+          the service. Test scope, so neither reaches the shaded jar or the SBOM.
+        -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers</artifactId>
+            <version>${testcontainers.version}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers-junit-jupiter</artifactId>
+            <version>${testcontainers.version}</version>
             <scope>test</scope>
         </dependency>
     </dependencies>

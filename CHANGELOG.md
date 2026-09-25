@@ -30,6 +30,23 @@ still blank.
 
 ## Unreleased
 
+### Added
+
+- **The AWS SDK code runs against emulators in CI.**
+  `SqsEventPublisherElasticMqTest` publishes through `SqsEventPublisher` to
+  ElasticMQ and reads the message back, body and attributes unchanged, with
+  the SDK checking both MD5 digests. The Lambda's
+  `BookingEventHandlerDynamoDbLocalTest` runs the handler against DynamoDB
+  Local on a table keyed as `lambda/template.yaml` keys it: the fixture lands
+  as one item per booking, a redelivered batch is refused by the condition
+  and is not a failure, and a malformed body fails only its own message.
+  Before, both halves were tested only against mocked clients, which cannot
+  see a request the server would refuse. Both classes skip without Docker,
+  and the step "The emulator tests ran" fails CI if either skipped. Neither
+  talks to AWS. `scripts/numbers.sh` now counts the Lambda's skipped tests.
+  Dependabot leaves the Lambda's Testcontainers version alone, as it does
+  JUnit, because `lambda/pom.xml` copies the one Boot manages for the service.
+
 ### Changed
 
 - **Version.** Both poms say `1.3.0-SNAPSHOT` until the next tag, so a build

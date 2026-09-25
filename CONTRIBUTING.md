@@ -39,14 +39,16 @@ Both modules' Surefire runs pin the test JVM to `Asia/Kolkata`. CI runs in UTC,
 where a formatter that used the system zone would still pass; at +05:30 it
 fails.
 
-### `Skipped: 9` is correct
+### Skipped tests without Docker are correct
 
-Nine tests are in three classes annotated
-`@Testcontainers(disabledWithoutDocker = true)`: five in
-`BookingIntegrationTest`, three in `service/OutboxPrunePostgresTest` and one
-in `LockTimeoutPostgresTest`.
-Without a container runtime they skip, and a local build is still green and
-still correct.
+Thirteen tests are in five classes annotated
+`@Testcontainers(disabledWithoutDocker = true)`. Nine run on PostgreSQL: five
+in `BookingIntegrationTest`, three in `service/OutboxPrunePostgresTest` and
+one in `LockTimeoutPostgresTest`. Four run the AWS SDK code against an
+emulator: one in `service/SqsEventPublisherElasticMqTest`, against ElasticMQ,
+and three in the Lambda's `BookingEventHandlerDynamoDbLocalTest`, against
+DynamoDB Local. Without a container runtime they skip, and a local build is
+still green and still correct.
 
 CI runs them on runners with Docker, so every CI run covers the PostgreSQL
 paths that a laptop without Docker skips: Flyway with `ddl-auto=validate`,
@@ -56,10 +58,18 @@ two competing pollers, and PostgreSQL's own `lock_timeout` firing on a held
 flight row. The build job's step "The PostgreSQL tests ran" fails CI if any of
 the three classes skips a test or has no report.
 
+The emulator tests check what a mocked client cannot: that ElasticMQ accepts
+the message `SqsEventPublisher` sends and hands back its body and attributes
+unchanged, and that DynamoDB Local accepts the item at the table's key and
+refuses a redelivery through the handler's condition. The step "The emulator
+tests ran" fails CI if either class skips a test or has no report. An
+emulator is not AWS, and neither class talks to AWS.
+
 So in CI the Surefire summary reads
-`Tests run: 278, Failures: 0, Errors: 0, Skipped: 0` for the service and
-`Tests run: 25, Failures: 0, Errors: 0, Skipped: 0` for the Lambda. On a laptop
-without Docker the service line ends `Skipped: 9`, and 269 of its tests run.
+`Tests run: 279, Failures: 0, Errors: 0, Skipped: 0` for the service and
+`Tests run: 28, Failures: 0, Errors: 0, Skipped: 0` for the Lambda. On a laptop
+without Docker the service line ends `Skipped: 10`, and 269 of its tests run.
+The Lambda line ends `Skipped: 3`, and 25 run.
 
 A new migration is not accepted until CI has gone green on it. The local H2
 profile never sees it, and neither does a laptop with no Docker.
@@ -123,10 +133,11 @@ scripts/numbers.sh          # recomputes every count the docs claim
 | Architecture | 9 | ArchUnit over `target/classes`, one test per rule in [Architecture rules](#architecture-rules). Each rule was seen to fail on a planted violation before it was committed |
 | Observability | 8 | the request-id filter against a hostile inbound header, and the booking meters scraped through a real `PrometheusMeterRegistry`, since a `SimpleMeterRegistry` would accept any name |
 | Run | 294 | 0 failures without Docker (13 + 36 + 75 + 10 + 89 + 11 + 19 + 24 + 9 + 8) |
-| PostgreSQL integration | 9 | `@Testcontainers(disabledWithoutDocker = true)`, skipped without a container runtime; [`Skipped: 9` is correct](#skipped-9-is-correct) names the three classes and what they cover |
+| PostgreSQL integration | 9 | `@Testcontainers(disabledWithoutDocker = true)`, skipped without a container runtime; [Skipped tests without Docker are correct](#skipped-tests-without-docker-are-correct) names the classes and what they cover |
+| Emulators | 4 | `@Testcontainers(disabledWithoutDocker = true)` as well: `SqsEventPublisherElasticMqTest` sends through `SqsEventPublisher` to ElasticMQ and reads the message back, and the Lambda's `BookingEventHandlerDynamoDbLocalTest` runs the handler against DynamoDB Local. Emulators, not AWS |
 
-So 303 tests exist across the two modules. 294 run without Docker and 9 skip,
-and CI runs all 303.
+So 307 tests exist across the two modules. 294 run without Docker and 13
+skip, and CI runs all 307.
 
 ## What CI enforces
 
@@ -157,6 +168,7 @@ for a commit on `main` that got no push run.
 | `build` | JaCoCo | bundle coverage below 80% line or 50% branch |
 | `build` | ArchUnit | a layering rule is broken (9 rules in `ArchitectureTest`) |
 | `build` | "The PostgreSQL tests ran" | `BookingIntegrationTest`, `service/OutboxPrunePostgresTest` or `LockTimeoutPostgresTest` has no readable report, no tests, or a skipped test |
+| `build` | "The emulator tests ran" | `service/SqsEventPublisherElasticMqTest` or the Lambda's `BookingEventHandlerDynamoDbLocalTest` has no readable report, no tests, or a skipped test |
 | `build` | "The SAM template points at the Lambda jar" | `lambda/template.yaml`'s `CodeUri`, which resolves against `lambda/`, is not a built file, or the jar lacks the `Handler` class |
 | `build` | "Both SBOMs exist" | `target/bom.json` or `lambda/target/bom.json` is missing or empty |
 | `infra-lint` | kubeconform | the rendered `deploy/k8s/overlays/aws`, `deploy/k8s/namespace.yaml` or `deploy/k8s/components/ingress/ingress.yaml` is not valid against the Kubernetes 1.36 schemas |
@@ -327,16 +339,17 @@ nothing else manages its versions.
   default is 5 per entry. The four entries at the default can open twenty pull
   requests the first time Dependabot runs.
 
-- The `ignore` rules cover four artifacts and no more, because an `ignore` also
+- The `ignore` rules cover five artifacts and no more, because an `ignore` also
   suppresses Dependabot's security updates for that dependency. That is accepted
   only where a bump would contradict a pin the project documents:
   `eclipse-temurin` and `maven` in the two base images (majors),
   `org.springframework.boot:spring-boot-starter-parent` (majors), and
-  `org.junit:junit-bom` under `/lambda`.
+  `org.junit:junit-bom` and `org.testcontainers:*` under `/lambda`.
 
-- The `junit-bom` ignore covers majors, minors and patches. `<junit.version>`
-  in `lambda/pom.xml` copies what Boot's BOM gives the service module, and
-  whichever side moves first splits the repository across two JUnit versions.
+- The `junit-bom` and Testcontainers ignores cover majors, minors and patches.
+  `<junit.version>` and `<testcontainers.version>` in `lambda/pom.xml` copy
+  what Boot's BOM gives the service module, and whichever side moves first
+  splits the repository across two versions.
 
 - Patch and minor updates: merge once CI is green.
 

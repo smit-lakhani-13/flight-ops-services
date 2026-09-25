@@ -647,7 +647,7 @@ receive.
 
 - The contract between them is a file, `contracts/booking-created-v1.json`.
   A test on each side asserts against it, and neither test imports the other
-  side's code. The module has 25 tests, and 6 of them are the consumer half of
+  side's code. The module has 28 tests, and 6 of them are the consumer half of
   the contract.
 
 - The handler is a plain `RequestHandler` with no framework. I did not use

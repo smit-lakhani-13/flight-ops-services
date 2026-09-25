@@ -137,6 +137,41 @@ jobs:
       - name: Build and test the Lambda consumer
         run: ./mvnw -B -f lambda/pom.xml clean verify
 
+      # The same guard for the two classes that run the AWS SDK code against an
+      # emulator in a container: SqsEventPublisher against ElasticMQ, and
+      # BookingEventHandler against DynamoDB Local on the table template.yaml
+      # declares. Neither reaches AWS. Without Docker they skip like the
+      # PostgreSQL classes, so this step fails unless both ran with nothing
+      # skipped. It comes after the Lambda build, which writes the second report.
+      - name: The emulator tests ran
+        run: |
+          python3 - <<'EOF'
+          import sys
+          import xml.etree.ElementTree as ET
+
+          failed = False
+          for reports, name in (
+                  ("target/surefire-reports",
+                   "com.smit.flightops.service.SqsEventPublisherElasticMqTest"),
+                  ("lambda/target/surefire-reports",
+                   "com.smit.flightops.lambda.BookingEventHandlerDynamoDbLocalTest")):
+              path = f"{reports}/TEST-{name}.xml"
+              try:
+                  suite = ET.parse(path).getroot()
+              except (OSError, ET.ParseError) as e:
+                  print(f"  {name}: no readable report ({e})")
+                  failed = True
+                  continue
+              tests = int(suite.get("tests", "0"))
+              skipped = int(suite.get("skipped", "0"))
+              print(f"  {name}: {tests} tests, {skipped} skipped")
+              if tests == 0 or skipped > 0:
+                  failed = True
+          if failed:
+              print("::error::the emulator tests did not all run; is Docker available?")
+              sys.exit(1)
+          EOF
+
       # lambda/template.yaml deploys the shaded jar as it is, with no
       # `sam build`, so its CodeUri (relative to the template) must name the
       # file the build above wrote, and that file must hold the handler class.
