@@ -14,7 +14,8 @@
 
 ## Checks
 
-- [ ] `./mvnw -B clean verify` passes (and `-f lambda/pom.xml` if the Lambda changed)
+- [ ] `./mvnw -B clean verify` passes (and `-f lambda/pom.xml` if the Lambda
+  changed)
 
 - [ ] `python3 scripts/refcheck.py && python3 scripts/linkcheck.py && scripts/sweeps.sh` pass
   (with `SWEEP_PATTERNS` unset, as on a laptop or a fork's pull request,

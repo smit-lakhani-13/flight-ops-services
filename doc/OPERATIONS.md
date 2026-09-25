@@ -167,8 +167,8 @@ Every log line carries the application name, trace id, span id and request id:
 
 The last field is the `X-Request-Id`, which is on every response the
 application handles, including 401 and 403. Tomcat's own 400 page and a
-`TRACE` refusal carry none. A user reporting "it said 403" can hand over one string that finds the
-request.
+`TRACE` refusal carry none. A user reporting "it said 403" can hand over one
+string that finds the request.
 
 `RequestIdFilter` runs at `HIGHEST_PRECEDENCE`, ahead of Spring Security. A 401
 comes from the security filter chain (`BasicAuthenticationFilter` or
@@ -208,7 +208,8 @@ created the row. The link is the `traceparent` the writer captured:
 
 The publisher's own trace is `d21efe52…`. The `traceparent` it carries is
 `10cd4f19…`, the booking request's. That value goes onto the SQS message as an
-attribute and the Lambda logs it, so one `grep` spans three processes:
+attribute and the Lambda logs it, so one trace id links three processes, and
+two searches find it:
 
 ```bash
 kubectl logs -n flight-ops -l app=flight-ops --tail=10000 | grep 10cd4f19102abf7a3f922f252b6d4a97
@@ -365,9 +366,9 @@ it. `BCryptPasswordEncoder` logs a WARN and returns false in place of throwing,
 so the pod goes Ready and every login as that user gets a 401.
 
 The WARN comes from `o.s.s.c.bcrypt.BCryptPasswordEncoder`. The self-check
-logs it once at startup for each such value, and every login logs it again. A WARN at startup therefore
-means a stored value is not a bcrypt hash, before anyone has tried to log in.
-Set a real hash, as in
+logs it once at startup for each such value, and every login logs it again. A
+WARN at startup therefore means a stored value is not a bcrypt hash, before
+anyone has tried to log in. Set a real hash, as in
 [Rotating the API or ops password](#rotating-the-api-or-ops-password).
 [SECURITY.md](../SECURITY.md#known-limitations) lists this as a known limit.
 
@@ -500,8 +501,8 @@ CI stopping at "Is this commit already in ECR?". Once the Deployment exists,
 
 `deploy/aws/selftest.sh` runs `down.sh`, `cost-check.sh`, `ecr-image-exists.sh`
 and `up.sh`'s checks in `lib.sh` against stubbed `aws`, `kubectl`, `helm`,
-`eksctl`, `sleep` and `mvnw` commands. It uses no credentials, takes a few seconds, and runs in CI's
-`infra-lint` job.
+`eksctl`, `sleep` and `mvnw` commands. It uses no credentials, takes a few
+seconds, and runs in CI's `infra-lint` job.
 
 ### Rotating the API or ops password
 
@@ -532,8 +533,8 @@ the property at startup either way.
   cross-process trace hunt is `kubectl logs | grep <traceId>` on this side and
   CloudWatch Logs Insights on the Lambda's log group on the other.
 
-- **The service exports no traces.** Micrometer Tracing generates the ids and puts
-  them in the logs. They come from OpenTelemetry through
+- **The service exports no traces.** Micrometer Tracing generates the ids and
+  puts them in the logs. They come from OpenTelemetry through
   `spring-boot-starter-opentelemetry`. OTLP export activates only when
   `management.opentelemetry.tracing.export.otlp.endpoint` is set, and it is
   not. The log line is the trace. The Lambda has X-Ray active tracing, so
@@ -549,11 +550,11 @@ the property at startup either way.
 - **No alerting.** Nothing pages anyone. Rows 4 and 5 of the alert table have
   CloudWatch alarms declared in `lambda/template.yaml`
   (`lambda/template.yaml#BookingEventDLQAlarm`,
-  `lambda/template.yaml#BookingEventBacklogAlarm`), linted in CI and never deployed,
-  with no notification target: an alarm would change state in the console
-  and tell no one. Rows 1 to 3 are Prometheus conditions, and nothing scrapes
-  `/actuator/prometheus`. Row 6 would need a Kubernetes monitor and row 7 an
-  RDS alarm, and neither exists.
+  `lambda/template.yaml#BookingEventBacklogAlarm`), linted in CI and never
+  deployed, with no notification target: an alarm would change state in the
+  console and tell no one. Rows 1 to 3 are Prometheus conditions, and nothing
+  scrapes `/actuator/prometheus`. Row 6 would need a Kubernetes monitor and
+  row 7 an RDS alarm, and neither exists.
 
 That is fine for a two-week demo on a $7.72/day cluster, and not for
 production.

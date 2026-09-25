@@ -7,7 +7,10 @@
 its message says what to set: `This build needs JDK 21. Point JAVA_HOME at a
 JDK 21 (with Homebrew on macOS: export JAVA_HOME=/opt/homebrew/opt/openjdk@21).`
 Without that rule, a build on 17 would fail later, in the compiler, on
-`release version 21 not supported`.
+`release version 21 not supported`. The upper bound is for reproducibility, not
+a known failure on 25. CI, the image and the Lambda runtime all use 21
+(`.github/workflows/build-and-deploy.yml`, `Dockerfile`,
+`lambda/template.yaml`), so a build on 25 would be one that CI never checked.
 
 ```bash
 export JAVA_HOME=/opt/homebrew/opt/openjdk@21      # Homebrew, Apple Silicon

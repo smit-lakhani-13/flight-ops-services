@@ -123,8 +123,10 @@ step "3/12  Lambda stack — SQS, DLQ, DynamoDB, the consumer"
 # Maven builds the jar, not `sam build`. SAM copies only the CodeUri directory
 # into a scratch directory, and the Lambda tests read ../contracts, so they
 # fail there. lambda/template.yaml points CodeUri at the shaded jar, relative
-# to itself. sam deploy prefers .aws-sam/build/template.yaml when one exists,
-# so a stale build from an earlier `sam build` is removed first.
+# to itself. --template-file names that file, so sam deploy never reads a
+# .aws-sam/build left by an earlier `sam build`. Removing it changes nothing
+# for this deploy; it only stops a later bare `sam deploy`, which does prefer
+# that built template, from deploying a stale copy.
 (
     cd "$repo"
     rm -rf .aws-sam

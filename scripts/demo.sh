@@ -167,7 +167,8 @@ fi
 
 say "Follow that header. The script reads the value the server sent instead of"
 say "assuming /bookings/1. It resolves; this endpoint threw"
-say "LazyInitializationException until I found and fixed it (bug 4)."
+say "LazyInitializationException until I found and fixed it (doc/DEFECT-LOG.md,"
+say "'A booking lookup that failed on every call')."
 run "curl -s $AUTH '$BASE$LOC' | jq_or_cat"
 pause
 
@@ -189,8 +190,9 @@ run "curl -s $AUTH -X POST '$API/bookings' -H 'Content-Type: application/json' \
   -d '{\"flightNumber\":\"$NEW_FLIGHT\",\"passengerName\":\"Greedy\",\"seats\":5,\"idempotencyKey\":\"oversell-$RUN\"}' | jq_or_cat"
 pause
 
-say "BUG 1: cancel a flight, then try to book it. Before the fix this returned 201"
-say "and sold a seat on a flight that was not going anywhere."
+say "doc/DEFECT-LOG.md, 'Seats sold on a cancelled flight': cancel a flight, then"
+say "try to book it. Before the fix this returned 201 and sold a seat on a flight"
+say "that was not going anywhere."
 run "curl -s $AUTH -o /dev/null -w 'DELETE -> %{http_code}\n' -X DELETE '$API/flights/$NEW_FLIGHT'"
 run "curl -s $AUTH -X POST '$API/bookings' -H 'Content-Type: application/json' \\
   -d '{\"flightNumber\":\"$NEW_FLIGHT\",\"passengerName\":\"TooLate\",\"seats\":1,\"idempotencyKey\":\"cancelled-$RUN\"}' | jq_or_cat"
@@ -200,8 +202,9 @@ pause
 
 # ── Act 4 ────────────────────────────────────────────────────────────────────
 act "ACT 4: ten callers race on one idempotency key"
-say "This is bug 3. Before the fix, roughly 4 callers got 201 and 6 got 409"
-say "for what should have been one logical booking. Watch all ten get 201."
+say "This is 'One idempotency key, two answers' in doc/DEFECT-LOG.md. Before the"
+say "fix, roughly 4 callers got 201 and 6 got 409 for what should have been one"
+say "logical booking. Watch all ten get 201."
 say "All ten send the same body: one request, retried. The next act sends"
 say "ten different bodies on one key."
 run "curl -s $AUTH -o /dev/null -X POST '$API/flights' -H 'Content-Type: application/json' \\
@@ -301,7 +304,7 @@ pause
 act "ACT 8: the endpoints Kubernetes uses"
 say "These three health endpoints need no credentials, and they have to be:"
 say "the kubelet sends none. The only other anonymous paths are the OpenAPI"
-say "document and Swagger UI."
+say "document, Swagger UI and /error."
 for p in health health/liveness health/readiness; do
   printf "   /actuator/%-18s -> %s\n" "$p" "$(curl -s -o /dev/null -w '%{http_code}' "$BASE/actuator/$p")"
 done

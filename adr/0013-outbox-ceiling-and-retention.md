@@ -41,10 +41,10 @@ watches *fell* to zero while the service was losing every event.
 So a failed row also gets a `next_attempt_at`
 (`src/main/resources/db/migration/V7__outbox_next_attempt_at.sql`). It is set to
 `retry-backoff` doubled once per attempt and capped at `max-retry-backoff`, and
-the claim query skips a row whose time has not come. With the defaults, ten attempts now span
-about thirteen and a half minutes (810 seconds of waits). I wrote the doubling as a bounded loop instead of a
-shift. A shift is wrong at attempt 64 without raising any error, and the loop
-stops at the cap.
+the claim query skips a row whose time has not come. With the defaults, ten
+attempts now span about thirteen and a half minutes (810 seconds of waits). I
+wrote the doubling as a bounded loop instead of a shift. A shift is wrong at
+attempt 64 without raising any error, and the loop stops at the cap.
 
 `src/main/java/com/smit/flightops/service/OutboxPruner.java` enforces retention
 with a batched delete. Each batch runs in its own transaction, and one run does

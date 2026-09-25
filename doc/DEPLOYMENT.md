@@ -131,9 +131,10 @@ jar, and `sam build` is not used. SAM builds in a scratch copy of the
 `CodeUri` directory, where the Lambda tests cannot find `../contracts`. So
 `lambda/template.yaml` points `CodeUri` at the shaded jar,
 `target/booking-event-handler.jar`, which SAM resolves against the template's
-directory. `sam deploy` prefers the template in `.aws-sam/build` when one
-exists, so the second line removes a stale build left by an earlier
-`sam build`.
+directory. `--template-file` names the template, so `sam deploy` never reads a
+`.aws-sam/build` left by an earlier `sam build`. The second line changes nothing
+for these commands; it only stops a later bare `sam deploy`, which does prefer
+that built template, from deploying a stale copy.
 
 This takes two minutes and creates the queue, the DLQ, two CloudWatch alarms
 on them with no notification target, the DynamoDB table and the Lambda. Then
@@ -374,8 +375,8 @@ full outage, and a PDB does nothing about a node dying. `required` would leave
 a pod `Pending` for ever on a single-node cluster.
 
 The HPA scales on CPU, because `metrics-server` offers CPU. The slow path here
-waits on `SELECT … FOR UPDATE`, which may not show as CPU. The better signal is
-request rate or queue depth, through KEDA or the Prometheus adapter.
+waits on `SELECT … FOR UPDATE`, which may not show as CPU. The better signal
+is request rate or queue depth, through KEDA or the Prometheus adapter.
 `/actuator/prometheus` already serves, because `micrometer-registry-prometheus`
 is on the classpath, so the adapter is the missing piece.
 
@@ -507,9 +508,9 @@ the Lambda) carry the tag `Project=flight-ops`. It passes
 `--tags Project=flight-ops` to each one, and CloudFormation copies stack tags
 to the resources that take them. `deploy/aws/cluster.yaml` puts the same tag
 on what eksctl creates from it: the cluster, its VPC and NAT gateway, and the
-node group. A few things are left untagged: the four EKS addons, the two IAM roles
-made by `eksctl create iamserviceaccount`, the load balancer controller's IAM
-policy, and the shared SAM bucket. None of them bills more than cents. The
+node group. A few things are left untagged: the four EKS addons, the two IAM
+roles made by `eksctl create iamserviceaccount`, the load balancer controller's
+IAM policy, and the shared SAM bucket. None of them bills more than cents. The
 addons and the roles go with the cluster, and `down.sh` deletes the policy by
 name. The catch-all query is:
 
@@ -527,9 +528,9 @@ The Kubernetes version is a cost control too. A version in extended support
 bills $0.60 per cluster-hour, and standard support bills $0.10. Extended
 support is on by default, so an aged-out version keeps running at six times
 the price. `deploy/aws/cluster.yaml` pins `1.36`, and `up.sh` sets the upgrade
-policy to `STANDARD` right after creation. On 22 September 2026, standard support covered
-1.36, 1.35 and 1.34, and extended support covered 1.33 and older. Re-check
-with:
+policy to `STANDARD` right after creation. On 22 September 2026, standard
+support covered 1.36, 1.35 and 1.34, and extended support covered 1.33 and
+older. Re-check with:
 
 ```bash
 aws eks describe-cluster-versions \
@@ -625,11 +626,11 @@ Reasoned from the configuration, not measured under load, the order would be:
 4. **Lambda concurrency.** The SQS event source sets
    `ScalingConfig.MaximumConcurrency: 5`, so a backlog runs at most five
    invocations. It reserves nothing from the account pool and limits only the
-   poller, and `lambda/template.yaml` explains the trade-off. Messages over the cap
-   wait in the queue, and their receive count is not raised, so a long backlog
-   is slow and does not reach the DLQ. An account pool that runs dry can still
-   throttle, and that does raise the count towards `maxReceiveCount: 3`. Raise
-   the cap before raising traffic; AWS accepts 2 to 1000.
+   poller, and `lambda/template.yaml` explains the trade-off. Messages over the
+   cap wait in the queue, and their receive count is not raised, so a long
+   backlog is slow and does not reach the DLQ. An account pool that runs dry can
+   still throttle, and that does raise the count towards `maxReceiveCount: 3`.
+   Raise the cap before raising traffic; AWS accepts 2 to 1000.
 
 5. **Node IP addresses, not CPU.** With the VPC CNI each pod takes a real VPC
    IP, and a t3.medium holds at most 17 pods. Two nodes hold the HPA's ceiling

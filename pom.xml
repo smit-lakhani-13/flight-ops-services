@@ -291,9 +291,12 @@
             <!--
               The toolchain gate: a JDK 17 build of this tree would otherwise stop in the
               compiler on "release version 21 not supported"; this names the JDK to use
-              and how to set it. requireUpperBoundDeps flags a dependency resolved below
-              what something in the tree asked for; the stricter dependencyConvergence
-              would flag dozens of versions the BOMs already settle.
+              and how to set it. The upper bound is for reproducibility, not a known
+              failure on 25: CI, the Dockerfile and the Lambda runtime all use 21, so a
+              build on a later JDK would be one CI never checked. requireUpperBoundDeps
+              flags a dependency resolved below what something in the tree asked for;
+              the stricter dependencyConvergence would flag dozens of versions the BOMs
+              already settle.
             -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

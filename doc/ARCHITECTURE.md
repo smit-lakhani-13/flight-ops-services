@@ -139,7 +139,7 @@ Reading it in the source, in order:
 |---|---|---|
 | Correlation | `src/main/java/com/smit/flightops/observability/RequestIdFilter.java#doFilterInternal` | Runs ahead of Spring Security, so a 401 also carries `X-Request-Id` |
 | Authorisation | `src/main/java/com/smit/flightops/config/SecurityConfig.java#apiSecurityFilterChain` | One rule set for Basic and JWT alike |
-| Binding and validation | `src/main/java/com/smit/flightops/dto/BookingRequest.java` | Bean Validation on the record components. The flight number is letters and digits, and the passenger name has no control characters. Failures become 400 before any service code runs. Jackson refuses a `seats` written with a decimal point or an exponent, `2.0` included, because `accept-float-as-int` is off in `src/main/resources/application.yml`, and a missing or null one because a primitive `int` cannot be null. `allow-coercion-of-scalars: false` refuses `"2"` as text. All of these are `400 MALFORMED_REQUEST`. The writes read JSON only, so a body sent with any other `Content-Type`, YAML included, gets 415 before any of this runs |
+| Binding and validation | `src/main/java/com/smit/flightops/dto/BookingRequest.java` | Bean Validation on the record components: the flight number is letters and digits, and the passenger name needs one character that is neither whitespace nor a format character, and has no control character or unpaired surrogate. Failures become 400 before any service code runs. Jackson refuses a `seats` with a decimal point or an exponent, `2.0` included (`accept-float-as-int` is off in `src/main/resources/application.yml`), a missing or null one, which a primitive `int` cannot hold, and `"2"` as text (`allow-coercion-of-scalars: false`), each as `400 MALFORMED_REQUEST`. The writes that take a body read JSON only, so any other `Content-Type`, YAML included, gets 415 first |
 | Idempotency | `src/main/java/com/smit/flightops/service/BookingService.java#book` | Decides replay, conflict or insert. Holds no transaction of its own |
 | The write | `src/main/java/com/smit/flightops/service/BookingWriter.java#insertNewBooking` | The transaction, the row lock, the key re-check under the lock, the seat arithmetic and the outbox row |
 | The race loser | `src/main/java/com/smit/flightops/service/BookingWriter.java#recoverReplay` | Reads the winner in a fresh read-only transaction. `BookingService#book` holds no transaction, so the loser's has already rolled back. If `book` ever becomes transactional, `REQUIRES_NEW` still keeps the read in its own transaction |
@@ -658,9 +658,9 @@ receive.
 
 - Partial batch failure: the handler returns only the failed message ids.
   `FunctionResponseTypes: [ReportBatchItemFailures]` in `lambda/template.yaml`
-  makes Lambda read that list. Without it, Lambda treats the invocation as a success
-  and deletes every message in the batch, failures included. With it, one
-  poison message does not redeliver the nine beside it that succeeded.
+  makes Lambda read that list. Without it, Lambda treats the invocation as a
+  success and deletes every message in the batch, failures included. With it,
+  one poison message does not redeliver the nine beside it that succeeded.
 
 - The write is conditional on `attribute_not_exists(bookingId)`. SQS delivers
   at least once, so a redelivery of a message that already succeeded is a
@@ -677,12 +677,12 @@ receive.
 
 - The sort key is `timestamp#bookingId`. The `bookingId` keeps two bookings on
   one flight in the same instant apart, and
-  `lambda/events/sqs-same-instant.json` covers that case. Both sides format the timestamp with
-  `uuuu-MM-dd'T'HH:mm:ss.SSSSSS'Z'`. DynamoDB sorts range keys as bytes, and
-  `Instant.toString()` prints 0, 3, 6 or 9 fractional digits. `…:00Z` would
-  then sort after `…:00.000001Z`, because `Z` is `0x5A` and `.` is `0x2E`. The
-  contract test asserts that the `#` lands at index 27, so a pattern changed on
-  one side only fails it.
+  `lambda/events/sqs-same-instant.json` covers that case. Both sides format the
+  timestamp with `uuuu-MM-dd'T'HH:mm:ss.SSSSSS'Z'`. DynamoDB sorts range keys as
+  bytes, and `Instant.toString()` prints 0, 3, 6 or 9 fractional digits.
+  `…:00Z` would then sort after `…:00.000001Z`, because `Z` is `0x5A` and
+  `.` is `0x2E`. The contract test asserts that the `#` lands at index 27, so a
+  pattern changed on one side only fails it.
 
 - The producer's `traceparent` arrives as a message attribute. A missing
   attribute map, a missing `traceparent` key and a value sent as binary all
@@ -752,7 +752,7 @@ costs:
 
 | Seam | Swap in | Cost |
 |---|---|---|
-| `EventPublisher` | A JMS broker (Solace PubSub+, TIBCO EMS), Kafka, EventBridge | `EventPublisher` itself does not change, because the payload is already serialised. For a JMS broker the cost is more than one class: a publisher behind `@ConditionalOnProperty`, a `ConnectionFactory` bean and the vendor's client library, a mode in `src/main/java/com/smit/flightops/config/EventProperties.java#MODES`, a test, and a new consumer, because the Lambda reads `SQSEvent` and Lambda has no event source for Solace or EMS. Kafka and EventBridge cost something different. [ADR 0015](../adr/0015-event-transport.md) sets out each from the vendors' documentation; none has been built or run here |
+| `EventPublisher` | A JMS broker (Solace PubSub+, TIBCO EMS), Kafka, EventBridge | `EventPublisher` itself does not change, because the payload is already serialised. A JMS broker would take a publisher behind `@ConditionalOnProperty`, a `ConnectionFactory` bean and the vendor's client library, a mode in `src/main/java/com/smit/flightops/config/EventProperties.java#MODES`, a test, and a new consumer, because the Lambda reads `SQSEvent`. [ADR 0015](../adr/0015-event-transport.md) sets out each option from the vendors' documentation; none has been built or run here |
 | `spring.security.oauth2.resourceserver.jwt.issuer-uri` and `.audiences` | Cognito, Okta, Entra | Configuration: set both. `issuer-uri` alone accepts a token the issuer minted for another client in the tenant. The rules already treat a JWT scope and a Basic authority identically |
 | `Clock` (`src/main/java/com/smit/flightops/config/TimeConfig.java`) | A fixed clock in a test | Already used everywhere |
 | `management.opentelemetry.tracing.export.otlp.endpoint` | An OTLP collector | An environment variable. Ids are already generated and already on every log line |

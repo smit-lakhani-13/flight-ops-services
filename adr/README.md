@@ -3,24 +3,10 @@
 One file per decision that had a real alternative. Each record gives the
 situation that forced a choice, the choice, its cost and the rejected options.
 
-Every accepted record was written after the decision it records; the "Taken in"
-column names the commit in which the decision landed. 0016 is a proposal and no
-decision has been taken. The first commit, `4a9a5b9`, is from 15 September 2026.
-0001–0014 were written on 22 September, and 0015 and 0016 on 25 September:
-
-* 0001–0008 and 0011–0014 were written together in `040c3be`. For 0001–0008
-  that was between about eight hours and seven days after the code. For
-  0011–0014 it was between twenty minutes and an hour and a quarter.
-
-* 0009 and 0010 were written in `92922cd`, the same commit as the deployment
-  scripts. The eksctl cluster file, the SAM template and `ap-south-1` were
-  already in `4a9a5b9`.
-
-* 0015 was written on 25 September, ten days after `4a9a5b9`, the commit in
-  which the queue, its dead-letter queue and the Lambda's event source mapping
-  first appear.
-
-None of them was an RFC that a team approved before any code existed.
+Every accepted record was written after the decision it records, between 22
+and 25 September 2026; the "Taken in" column names the commit in which the
+decision landed. None of them was an RFC that a team approved before any code
+existed. 0016 is a proposal and no decision has been taken.
 
 A record's decision does not change once it is accepted. A decision that
 changes gets a new record that supersedes the old one. The old one stays,
@@ -48,7 +34,7 @@ says so.
 | [0013](0013-outbox-ceiling-and-retention.md) | The outbox is bounded: an attempt ceiling and a retention window | accepted | `a6efc1c`, `50e8871` |
 | [0014](0014-quality-gates.md) | The build fails on architecture, coverage and dependency drift | accepted | `631f5f0`, `f8d2d4b` |
 | [0015](0015-event-transport.md) | Events go to an SQS standard queue, not a JMS broker | accepted | `4a9a5b9` |
-| [0016](0016-oracle-port.md) | What porting to Oracle would change | proposed | none |
+| [0016](0016-oracle-port.md) | What porting to Oracle would change | proposed; from documentation, never built or run | none |
 
 ## Writing another one
 

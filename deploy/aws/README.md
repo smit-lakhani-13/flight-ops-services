@@ -117,9 +117,9 @@ shows in the checks list under the gated-off name.
 Put those in the GitHub repository settings and run the workflow. The script
 waits up to 30 minutes for CI to create the deployment, and up to 20 for the
 rollout. Then it creates the Ingress, waits for the load balancer, and finishes
-by running [`scripts/demo.sh`](../../scripts/demo.sh) against the public URL. The demo is eight
-acts over HTTP and never looks at the queue or the table. To see bookings
-arrive in DynamoDB through the queue:
+by running [`scripts/demo.sh`](../../scripts/demo.sh) against the public URL.
+The demo is eight acts over HTTP and never looks at the queue or the table. To
+see bookings arrive in DynamoDB through the queue:
 
 ```bash
 aws dynamodb scan --table-name flight-status-events --select COUNT
@@ -164,10 +164,10 @@ controller or anything else on the cluster.
 ./deploy/aws/cost-check.sh 14
 ```
 
-Run it the morning after `up.sh` and then daily. Cost Explorer lags 8–24 hours,
-so the current day is always incomplete; read the forecast, not today's total.
-If Cost Explorer is not enabled on the account, the script says so and still
-prints the budget status.
+Run it the morning after `up.sh` and then daily. Cost Explorer lags 8 to 24
+hours, so the current day is always incomplete; read the forecast, not
+today's total. If Cost Explorer is not enabled on the account, the script says
+so and still prints the budget status.
 
 ## Deleting it
 

@@ -176,8 +176,9 @@ rollback-only, and a loser owed a 201 would get a 500.
 
 `BookingIdempotencyTest.racingTenCallersOnTheSameKeyAllGetTheSameBooking` pins
 it. Ten threads send one key, every caller gets the same booking id back, one
-row exists and one seat is debited. `BookingServiceTest.racingTheWriterRecoversTheWinner`
-and `theWritersLostRaceSignalAlsoRecovers` cover both signals with the writer
+row exists and one seat is debited.
+`BookingServiceTest.racingTheWriterRecoversTheWinner` and
+`theWritersLostRaceSignalAlsoRecovers` cover both signals with the writer
 mocked. The fix is `d4e0113`.
 
 Some contracts are only false under concurrency. The test that catches them has
@@ -398,8 +399,9 @@ Two counters shared a meter name with different descriptions. The exporter
 prints one `# HELP` line per name, so whichever registered last described both
 series. The metric was right and its documentation was wrong, and that is the
 harder one to notice. There is now one description per meter name, held in a
-constant, and the Prometheus test asserts a single `# HELP bookings_booked_total`
-line. The fixes are in `d18f58b`, the commit that added the meters.
+constant, and the Prometheus test asserts a single
+`# HELP bookings_booked_total` line. The fixes are in `d18f58b`, the commit that
+added the meters.
 
 ## A teardown that could pass on an error
 
@@ -653,12 +655,13 @@ pins it. A bad token gets a 401, the `Bearer` challenge with
 ### An expanded year poisoned the sort key
 
 `Instant.parse` accepts `+12026-09-15T10:00:00Z`, and the `uuuu` pattern emits
-the sign. The key became 29 characters starting with `+` (0x2B, below every
-ASCII digit). It sorted ahead of the whole partition and was invisible to
-`begins_with(eventTime, "2026-")`. `sortKey` now range-checks the year and
-throws outside the range. The message is reported as a batch item failure, so
-it is retried and lands in the DLQ, where someone can inspect it. The Lambda's
-`BookingEventContractTest.anExpandedYearIsRejected` pins it.
+the sign. The timestamp half of the key became 29 characters, not 27, starting
+with `+` (0x2B, below every ASCII digit). It sorted ahead of the whole partition
+and was invisible to `begins_with(eventTime, "2026-")`. `sortKey` now
+range-checks the year and throws outside the range. The message is reported as a
+batch item failure, so it is retried and lands in the DLQ, where someone can
+inspect it. The Lambda's `BookingEventContractTest.anExpandedYearIsRejected`
+pins it.
 
 ### The contract test checked the shape and not the values
 
@@ -672,7 +675,9 @@ as a whole document, in
 `BookingEventContractTest.theWireFormatMatchesTheContractExactly`.
 `theWireTimestampIsUtcWhateverTheHostZone` names the zone in its failure
 message. CI runs in UTC and a laptop does not, which is the arrangement in which
-a zone bug ships green.
+a zone bug ships green. Both modules' Surefire runs now pin the test JVM to
+`Asia/Kolkata`, through the `argLine` in `pom.xml` and `lambda/pom.xml`, so a
+zone bug fails the test on a UTC runner as well.
 
 ### The example Secret lacked the passwords
 
