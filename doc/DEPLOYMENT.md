@@ -82,6 +82,11 @@ passwords. The deploy job checks for that failure before it pushes an image, in
 the step "The image will not start without a database". The `image` job runs
 the same check on every push or pull request to `main`.
 
+`compose.yaml` publishes the application on `127.0.0.1:8080` only, so it
+answers on the laptop and not to the rest of the network. A bare `8080:8080`
+would listen on every interface, and on Linux Docker's own firewall rules
+bypass a host firewall such as ufw.
+
 ### PostgreSQL without compose
 
 To run the app from source against a real database, start PostgreSQL in a
@@ -89,9 +94,13 @@ container and select the `postgres` profile:
 
 ```bash
 docker run --name pg -e POSTGRES_PASSWORD=pass -e POSTGRES_DB=flightops \
-  -p 5432:5432 -d postgres:17-alpine
+  -p 127.0.0.1:5432:5432 -d postgres:17-alpine
 DB_PASSWORD=pass ./mvnw spring-boot:run -Dspring-boot.run.profiles=postgres
 ```
+
+The port is published on loopback only, as in `compose.yaml`. A bare
+`-p 5432:5432` would offer a database whose password is `pass` to the rest of
+the network.
 
 `DB_PASSWORD` has no default. In the `postgres` profile,
 `spring.datasource.password` is plain `${DB_PASSWORD}`, so `application.yml`
@@ -447,6 +456,14 @@ $0.0224/hour running `docker compose up` with an Elastic IP, plus the free-tier
 SAM stack. It proves the service works on AWS and proves nothing about EKS.
 Ninety per cent of the cost of shape A pays for Kubernetes. Whether that is
 worth $123 over fifteen days depends on who is asking.
+
+`compose.yaml` is not ready for shape C as it stands. It publishes port 8080 on
+loopback only, and its two password hashes are of passwords the README prints.
+Shape C needs a compose override file that sets its own bcrypt hashes for
+`API_PASSWORD` and `OPS_PASSWORD` and puts a proxy that terminates TLS in front
+of the application, in place of a bare port 8080 open to the internet. For the
+SAM stack to receive events, it also needs `APP_EVENTS_PUBLISHER=sqs` and
+`SQS_QUEUE_URL`, because `compose.yaml` selects the log publisher.
 
 B saves $0.60/day and costs an afternoon: Fargate profiles for `kube-system`,
 CoreDNS patched off its EC2-only annotation, and somewhere for the load

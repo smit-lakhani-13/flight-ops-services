@@ -29,15 +29,15 @@ JVM.
 | Variable | Default | What it does |
 |---|---|---|
 | `SERVER_PORT` | `8080` | HTTP port |
-| `DB_URL` | `jdbc:postgresql://localhost:5432/flightops` in `postgres`. **None in `prod`** | JDBC URL. Unset in `prod`, startup fails with `'url' must start with "jdbc"`. The default profile uses H2 and does not read it |
+| `DB_URL` | `jdbc:postgresql://localhost:5432/flightops` in `postgres`. **None in `prod`** | JDBC URL. Unset in `prod`, startup fails with `'url' must start with "jdbc"`. The default profile uses H2 and does not connect to it. Set while the datasource is still in-memory H2, under no profile or one no document matches, it stops startup. See [Profiles](#profiles) |
 | `DB_USER` | `postgres` in `postgres`. None in `prod` | database user |
 | `DB_PASSWORD` | *(none)* | **Required** in `postgres` and `prod`. Unset, startup fails at Flyway's first connection with `password authentication failed`, which does not name the variable. See the `postgres` profile in `application.yml` |
-| `API_PASSWORD` | `{noop}dev-secret`. None in `prod` | the `api` account. **Must carry an `{id}` prefix** the encoder knows, such as `{bcrypt}$2y$10$…`. Unprefixed, or unset in `prod`, startup fails naming `app.security.api-password (API_PASSWORD)`. An unknown id stops startup too. See [the playbook](#pods-crash-loop-at-startup-and-the-log-names-appsecurityapi-password) |
+| `API_PASSWORD` | `{noop}dev-secret`. None in `prod` | the `api` account. **Must carry an `{id}` prefix** the encoder knows, such as `{bcrypt}$2y$10$…`. Unprefixed, or unset in `prod`, startup fails naming `app.security.api-password (API_PASSWORD)`. An unknown id stops startup too, and so does `{noop}` in `prod`. See [the playbook](#pods-crash-loop-at-startup-and-the-log-names-appsecurityapi-password) |
 | `OPS_PASSWORD` | `{noop}dev-ops`. None in `prod` | the `ops` account. Same prefix rule, named `app.security.ops-password (OPS_PASSWORD)` |
 | `APP_EVENTS_PUBLISHER` | `log`; `sqs` in `prod` | `sqs` or `log`. Any other value stops startup with `app.events.publisher must be one of [log, sqs], not "<value>"`. Read in every profile: the base document is `${APP_EVENTS_PUBLISHER:log}` and `prod` is `${APP_EVENTS_PUBLISHER:sqs}`. `log` writes and drains the outbox without sending anything. Choosing `sqs` without `SQS_QUEUE_URL` stops startup with `app.events.publisher=sqs requires app.aws.sqs-queue-url (env SQS_QUEUE_URL)`. A laptop publishes only when someone sets both. The startup log names the choice: `Outbox publisher started with event transport 'log'` |
 | `SQS_QUEUE_URL` | *(empty)* | required when the publisher is `sqs` |
 | `AWS_REGION` | `ap-south-1` | |
-| `OUTBOX_ENABLED` | `true` | `false` stops the drain and the pruner. Rows still accumulate |
+| `OUTBOX_ENABLED` | `true` | `true`, `on`, `yes` or `1` runs the drain and the pruner. `false`, `off`, `no` or `0` stops both, and rows still accumulate. Any other value stops startup, naming `app.outbox.enabled`. So does an empty `OUTBOX_ENABLED=`, which is set and so does not take the default |
 | `OUTBOX_POLL_INTERVAL` | `1000` | milliseconds between drain attempts |
 | `OUTBOX_BATCH_SIZE` | `100` | rows claimed per pass. With the default interval, about 100 events a second per replica |
 | `OUTBOX_MAX_ATTEMPTS` | `10` | after this many failures a row is dead and is never claimed again |
@@ -76,6 +76,20 @@ a database". The deploy job runs the same step before it pushes an image. That
 job is gated off, so its copy has never run. `compose.yaml` selects `postgres`,
 and `deploy/k8s/base/configmap.yaml` sets `prod` for the cluster. The Deployment
 pulls the whole ConfigMap in with `envFrom`.
+
+A profile no document matches, such as `Prod` (profile names are
+case-sensitive) or `aws`, keeps the base document's in-memory H2. Each pod would
+then run on its own database and pass readiness.
+`config/EmbeddedDatabaseGuard.java#refuseInMemoryH2WithDbUrl` stops that at
+startup. When `DB_URL` is set and the datasource is still `jdbc:h2:mem:`, the
+log reads `DB_URL is set, but the datasource is still the laptop default`,
+names the active profiles, and says `SPRING_PROFILES_ACTIVE` must include
+`prod` or `postgres`. The guard keys on `DB_URL` because the ConfigMap and
+`compose.yaml` set it and a laptop run on H2 does not. It does not key on the
+publisher, because H2 with `sqs` is a supported laptop setup. The catch: a
+developer with `DB_URL` exported in the shell has a default-profile
+`./mvnw spring-boot:run` refused too, and the H2 tests fail the same way. The
+message says to unset `DB_URL` to run on H2.
 
 ## Health
 
@@ -308,8 +322,8 @@ kubectl get secret flight-ops-secret -n flight-ops -o jsonpath='{.data}' | tr ',
 
 ### Pods crash-loop at startup, and the log names `app.security.api-password`
 
-The same applies to `app.security.ops-password`. Either startup check stops
-the pod before it becomes Ready. The crashing pod's
+The same applies to `app.security.ops-password`. Each startup check stops the
+pod before it becomes Ready. The crashing pod's
 `--previous` log (see the playbook above) shows which one fired.
 
 `API_PASSWORD` (or `OPS_PASSWORD`) is unset or has no `{id}` prefix.
@@ -345,25 +359,32 @@ Caused by: java.lang.IllegalArgumentException: There is no password encoder mapp
 The first of the two names the property, so read it to tell `api` from `ops`.
 The last is the encoder's own exception, and it names only the id.
 
+The value is `{noop}` and the profile is `prod`. `SecurityConfig` refuses an
+unhashed password there. The last `Caused by` line names
+`app.security.api-password (API_PASSWORD)` and says it
+`must be a hashed password under the prod profile`. Put a `{bcrypt}` hash in
+the Secret; every profile but `prod` takes `{noop}`.
+
 The id is case-sensitive, so write `{bcrypt}`. An `{argon2}` or `{scrypt}` hash
 fails the same check with a `NoClassDefFoundError`. Both encoders need
 BouncyCastle, and the build does not include it. Use `{bcrypt}` or `{pbkdf2}`.
 
-Neither message prints the password or the hash, so a failed start leaves no
+No message prints the password or the hash, so a failed start leaves no
 secret in the pod log.
 
-Both checks exist because Spring's delegating encoder throws on a value it
-cannot read, where a wrong password would simply fail to match. Without them
-the pod would go Ready and fail on the first login. I checked this: an
-unprefixed bcrypt string raises `IllegalArgumentException` on the first login.
+The prefix check and the self-check exist because Spring's delegating encoder
+throws on a value it cannot read, where a wrong password would simply fail to
+match. Without them the pod would go Ready and fail on the first login.
+I checked this: an unprefixed bcrypt string raises `IllegalArgumentException`
+on the first login.
 
 ### Every login gets 401, and the log warns `Encoded password does not look like BCrypt`
 
 The value has the `{bcrypt}` prefix, but what follows is not a bcrypt hash.
 The usual cause is `{bcrypt}REPLACE_ME`, copied from
-`deploy/k8s/secret.example.yaml` without the real hash. Both startup checks pass
-it. `BCryptPasswordEncoder` logs a WARN and returns false in place of throwing,
-so the pod goes Ready and every login as that user gets a 401.
+`deploy/k8s/secret.example.yaml` without the real hash. Every startup check
+passes it. `BCryptPasswordEncoder` logs a WARN and returns false in place of
+throwing, so the pod goes Ready and every login as that user gets a 401.
 
 The WARN comes from `o.s.s.c.bcrypt.BCryptPasswordEncoder`. The self-check
 logs it once at startup for each such value, and every login logs it again. A
@@ -383,7 +404,7 @@ Then check, in order:
 1. Is `SQS_QUEUE_URL` set and correct?
 2. Does the pod have IRSA? `kubectl describe pod` should show
    `AWS_WEB_IDENTITY_TOKEN_FILE`.
-3. Is `OUTBOX_ENABLED` still `true`?
+3. Is `OUTBOX_ENABLED` still true? `false`, `off`, `no` or `0` stops the drain.
 
 Read `outbox_pending` together with `outbox_publish_total{result="failure"}`.
 The gauge counts every unpublished row still inside the attempt ceiling,

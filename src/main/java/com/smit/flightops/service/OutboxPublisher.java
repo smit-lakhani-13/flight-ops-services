@@ -1,13 +1,14 @@
 package com.smit.flightops.service;
 
 import com.smit.flightops.config.EventProperties;
+import com.smit.flightops.config.OutboxEnabledCondition;
 import com.smit.flightops.config.OutboxProperties;
 import com.smit.flightops.entity.OutboxEvent;
 import com.smit.flightops.observability.OutboxMetrics;
 import com.smit.flightops.repository.OutboxEventRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.context.annotation.Conditional;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -32,7 +33,7 @@ import java.util.Map;
  * @see OutboxEventRepository#claimUnpublished
  */
 @Component
-@ConditionalOnProperty(name = "app.outbox.enabled", havingValue = "true", matchIfMissing = true)
+@Conditional(OutboxEnabledCondition.class)
 public class OutboxPublisher {
 
     private static final Logger log = LoggerFactory.getLogger(OutboxPublisher.class);

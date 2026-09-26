@@ -46,11 +46,14 @@ Basic alone and no dead configuration.
   issue `flights:read` and `flights:write`, or the mapping breaks without any
   error.
 
-* **The audience is a second contract.** `issuer-uri` alone accepts any token
-  the issuer signed, including one minted for another client in the tenant.
-  Turning JWT on also needs
+* **The audience is a second contract.** `issuer-uri` alone would accept any
+  token the issuer signed, including one minted for another client in the
+  tenant. Turning JWT on also needs
   `spring.security.oauth2.resourceserver.jwt.audiences: [flight-ops-service]`.
-  [SECURITY.md](../SECURITY.md) has the warning.
+  `src/main/java/com/smit/flightops/config/SecurityConfig.java#requireIssuerAndAudience`
+  now stops startup when a decoder property is set without it, or a
+  `jwk-set-uri` without `issuer-uri`. [SECURITY.md](../SECURITY.md) has the
+  warning.
 
 * `anyRequest().denyAll()` closes the list. A new endpoint under `/api/**` is
   covered by the scope rules for GET, HEAD, POST, PATCH and DELETE. One outside

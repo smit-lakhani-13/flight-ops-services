@@ -13,6 +13,8 @@ import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import tools.jackson.databind.ObjectMapper;
 
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.time.Clock;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -20,8 +22,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * The startup self-check in {@link SecurityConfig}: a password the delegating encoder
  * cannot verify at all must stop the context, naming the property, instead of starting a
- * pod that answers every authenticated request with a 500. It runs {@code SecurityConfig}
- * alone, with the beans its filter chain needs, so each case is a fresh context.
+ * pod that answers every authenticated request with a 500. Under {@code prod}, an
+ * unhashed {@code {noop}} value must stop it too. It runs {@code SecurityConfig} alone,
+ * with the beans its filter chain needs, so each case is a fresh context.
  */
 class PasswordVerifiabilityTest {
 
@@ -86,5 +89,40 @@ class PasswordVerifiabilityTest {
                     String stored = context.getBean(UserDetailsService.class).loadUserByUsername("api").getPassword();
                     assertThat(context.getBean(PasswordEncoder.class).matches("s3cret", stored)).isTrue();
                 });
+    }
+
+    /**
+     * A {@code {noop}} value is the password itself, so under {@code prod} a leaked Secret
+     * or an environment dump would be a working login. The value must not reach the log.
+     */
+    @Test
+    @DisplayName("under the prod profile a {noop} password stops startup, naming the property and not the value")
+    void theProdProfileRefusesAnUnhashedPassword() {
+        runner.withPropertyValues("spring.profiles.active=prod",
+                        "app.security.api-password=" + PBKDF2,
+                        "app.security.ops-password={noop}leaked-ops-value")
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(stackTrace(context.getStartupFailure()))
+                            .contains("app.security.ops-password (OPS_PASSWORD) must be a hashed password "
+                                    + "under the prod profile")
+                            .doesNotContain("leaked-ops-value");
+                });
+    }
+
+    /** The default profile's {@code {noop}} values are the other tests' baseline; prod takes hashes. */
+    @Test
+    @DisplayName("under the prod profile hashed passwords start the context")
+    void theProdProfileAcceptsHashedPasswords() {
+        runner.withPropertyValues("spring.profiles.active=prod",
+                        "app.security.api-password=" + PBKDF2,
+                        "app.security.ops-password=" + PBKDF2)
+                .run(context -> assertThat(context).hasNotFailed());
+    }
+
+    private static String stackTrace(Throwable failure) {
+        StringWriter out = new StringWriter();
+        failure.printStackTrace(new PrintWriter(out));
+        return out.toString();
     }
 }
