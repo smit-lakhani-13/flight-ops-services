@@ -78,9 +78,9 @@ image's default with `ENV SPRING_PROFILES_ACTIVE=prod`, and
 RDS, IRSA and the SQS publisher and has no default passwords. Run bare, with no
 `DB_URL`, the image stops at startup with `'url' must start with "jdbc"`.
 Without that default it would start on in-memory H2 and serve the `{noop}` dev
-passwords. The deploy job checks for that failure before it pushes an image, in
-the step "The image will not start without a database". The `image` job runs
-the same check on every push or pull request to `main`.
+passwords. The `image` job checks for that failure on every push or pull
+request to `main`, in the step "The image will not start without a database",
+and the deploy job would push only an image that passed it.
 
 ### PostgreSQL without compose
 
@@ -216,20 +216,30 @@ URL. It skips the demo when the Secret came from an earlier run, because it
 no longer knows the passwords.
 
 CI deploys the application, and the script does not. The image tag is the
-commit SHA, and only the job that built the image knows it. A laptop build
-would tag whatever happened to be checked out, including uncommitted work. The
+commit SHA of the CI run that built the image. A laptop build would tag
+whatever happened to be checked out, including uncommitted work. The
 split also keeps every password away from GitHub. `up.sh` writes the database
 password and the bcrypt hashes of the API and ops passwords into a Kubernetes
 Secret, and prints the API and ops passwords to the terminal. CI applies a
 Deployment that refers to the Secret by name.
 
-Before it builds, the deploy job asks ECR whether the commit's image is already
-there, in the step "Is this commit already in ECR?". It runs
+The deploy job builds and scans nothing. The `image` job builds the image,
+starts it with no database and scans it, holding no AWS credentials. On a run
+that can deploy, it saves the image and records the archive's sha256 before its
+scan runs, and uploads it as a run artefact kept for one day once the scan
+passes. The deploy job downloads the archive, checks that sha256, loads the
+image, tags it with the commit SHA and pushes it. So the image is scanned once,
+and the registry gets the bytes that were scanned. A "Re-run failed jobs" more
+than a day later finds no artefact unless the image is already in ECR; re-run
+all jobs instead.
+
+Before it downloads the image, the deploy job asks ECR whether the commit's
+image is already there, in the step "Is this commit already in ECR?". It runs
 [`deploy/aws/ecr-image-exists.sh`](../deploy/aws/ecr-image-exists.sh), which
 calls `ecr:DescribeImages` and reports the image missing only on
 `ImageNotFoundException`. Any other error fails the job. Guessing "missing"
-would rebuild the image and then fail at the push, because the repository's tags
-are immutable.
+would push the image again and fail, because the repository's tags are
+immutable.
 
 Every step checks whether its resource exists before creating it. To resume an
 interrupted run, run the same command again. If eksctl stopped part way through

@@ -8,7 +8,7 @@ name: build-and-deploy
 #   docs-check         every trigger      citations, links, the README's ADR count,
 #                                         attribution and privacy sweeps
 #   image              every trigger      docker build, a start with no database, the size,
-#                                         a CRITICAL scan; never pushed
+#                                         a CRITICAL scan; deploy pushes this build
 #   dependency-review  pull_request only  what a pull request ADDS
 #   deploy             gated push or      render, apply, wait, smoke
 #                      manual run on main
@@ -64,6 +64,12 @@ permissions:
 # across tens of thousands of repositories in March 2025. Dependabot bumps the
 # SHAs and rewrites the version comment with them.
 #
+# A pin fixes an action's own code, not what that code downloads when it runs.
+# So the deploy job builds and scans nothing. The image job, which holds no
+# AWS credentials, builds, starts and scans the image, and the deploy job
+# pushes those bytes. The one tool the deploy job still downloads is kubectl,
+# installed before the AWS keys are exported.
+#
 # Every job names its OS release, ubuntu-24.04, not ubuntu-latest. That label
 # moves to Ubuntu 26.04 between 19 October and 19 November 2026
 # (actions/runner-images#14748), and an OS jump belongs in a pull request of
@@ -93,7 +99,7 @@ jobs:
       # `verify`, not `test`: it also runs jacoco:check against the coverage
       # floor and the CycloneDX SBOM, so a JAR that cannot be assembled or
       # slipping coverage fails here, and the deploy job, which needs this one,
-      # stops before its `docker build`.
+      # never starts.
       # `./mvnw`, not the runner's Maven: the wrapper pins the version and its
       # SHA-256.
       - name: Build and test
@@ -547,10 +553,13 @@ jobs:
         run: scripts/sweeps.sh
 
   # ---------------------------------------------------------------------------
-  # The image, on every trigger, never pushed. This proves on every pull request
-  # to main that the Dockerfile builds and that the image refuses to start
-  # without a database. It logs in to nothing and pushes nothing; the deploy job
-  # builds its own copy on its own runner.
+  # The image, on every trigger. This proves on every pull request to main that
+  # the Dockerfile builds, that the image refuses to start without a database
+  # and that it has no fixable CRITICAL. It logs in to nothing and pushes
+  # nothing. It is also the only image build: on a run that can deploy, it
+  # hands the image it checked and scanned to the deploy job as a run artefact,
+  # and the deploy job pushes those bytes. So the scanner never runs beside the
+  # deploy role's credentials.
   image:
     name: image
     runs-on: ubuntu-24.04
@@ -558,20 +567,34 @@ jobs:
     # empty on a fresh runner.
     timeout-minutes: 20
 
+    # The saved archive's checksum, empty on a run that saves nothing. The
+    # deploy job refuses an archive with any other checksum.
+    outputs:
+      image_sha256: ${{ steps.save.outputs.sha256 }}
+
     env:
       # trivy-fs's mirror list, plus the Java database: an image scan reads
       # the jar inside the image. trivy-fs scans no jar, so only the image
-      # scans need that database.
+      # scan needs that database.
       TRIVY_DB_REPOSITORY: mirror.gcr.io/aquasec/trivy-db:2,ghcr.io/aquasecurity/trivy-db:2,public.ecr.aws/aquasecurity/trivy-db:2
       TRIVY_JAVA_DB_REPOSITORY: mirror.gcr.io/aquasec/trivy-java-db:1,ghcr.io/aquasecurity/trivy-java-db:1,public.ecr.aws/aquasecurity/trivy-java-db:1
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # Runners and t3.medium nodes are both amd64, so no --platform flag is
+      # needed. A plain `docker build` on Apple Silicon produces arm64, and a
+      # pod would crash-loop with `exec /bin/sh: exec format error`. See
+      # doc/DEPLOYMENT.md, "The service image".
+      #
+      # The runner's builder writes the image into the local image store, so
+      # the steps below start, save and scan this build by its tag.
       - name: Build the image
         run: docker build --build-arg "GIT_SHA=${{ github.sha }}" -t flight-ops-service:ci .
 
-      # The deploy job's check, against the local tag. See the comment there.
+      # The Dockerfile makes prod the default profile, so the image run with no
+      # environment must stop at startup for want of a DB_URL. Under the
+      # default profile it would start on H2 and serve until the timeout.
       - name: The image will not start without a database
         run: |
           status=0
@@ -592,11 +615,38 @@ jobs:
           mb=$(awk -v b="$bytes" 'BEGIN { printf "%.1f", b / 1000000 }')
           server=$(docker version --format '{{.Server.Version}}')
           echo "image size: ${mb} MB (${bytes} bytes), docker image inspect, Docker ${server}"
-          echo "flight-ops-service:ci is **${mb} MB** (${bytes} bytes) as \`docker image inspect\` reports it on this runner (Docker ${server}). It was not pushed." >> "$GITHUB_STEP_SUMMARY"
+          echo "flight-ops-service:ci is **${mb} MB** (${bytes} bytes) as \`docker image inspect\` reports it on this runner (Docker ${server}). This job pushes nothing." >> "$GITHUB_STEP_SUMMARY"
 
-      # The deploy job's scan, on every trigger, so a fixable CRITICAL in the
-      # base image or the jar shows up on the pull request that brings it in.
-      # CRITICAL only, for the reason the deploy job gives.
+      # Only on a run that can deploy, under the deploy job's condition, so a
+      # pull request stores nothing. Saved before the scan, with its checksum
+      # as a step output, which no later step can rewrite: an archive changed
+      # after this step, by the scanner or anything else, fails the deploy
+      # job's check. `set -o pipefail`, because a run step's default shell has
+      # no pipefail, and gzip would hide a failed save.
+      - name: Save the image for the deploy job
+        id: save
+        if: >-
+          (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+          && github.ref == 'refs/heads/main'
+          && vars.DEPLOY_ENABLED == 'true'
+        run: |
+          set -o pipefail
+          archive="$RUNNER_TEMP/service-image.tar.gz"
+          docker save flight-ops-service:ci | gzip > "$archive"
+          sum=$(sha256sum "$archive" | cut -d' ' -f1)
+          echo "sha256=$sum" >> "$GITHUB_OUTPUT"
+          echo "saved flight-ops-service:ci: $(wc -c < "$archive" | tr -d ' ') bytes gzipped, sha256 $sum"
+
+      # On every trigger, so a fixable CRITICAL in the base image or the jar
+      # shows up on the pull request that brings it in. It is the workflow's
+      # only image scan, and on a run that deploys it is the gate before the
+      # push: an image under an immutable tag cannot be replaced, and someone
+      # eventually pulls a vulnerable layer left in a registry.
+      #
+      # CRITICAL only, unlike the filesystem gate. This scans the whole base
+      # image, where a HIGH in an OS package the JRE never calls would block
+      # every deploy until Temurin ships a rebuild. ECR scans on push too, so a
+      # HIGH is still reported.
       - name: Scan the image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -607,6 +657,21 @@ jobs:
           ignore-unfixed: true
           format: table
           exit-code: '1'
+
+      # After the scan, so an image that fails it is never handed over. One
+      # day covers the deploy job of this run. A "Re-run failed jobs" after
+      # that finds no artefact unless the image is already in ECR; "Re-run all
+      # jobs" builds, checks and scans it again.
+      - name: Hand the image to the deploy job
+        if: steps.save.outcome == 'success'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: service-image
+          path: ${{ runner.temp }}/service-image.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+          # Gzipped already; zipping it again would cost time and save nothing.
+          compression-level: 0
 
   # ---------------------------------------------------------------------------
   # Everything below runs only for a configured push or manual run on main.
@@ -653,6 +718,16 @@ jobs:
       contents: read
 
     steps:
+      # First, because it downloads a binary and needs no AWS access. The step
+      # "Configure AWS credentials" exports session keys to every step after
+      # it, and the ECR login writes a registry credential, so neither is in
+      # this step's environment. id-token is granted to the whole job, so the
+      # OIDC request variables are.
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5.1.0
+        with:
+          version: ${{ env.KUBECTL_VERSION }}
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Configure AWS credentials (OIDC)
@@ -670,16 +745,11 @@ jobs:
       # IMMUTABLE tags. `kubectl rollout undo` needs the previous tag to still
       # name the image it named, and a second push of the same SHA is refused.
       #
-      # Runners and t3.medium nodes are both amd64, so no --platform flag is
-      # needed. A plain `docker build` on Apple Silicon produces arm64, and a
-      # pod would crash-loop with `exec /bin/sh: exec format error`. See
-      # doc/DEPLOYMENT.md, "The service image".
-      #
       # Immutable tags have one sharp edge. If the deploy fails after the push,
       # "Re-run failed jobs" would stop at `docker push` with
       # ImageTagAlreadyExists. So the tag is looked up first, and if it is there
-      # the build and push are skipped. The tag is the commit SHA and cannot
-      # move, so the image in the registry is the one this run would build.
+      # the download and push are skipped. The tag is the commit SHA and cannot
+      # move, so the image in the registry was built from this commit.
       #
       # Any error other than ImageNotFoundException stops the job; the script's
       # header says why, and selftest.sh tests all three outcomes.
@@ -694,62 +764,36 @@ jobs:
             exit 1
           fi
 
-      - name: Build the image
+      # The image job's build, not a second one. That job started it with no
+      # database and scanned it while holding no AWS credentials, and this
+      # job, which holds them, runs no build and no scanner. The next step
+      # checks the archive against the checksum that job recorded before its
+      # scan.
+      - name: Download the image the image job scanned
+        if: steps.image.outputs.exists == 'false'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: service-image
+          path: ${{ runner.temp }}/service-image
+
+      - name: Load the image and tag it for ECR
         if: steps.image.outputs.exists == 'false'
         env:
-          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          EXPECTED_SHA256: ${{ needs.image.outputs.image_sha256 }}
         run: |
-          docker build \
-            --build-arg "GIT_SHA=${{ github.sha }}" \
-            -t "$REGISTRY/$ECR_REPOSITORY:${{ github.sha }}" .
-
-      # The Dockerfile makes prod the default profile, so the image run with no
-      # environment must stop at startup for want of a DB_URL. Under the
-      # default profile it would start on H2 and serve until the timeout.
-      - name: The image will not start without a database
-        if: steps.image.outputs.exists == 'false'
-        run: |
-          status=0
-          out=$(timeout 120 docker run --rm "$IMAGE" 2>&1) || status=$?
-          printf '%s\n' "$out" | tail -n 3 | cut -c1-400
-          if [ "$status" -ne 0 ] && grep -q "'url' must start with" <<<"$out"; then
-            echo "stopped at startup (exit $status) for want of a DB_URL"
-          else
-            echo "::error::the image did not stop for want of a database (exit $status); does the Dockerfile still set SPRING_PROFILES_ACTIVE=prod?"
+          archive="$RUNNER_TEMP/service-image/service-image.tar.gz"
+          if [ -z "$EXPECTED_SHA256" ] \
+              || ! echo "$EXPECTED_SHA256  $archive" | sha256sum -c -; then
+            echo "::error::the downloaded image is not the one the image job saved (expected sha256 '$EXPECTED_SHA256')"
             exit 1
           fi
-
-      # Before the push: an image under an immutable tag cannot be replaced,
-      # and someone eventually pulls a vulnerable layer left in a registry.
-      #
-      # CRITICAL only, unlike the filesystem gate. This scans the whole base
-      # image, where a HIGH in an OS package the JRE never calls would block
-      # every deploy until Temurin ships a rebuild. ECR scans on push too, so a
-      # HIGH is still reported. The image job runs the same scan on every
-      # trigger.
-      - name: Scan the image before pushing it
-        if: steps.image.outputs.exists == 'false'
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        env:
-          TRIVY_DB_REPOSITORY: mirror.gcr.io/aquasec/trivy-db:2,ghcr.io/aquasecurity/trivy-db:2,public.ecr.aws/aquasecurity/trivy-db:2
-          TRIVY_JAVA_DB_REPOSITORY: mirror.gcr.io/aquasec/trivy-java-db:1,ghcr.io/aquasecurity/trivy-java-db:1,public.ecr.aws/aquasecurity/trivy-java-db:1
-        with:
-          scan-type: image
-          image-ref: ${{ env.IMAGE }}
-          scanners: vuln
-          severity: CRITICAL
-          ignore-unfixed: true
-          format: table
-          exit-code: '1'
+          # docker load reads a gzipped archive as it is.
+          docker load --input "$archive"
+          docker tag flight-ops-service:ci "$IMAGE"
 
       - name: Push the image
         if: steps.image.outputs.exists == 'false'
         run: docker push "$IMAGE"
-
-      - name: Set up kubectl
-        uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5.1.0
-        with:
-          version: ${{ env.KUBECTL_VERSION }}
 
       # `apply` of the rendered overlay, not `kubectl set image`, so the
       # repository is the source of truth for all six resources: the ConfigMap,

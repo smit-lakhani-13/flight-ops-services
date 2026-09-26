@@ -127,10 +127,10 @@ aws dynamodb scan --table-name flight-status-events --select COUNT
 
 ### Why CI deploys the application and this script does not
 
-The image tag is the commit SHA, and only the job that built the image knows
-it. A script that built and pushed from a laptop would tag whatever was checked
-out, including uncommitted changes, and the cluster would run something that
-does not exist in git.
+The image tag is the commit SHA of the CI run that built the image. A script
+that built and pushed from a laptop would tag whatever was checked out,
+including uncommitted changes, and the cluster would run something that does
+not exist in git.
 
 No password reaches GitHub either. `up.sh` generates the database, API and ops
 passwords. It writes the database password and the bcrypt hashes of the other
@@ -202,11 +202,11 @@ Two orderings in that script matter:
 
 `--keep-foundation` keeps ECR, the CI role and the budgets. CI's "Is this
 commit already in ECR?" step then finds an image already pushed for the commit
-it deploys, and skips the build. The sweep leaves out the foundation stack and
-the resources it owns, and still checks everything else. The kept images stay
-in ECR, which bills storage at $0.10 per GB-month after any free tier, so five
-images cost cents a month. The shared SAM bucket also stays, as it does after a
-full teardown, unless you pass `--delete-sam-bucket`.
+it deploys, and skips the download and push. The sweep leaves out the
+foundation stack and the resources it owns, and still checks everything else.
+The kept images stay in ECR, which bills storage at $0.10 per GB-month after
+any free tier, so five images cost cents a month. The shared SAM bucket also
+stays, as it does after a full teardown, unless you pass `--delete-sam-bucket`.
 
 Two things the sweep cannot prove. Cost Explorer lags, so check again the next
 day and expect zero, not "small". And data already transferred this month is
