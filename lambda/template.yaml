@@ -85,6 +85,15 @@ Resources:
       # expires mid-batch, SQS hands the same message to a second invocation.
       VisibilityTimeout: 180
 
+      # 10 days, not the SQS default of 4: a consumer that stops on a Friday
+      # night still has its backlog on Monday week. Redrive counts receives,
+      # so a message received fewer than three times never reaches the DLQ;
+      # it is deleted when it expires. The DLQ keeps 14 days, counted from
+      # the original enqueue time, not from the redrive. So this queue keeps
+      # less than the DLQ, as the SQS guidance says, and a message
+      # dead-lettered here has at least 4 days left on the DLQ.
+      MessageRetentionPeriod: 864000
+
       RedrivePolicy:
         deadLetterTargetArn: !GetAtt BookingEventDLQ.Arn
         # AWS advises at least 5 for a queue Lambda reads, to give Lambda a few
@@ -106,8 +115,10 @@ Resources:
 
       SqsManagedSseEnabled: true
 
-      # 14 days, the SQS maximum: a Friday-night failure is still there on
-      # Monday week.
+      # 14 days, the SQS maximum, counted from the original send, not from
+      # the redrive. A message sent and failed on a Friday night is still
+      # here on Monday week; one that waited N days on the main queue first
+      # has 14 - N days here, at least 4.
       MessageRetentionPeriod: 1209600
       Tags:
         - Key: Project
@@ -216,8 +227,11 @@ Resources:
     Type: AWS::Logs::LogGroup
     Properties:
       LogGroupName: /aws/lambda/booking-event-handler
-      # A week is enough; the DLQ is the durable record of a failure.
-      RetentionInDays: 7
+      # 14 days, like the DLQ. The DLQ keeps a failed message but not why it
+      # failed. When the handler failed on it, its FAILED <messageId> line
+      # here says why. The line is written after the message was sent, and
+      # the DLQ counts from the send, so the line outlasts the message.
+      RetentionInDays: 14
       Tags:
         - Key: Project
           Value: flight-ops

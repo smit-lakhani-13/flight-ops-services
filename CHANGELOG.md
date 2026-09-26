@@ -141,6 +141,30 @@ still blank.
   that a later bare `sam deploy` cannot pick up a stale build. The recipe has
   still never been run.
 
+- **The booking queue kept an event for only 4 days.**
+  `lambda/template.yaml#BookingEventQueue` set no `MessageRetentionPeriod`, so
+  SQS's 4-day default applied. Redrive counts receives, so if the Lambda
+  stopped receiving, for example with its event source mapping left disabled,
+  the backlog would never reach the dead-letter queue: SQS would delete it on
+  day 4, neither alarm would notify anyone, and the outbox would already count
+  those rows as published. The queue now keeps 10 days. The dead-letter queue
+  keeps 14, counted from the original enqueue time, so a message dead-lettered
+  after a long wait still has at least 4 days there. `doc/OPERATIONS.md` and
+  `doc/DEPLOYMENT.md` now say that a message still on the main queue 10 days
+  after it was sent is deleted, and `doc/OPERATIONS.md` that by then the
+  default `OUTBOX_RETENTION` of 7 days has pruned its outbox row, so it cannot
+  be re-sent from there.
+
+- **The Lambda's logs expired before its dead-letter queue did.**
+  `lambda/template.yaml#BookingEventFunctionLogGroup` kept 7 days against the
+  dead-letter queue's 14, and when the handler fails on a message, only its
+  `FAILED <messageId>` line records why. From day 7 a message still on the
+  dead-letter queue could not be diagnosed without reproducing the failure.
+  The log group now keeps 14 days. The dead-letter queue playbook in
+  `doc/OPERATIONS.md` now points at that line, and says a message expires 14
+  days after it was first sent, not 14 days after it reached the dead-letter
+  queue.
+
 - **Documents that said more than the code does.** `SECURITY.md` called the
   idempotency key a client's private token, but the service logs it on a
   replay; it is now a client-chosen key that must hold nothing private. The

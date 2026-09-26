@@ -628,9 +628,10 @@ Reasoned from the configuration, not measured under load, the order would be:
    invocations. It reserves nothing from the account pool and limits only the
    poller, and `lambda/template.yaml` explains the trade-off. Messages over the
    cap wait in the queue, and their receive count is not raised, so a long
-   backlog is slow and does not reach the DLQ. An account pool that runs dry can
-   still throttle, and that does raise the count towards `maxReceiveCount: 3`.
-   Raise the cap before raising traffic; AWS accepts 2 to 1000.
+   backlog is slow and does not reach the DLQ. A message still waiting 10 days
+   after it was sent is deleted. An account pool that runs dry can still
+   throttle, and that does raise the count towards `maxReceiveCount: 3`. Raise
+   the cap before raising traffic; AWS accepts 2 to 1000.
 
 5. **Node IP addresses, not CPU.** With the VPC CNI each pod takes a real VPC
    IP, and a t3.medium holds at most 17 pods. Two nodes hold the HPA's ceiling

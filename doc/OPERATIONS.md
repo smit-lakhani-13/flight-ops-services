@@ -266,7 +266,7 @@ In the order they matter:
 | 2 | `outbox_pending` rising for 10 min | the drain is losing to the write rate, or SQS is rejecting |
 | 3 | `rate(bookings_lock_timeout_total[5m]) > 0` | users are getting 503s on flight row contention |
 | 4 | SQS `ApproximateNumberOfMessagesVisible` on the **DLQ** `> 0` | a message was received three times without success, usually three Lambda failures on it. Declared as `lambda/template.yaml#BookingEventDLQAlarm`, never deployed, with no notification target |
-| 5 | SQS `ApproximateAgeOfOldestMessage` on the main queue above 600 s for 5 minutes | the Lambda is behind at its concurrency cap of five, throttled by a dry account pool, or not polling; retries alone take about 540 s. Declared as `lambda/template.yaml#BookingEventBacklogAlarm`, never deployed, with no notification target |
+| 5 | SQS `ApproximateAgeOfOldestMessage` on the main queue above 600 s for 5 minutes | the Lambda is behind at its concurrency cap of five, throttled by a dry account pool, or not polling; retries alone take about 540 s. A message still on the main queue 10 days after it was sent is deleted without reaching the DLQ. By then the default `OUTBOX_RETENTION` of `7d` has pruned its outbox row, so it cannot be re-sent from the outbox. The booking row in PostgreSQL is untouched; only the DynamoDB projection lacks the item. Declared as `lambda/template.yaml#BookingEventBacklogAlarm`, never deployed, with no notification target |
 | 6 | readiness failing on any pod for 5 min | usually the database |
 | 7 | RDS `DatabaseConnections` above 50 | more than the service's own pools can open: 4 pods × 10, or 5 × 10 during a rollout surge. Something else is connecting, or `maxReplicas` went up without a bigger instance class (fewer than 112 connections; read the limit with `SHOW max_connections`). See [DEPLOYMENT.md §7](DEPLOYMENT.md#7-what-breaks-first) |
 
@@ -449,10 +449,18 @@ counted. The cap reserves nothing from the account's concurrency pool. It limits
 only the poller, so an account pool that runs dry can still throttle a message
 into the DLQ. The value must be 2 to 1000.
 
-Read the body and fix the handler or the data. Then redrive with the console's
-"Start DLQ redrive", or re-send the messages to the main queue. Delete a
-message that is permanently malformed, and leave a note saying why. Left
-alone, it expires after 14 days with no record.
+Read the body. It does not say why the message failed, and if DynamoDB refused
+the write, the body is a valid event. The handler's `FAILED <messageId>` line
+in the log group `/aws/lambda/booking-event-handler` says why. No such line
+means the handler never reported the message: the function was throttled,
+timed out, failed to start or crashed. SQS keeps the message id when it moves
+a message to the DLQ, and the log group keeps 14 days, like the DLQ, so the
+line outlasts the message. Fix the handler or the data. Then redrive with the
+console's "Start DLQ redrive", or re-send the messages to the main queue.
+Delete a message that is permanently malformed, and leave a note saying why.
+Left alone, it expires 14 days after it was first sent, because SQS keeps a
+message's original enqueue time when it moves it to the DLQ. Nothing notes
+the expiry.
 
 ### 503s with `Retry-After`: a lock timeout storm
 
