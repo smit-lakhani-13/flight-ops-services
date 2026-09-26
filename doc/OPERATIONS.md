@@ -127,16 +127,24 @@ for a new booking and a 201 for an idempotent replay the same way, because
 both are the same status on the same route. The difference between them is
 the behaviour I most want to watch.
 
-Both gauges query the database on the scrape thread. If the query fails,
-`observability/OutboxMetrics.java#count` logs the error at DEBUG and the gauge
-reports `NaN` instead of throwing. `NaN` says the value is unknown, where a
-stale last value would look like a healthy flat line. The rest of the response
-is unaffected, and that would hold without the catch: in Micrometer 1.17.1,
-the version Boot 4.1.1 manages, the Prometheus registry catches a gauge that
-throws, reports `NaN` for it and logs a WARN with the stack trace the first
-time. I checked this against those jars, with a throwing gauge scraped beside
-a counter. So the catch swaps that one WARN and stack trace for a DEBUG line.
-It is not what keeps the other series in the response.
+Both gauges read counts held in memory, and a scrape never touches the
+database.
+`src/main/java/com/smit/flightops/observability/OutboxMetrics.java#refresh`
+runs the two counts every 15 seconds on a thread of its own, `outbox-metrics`,
+not on the scheduler thread the drain and the pruner share. A count on the
+scrape thread would wait out the pool's 30 s connection timeout while the
+database is unreachable, once per gauge. Prometheus's default scrape timeout
+is 10 s, so every other series in the response would be lost with the two
+gauges, during the outage they are needed for.
+
+A failed count is logged at DEBUG, and the gauge keeps its last good value. A
+gauge reports `NaN` until its first successful count, and again once that
+count is more than 45 seconds old, three refresh intervals. `NaN` says the
+value is unknown, where a stale last value would look like a healthy flat
+line. So in a database outage the two gauges turn `NaN` within a minute, and
+the rest of the response still arrives on time.
+`src/test/java/com/smit/flightops/observability/OutboxMetricsTest.java#aHungDatabaseDoesNotHoldUpTheScrape`
+scrapes while the refresher is stuck inside a count.
 
 Useful queries:
 
@@ -235,6 +243,17 @@ output:
  "traceId":"d5c7f7f85e5ca15a94bb489678506d22","spanId":"e9cfbc31f3226cac","requestId":"ecs-check-1","ecs":{"version":"8.11"}}
 ```
 
+The `sqs` transport's line for a send is
+`Published BookingCreated to SQS (messageId=…)`, and it does not print the
+headers. So the drain puts each event's stored `traceparent` in the MDC while
+it sends that event, and removes it afterwards
+(`src/main/java/com/smit/flightops/service/OutboxPublisher.java#drainOutbox`).
+In ECS that line, and the drain's retry and exhaustion warnings for the same
+event, carry a `traceparent` field that contains the booking request's trace
+id, so the `kubectl logs | grep` above finds them too. The readable format
+prints only the four bracketed fields, so on the other profiles only the `log`
+transport's line shows the traceparent.
+
 ### What a failure logs
 
 A 500 logs its stack trace at ERROR, with the request id. An exception inside
@@ -247,10 +266,41 @@ the id back from the response header
 (`ApiErrorControllerTest#aFailureThatEscapedTheChainIsLoggedWithTheRequestId`).
 That 500 body tells the caller to quote the id:
 `The request failed. The X-Request-Id header identifies it in the logs.` A 4xx
-forwarded to `/error` is a client mistake and is not logged.
+forwarded to `/error` is a client mistake, and `ApiErrorController` does not
+log it.
 
-At the default level a 401 logs nothing. A 403 logs a WARN that names the
-method and the path, never the principal or a header:
+Every answer of 400 or above that the application handles, a 401 included,
+logs one INFO line from `RequestIdFilter`, with the method, the path and the
+status, and the request id in the MDC:
+
+```
+INFO … [flight-ops-service,,,support-ticket-4471] c.s.f.observability.RequestIdFilter : GET /api/v1/flights/UA123 -> 401
+```
+
+The trace and span fields are empty, because the request's observation has
+closed by the time the filter writes the line. The request id is the one to
+search by. The path goes through the 403 line's rule, which turns anything
+outside visible ASCII into `?`. The query string, the headers and the
+principal are never logged. Paths under `/actuator/` are skipped, so a failing
+readiness probe does not log a line every period. The line is INFO because a
+4xx is the caller's mistake. If 401 or 404 scanning makes it noisy,
+`logging.level.com.smit.flightops.observability.RequestIdFilter=WARN` turns it
+off. `SecurityRulesTest#everyResponseCarriesARequestId` finds the line for a
+401 by the caller's id, through the real filter chain.
+
+A failure that escapes the filter chain gets no such line, although the status
+reads 500 by the time `RequestIdFilter` finishes. Spring's
+`ServerHttpObservationFilter`, which Boot registers one step inside
+`RequestIdFilter`, sets 500 on the response before it rethrows. So
+`RequestIdFilter` notes that the chain threw and skips its line, and the ERROR
+line `ApiErrorController` writes at `/error` is the one line the failure leaves
+under the request id.
+`EscapedFailureLogTest#anEscapedFailureIsLoggedOnceByApiErrorController` checks
+this in a running server, and checks that the observation filter is in the
+chain.
+
+A 403 also logs a WARN that names the method and the path, never the
+principal or a header:
 
 ```
 WARN … [flight-ops-service,affe185c…,a72584ea…,put-1] c.s.f.security.JsonAccessDeniedHandler : Denied PUT /api/v1/flights/UA123 for an authenticated caller: no rule grants this method and path to its authorities

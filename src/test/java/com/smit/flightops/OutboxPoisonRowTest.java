@@ -1,6 +1,7 @@
 package com.smit.flightops;
 
 import com.smit.flightops.entity.OutboxEvent;
+import com.smit.flightops.observability.OutboxMetrics;
 import com.smit.flightops.repository.OutboxEventRepository;
 import com.smit.flightops.service.EventPublisher;
 import com.smit.flightops.service.OutboxPublisher;
@@ -49,6 +50,7 @@ class OutboxPoisonRowTest {
     @Autowired private OutboxEventRepository outboxEventRepository;
     @Autowired private OutboxPublisher outboxPublisher;
     @Autowired private MeterRegistry meterRegistry;
+    @Autowired private OutboxMetrics outboxMetrics;
     @Autowired private JdbcTemplate jdbcTemplate;
     @Autowired private Clock clock;
 
@@ -66,7 +68,9 @@ class OutboxPoisonRowTest {
                 "{\"bookingId\":\"" + aggregateId + "\"}", clock.instant()));
     }
 
+    /** Refreshed first: the gauges read a cached count, which the refresher updates every 15 s. */
     private double gauge(String name) {
+        outboxMetrics.refresh();
         return meterRegistry.get(name).gauge().value();
     }
 
