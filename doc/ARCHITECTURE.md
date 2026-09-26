@@ -173,7 +173,9 @@ The path depends on details in that table that are easy to miss:
   attached as suppressed. It logs a WARN that ends `not a lost race`. A
   constraint violation on that path gets `409 DUPLICATE_REQUEST` from
   `src/main/java/com/smit/flightops/exception/GlobalExceptionHandler.java#handleDataIntegrity`,
-  where it used to get a 500.
+  where it used to get a 500. A data error there, SQLState class 22 such as
+  a NUL that PostgreSQL refuses, gets `400 MALFORMED_REQUEST` from the same
+  handler.
   `src/test/java/com/smit/flightops/service/BookingServiceTest.java#aViolationWithNoWinnerIsRethrown`
   pins the rethrow and the suppressed exception.
 

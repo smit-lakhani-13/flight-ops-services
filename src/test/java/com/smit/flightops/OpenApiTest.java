@@ -1,5 +1,6 @@
 package com.smit.flightops;
 
+import com.smit.flightops.entity.FlightStatus;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -9,6 +10,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -36,20 +38,28 @@ class OpenApiTest {
 
     /**
      * Each operation's documented status codes. Every endpoint needs credentials
-     * and a scope. Every write to an existing flight row can wait behind a
-     * booking's row lock, so each of them can answer 503. Every write with a body
-     * reads JSON only, so each of them can answer 415.
+     * and a scope. Every endpoint opens a transaction, so each of them can answer
+     * 503 when the database is out of reach, and every write to an existing
+     * flight row can also wait behind a booking's row lock. Every write with a
+     * body reads JSON only, so each of them can answer 415.
      */
     private static final Map<String, List<String>> RESPONSES = Map.of(
-            "get /api/v1/flights", List.of("200", "400", "401", "403"),
-            "post /api/v1/flights", List.of("201", "400", "401", "403", "409", "415"),
-            "get /api/v1/flights/{flightNumber}", List.of("200", "401", "403", "404"),
+            "get /api/v1/flights", List.of("200", "400", "401", "403", "503"),
+            "post /api/v1/flights", List.of("201", "400", "401", "403", "409", "415", "503"),
+            "get /api/v1/flights/{flightNumber}", List.of("200", "401", "403", "404", "503"),
             "delete /api/v1/flights/{flightNumber}", List.of("204", "401", "403", "404", "409", "503"),
             "patch /api/v1/flights/{flightNumber}/status", List.of("200", "400", "401", "403", "404", "409", "415", "503"),
-            "get /api/v1/bookings", List.of("200", "400", "401", "403"),
+            "get /api/v1/bookings", List.of("200", "400", "401", "403", "503"),
             "post /api/v1/bookings", List.of("201", "400", "401", "403", "404", "409", "415", "503"),
-            "get /api/v1/bookings/{bookingId}", List.of("200", "400", "401", "403", "404"),
+            "get /api/v1/bookings/{bookingId}", List.of("200", "400", "401", "403", "404", "503"),
             "delete /api/v1/bookings/{bookingId}", List.of("200", "400", "401", "403", "404", "503"));
+
+    /** The operations that take or queue behind the flight row lock, and so can time out on it. */
+    private static final List<String> LOCKING = List.of(
+            "delete /api/v1/flights/{flightNumber}",
+            "patch /api/v1/flights/{flightNumber}/status",
+            "post /api/v1/bookings",
+            "delete /api/v1/bookings/{bookingId}");
 
     @Autowired private MockMvc mockMvc;
 
@@ -93,6 +103,92 @@ class OpenApiTest {
         assertThat(documented.keySet()).containsExactlyInAnyOrderElementsOf(RESPONSES.keySet());
         RESPONSES.forEach((operation, codes) ->
                 assertThat(documented.get(operation)).as(operation).containsExactlyInAnyOrderElementsOf(codes));
+    }
+
+    /**
+     * {@code GlobalExceptionHandler} sends both 503 codes with
+     * {@code Retry-After}, and {@code RequestIdFilter} puts {@code X-Request-Id}
+     * on every response. Only the operations that touch the row lock can time
+     * out on it, so only they name {@code LOCK_TIMEOUT}.
+     */
+    @Test
+    @DisplayName("every 503 names the codes its operation can return and declares Retry-After; every response declares X-Request-Id")
+    void theSharedResponsesAreDeclaredOnEveryOperation() throws Exception {
+        JsonNode document = document();
+        JsonNode paths = document.get("paths");
+
+        for (String path : paths.propertyNames()) {
+            for (String method : paths.get(path).propertyNames()) {
+                String operation = method + " " + path;
+                JsonNode responses = paths.get(path).get(method).get("responses");
+
+                JsonNode unavailable = responses.get("503");
+                assertThat(unavailable.get("description").asString()).as(operation)
+                        .contains("DATABASE_UNAVAILABLE");
+                assertThat(unavailable.get("description").asString().contains("LOCK_TIMEOUT")).as(operation)
+                        .isEqualTo(LOCKING.contains(operation));
+                assertThat(unavailable.get("headers").get("Retry-After").get("$ref").asString()).as(operation)
+                        .isEqualTo("#/components/headers/Retry-After");
+                assertThat(unavailable.get("content").get("application/json").get("schema").get("$ref").asString())
+                        .as(operation).endsWith("/ErrorResponse");
+
+                for (String code : responses.propertyNames()) {
+                    assertThat(responses.get(code).get("headers").get("X-Request-Id").get("$ref").asString())
+                            .as(operation + " " + code).isEqualTo("#/components/headers/X-Request-Id");
+                }
+            }
+        }
+
+        JsonNode headers = document.get("components").get("headers");
+        assertThat(headers.get("Retry-After").get("schema").get("type").asString()).isEqualTo("integer");
+        assertThat(headers.get("X-Request-Id").get("schema").get("type").asString()).isEqualTo("string");
+    }
+
+    /**
+     * Without {@code @ParameterObject} springdoc publishes the {@code Pageable}
+     * as one required object parameter named {@code pageable}, and Swagger UI
+     * fills it with {@code sort=string}, which the endpoint refuses.
+     */
+    @Test
+    @DisplayName("both list endpoints publish page, size and sort as query parameters, with their defaults")
+    void theListEndpointsPublishPageSizeAndSort() throws Exception {
+        JsonNode paths = document().get("paths");
+
+        Map<String, String> defaultSort = Map.of(
+                "/api/v1/flights", "departureTime,ASC",
+                "/api/v1/bookings", "createdAt,ASC");
+        defaultSort.forEach((path, sort) -> {
+            Map<String, JsonNode> parameters = new HashMap<>();
+            paths.get(path).get("get").get("parameters").forEach(p -> parameters.put(p.get("name").asString(), p));
+
+            assertThat(parameters).as(path).containsKeys("page", "size", "sort").doesNotContainKey("pageable");
+            assertThat(parameters.values()).as(path).allMatch(p -> p.get("in").asString().equals("query"));
+            assertThat(parameters.get("size").get("schema").get("default").asInt()).as(path).isEqualTo(20);
+            assertThat(parameters.get("sort").get("schema").get("default").get(0).asString()).as(path).isEqualTo(sort);
+        });
+    }
+
+    /**
+     * Jackson writes {@code "cancelledAt": null} for an active booking, which
+     * a schema without a null type refuses. The status is one enum, the same
+     * one the status change reads, whatever Java type each side holds it in.
+     */
+    @Test
+    @DisplayName("a null cancelledAt is allowed, and the flight status is one named enum both ways")
+    void theResponseSchemasMatchTheWire() throws Exception {
+        JsonNode schemas = document().get("components").get("schemas");
+
+        JsonNode cancelledAt = schemas.get("BookingDto").get("properties").get("cancelledAt");
+        assertThat(cancelledAt.get("type").valueStream().map(JsonNode::asString).toList())
+                .containsExactlyInAnyOrder("string", "null");
+        assertThat(cancelledAt.get("format").asString()).isEqualTo("date-time");
+
+        assertThat(schemas.get("FlightStatus").get("enum").valueStream().map(JsonNode::asString).toList())
+                .containsExactlyElementsOf(Arrays.stream(FlightStatus.values()).map(Enum::name).toList());
+        assertThat(schemas.get("FlightDto").get("properties").get("status").get("$ref").asString())
+                .isEqualTo("#/components/schemas/FlightStatus");
+        assertThat(schemas.get("StatusUpdate").get("properties").get("status").get("$ref").asString())
+                .isEqualTo("#/components/schemas/FlightStatus");
     }
 
     /**

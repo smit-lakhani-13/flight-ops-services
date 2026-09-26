@@ -91,6 +91,40 @@ still blank.
   the same validation as any other. The descriptions now name the seat count,
   and a text field sent as an array or an object, which Jackson still refuses.
 
+- **The OpenAPI document asked for paging as one required object.** Neither
+  `Pageable` parameter carried `@ParameterObject`, so springdoc published one
+  required query parameter named `pageable` with none of the defaults, and
+  Swagger UI's "Try it out" offered a sample with `sort=string`, which is
+  `400 UNKNOWN_SORT_PROPERTY`. `FlightController#search` and
+  `BookingController#byFlight` now carry it, and the document lists `page`,
+  `size` and `sort` with their defaults. It does not show the cap of 100.
+
+- **The OpenAPI document left out the 503 every operation can return.**
+  `GlobalExceptionHandler#handleDatabaseUnavailable` answers any operation
+  that cannot get a database connection, reads included, with
+  `503 DATABASE_UNAVAILABLE`. Five operations declared no 503, and the other
+  four named only `LOCK_TIMEOUT`. `OpenApiConfig#sharedResponses` now adds the
+  code to every operation under `/api/`, `Retry-After` as a header on every
+  503, and `X-Request-Id` as a header on every documented response, since
+  `RequestIdFilter` sets it on every response the application handles.
+
+- **Two response schemas disagreed with the JSON.** An active booking is sent
+  with `"cancelledAt": null`, and the schema's plain `string` type refused the
+  null; it is now `string` or `null`. `FlightDto.status` was an unconstrained
+  string, and it now refers to a `FlightStatus` enum component, the one
+  `StatusUpdate` reads. Neither the Java types nor the JSON changed.
+
+- **A NUL inside a query filter was a 409 on PostgreSQL.** `?origin=J%00K`,
+  `?destination=J%00K` and `?flightNumber=A%00B` reached the query, PostgreSQL
+  refused the NUL with SQLState 22021, and the client got
+  `409 DUPLICATE_REQUEST` telling it to retry a read that fails every time.
+  H2 answered an empty page. `QueryParams#withoutControlCharacters` now
+  answers a filter that holds a control character once trimmed with
+  `400 MALFORMED_REQUEST`, before any query. Nothing else is checked, so
+  `?origin=J-K` is still an empty page. As a backstop,
+  `GlobalExceptionHandler#handleDataIntegrity` answers any SQLState class 22
+  data error with `400 MALFORMED_REQUEST` rather than `DUPLICATE_REQUEST`.
+
 - **The SBOMs described two applications as libraries.** The CycloneDX plugin
   types a module `library` unless told otherwise, and neither pom told it, so
   both `target/bom.json` files did. Both are typed `application` now. The

@@ -142,7 +142,8 @@ Both controllers produce and read JSON only.
 - The header decides, so a YAML body sent as `application/json` is
   `400 MALFORMED_REQUEST`.
 - Any `/api/**` row can also answer `503 DATABASE_UNAVAILABLE`, with
-  `Retry-After`, when the service cannot reach its database.
+  `Retry-After`, when the service cannot reach its database. The OpenAPI
+  document declares that 503 on every operation.
 
 Tomcat refuses some requests before Spring sees them: `%2F`, `%5C`, `%00` or
 `%zz` in the path, a raw `|`, or a 20KB header. Those get Tomcat's own HTML
@@ -162,13 +163,13 @@ pass through: `FlightNotFoundException`, `BookingNotFoundException`,
 Spring MVC's own `ErrorResponse` detail, such as
 `Method 'POST' is not supported.`, which names only the request.
 
-Two cases get a fixed message instead:
+These get a fixed message instead:
 
 - A `POST` or `PATCH` with no `Content-Type`. Spring would say
   `Content-Type 'null' is not supported.`, so it gets
   `The request has no Content-Type. Send application/json.`
-- A stray `IllegalArgumentException` gets
-  `The request contained an invalid value.`
+- A stray `IllegalArgumentException`, and a database data error (SQLState
+  class 22), get `The request contained an invalid value.`
 
 The fixed strings for the other codes are in
 `exception/GlobalExceptionHandler.java`: `CONCURRENT_MODIFICATION`,
@@ -228,7 +229,7 @@ included.
 | `UNAUTHENTICATED` | 401 | no credentials, or credentials that do not verify; written by `JsonAuthenticationEntryPoint` |
 | `FORBIDDEN` | 403 | authenticated, without the authority this path needs; written by `JsonAccessDeniedHandler` |
 | `VALIDATION_FAILED` | 400 | Bean Validation, per field, including `@DistinctEndpoints`, which refuses a flight from EWR to EWR. A field that breaks more than one rule gets one message, taken in this order: null, blank, size or range, pattern, any other rule. So an empty airport code gets `must not be blank`, not `size must be between 3 and 3`. A flight number with a space, `/` or `%` inside gets `must contain only letters and digits`. An airport code with a digit, symbol or padding gets `must contain only letters`. A passenger name with a control character gets `must not contain control characters`, one with an unpaired UTF-16 surrogate gets `must not contain unpaired surrogates`, and one made only of spaces, no-break spaces or format characters such as U+200B and U+FEFF gets `must not be blank`; for the last two that message comes from a pattern, so such a name past 255 characters gets the size message instead. An idempotency key with a character other than letters, digits and `. _ : -` gets `must contain only letters, digits and . _ : -`. A missing or null `departureTime` gets `must not be null` |
-| `MALFORMED_REQUEST` | 400 | unreadable body, an unknown enum constant or one sent as a number, a `seats` or `totalSeats` that is missing, null, quoted, or written with a decimal point or an exponent (`2.0` included), a `departureTime` that is not an ISO-8601 instant with `Z` or an offset (a missing or null one is `VALIDATION_FAILED`), bad path variable, missing query parameter, or `page * size` above 2147483647 on either list endpoint |
+| `MALFORMED_REQUEST` | 400 | unreadable body, an unknown enum constant or one sent as a number, a `seats` or `totalSeats` that is missing, null, quoted, or written with a decimal point or an exponent (`2.0` included), a `departureTime` that is not an ISO-8601 instant with `Z` or an offset (a missing or null one is `VALIDATION_FAILED`), bad path variable, missing query parameter, a filter with a control character once trimmed (see [Paging and sorting](#paging-and-sorting)), a value the database refuses as invalid data (SQLState class 22), or `page * size` above 2147483647 on either list endpoint |
 | `RESOURCE_NOT_FOUND` | 404 | unmapped path |
 | `METHOD_NOT_ALLOWED` | 405 | a verb the security rules allow on a path that does not map it, such as `POST` on `/api/v1/flights/UA123`; the `Allow` header lists the mapped verbs. Tomcat refuses `TRACE` before any filter runs, so its 405 comes from `ApiErrorController`, with the servlet's full `Allow` list and no `X-Request-Id`. `PUT` and `OPTIONS` get 403 from `anyRequest().denyAll()`, or 401 without credentials |
 | `UNSUPPORTED_MEDIA_TYPE` | 415 | a `Content-Type` that is missing or is not `application/json`, YAML included; the `Accept` header names JSON |
@@ -374,6 +375,12 @@ not rejected: `?size=5000` answers 200 and asks the service for 100 rows
 is Spring Data's own handling, observed over HTTP and not pinned by a test
 here.
 
+The OpenAPI document lists `page`, `size` and `sort` as three optional query
+parameters with the defaults above, because both `Pageable` parameters carry
+springdoc's `@ParameterObject`
+(`OpenApiTest.java#theListEndpointsPublishPageSizeAndSort`). It does not show
+the cap of 100.
+
 The response is `{content, page}`, with `page` holding `size`, `number`,
 `totalElements` and `totalPages` (`serialization-mode: via-dto` in
 `application.yml`).
@@ -381,7 +388,14 @@ The response is `{content, page}`, with `page` holding `size`, `number`,
 The filters: `origin` and `destination` are both optional on the flight
 search, and each is trimmed and upper-cased before the query. `flightNumber`
 is required on the bookings list, is trimmed and upper-cased too, and an
-unknown flight number is an empty page.
+unknown flight number is an empty page. A filter that still holds a control
+character (`\p{Cc}`) once trimmed, such as `?origin=J%00K`, is
+`400 MALFORMED_REQUEST` with the message
+`origin must not contain control characters.`, and no query runs
+(`controller/QueryParams.java#withoutControlCharacters`). PostgreSQL refuses
+a NUL in a text value, and H2 does not, so the check keeps the two databases
+giving the same answer. Nothing else about a filter is checked: `?origin=J-K`
+is an empty page, like any other code no flight has.
 
 `controller/SortPolicy.java#stable` applies the same rules to both endpoints.
 Each endpoint publishes the properties it sorts by:
@@ -446,3 +460,12 @@ Nothing in `application.yml` turns the documents off:
 `springdoc.api-docs.enabled` is fixed at `true`. Swagger UI opens with "Try
 it out" enabled (`try-it-out-enabled: true`), so the page sends live requests
 with whatever credentials are entered in it.
+
+`config/OpenApiConfig.java#sharedResponses` adds what every operation shares
+and no annotation can see, so a new operation gets it too: the
+`503 DATABASE_UNAVAILABLE`, which it appends to the `LOCK_TIMEOUT` 503 on the
+four writes that take the flight row lock, `Retry-After` as a header on every
+503, and `X-Request-Id` as a header on every response it lists. In the
+schemas, `BookingDto.cancelledAt` is `string` or `null`, and the flight status
+is one `FlightStatus` enum that `FlightDto.status` and `StatusUpdate.status`
+both refer to (`OpenApiTest.java#theResponseSchemasMatchTheWire`).

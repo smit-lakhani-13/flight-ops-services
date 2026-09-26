@@ -28,6 +28,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
+import java.sql.SQLException;
 import java.time.Clock;
 import java.util.Comparator;
 import java.util.Map;
@@ -111,11 +112,24 @@ public class GlobalExceptionHandler {
      * idempotency key never gets here, because {@code BookingService#book}
      * recovers the winner's booking and answers 201, or 409
      * {@code IDEMPOTENCY_KEY_REUSED} when the two requests differ.
+     *
+     * <p>Spring reports a data error, SQLState class 22, as the same exception,
+     * PostgreSQL refusing a NUL in a text value among them. That is a value the
+     * database will never take, so it is 400 {@code MALFORMED_REQUEST}, not a
+     * 409 that tells the caller to retry a request that fails the same way
+     * every time.
      */
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<ErrorResponse> handleDataIntegrity(DataIntegrityViolationException e) {
         // PostgreSQL's detail quotes the values the client sent.
-        log.warn("Constraint violation: {}", printable(e.getMostSpecificCause().getMessage()));
+        String detail = printable(e.getMostSpecificCause().getMessage());
+        String state = sqlStateOf(e);
+        if (state != null && state.startsWith("22")) {
+            log.warn("Data error: {}", detail);
+            return json(HttpStatus.BAD_REQUEST)
+                    .body(ErrorResponse.of("MALFORMED_REQUEST", "The request contained an invalid value.", clock.instant()));
+        }
+        log.warn("Constraint violation: {}", detail);
         return json(HttpStatus.CONFLICT)
                 .body(ErrorResponse.of("DUPLICATE_REQUEST",
                                        "This request conflicts with an existing record. Please retry.",
@@ -322,6 +336,16 @@ public class GlobalExceptionHandler {
             case "Pattern" -> 3;
             default -> 4;
         };
+    }
+
+    /** The SQLState of the first SQLException in the cause chain, or null if there is none. */
+    private static String sqlStateOf(Throwable thrown) {
+        for (Throwable t = thrown; t != null; t = t.getCause()) {
+            if (t instanceof SQLException sql) {
+                return sql.getSQLState();
+            }
+        }
+        return null;
     }
 
     private static ResponseEntity.BodyBuilder json(HttpStatus status) {
