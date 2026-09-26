@@ -47,6 +47,13 @@ still blank.
   Dependabot leaves the Lambda's Testcontainers version alone, as it does
   JUnit, because `lambda/pom.xml` copies the one Boot manages for the service.
 
+- **What the database login can do, and what would replace it.** The service
+  and Flyway both log in as the RDS master user, a member of `rds_superuser`
+  that owns every table. `doc/OPERATIONS.md` now traces where that login comes
+  from and what it allows, and `doc/ARCHITECTURE.md` lists the fix, a
+  migration user and a least-privilege runtime user, as still open. No code
+  changes.
+
 ### Changed
 
 - **Version.** Both poms say `1.3.0-SNAPSHOT` until the next tag, so a build
@@ -162,6 +169,18 @@ still blank.
   the passenger name checks above. Markdown prose lines over 80 columns are
   rewrapped where they can break, except in `README.md` and the released
   sections here.
+
+- **Runbooks that promised more than the code delivers.** `doc/OPERATIONS.md`
+  and `doc/DEPLOYMENT.md` put the outbox drain at about 100 events a second
+  per replica, but `OutboxPublisher#drainOutbox` sends one row at a time and
+  waits the poll interval after each drain, so a replica drains
+  `batch / (poll interval + batch × send latency)` events a second, and never
+  more than `1 / send latency`. Both now show that arithmetic. Below that cap
+  the throughput playbook prefers a shorter interval to a bigger batch, which
+  holds its row locks longer, and at the cap it adds replicas, up to the HPA's
+  four. The command in "Events stop arriving" read only the last 10 lines of
+  each pod, kubectl's default with a label selector, and now passes
+  `--tail=-1` and `--prefix`.
 
 ## 1.2.0 — 2026-09-26
 
