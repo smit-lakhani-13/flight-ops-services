@@ -92,10 +92,10 @@ the two statuses stay apart.
 |---|---|---|---|---|
 | `GET` | `/api/v1/flights/{flightNumber}` | `flights:read` | 200 | 404 |
 | `GET` | `/api/v1/flights?origin=&destination=&page=&size=&sort=` | `flights:read` | 200 (paginated) | 400 |
-| `POST` | `/api/v1/flights` | `flights:write` | 201 + `Location` | 400, 409, 415 |
-| `PATCH` | `/api/v1/flights/{flightNumber}/status` | `flights:write` | 200 | 400, 404, 409, 415, 503 |
+| `POST` | `/api/v1/flights` | `flights:write` | 201 + `Location` | 400, 409, 413, 415 |
+| `PATCH` | `/api/v1/flights/{flightNumber}/status` | `flights:write` | 200 | 400, 404, 409, 413, 415, 503 |
 | `DELETE` | `/api/v1/flights/{flightNumber}` | `flights:write` | 204 | 404, 409, 503 |
-| `POST` | `/api/v1/bookings` | `flights:write` | 201 + `Location` | 400, 404, 409, 415, 503 |
+| `POST` | `/api/v1/bookings` | `flights:write` | 201 + `Location` | 400, 404, 409, 413, 415, 503 |
 | `GET` | `/api/v1/bookings/{bookingId}` | `flights:read` | 200 | 400, 404 |
 | `GET` | `/api/v1/bookings?flightNumber=&page=&size=&sort=` | `flights:read` | 200 (paginated) | 400 |
 | `DELETE` | `/api/v1/bookings/{bookingId}` | `flights:write` | 200 | 400, 404, 503 |
@@ -141,6 +141,13 @@ Both controllers produce and read JSON only.
   uploads.
 - The header decides, so a YAML body sent as `application/json` is
   `400 MALFORMED_REQUEST`.
+- A declared `Content-Length` over 16384 bytes gets `413 PAYLOAD_TOO_LARGE`
+  on any path, without reading the body and before the credentials are
+  checked. A body without one, such as a chunked body, gets the same 413 once
+  a read passes the limit, so nothing parses more than 16384 bytes; a path
+  that never reads its body never counts it. A valid body is normally under
+  1 KB. `HTTP_MAX_BODY_BYTES` sets the limit, through
+  `app.http.max-body-bytes`.
 - Any `/api/**` row can also answer `503 DATABASE_UNAVAILABLE`, with
   `Retry-After`, when the service cannot reach its database.
 
@@ -158,9 +165,9 @@ WARN. The project's own exception messages are written for clients, and those
 pass through: `FlightNotFoundException`, `BookingNotFoundException`,
 `InsufficientSeatsException`, `FlightNotBookableException`,
 `DuplicateFlightException`, `IllegalFlightTransitionException`,
-`IdempotencyKeyConflictException` and `UnknownSortPropertyException`. So does
-Spring MVC's own `ErrorResponse` detail, such as
-`Method 'POST' is not supported.`, which names only the request.
+`IdempotencyKeyConflictException`, `UnknownSortPropertyException` and
+`PayloadTooLargeException`. So does Spring MVC's own `ErrorResponse` detail,
+such as `Method 'POST' is not supported.`, which names only the request.
 
 Two cases get a fixed message instead:
 
@@ -200,13 +207,13 @@ Three classes write them:
 | Writer | What it answers |
 |---|---|
 | `exception/GlobalExceptionHandler.java` | every exception a controller lets through, and Spring MVC's own 404, 405, 406 and 415 |
-| `security/ErrorResponseWriter.java` | the 401 and 403, for `JsonAuthenticationEntryPoint` and `JsonAccessDeniedHandler`. Spring Security decides those before the `DispatcherServlet` runs, so the handler above never sees them |
+| `security/ErrorResponseWriter.java` | the 401 and 403, for `JsonAuthenticationEntryPoint` and `JsonAccessDeniedHandler`, and the 413 that `RequestBodyLimitFilter` decides itself. Those are decided before the `DispatcherServlet` runs, so the handler above never sees them |
 | `exception/ApiErrorController.java` | `/error`, where the container forwards a failure raised outside Spring MVC, such as a path the firewall refuses or a `TRACE` |
 
 Each sets `Content-Type: application/json` itself, whatever the `Accept`
 header asked for. No controller contains a `try`/`catch`. All three take the
 timestamp from the one injected `Clock`. `RequestIdFilter` returns
-`X-Request-Id` on every response the application handles, 401 and 403
+`X-Request-Id` on every response the application handles, 401, 403 and 413
 included.
 
 ## Error codes
@@ -231,6 +238,7 @@ included.
 | `MALFORMED_REQUEST` | 400 | unreadable body, an unknown enum constant or one sent as a number, a `seats` or `totalSeats` that is missing, null, quoted, or written with a decimal point or an exponent (`2.0` included), a `departureTime` that is not an ISO-8601 instant with `Z` or an offset (a missing or null one is `VALIDATION_FAILED`), bad path variable, missing query parameter, or `page * size` above 2147483647 on either list endpoint |
 | `RESOURCE_NOT_FOUND` | 404 | unmapped path |
 | `METHOD_NOT_ALLOWED` | 405 | a verb the security rules allow on a path that does not map it, such as `POST` on `/api/v1/flights/UA123`; the `Allow` header lists the mapped verbs. Tomcat refuses `TRACE` before any filter runs, so its 405 comes from `ApiErrorController`, with the servlet's full `Allow` list and no `X-Request-Id`. `PUT` and `OPTIONS` get 403 from `anyRequest().denyAll()`, or 401 without credentials |
+| `PAYLOAD_TOO_LARGE` | 413 | a request body over `app.http.max-body-bytes`, 16384 bytes by default. `RequestBodyLimitFilter` refuses a declared `Content-Length` over it before the body is read and before the credentials are checked. A chunked body is refused with the same code once the read passes the limit |
 | `UNSUPPORTED_MEDIA_TYPE` | 415 | a `Content-Type` that is missing or is not `application/json`, YAML included; the `Accept` header names JSON |
 | `REQUEST_REJECTED` | 4xx | any other Spring MVC client error, such as the 406 for a non-JSON `Accept` |
 | `BAD_REQUEST` | 4xx | any other client error the container forwards to `/error`, such as a path the firewall refuses; written by `ApiErrorController` in the same envelope |

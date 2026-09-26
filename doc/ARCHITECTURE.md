@@ -110,6 +110,7 @@ sequenceDiagram
 
     C->>F: POST /api/v1/bookings
     F->>F: X-Request-Id validated or minted, MDC set
+    Note over F,S: RequestBodyLimitFilter refuses a body over 16 KiB with 413
     F->>S: continue chain
     S->>S: authenticate, require SCOPE_flights:write
     S->>Ctl: @Valid BookingRequest
@@ -138,6 +139,7 @@ Reading it in the source, in order:
 | Step | Where | What it is responsible for |
 |---|---|---|
 | Correlation | `src/main/java/com/smit/flightops/observability/RequestIdFilter.java#doFilterInternal` | Runs ahead of Spring Security, so a 401 also carries `X-Request-Id` |
+| Body limit | `src/main/java/com/smit/flightops/security/RequestBodyLimitFilter.java#doFilterInternal` | Refuses a body over 16 KiB with 413 before anything parses it: a declared `Content-Length` unread, a chunked body once the read passes the limit |
 | Authorisation | `src/main/java/com/smit/flightops/config/SecurityConfig.java#apiSecurityFilterChain` | One rule set for Basic and JWT alike |
 | Binding and validation | `src/main/java/com/smit/flightops/dto/BookingRequest.java` | Bean Validation on the record components: the flight number is letters and digits, and the passenger name needs one character that is neither whitespace nor a format character, and has no control character or unpaired surrogate. Failures become 400 before any service code runs. Jackson refuses a `seats` with a decimal point or an exponent, `2.0` included (`accept-float-as-int` is off in `src/main/resources/application.yml`), a missing or null one, which a primitive `int` cannot hold, and `"2"` as text (`allow-coercion-of-scalars: false`), each as `400 MALFORMED_REQUEST`. The writes that take a body read JSON only, so any other `Content-Type`, YAML included, gets 415 first |
 | Idempotency | `src/main/java/com/smit/flightops/service/BookingService.java#book` | Decides replay, conflict or insert. Holds no transaction of its own |
@@ -510,13 +512,15 @@ and restore the seats the booking had just debited.
 │   │                   (the wire contract)
 │   ├── exception/      the domain exceptions, GlobalExceptionHandler (the
 │   │                   @RestControllerAdvice) and ApiErrorController
-│   ├── security/       the JSON 401 and 403 writers
+│   ├── security/       the JSON 401 and 403 writers, and the request body
+│   │                   limit
 │   ├── observability/  RequestIdFilter, BookingMetrics, OutboxMetrics
 │   ├── validation/     @DistinctEndpoints, a class-level Bean Validation
 │   │                   constraint, and IsoInstantDeserializer, which takes only
 │   │                   an ISO-8601 instant
-│   └── config/         SecurityConfig, OpenApiConfig, AwsConfig, the
-│                       @ConfigurationProperties records, TimeConfig, DataSeeder
+│   └── config/         SecurityConfig, OpenApiConfig, AwsConfig, HttpConfig,
+│                       the @ConfigurationProperties records, TimeConfig,
+│                       DataSeeder
 ├── src/main/resources/
 │   ├── application.yml         profiles: default (H2), postgres, prod
 │   └── db/migration/           the Flyway migrations, which own the PostgreSQL
@@ -607,6 +611,7 @@ flowchart TD
     observability --> config
     observability --> repository
     security --> dto
+    security --> exception
     validation --> dto
 ```
 

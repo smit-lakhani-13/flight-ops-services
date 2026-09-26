@@ -169,6 +169,12 @@ app:
   aws:
     region: ${AWS_REGION:ap-south-1}
     sqs-queue-url: ${SQS_QUEUE_URL:}
+  http:
+    # Bytes. A larger request body gets 413 PAYLOAD_TOO_LARGE before it is parsed;
+    # Jackson would otherwise build a string field of any length before @Size saw
+    # it. A booking with every field at its longest and every character escaped is
+    # under 4 KB. See RequestBodyLimitFilter.
+    max-body-bytes: ${HTTP_MAX_BODY_BYTES:16384}
 
 springdoc:
   # Every endpoint speaks JSON, so the document says application/json, not */*.
