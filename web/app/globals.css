@@ -1,0 +1,58 @@
+@import "tailwindcss";
+
+/*
+ * Design tokens. Surfaces are slate, and there is one accent hue, sky:
+ * sky-600 on light surfaces and sky-400 on dark ones, for focus outlines,
+ * seat bars and the current page. A filled primary button uses sky-700 in the
+ * light scheme, because white text on sky-600 is only about 4.1:1. The scheme
+ * follows prefers-color-scheme; there is no toggle.
+ */
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+  --radius-control: 0.5rem;
+  --radius-card: 0.75rem;
+
+  --shadow-card: 0 1px 2px 0 rgb(15 23 42 / 0.05), 0 1px 3px 0 rgb(15 23 42 / 0.08);
+  --shadow-drawer: 0 -12px 32px -8px rgb(15 23 42 / 0.25);
+}
+
+/* Resolved at run time, so one class serves both schemes. */
+@theme inline {
+  --color-accent: var(--accent);
+  --color-accent-strong: var(--accent-strong);
+  --color-on-accent: var(--on-accent);
+}
+
+:root {
+  color-scheme: light dark;
+  --accent: var(--color-sky-600);
+  --accent-strong: var(--color-sky-700);
+  --on-accent: var(--color-white);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --accent: var(--color-sky-400);
+    --accent-strong: var(--color-sky-400);
+    --on-accent: var(--color-slate-950);
+  }
+}
+
+@layer base {
+  /* While the request log is open it covers the bottom half of the screen, so
+     a field the keyboard reaches is scrolled clear of it, not behind it. */
+  html:has(#request-log-drawer) {
+    scroll-padding-bottom: 50vh;
+  }
+
+  body {
+    @apply bg-slate-50 text-slate-900 antialiased dark:bg-slate-950 dark:text-slate-100;
+  }
+
+  code,
+  .mono {
+    @apply font-mono text-[0.85em];
+  }
+}

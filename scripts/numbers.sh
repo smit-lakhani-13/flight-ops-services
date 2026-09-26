@@ -8,7 +8,8 @@
 #   ./mvnw -B clean verify && ./mvnw -B -f lambda/pom.xml clean verify
 #   scripts/numbers.sh
 #
-# Everything else is computed from git, so it is correct in a clean clone.
+# Everything else is computed from git, so it is correct in a clean clone,
+# except the console's test counts, which need `npm ci` in web/ first.
 #
 #   scripts/numbers.sh --check-readme
 #
@@ -96,6 +97,26 @@ else
     grep -h 'Tests run' "$dir"/*.txt | sed 's/^Tests run: /  /;s/, Failures.*-- in / in /' \
       | awk '{printf "%-6s %s\n", $1, $NF}' | sort -b -k2
   done
+fi
+
+rule 'Console (web/)'
+web_ts() { git ls-files -z 'web/*.ts' 'web/*.tsx'; }
+printf 'TypeScript             %s files, %s lines (tests included)\n' \
+  "$(web_ts | tr -cd '\0' | wc -c | tr -d ' ')" \
+  "$(printf "%'d" "$(web_ts | xargs -0 cat | wc -l | tr -d ' ')")"
+printf 'pages, API routes      %s, %s\n' \
+  "$(git ls-files 'web/app/*page.tsx' | wc -l | tr -d ' ')" \
+  "$(git ls-files 'web/app/api/*route.ts' | wc -l | tr -d ' ')"
+# Declared, not run. Listing needs `npm ci` in web/ but no server; CI runs
+# both suites on every trigger.
+if [ -d web/node_modules ]; then
+  printf 'unit tests             %s declared\n' \
+    "$(cd web && npx --no-install vitest list 2>/dev/null | grep -c ' > ')"
+  printf 'end-to-end tests       %s declared\n' \
+    "$(cd web && npx --no-install playwright test --list --project desktop-1280 2>/dev/null \
+      | sed -n 's/^Total: \([0-9]*\) tests.*/\1/p')"
+else
+  echo 'tests                  n/a -- run npm ci in web/ first'
 fi
 
 rule 'Versions'

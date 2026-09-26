@@ -8,13 +8,13 @@ Seat inventory and bookings that stay correct under retries and contention: a Sp
 
 I chose flight bookings because seat inventory is a real consistency problem: many clients want the same few seats, clients retry, and one mistake sells a seat twice.
 
-**Built and tested:** Java 21, Spring Boot 4.1, Spring Security 7, JPA/Hibernate, Flyway, PostgreSQL 17, Testcontainers, Docker, GitHub Actions.
+**Built and tested:** Java 21, Spring Boot 4.1, Spring Security 7, JPA/Hibernate, Flyway, PostgreSQL 17, Testcontainers, Docker, GitHub Actions, and a Next.js and TypeScript console that Playwright drives against the running service.
 
 **Written and unit-tested or linted, never deployed:** SQS, Lambda, DynamoDB, Kubernetes, SAM. This is a demo service that has never been deployed or served production traffic; [Status](#status) says exactly what has run.
 
 ```mermaid
 flowchart LR
-  client([HTTP client]) -->|"Basic or bearer"| api
+  client(["HTTP client, or the console's proxy"]) -->|"Basic or bearer"| api
   subgraph svc ["flight-ops-service"]
     api[REST API] -->|"one transaction: booking and event"| db[(PostgreSQL)]
     poller[Outbox poller] -->|"claims rows, SKIP LOCKED"| db
@@ -37,6 +37,12 @@ flowchart LR
 - **More than one poller can run.** The poller claims rows with `FOR UPDATE SKIP LOCKED` ([`src/main/java/com/smit/flightops/repository/OutboxEventRepository.java#claimUnpublished`](src/main/java/com/smit/flightops/repository/OutboxEventRepository.java)), so two replicas take disjoint batches instead of queueing behind each other.
 - **The consumer tolerates redelivery.** The Lambda writes with `attribute_not_exists(bookingId)`, so a duplicate message is a no-op, and a partial batch response reports only the messages that failed, so SQS redelivers just those ([`lambda/src/main/java/com/smit/flightops/lambda/BookingEventHandler.java#handleRequest`](lambda/src/main/java/com/smit/flightops/lambda/BookingEventHandler.java)).
 
+## See it
+
+![Ten replays of one idempotency key from the console: ten 201s, one booking, one seat debited](doc/assets/console-race.png)
+
+The console in [`web/`](web/README.md) puts every operation on a screen. Above, it has sent ten identical booking requests at the same moment, all on one idempotency key: ten `201`s, one booking id, one seat taken from the flight. It also walks a flight through its statuses and shows the service refusing a move with a `409`, shows one message per invalid field, and reads health and the booking and outbox meters as `ops`. The browser talks only to the console's own server, which forwards an allow-listed set of calls with your credentials and stores nothing, so the API gained no CORS policy ([ADR 0017](adr/0017-web-console.md)).
+
 ## Status
 
 | What | State |
@@ -44,6 +50,7 @@ flowchart LR
 | The service | Built and tested: 279 tests, 9 of them on PostgreSQL 17 and 1 on ElasticMQ through Testcontainers, which run in CI and skip on a machine without Docker. Every endpoint exercised over HTTP against a running instance; `scripts/demo.sh` replays the tour. |
 | The SQS publisher and the Lambda | Unit-tested against mocked AWS SDK clients, and run in CI against emulators in containers: the publisher sends to ElasticMQ, where the test reads the message back, and the handler writes to DynamoDB Local on a table keyed as `lambda/template.yaml` keys it (the Lambda module has 28 tests, 3 of them on DynamoDB Local). Never connected to SQS or DynamoDB in AWS. |
 | The container image | Built from the `Dockerfile`, started without a database and scanned by Trivy in CI on every push or pull request to `main`. Never pushed to a registry. The job logs the image size on every run, about 300 MB. |
+| The console | Built and tested in CI on every push or pull request to `main`: lint, types, 107 unit tests, the production build, and 23 Playwright tests in Chromium against the service's own jar, three of them at eleven viewports. Never hosted. |
 | Written and linted, never run against AWS or a cluster | `deploy/k8s/` (kustomize), `lambda/template.yaml` (SAM), the scripts in `deploy/aws/` (CI renders the manifests with `render-aws.sh` and tests the teardown and `up.sh`'s checks against stubbed tools), and the deploy job, which is gated by a `DEPLOY_ENABLED` variable that has never been set. |
 | Not implemented | A JMS publisher, trace export to a collector, rate limiting. |
 
@@ -58,6 +65,7 @@ Merging to `main` deploys nothing. Read the green badge as "it builds and the te
 | The outbox | [`service/OutboxWriter.java#recordBookingCreated`](src/main/java/com/smit/flightops/service/OutboxWriter.java), [`service/OutboxPublisher.java#drainOutbox`](src/main/java/com/smit/flightops/service/OutboxPublisher.java) | [`OutboxTest.java#aRolledBackBookingLeavesNoEvent`](src/test/java/com/smit/flightops/OutboxTest.java), [`OutboxPoisonRowTest.java#anExhaustedRowDropsOutOfTheClaim`](src/test/java/com/smit/flightops/OutboxPoisonRowTest.java), [`OutboxPrunePostgresTest.java#concurrentClaimsAreDisjointAndSkipRowsNotYetDue`](src/test/java/com/smit/flightops/service/OutboxPrunePostgresTest.java) |
 | Lock timeout to 503 | [`exception/GlobalExceptionHandler.java#handleLockTimeout`](src/main/java/com/smit/flightops/exception/GlobalExceptionHandler.java) | [`LockTimeoutPostgresTest.java#postgresLockTimeoutGives503`](src/test/java/com/smit/flightops/LockTimeoutPostgresTest.java) (PostgreSQL's own `lock_timeout`, SQLSTATE `55P03`); on H2, [`LockTimeoutTest.java#contendedFlightRowGives503`](src/test/java/com/smit/flightops/LockTimeoutTest.java) |
 | Who may call what | [`config/SecurityConfig.java#apiSecurityFilterChain`](src/main/java/com/smit/flightops/config/SecurityConfig.java) | [`SecurityRulesTest.java#unmappedPathsAreDeniedByDefault`](src/test/java/com/smit/flightops/SecurityRulesTest.java), [`BearerTokenChallengeTest.java#aSignedTokensScopeMapsOntoTheRules`](src/test/java/com/smit/flightops/BearerTokenChallengeTest.java) |
+| The console's proxy | [`web/lib/proxy.ts#forward`](web/lib/proxy.ts), [`web/lib/race.ts#runRace`](web/lib/race.ts) | [`web/lib/proxy.test.ts`](web/lib/proxy.test.ts) against a stubbed `fetch`; [`web/e2e/ops.spec.ts`](web/e2e/ops.spec.ts) and [`web/e2e/bookings.spec.ts`](web/e2e/bookings.spec.ts) against the running service |
 | Layering | the package structure under `src/main/java/com/smit/flightops/` | [`ArchitectureTest.java#layers_are_respected`](src/test/java/com/smit/flightops/ArchitectureTest.java), [`ArchitectureTest.java#transactions_are_opened_only_in_the_service_layer`](src/test/java/com/smit/flightops/ArchitectureTest.java) |
 | The consumer | [`BookingEventHandler.java#handleRequest`](lambda/src/main/java/com/smit/flightops/lambda/BookingEventHandler.java) | [`BookingEventHandlerTest.java#duplicateIsNotAFailure`](lambda/src/test/java/com/smit/flightops/lambda/BookingEventHandlerTest.java), [`BookingEventHandlerTest.java#reportsOnlyTheFailingMessage`](lambda/src/test/java/com/smit/flightops/lambda/BookingEventHandlerTest.java) |
 
@@ -71,10 +79,11 @@ Every job below runs on every push or pull request to `main`, except `dependency
 | `infra-lint` | The kustomize render against the Kubernetes schemas, `cfn-lint`, `sam validate`, `shellcheck`, and a self-test of the deploy scripts against stubbed tools |
 | `trivy-fs` | A CRITICAL or HIGH vulnerability with a fix available, or a committed secret that Trivy rates CRITICAL or HIGH |
 | `image` | The image does not build, does not refuse to start without a database, or has a CRITICAL vulnerability with a fix available |
+| `web` | A lint warning, a type error or a failing unit test in the console, a console that does not build, or a failing Playwright test against the built console and the service's jar |
 | `docs-check` | A cited file that does not exist or does not name the cited symbol; a broken relative link or heading anchor; this README's decision-record count or the index in `adr/README.md` disagreeing with `adr/`; a hygiene sweep of the tracked files and the commit messages |
 | `dependency-review` | A pull request that adds a dependency with a high-severity advisory |
 
-CodeQL runs the `security-extended` queries on every push or pull request to `main`, and weekly. [CONTRIBUTING.md](CONTRIBUTING.md#what-ci-enforces) lists every step.
+CodeQL runs the `security-extended` queries over the Java and the console's TypeScript on every push or pull request to `main`, and weekly. [CONTRIBUTING.md](CONTRIBUTING.md#what-ci-enforces) lists every step.
 
 ## Design decisions
 
@@ -87,8 +96,9 @@ CodeQL runs the `security-extended` queries on every push or pull request to `ma
 | [0008](adr/0008-standalone-lambda-consumer.md) | A plain `RequestHandler` on arm64 with no framework; a conditional `PutItem` makes a redelivered message a no-op. |
 | [0014](adr/0014-quality-gates.md) | The build fails on architecture, coverage and dependency drift. |
 | [0015](adr/0015-event-transport.md) | Events go to an SQS standard queue, not a JMS broker; what a broker such as Solace would change is taken from its documentation, never built or run. |
+| [0017](adr/0017-web-console.md) | The console reaches the API through its own server, so the API gets no CORS policy and 0006 still holds. |
 
-All 16 decision records: [adr/README.md](adr/README.md).
+All 17 decision records: [adr/README.md](adr/README.md).
 
 ## Run it
 
@@ -108,6 +118,12 @@ scripts/demo.sh                   # the tour over HTTP; --fast skips the pauses
 ```
 
 Swagger UI is at <http://localhost:8080/swagger-ui.html>. The two accounts, `api` / `dev-secret` and `ops` / `dev-ops`, are the defaults in every profile except `prod`, which has none, and `compose.yaml` sets bcrypt hashes of the same two passwords; [doc/api.md](doc/api.md#authentication) explains them and what the `prod` profile checks at startup. On macOS, see [CONTRIBUTING.md](CONTRIBUTING.md#use-jdk-21) if `java -version` does not say 21.
+
+For the console instead of curl, keep the service running and, with Node 24:
+
+```bash
+cd web && npm ci && npm run build && npm start    # then open http://localhost:3000
+```
 
 `docker compose up --build` is meant to run the same service on PostgreSQL 17. `compose.yaml` is written and has not been run end to end.
 
@@ -162,6 +178,7 @@ More, including four review passes over my own code, are in [the defect log](doc
 | [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md) | Three ways to run it, the runbook for each, what each would cost, and how to tear it down with proof |
 | [doc/OPERATIONS.md](doc/OPERATIONS.md) | Configuration, metrics, following one booking across the queue, what to alert on, and the playbooks |
 | [SECURITY.md](SECURITY.md) | The auth model, what is exposed, how secrets are handled, and the known limitations |
+| [web/README.md](web/README.md) | The console: running it, each page and the calls it makes, the proxy's rules, and its tests |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | The JDK trap, both builds, the tests by layer, the versions, and what CI enforces |
 | [CHANGELOG.md](CHANGELOG.md) | What changed in each release |
 | [contracts/README.md](contracts/README.md) | The event contract between the two modules and how to change it safely |

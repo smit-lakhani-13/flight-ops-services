@@ -31,7 +31,7 @@ CODE_SPAN = re.compile(r'`([^`\n]+)`')
 FENCE = re.compile(r'^\s*(```|~~~)')
 PATH_CHARS = re.compile(r'^[A-Za-z0-9_./#-]+$')
 EXTENSIONS = ('.java', '.yml', '.yaml', '.json', '.sql', '.md', '.sh', '.py',
-              '.xml', '.txt', '.properties')
+              '.xml', '.txt', '.properties', '.ts', '.tsx', '.mjs', '.css')
 # Named files that carry no extension.
 BARE_FILES = ('Dockerfile', 'mvnw', 'LICENSE')
 

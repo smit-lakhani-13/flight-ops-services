@@ -91,6 +91,14 @@ Against real PostgreSQL:
 docker compose up --build
 ```
 
+The console in `web/` needs Node 24 and the service running on port 8080:
+
+```bash
+cd web && npm ci && npm run build && npm start    # http://localhost:3000
+```
+
+[web/README.md](web/README.md) has its pages, its proxy rules and its tests.
+
 For anything containing `${…}`, use environment variables instead of
 `-Dspring-boot.run.arguments`. The shell mangles the argument form, and the
 resulting failure blames the property.
@@ -142,9 +150,14 @@ scripts/numbers.sh          # recomputes every count the docs claim
 So 307 tests exist across the two modules. 294 run without Docker and 13
 skip, and CI runs all 307.
 
+The console has two suites of its own, outside those counts: 107 Vitest unit
+tests and 23 Playwright end-to-end tests, three of them at eleven viewports.
+`scripts/numbers.sh` lists both counts after an `npm ci` in `web/`, and
+[web/README.md](web/README.md#tests) says what each suite covers.
+
 ## What CI enforces
 
-`.github/workflows/build-and-deploy.yml` defines seven jobs, and not all of them
+`.github/workflows/build-and-deploy.yml` defines eight jobs, and not all of them
 run on every event. The workflow runs on every push or pull request to `main`,
 and on a manual run. The jobs run in parallel, so a red square names what broke
 before you open the log.
@@ -156,11 +169,13 @@ before you open the log.
 | `trivy-fs` | every trigger |
 | `docs-check` | every trigger |
 | `image` | every trigger. It builds and starts the image and never pushes it |
+| `web` | every trigger. It checks and builds the console, then runs Playwright against the service's jar. Nothing is hosted |
 | `dependency-review` | **pull requests only**. It diffs what the PR adds against the base, and a push has no base to diff against |
 | `deploy` | gated off: a push or manual run on `main` **and** `vars.DEPLOY_ENABLED == 'true'`. That variable is unset, so the job reports as skipped. Its display name, `deploy (gated off)`, says so in the checks list |
 
-A separate `codeql.yml` workflow analyses both modules on every push or pull
-request to `main`, weekly, and by hand. The weekly run is there because CodeQL
+A separate `codeql.yml` workflow analyses the Java in both modules and the
+console's TypeScript on every push or pull request to `main`, weekly, and by
+hand. The weekly run is there because CodeQL
 ships new queries, and code that was clean when it merged can be found
 vulnerable months later without a line of it changing. The manual trigger is
 for a commit on `main` that got no push run.
@@ -187,6 +202,12 @@ for a commit on `main` that got no push run.
 | `image` | `docker build` | the `Dockerfile` does not build |
 | `image` | "The image will not start without a database" | the image, run with no environment, does not stop with `'url' must start with` |
 | `image` | Trivy, on the image | the image the job built has a CRITICAL vulnerability with a fix available |
+| `web` | "Node is the major web/.nvmrc names" | the runner's Node is not the major `web/.nvmrc` names |
+| `web` | ESLint | any error or warning under `web/` |
+| `web` | `next build`, `tsc --noEmit` | the console does not build, or its code, tests or configs do not type-check |
+| `web` | Vitest | a unit test fails, including `web/lib/transitions.test.ts`, which reads `FlightStatus.java` and fails if the console's copy of the transition table differs |
+| `web` | "Start the service" | the service jar does not report `UP` within 120 s |
+| `web` | Playwright | an end-to-end test fails. The report, the traces and the service log are uploaded as `web-e2e` |
 | `deploy` | "Is this commit already in ECR?" | `describe-images` fails with anything other than `ImageNotFoundException` |
 | `deploy` | "The image will not start without a database" | the image, run with no environment, does not stop with `'url' must start with` |
 | `deploy` | Trivy, on the image | the built image has a CRITICAL vulnerability with a fix available. It runs before the push |
@@ -204,6 +225,12 @@ Run the doc gates before you push. They are fast, and they catch real mistakes:
 ```bash
 python3 scripts/refcheck.py && python3 scripts/linkcheck.py \
   && scripts/numbers.sh --check-readme && scripts/sweeps.sh
+```
+
+If the console changed, run its checks from `web/` as well:
+
+```bash
+npm run lint && npm run build && npx tsc --noEmit && npm test
 ```
 
 They have already caught errors in this repository's own documentation: a
@@ -307,6 +334,10 @@ Documentation is part of the change and ships with it:
 | AWS SDK for Java | 2.55.3 | `<aws.sdk.version>` in both POMs |
 | JUnit | 6.0.3 | Spring Boot in the service; `<junit.version>` in `lambda/pom.xml` |
 | Maven | 3.9.16 | `.mvn/wrapper/maven-wrapper.properties` |
+| Node | 24 | `web/.nvmrc`, which CI reads, and `engines` in `web/package.json` |
+| Next.js | 16.3.6 | `web/package.json`, exact pins throughout, resolved by `web/package-lock.json` |
+| React | 19.2.8 | `web/package.json` |
+| TypeScript | 5.9.3 | `web/package.json` |
 
 `pom.xml` changes one dependency version that Boot manages: it sets
 `jackson-2-bom.version` to 2.22.2. Boot 4 runs on Jackson 3 and still manages
@@ -333,21 +364,27 @@ and how to handle its pull requests.
 
 ## Dependabot
 
-Dependabot runs monthly on both Maven modules, the Actions workflows and the
-Dockerfile base images. `.github/dependabot.yml` sets the interval and the
-grouping. The Lambda module has its own entry, because with no parent POM
-nothing else manages its versions.
+Dependabot runs monthly on both Maven modules, the console's npm packages, the
+Actions workflows and the Dockerfile base images. `.github/dependabot.yml` sets
+the interval and the grouping. The Lambda module has its own entry, because with
+no parent POM nothing else manages its versions.
 
-- `open-pull-requests-limit` is set on every entry (3, 2, 1 and 2), because the
-  default is 5 per entry. The four entries at the default can open twenty pull
-  requests the first time Dependabot runs.
+- `open-pull-requests-limit` is set on every entry (3, 2, 1, 2 and 2), because
+  the default is 5 per entry. The five entries at the default can open
+  twenty-five pull requests the first time Dependabot runs.
 
-- The `ignore` rules cover five artifacts and no more, because an `ignore` also
-  suppresses Dependabot's security updates for that dependency. That is accepted
-  only where a bump would contradict a pin the project documents:
+- The `ignore` rules cover eight artifacts and no more, because an `ignore`
+  also suppresses Dependabot's security updates for that dependency. That is
+  accepted only where a bump would contradict a pin the project documents:
   `eclipse-temurin` and `maven` in the two base images (majors),
-  `org.springframework.boot:spring-boot-starter-parent` (majors), and
-  `org.junit:junit-bom` and `org.testcontainers:*` under `/lambda`.
+  `org.springframework.boot:spring-boot-starter-parent` (majors),
+  `org.junit:junit-bom` and `org.testcontainers:*` under `/lambda`, and in
+  `web/` the majors of `next`, `eslint-config-next` and `eslint`. The ESLint
+  plugins that `eslint-config-next` loads declare peer ranges that stop at
+  ESLint 9.
+
+- The console's entry groups its updates into two pull requests, one for the
+  runtime dependencies and one for the tooling, and allows two open at once.
 
 - The `junit-bom` and Testcontainers ignores cover majors, minors and patches.
   `<junit.version>` and `<testcontainers.version>` in `lambda/pom.xml` copy

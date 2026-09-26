@@ -3,10 +3,12 @@
 One file per decision that had a real alternative. Each record gives the
 situation that forced a choice, the choice, its cost and the rejected options.
 
-Every accepted record was written after the decision it records, between 22
-and 25 September 2026; the "Taken in" column names the commit in which the
-decision landed. None of them was an RFC that a team approved before any code
-existed. 0016 is a proposal and no decision has been taken.
+Every accepted record up to 0015 was written after the decision it records,
+between 22 and 25 September 2026; the "Taken in" column names the commit in
+which the decision landed. None of them was an RFC that a team approved before
+any code existed. 0016 is a proposal and no decision has been taken. 0017 was
+written with the change it records, so its row names that change instead of a
+commit.
 
 A record's decision does not change once it is accepted. A decision that
 changes gets a new record that supersedes the old one. The old one stays,
@@ -35,6 +37,7 @@ says so.
 | [0014](0014-quality-gates.md) | The build fails on architecture, coverage and dependency drift | accepted | `631f5f0`, `f8d2d4b` |
 | [0015](0015-event-transport.md) | Events go to an SQS standard queue, not a JMS broker | accepted | `4a9a5b9` |
 | [0016](0016-oracle-port.md) | What porting to Oracle would change | proposed; from documentation, never built or run | none |
+| [0017](0017-web-console.md) | The console reaches the API through its own server, not through CORS | accepted | the change that added `web/` |
 
 ## Writing another one
 

@@ -4,10 +4,10 @@
 # Two things to know before editing:
 #
 # 1. Every entry sets open-pull-requests-limit. The default is 5 per entry,
-#    so the four entries could open twenty pull requests on the first run.
+#    so the five entries could open twenty-five pull requests on the first run.
 #    Groups and explicit limits keep a monthly run to a handful.
 #
-# 2. The ignore rules name five artifacts, because an ignore condition also
+# 2. The ignore rules name eight artifacts, because an ignore condition also
 #    stops Dependabot's security updates for that dependency. Each one is a
 #    major bump that would reverse a documented decision, so a person makes it:
 #      - the JDK: pom.xml sets <java.version>21</java.version>, and a major base
@@ -19,8 +19,12 @@
 #        patches too; the comment above the junit-bom rule has the reason
 #      - Maven: the build stage's image, where a major (Maven 4) is its own
 #        upgrade
-#    Every other dependency, and the minors and patches of the other three,
-#    still flow automatically.
+#      - the console's Next.js and its ESLint config, which move together
+#        and whose majors change the App Router's contracts
+#      - ESLint, because the React, JSX accessibility and import plugins that
+#        eslint-config-next loads declare peer ranges that stop at ESLint 9
+#    Every other dependency, and the minors and patches of the rest, still
+#    flow automatically.
 version: 2
 
 updates:
@@ -118,4 +122,27 @@ updates:
       - dependency-name: "eclipse-temurin"
         update-types: ["version-update:semver-major"]
       - dependency-name: "maven"
+        update-types: ["version-update:semver-major"]
+
+  # The console. One grouped PR for what ships in it and one for the tooling.
+  # Tailwind, the linters and the test runners are all development
+  # dependencies: Tailwind compiles to CSS at build time, and the rest never
+  # reach the browser or the server.
+  - package-ecosystem: npm
+    directory: "/web"
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 2
+    labels: ["dependencies"]
+    groups:
+      runtime:
+        dependency-type: production
+      tooling:
+        dependency-type: development
+    ignore:
+      - dependency-name: "next"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "eslint-config-next"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "eslint"
         update-types: ["version-update:semver-major"]

@@ -58,3 +58,9 @@ A browser caches Basic credentials after its login prompt and sends them again.
 The protection rests on JSON-only writes and the absence of a CORS policy, so
 a form body on a write or a CORS policy that allows credentials would also
 make the decision wrong.
+
+**Note (2026-09-25).** The browser console in `web/` does not change this
+decision. It reaches the API through its own server
+([ADR 0017](0017-web-console.md)), so the API still sets no cookie, has no
+CORS policy and takes JSON-only writes. The console drops `WWW-Authenticate`,
+so the browser never shows its Basic prompt or caches the credentials.

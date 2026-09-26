@@ -24,6 +24,10 @@
 
 - [ ] `deploy/aws/selftest.sh` passes if anything under `deploy/aws/` changed
 
+- [ ] In `web/`, `npm run lint && npm run build && npx tsc --noEmit && npm test`
+  passes if the console changed (`npm run e2e` needs the service running; CI
+  runs it)
+
 - [ ] Counts in the Markdown files match `scripts/numbers.sh`, and
   `scripts/numbers.sh --check-readme` passes
 

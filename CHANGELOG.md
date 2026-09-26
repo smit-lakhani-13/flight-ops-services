@@ -47,7 +47,36 @@ still blank.
   Dependabot leaves the Lambda's Testcontainers version alone, as it does
   JUnit, because `lambda/pom.xml` copies the one Boot manages for the service.
 
+- **A browser console for every operation, in `web/`.** A Next.js 16 and
+  TypeScript application. It signs in with one of the service's accounts,
+  searches, creates and moves flights, books with an idempotency key, replays
+  a booking, changes the body on the same key to show the 409, sends ten
+  identical bookings at once from its own server, cancels, and reads health
+  and the meters as `ops`. The browser talks only to the console's origin, and
+  `web/lib/proxy.ts#forward` passes an allow-listed set of calls on to the API
+  with the caller's credentials, which it neither logs nor keeps. The API is
+  unchanged: no CORS policy and no cookie, so ADR 0006 holds, and a dated note
+  there says so. [ADR 0017](adr/0017-web-console.md) records the design and
+  `web/README.md` maps each page to the calls it makes. The pages are laid out
+  for phones, tablets and desktops, with touch-sized controls and 16 px field
+  text below 1280 px and on any touch screen, and a Playwright spec checks
+  every page at eleven Chromium viewports and the keyboard's outline on every
+  stop of the sign-in page. Built and tested in CI, never hosted.
+
+- **CI checks the console on every push or pull request to `main`.** A new
+  `web` job lints, type-checks, unit-tests and builds it, then packages the
+  service's jar, starts it on the default H2 profile and runs the Playwright
+  suite in Chromium against both. The deploy job needs `web` too. CodeQL
+  analyses the console's TypeScript beside the Java, as a second matrix entry,
+  `analyze (javascript-typescript)`; the Java check keeps its name. Dependabot
+  gains a fifth entry, for `web/`, with one grouped pull request for the
+  runtime dependencies and one for the tooling.
+
 ### Changed
+
+- **The doc checkers know the console.** `scripts/refcheck.py` also checks
+  citations of TypeScript, JavaScript module and CSS files, and
+  `scripts/numbers.sh` prints the console's file, line, page and test counts.
 
 - **Version.** Both poms say `1.3.0-SNAPSHOT` until the next tag, so a build
   from `main` no longer reports itself as 1.2.0 in `/actuator/info` and the
