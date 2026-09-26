@@ -72,9 +72,9 @@ Dockerfile sets `SPRING_PROFILES_ACTIVE=prod`, so a container started with no
 profile fails closed. With no `DB_URL`, a bare `docker run` stops with
 `'url' must start with "jdbc"`. CI checks that on every push or pull request to
 `main`, in the `image` job's step "The image will not start without
-a database". The deploy job runs the same step before it pushes an image. That
-job is gated off, so its copy has never run. `compose.yaml` selects `postgres`,
-and `deploy/k8s/base/configmap.yaml` sets `prod` for the cluster. The Deployment
+a database". The deploy job, which is gated off, would push the image that
+step checked and runs no copy of it. `compose.yaml` selects `postgres`, and
+`deploy/k8s/base/configmap.yaml` sets `prod` for the cluster. The Deployment
 pulls the whole ConfigMap in with `envFrom`.
 
 ## Health

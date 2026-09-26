@@ -349,9 +349,9 @@ work is written down. What is missing is a domain.
 | Upper-bound dependency check | `maven-enforcer` `requireUpperBoundDeps`. A transitive downgrade fails the build |
 | Coverage floor | JaCoCo. The build fails under 80% line or 50% branch coverage |
 | Architecture rules | ArchUnit, 9 rules. A violation fails the build; it is not just reported |
-| Vulnerability and secret scanning | Trivy scans the filesystem for vulnerabilities and committed secrets on every push or pull request to `main`, and fails on a fixable HIGH or CRITICAL. The `image` job scans the image it has just built, on the same triggers, and fails on a fixable CRITICAL. No image has ever been pushed. The deploy job, which is gated off and has never run, would repeat the image scan before a push. Only the filesystem scan uploads SARIF, and only on a push to `main`. A pull request from a fork has a read-only token, so the upload would fail on permissions and say nothing about the code. The image scans report in the job log, and ECR's own scan-on-push would cover the image in the registry |
+| Vulnerability and secret scanning | Trivy scans the filesystem for vulnerabilities and committed secrets on every push or pull request to `main`, and fails on a fixable HIGH or CRITICAL. The `image` job scans the image it has just built, on the same triggers, and fails on a fixable CRITICAL. That is the only image scan in CI. The deploy job, which is gated off and has never run, would push the bytes the `image` job built and scanned, handed over as a run artefact and checked against the checksum that job recorded, and it runs no build and no scanner beside its AWS credentials. No image has ever been pushed. Only the filesystem scan uploads SARIF, and only on a push to `main`. A pull request from a fork has a read-only token, so the upload would fail on permissions and say nothing about the code. The image scan reports in the job log, and ECR's own scan-on-push would cover the image in the registry |
 | Static analysis | CodeQL `security-extended`, on every push or pull request to `main`, weekly, and by hand |
-| Pinned actions | Every `uses:` is a full commit SHA with the version as a trailing comment, and Dependabot rewrites the comment along with the SHA. A tag is a mutable pointer in someone else's repository. Re-pointing `@v4` at a malicious commit needs no access to this repository, and that is what happened to `tj-actions/changed-files` in March 2025. The cost is a pull request for every patch release |
+| Pinned actions | Every `uses:` is a full commit SHA with the version as a trailing comment, and Dependabot rewrites the comment along with the SHA. A tag is a mutable pointer in someone else's repository. Re-pointing `@v4` at a malicious commit needs no access to this repository, and that is what happened to `tj-actions/changed-files` in March 2025. The cost is a pull request for every patch release. A pin fixes the action's own code, not a tool it downloads when it runs, such as the Trivy CLI. So Trivy runs only in jobs that hold no AWS credentials. The one tool the deploy job still downloads is kubectl, by version, with no checksum held in this repository |
 
 ## Known limitations
 
@@ -373,10 +373,9 @@ work is written down. What is missing is a domain.
    `SPRING_PROFILES_ACTIVE=prod`, so a container started with no profile fails
    closed: a bare `docker run` stops with `'url' must start with "jdbc"`. CI
    checks that on every push or pull request to `main`, in the `image` job's
-   step "The image will not start without a database". The deploy job
-   runs the same step before it pushes an image. That job is gated off, so its
-   copy has never run. `compose.yaml` selects `postgres`, and the ConfigMap sets
-   `prod`.
+   step "The image will not start without a database". The deploy job, which
+   is gated off, would push the image that step checked and runs no copy of
+   it. `compose.yaml` selects `postgres`, and the ConfigMap sets `prod`.
 
 6. **A placeholder hash starts.** The startup self-check proves the encoder can
    read a value. It cannot tell a malformed value behind a known prefix from a

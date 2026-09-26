@@ -163,6 +163,22 @@ still blank.
   rewrapped where they can break, except in `README.md` and the released
   sections here.
 
+### Security
+
+- **The deploy job pushes the image CI scanned, and runs no scanner.** It
+  built its own copy of the image and scanned it with Trivy after assuming
+  the deploy role. The action downloads the Trivy CLI when it runs, and its
+  SHA pin does not cover those bytes, so a replaced release asset would have
+  run beside the AWS session keys, the ECR login and the OIDC request token.
+  The `image` job, which holds no AWS credentials, is now the only image
+  build and scan. On a run that can deploy it saves the image, records the
+  archive's sha256 before the scan, and uploads it for one day once the scan
+  passes. The deploy job checks the sha256, loads the image, tags it and
+  pushes those bytes, and it installs kubectl before the AWS keys exist.
+  `id-token: write` is job-level, so the OIDC request variables are still in
+  every step (`.github/workflows/build-and-deploy.yml`). The job is gated off
+  and has never run.
+
 ## 1.2.0 — 2026-09-26
 
 The [fourth review pass](doc/DEFECT-LOG.md#fourth-review-pass), a full audit
