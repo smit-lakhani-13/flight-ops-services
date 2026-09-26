@@ -27,6 +27,13 @@ repo=$(cd "$here/../.." && pwd)
 # The EKS version lives in cluster.yaml, once. It is not repeated here.
 LBC_CHART_VERSION=3.5.0          # aws-load-balancer-controller Helm chart
 LBC_POLICY_TAG=v3.5.0            # the matching iam_policy.json tag
+# The controller's IAM policy: iam_policy.json from upstream's repository at
+# LBC_POLICY_TAG, committed unchanged, and that file's sha256. Step 1 checks
+# the sum, and step 8 checks it again just before it creates the policy.
+# doc/DEPLOYMENT.md says how to move the tag, the file and the sum together.
+LBC_POLICY_FILE="$here/lbc-iam-policy-${LBC_POLICY_TAG}.json"
+LBC_POLICY_SHA256=16f232c9d9f79366fe949c4550ad517a202380058a9e48d45a4e215044a20a6a
+LBC_POLICY_NAME="${LBC_POLICY_PREFIX}${LBC_POLICY_TAG}"
 
 # ---------------------------------------------------------------------------
 step "1/12  Preflight, and what this is about to cost"
@@ -38,6 +45,9 @@ require_tool aws eksctl kubectl helm sam openssl htpasswd
 # Step 3 builds the Lambda jar with the Maven wrapper.
 require_jdk21 "$repo/mvnw"
 require_eksctl
+# Step 8 turns this file into an IAM policy. A file that does not match stops
+# the run here, before anything bills, not with the cluster already up.
+require_sha256 "$LBC_POLICY_FILE" "$LBC_POLICY_SHA256"
 
 ACCOUNT_ID=$(require_credentials) || exit 1
 ok "account $ACCOUNT_ID, region $AWS_REGION"
@@ -263,21 +273,25 @@ step "8/12  AWS Load Balancer Controller and metrics-server"
 # The Ingress in deploy/k8s/components/ingress does nothing without this
 # controller: `kubectl get ingress` shows no ADDRESS, forever, with no error
 # anywhere.
-LBC_POLICY_ARN="arn:aws:iam::${ACCOUNT_ID}:policy/AWSLoadBalancerControllerIAMPolicy"
-if ! aws iam get-policy --policy-arn "$LBC_POLICY_ARN" >/dev/null 2>&1; then
-    # mktemp, not a fixed name in /tmp. Another local user could leave a
-    # writable file or a symlink at that name. They could then rewrite it after
-    # curl and before create-policy, so the policy would carry their text.
-    policy_file=$(mktemp)
-    trap 'rm -f "$policy_file"' EXIT
-    curl -fsSL -o "$policy_file" \
-        "https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/${LBC_POLICY_TAG}/docs/install/iam_policy.json"
+#
+# The policy comes from the file step 1 checked, not from the network. A tag
+# is a mutable pointer in someone else's repository, and whatever it pointed
+# at on the day would land on the controller's role. The name is this
+# project's and the tag's, so a policy another cluster created under AWS's
+# name is never attached, and a new tag gets a new policy.
+LBC_POLICY_ARN="arn:aws:iam::${ACCOUNT_ID}:policy/${LBC_POLICY_NAME}"
+if aws iam get-policy --policy-arn "$LBC_POLICY_ARN" >/dev/null 2>&1; then
+    ok "$LBC_POLICY_NAME already exists"
+else
+    # Checked again: on a first run the cluster takes most of an hour after
+    # step 1, and an edit or a checkout in this clone meanwhile would
+    # otherwise reach the policy unseen.
+    require_sha256 "$LBC_POLICY_FILE" "$LBC_POLICY_SHA256"
     aws iam create-policy \
-        --policy-name AWSLoadBalancerControllerIAMPolicy \
-        --policy-document "file://$policy_file" >/dev/null
-    rm -f "$policy_file"
-    trap - EXIT
-    ok "created AWSLoadBalancerControllerIAMPolicy from $LBC_POLICY_TAG"
+        --policy-name "$LBC_POLICY_NAME" \
+        --policy-document "file://$LBC_POLICY_FILE" \
+        --tags Key=Project,Value=flight-ops >/dev/null
+    ok "created $LBC_POLICY_NAME from ${LBC_POLICY_FILE##*/}"
 fi
 
 # Here eksctl DOES create the ServiceAccount, because nothing else owns it: it

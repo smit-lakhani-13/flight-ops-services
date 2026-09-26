@@ -1,9 +1,9 @@
 # Deploying to AWS
 
-Six scripts, a shared library, two CloudFormation templates and the eksctl
-cluster definition. Together they create the whole demo (cluster, database,
-queue, Lambda, load balancer) in an empty account, and delete it again with
-proof that it is gone.
+Six scripts, a shared library, two CloudFormation templates, the eksctl
+cluster definition and the load balancer controller's IAM policy. Together
+they create the whole demo (cluster, database, queue, Lambda, load balancer)
+in an empty account, and delete it again with proof that it is gone.
 
 Nothing here has been run against a real account. The templates lint, the
 scripts parse and are shellcheck-clean, and `selftest.sh` runs the teardown,
@@ -146,7 +146,7 @@ its contents.
 | SQS, DLQ, two CloudWatch alarms, DynamoDB, the Lambda | `lambda/template.yaml` via `sam deploy`, from the jar Maven builds | SAM owns its own stack; it is also the only half that is useful on its own |
 | Cluster, VPC, NAT, nodes | `cluster.yaml` via `eksctl` | eksctl's VPC layout is what the RDS template reads its subnets from |
 | RDS, its subnet group and security group | `data.yaml` | needs eksctl's VPC, so it cannot come earlier |
-| IRSA roles, LB controller, metrics-server | `up.sh` | one-off cluster setup, not per-deploy |
+| IRSA roles, LB controller and its IAM policy, metrics-server | `up.sh`, the policy from `lbc-iam-policy-v3.5.0.json` | one-off cluster setup, not per-deploy |
 | Namespace, Secret, EKS access entry | `up.sh` | holds passwords, and grants CI its scoped access |
 | Deployment, Service, HPA, PDB, ConfigMap, ServiceAccount | CI, from `deploy/k8s/overlays/aws` | changes every release |
 | Ingress, and therefore the ALB | `up.sh` | optional: without it the app is reachable by port-forward, and the ALB's share of the bill goes |
@@ -224,6 +224,7 @@ still billed at month end.
 | `kubectl get hpa` shows `<unknown>/70%` | metrics-server is not installed. `aws eks describe-addon --cluster-name flight-ops-cluster --addon-name metrics-server` |
 | `up.sh` stops at step 1 on the JDK | the Maven wrapper does not see JDK 21. Point `JAVA_HOME` at `openjdk@21` |
 | `up.sh` stops at step 1: `up.sh needs eksctl 0.184.0 or later` | an older eksctl installs the cluster's networking addons self-managed, and step 4's re-run looks them up as EKS addons. `brew upgrade eksctl` |
+| `up.sh` stops at step 1, or at step 8 if the file changed during the run: `…/lbc-iam-policy-v3.5.0.json has sha256 '…', not the … recorded for it` | the committed controller policy is not the file its sum was recorded for. Restore it with `git checkout -- deploy/aws/lbc-iam-policy-v3.5.0.json`, or, for a new release, change the file, the tag and the sum together as `doc/DEPLOYMENT.md` describes |
 | `up.sh` stops at step 4: `cluster flight-ops-cluster is not ACTIVE` | the cluster is `FAILED` or `DELETING`, or still not `ACTIVE` after 20 minutes. The message prints the `describe-cluster` command to check it |
 | `up.sh` stops at step 4: `addon vpc-cni did not become ACTIVE` or `node group ng-1 did not become ACTIVE` | the addon is `CREATE_FAILED` or `DEGRADED`, or the node group is `CREATE_FAILED`, or the wait ran out (10 minutes for vpc-cni, 40 for the node group). The message prints the command that shows its health. A re-run does not replace a `CREATE_FAILED` node group: delete it with `eksctl delete nodegroup --cluster flight-ops-cluster --name ng-1 --region ap-south-1 --wait`, then re-run |
 | `up.sh` stops at step 4: `could not create addon <name>`, `could not associate an IAM OIDC provider` or `could not create node group ng-1` | EKS or eksctl refused the create. Its own error is printed just above |
@@ -254,6 +255,7 @@ still billed at month end.
 | `foundation.yaml` | ECR, GitHub OIDC provider and role, the SQS publish policy, two budgets |
 | `data.yaml` | RDS PostgreSQL, its subnet group and security group |
 | `cluster.yaml` | the eksctl cluster: Kubernetes version pin, one NAT gateway, OIDC for IRSA, and the managed node group `lib.sh` names; `up.sh` passes it to `eksctl` with `-f` |
+| `lbc-iam-policy-v3.5.0.json` | the AWS Load Balancer Controller's IAM policy for v3.5.0, copied unchanged from upstream; `up.sh` checks its sha256 and creates the policy `flight-ops-lbc-v3.5.0` from it. `doc/DEPLOYMENT.md` gives its source and how to move to a new release |
 
 `cluster.yaml` sits beside the scripts that use it, because `eksctl` takes its
 config from `-f` and has no default location. The SAM template is

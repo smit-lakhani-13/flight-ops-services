@@ -27,6 +27,13 @@ FOUNDATION_STACK=flight-ops-foundation
 DATA_STACK=flight-ops-data
 # shellcheck disable=SC2034
 SAM_STACK=flight-ops-lambda
+# The load balancer controller's IAM policy. up.sh appends the upstream tag its
+# document comes from, and down.sh deletes every policy with this prefix, so a
+# tag bump between the two leaves nothing behind. AWS's install guide names the
+# policy AWSLoadBalancerControllerIAMPolicy, and an account with another
+# cluster may hold one by that name. Neither script touches it.
+# shellcheck disable=SC2034
+LBC_POLICY_PREFIX=flight-ops-lbc-
 
 if [ -t 1 ] && [ -z "${NO_COLOUR:-}" ]; then
     C_RESET=$'\033[0m'; C_BOLD=$'\033[1m'; C_RED=$'\033[31m'
@@ -197,6 +204,24 @@ require_eksctl() {
         *) false ;;
     esac || die "up.sh needs eksctl 0.184.0 or later; this one reports '${version:-no version}'.
     brew upgrade eksctl"
+}
+
+# require_sha256 FILE SUM: stops unless FILE's sha256 is SUM. up.sh turns a
+# committed file into an IAM policy, so a change to the file must come with a
+# change to the sum. GNU coreutils has sha256sum and macOS has shasum, so one
+# of the two is on either system.
+require_sha256() {
+    local file=$1 expected=$2 actual
+    if command -v sha256sum >/dev/null 2>&1; then
+        actual=$({ sha256sum < "$file"; } 2>/dev/null | cut -d' ' -f1 || true)
+    elif command -v shasum >/dev/null 2>&1; then
+        actual=$({ shasum -a 256 < "$file"; } 2>/dev/null | cut -d' ' -f1 || true)
+    else
+        die "neither sha256sum nor shasum is installed, so $file cannot be checked"
+    fi
+    [ "$actual" = "$expected" ] || die "$file has sha256 '${actual:-no file}', not the $expected recorded for it.
+    Restore it from git, or refresh the file and the sum together as
+    doc/DEPLOYMENT.md describes."
 }
 
 # complete_cluster CONFIG: for a cluster that already exists. eksctl create

@@ -541,8 +541,11 @@ and restore the seats the booking had just debited.
 │   │                           ecr-image-exists.sh and up.sh's checks in
 │   │                           lib.sh against stubbed tools; the CloudFormation
 │   │                           templates foundation.yaml and data.yaml; the
-│   │                           eksctl cluster.yaml, version pinned; and
-│   │                           README.md, the runbook that orders them
+│   │                           eksctl cluster.yaml, version pinned; the load
+│   │                           balancer controller's IAM policy,
+│   │                           lbc-iam-policy-v3.5.0.json, copied unchanged
+│   │                           from upstream; and README.md, the runbook that
+│   │                           orders them
 │   └── k8s/                    kustomize, and beside it namespace.yaml, which
 │       │                       up.sh applies once, and secret.example.yaml, a
 │       │                       template for the Secret up.sh creates

@@ -45,7 +45,7 @@ cat <<PLAN
   Account $ACCOUNT_ID, region $AWS_REGION:
 
     the Ingress and its ALB
-    the AWS Load Balancer Controller and its IAM role
+    the AWS Load Balancer Controller, its IAM role and its policy ${LBC_POLICY_PREFIX}*
     namespace $NAMESPACE, including the Secret and its passwords
     $SAM_STACK        (SQS, DLQ, DynamoDB table AND ITS DATA, the Lambda)
     $DATA_STACK          (RDS instance AND ITS DATA — no final snapshot)
@@ -311,18 +311,34 @@ fi
 # up.sh creates the LB controller policy with the CLI, outside any stack, so
 # nothing else deletes it. It costs nothing, and it is removed anyway: "nothing
 # of this project's is left" is easier to verify than a list of exceptions.
-LBC_POLICY_ARN="arn:aws:iam::${ACCOUNT_ID}:policy/AWSLoadBalancerControllerIAMPolicy"
-if aws iam get-policy --policy-arn "$LBC_POLICY_ARN" >/dev/null 2>&1; then
-    for v in $(aws iam list-policy-versions --policy-arn "$LBC_POLICY_ARN" \
-            --query 'Versions[?!IsDefaultVersion].VersionId' --output text 2>/dev/null); do
-        aws iam delete-policy-version --policy-arn "$LBC_POLICY_ARN" --version-id "$v" >/dev/null 2>&1 || true
-    done
-    if aws iam delete-policy --policy-arn "$LBC_POLICY_ARN" >/dev/null 2>&1; then
-        ok "AWSLoadBalancerControllerIAMPolicy deleted"
-    else
-        warn "could not delete AWSLoadBalancerControllerIAMPolicy (a role may still be attached)"
-    fi
+# Every policy named with the project's prefix goes, whichever tag it was
+# created from. AWSLoadBalancerControllerIAMPolicy may be another cluster's
+# and is never touched. The cluster delete in step 6 took the role the policy
+# was attached to; if that role is still there, delete-policy refuses.
+if ! lbc_policies=$(aws iam list-policies --scope Local \
+        --query "Policies[?starts_with(PolicyName, '$LBC_POLICY_PREFIX')].Arn" \
+        --output text 2>&1); then
+    warn "could not list IAM policies, so ${LBC_POLICY_PREFIX}* is not deleted: $lbc_policies"
+    lbc_policies=""
 fi
+for arn in $lbc_policies; do
+    # The capture holds stderr too, for the warning above, and the CLI can
+    # print a warning there even when the call succeeds. Only this project's
+    # policy ARNs are words to act on; "None" and anything else are skipped.
+    case "$arn" in
+        arn:*:iam::*:policy/"$LBC_POLICY_PREFIX"*) ;;
+        *) continue ;;
+    esac
+    for v in $(aws iam list-policy-versions --policy-arn "$arn" \
+            --query 'Versions[?!IsDefaultVersion].VersionId' --output text 2>/dev/null); do
+        aws iam delete-policy-version --policy-arn "$arn" --version-id "$v" >/dev/null 2>&1 || true
+    done
+    if aws iam delete-policy --policy-arn "$arn" >/dev/null 2>&1; then
+        ok "${arn##*/} deleted"
+    else
+        warn "could not delete ${arn##*/} (a role may still be attached)"
+    fi
+done
 
 # ---------------------------------------------------------------------------
 step "9/9  The sweep — this is the part that actually matters"
@@ -423,11 +439,11 @@ fi
 tagged=$(q resourcegroupstaggingapi get-resources \
     --tag-filters Key=Project,Values=flight-ops \
     --query 'ResourceTagMappingList[].ResourceARN' --output text)
-# The query runs in ap-south-1, and AWS reports IAM resources from us-east-1,
-# so no IAM role or OIDC provider reaches this list. IAM bills nothing, and the
-# stacks check above still catches an eksctl stack that failed to delete. The
-# patterns drop the foundation's resources wherever the tagging API lists them:
-# the GitHub OIDC provider, which foundation.yaml retains, and with
+# The query runs in ap-south-1, and AWS reports IAM resources from us-east-1, so
+# no IAM role, policy or OIDC provider reaches this list. IAM bills nothing, and
+# the stacks check above still catches an eksctl stack that failed to delete.
+# The patterns drop the foundation's resources wherever the tagging API lists
+# them: the GitHub OIDC provider, which foundation.yaml retains, and with
 # --keep-foundation the rest of the foundation. The ARNs are split once, so
 # every pattern sees one ARN per line.
 retained_arns=':oidc-provider/token\.actions\.githubusercontent\.com$'

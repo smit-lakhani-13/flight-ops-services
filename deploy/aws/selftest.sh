@@ -81,6 +81,11 @@ case "$service $op" in
     'iam list-open-id-connect-providers')
         [ "${STUB_OIDC_LIST_FAILS:-0}" = 0 ] || { echo 'An error occurred (Throttling): Rate exceeded' >&2; exit 254; }
         printf '%b' "${STUB_OIDC_PROVIDERS:-}" ;;
+    'iam list-policies')
+        [ "${STUB_POLICY_LIST_FAILS:-0}" = 0 ] || { echo 'An error occurred (Throttling): Rate exceeded' >&2; exit 254; }
+        [ "${STUB_POLICY_LIST_WARNS:-0}" = 0 ] || echo 'PythonDeprecationWarning: Python 3.8 support ends soon' >&2
+        printf '%b' "${STUB_POLICIES:-}" ;;
+    'iam list-policy-versions') printf '%s' "${STUB_POLICY_VERSIONS:-}" ;;
     'ecr describe-images')
         case "${STUB_ECR:-}" in
             found)   echo '{"imageDetails": [{"imageTags": ["abc123"]}]}' ;;
@@ -116,7 +121,7 @@ case "$service $op" in
         }
         echo '[]' ;;
     'budgets describe-budgets') echo 'flight-ops-daily  8  0.00  0.00' ;;
-    'logs delete-log-group'|'ecr delete-repository'|'iam get-policy')
+    'logs delete-log-group'|'ecr delete-repository')
         echo 'An error occurred (NotFound)' >&2; exit 254 ;;
     *) ;;  # every describe and list: nothing left
 esac
@@ -300,6 +305,35 @@ STUB_STACKS='flight-ops-lambda flight-ops-data flight-ops-foundation' STUB_WAIT_
 reject_out "$name" '✓ flight-ops-lambda deleted' && reject_out "$name" '✓ flight-ops-data deleted' \
     && reject_out "$name" '✓ flight-ops-foundation deleted' && reject_out "$name" '✓ cluster deleted' \
     && expect_out "$name" 'flight-ops-data did not finish deleting' && pass "$name"
+
+# The real CLI applies the prefix query; the stub prints what it would return.
+# IAM refuses to delete a policy that still has non-default versions. The
+# listing's capture holds stderr as well, so a warning the CLI prints there on
+# success must not be taken for policy ARNs.
+LBC_ARN=arn:aws:iam::123456789012:policy/flight-ops-lbc
+name="down.sh deletes the project's controller policies, versions first, and no other"
+STUB_POLICIES="$LBC_ARN-v3.5.0\\t$LBC_ARN-v3.4.0" STUB_POLICY_VERSIONS=v1 STUB_POLICY_LIST_WARNS=1 run down.sh
+if expect_status "$name" 0 \
+        && expect_calls "$name" "^aws iam list-policies --scope Local .*starts_with(PolicyName, 'flight-ops-lbc-')" 1 \
+        && expect_calls "$name" "^aws iam delete-policy --policy-arn $LBC_ARN-v3.5.0\$" 1 \
+        && expect_calls "$name" "^aws iam delete-policy --policy-arn $LBC_ARN-v3.4.0\$" 1 \
+        && expect_calls "$name" '^aws iam delete-policy ' 2 \
+        && expect_calls "$name" 'AWSLoadBalancerControllerIAMPolicy' 0 \
+        && reject_out "$name" 'could not delete' \
+        && expect_out "$name" '✓ flight-ops-lbc-v3.5.0 deleted'; then
+    version_at=$(grep -n "delete-policy-version --policy-arn $LBC_ARN-v3.5.0 " "$STUB_LOG" | cut -d: -f1)
+    policy_at=$(grep -n "delete-policy --policy-arn $LBC_ARN-v3.5.0\$" "$STUB_LOG" | cut -d: -f1)
+    if [ -n "$version_at" ] && [ "$version_at" -lt "$policy_at" ]; then
+        pass "$name"
+    else
+        fail "$name" "the non-default version was not deleted before the policy"
+    fi
+fi
+
+name="a failed policy listing is reported, not taken for no policy"
+STUB_POLICY_LIST_FAILS=1 run down.sh
+expect_out "$name" 'could not list IAM policies, so flight-ops-lbc-* is not deleted' \
+    && expect_calls "$name" 'iam delete-policy' 0 && pass "$name"
 
 echo "cost-check.sh"
 
@@ -588,6 +622,28 @@ name="require_eksctl names the problem when eksctl version itself fails"
 STUB_EKSCTL_VERSION_FAILS=1 run_lib require_eksctl
 expect_status "$name" 1 && expect_out "$name" "reports 'no version'" && pass "$name"
 
+# The committed controller policy against the sum up.sh records, so a change
+# to one without the other fails CI as well as the preflight.
+policy_tag=$(sed -n 's/^LBC_POLICY_TAG=\([^ ]*\).*/\1/p' "$here/up.sh")
+policy_sum=$(sed -n 's/^LBC_POLICY_SHA256=\([0-9a-f]*\).*/\1/p' "$here/up.sh")
+
+name="require_sha256 accepts the committed controller policy at the sum up.sh records"
+if [ -z "$policy_tag" ] || [ -z "$policy_sum" ]; then
+    : > "$OUT"
+    fail "$name" "up.sh sets no LBC_POLICY_TAG or LBC_POLICY_SHA256"
+else
+    run_lib "require_sha256 '$here/lbc-iam-policy-$policy_tag.json' $policy_sum"
+    expect_status "$name" 0 && pass "$name"
+fi
+
+name="require_sha256 stops on a changed file and on a missing one"
+printf '{}\n' > "$tmp/policy.json"
+run_lib "require_sha256 '$tmp/policy.json' $policy_sum"
+if expect_status "$name" 1 && expect_out "$name" "not the $policy_sum recorded for it"; then
+    run_lib "require_sha256 '$tmp/absent.json' $policy_sum"
+    expect_status "$name" 1 && expect_out "$name" "has sha256 'no file'" && pass "$name"
+fi
+
 EDIT=arn:aws:eks::aws:cluster-access-policy/AmazonEKSEditPolicy
 grant="grant_namespace_access arn:aws:iam::123456789012:role/github-actions-deploy $EDIT flight-ops"
 
@@ -635,7 +691,8 @@ name="up.sh runs each of those checks"
 : > "$OUT"
 missing_calls=''
 # shellcheck disable=SC2016  # the calls are matched as written, unexpanded
-for call in 'require_jdk21 "$repo/mvnw"' 'require_eksctl' 'complete_cluster "$here/cluster.yaml"' \
+for call in 'require_jdk21 "$repo/mvnw"' 'require_eksctl' \
+        'require_sha256 "$LBC_POLICY_FILE" "$LBC_POLICY_SHA256"' 'complete_cluster "$here/cluster.yaml"' \
         'grant_namespace_access ' 'if stack_ready "$DATA_STACK"' \
         'require_jdbc_url "$DB_URL"' 'ensure_metrics_server' \
         'wait_for_deployment'; do
@@ -646,7 +703,7 @@ done
 if [ -z "$missing_calls" ]; then pass "$name"; else fail "$name" "no call to$missing_calls"; fi
 
 # Another local user can leave a writable file or a symlink at a fixed name in
-# /tmp, and step 8 turns the file it downloads into an IAM policy.
+# /tmp, and rewrite whatever up.sh then reads back from it.
 name="up.sh writes nothing to a fixed path in /tmp"
 if grep -n '/tmp/' "$here/up.sh" > "$OUT"; then fail "$name" "a fixed /tmp path"; else pass "$name"; fi
 

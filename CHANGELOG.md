@@ -163,6 +163,30 @@ still blank.
   rewrapped where they can break, except in `README.md` and the released
   sections here.
 
+### Security
+
+- **The load balancer controller's IAM policy is no longer downloaded.**
+  Step 8 of `up.sh` fetched it by Git tag from the controller's repository
+  and created the policy with no check. A tag can be moved, so the
+  controller's role would have got whatever the tag pointed at that day. The
+  v3.5.0 document is now committed byte for byte beside the scripts, as the
+  file `deploy/aws/up.sh#LBC_POLICY_FILE` names. Step 1 checks its sha256
+  against `deploy/aws/up.sh#LBC_POLICY_SHA256` with
+  `deploy/aws/lib.sh#require_sha256` before anything bills, step 8 checks it
+  again just before it creates the policy, and `deploy/aws/selftest.sh` makes
+  the same check in CI. `doc/DEPLOYMENT.md` records the source and says how
+  to move to a new release.
+
+- **The controller's policy has a name this project owns.** It was
+  `AWSLoadBalancerControllerIAMPolicy`, the name AWS's install guide uses. In
+  an account where another cluster had created it, `up.sh` would have
+  attached that copy whatever its release, and `down.sh` would have deleted
+  its versions and, if nothing was attached, the policy. `up.sh` now creates
+  `flight-ops-lbc-v3.5.0`, from `deploy/aws/lib.sh#LBC_POLICY_PREFIX` and the
+  tag, tagged `Project=flight-ops`. `down.sh` deletes only policies with that
+  prefix, and `deploy/aws/selftest.sh` checks that it never names the generic
+  one.
+
 ## 1.2.0 — 2026-09-26
 
 The [fourth review pass](doc/DEFECT-LOG.md#fourth-review-pass), a full audit
