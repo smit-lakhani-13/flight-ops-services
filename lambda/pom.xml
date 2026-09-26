@@ -52,7 +52,7 @@
         <aws.lambda.tests.version>1.1.2</aws.lambda.tests.version>
 
         <!-- Same pin as ../pom.xml. Keep the two in step. -->
-        <aws.sdk.version>2.55.2</aws.sdk.version>
+        <aws.sdk.version>2.55.3</aws.sdk.version>
 
         <!--
           Pinned because the AWS SDK BOM does not manage jackson-databind. The
