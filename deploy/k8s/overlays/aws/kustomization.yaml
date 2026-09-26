@@ -16,7 +16,7 @@
 # startup.
 #
 # Render it with:
-#   AWS_ACCOUNT_ID=... IMAGE_TAG=... SQS_QUEUE_URL=... DB_URL=... \
+#   AWS_ACCOUNT_ID=... IMAGE_TAG=... SQS_QUEUE_URL=... DB_URL='...' \
 #     deploy/aws/render-aws.sh
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization

@@ -333,10 +333,11 @@ and how to handle its pull requests.
 
 ## Dependabot
 
-Dependabot runs monthly on both Maven modules, the Actions workflows and the
-Dockerfile base images. `.github/dependabot.yml` sets the interval and the
-grouping. The Lambda module has its own entry, because with no parent POM
-nothing else manages its versions.
+Dependabot runs monthly on both Maven modules and the Actions workflows, and
+weekly on the Dockerfile base images, which are pinned by digest: a pinned base
+gets OS and JRE fixes only through its pull requests. `.github/dependabot.yml`
+sets the interval and the grouping. The Lambda module has its own entry,
+because with no parent POM nothing else manages its versions.
 
 - `open-pull-requests-limit` is set on every entry (3, 2, 1 and 2), because the
   default is 5 per entry. The four entries at the default can open twenty pull

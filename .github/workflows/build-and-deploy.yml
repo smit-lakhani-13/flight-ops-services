@@ -629,7 +629,7 @@ jobs:
     #   gh secret   set AWS_ACCOUNT_ID --body <account-id>
     #   gh variable set DEPLOY_ENABLED --body true
     #   gh variable set SQS_QUEUE_URL  --body <queue url>
-    #   gh variable set DB_URL         --body <jdbc url>
+    #   gh variable set DB_URL         --body '<the JdbcUrl output>'
     # Anyone who can read the repository can read a `vars` value, so the
     # account ID is a secret. GitHub holds no password: up.sh writes the
     # database password and the bcrypt hashes of the API and ops passwords
