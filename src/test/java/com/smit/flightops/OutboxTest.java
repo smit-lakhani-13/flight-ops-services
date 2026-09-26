@@ -20,6 +20,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.IllegalTransactionStateException;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -29,12 +30,20 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyMap;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
@@ -47,8 +56,9 @@ import static org.mockito.Mockito.verifyNoInteractions;
  * poller, retries, the MANDATORY guard and trace context.
  *
  * <p>The schedule is pushed out to an hour and {@code drainOutbox()} is called directly,
- * so no test waits on a timer. The class is not {@code @Transactional}, since a
- * rolled-back test could read uncommitted state; each test uses its own flight number.
+ * so no test waits on a timer; {@link OutboxSchedulingTest} covers the schedule. The
+ * class is not {@code @Transactional}, since a rolled-back test could read uncommitted
+ * state; each test uses its own flight number.
  */
 @SpringBootTest(
         webEnvironment = SpringBootTest.WebEnvironment.NONE,
@@ -74,6 +84,7 @@ class OutboxTest {
     @Autowired private OutboxWriter outboxWriter;
     @Autowired private Tracer tracer;
     @Autowired private PlatformTransactionManager transactionManager;
+    @Autowired private JdbcTemplate jdbcTemplate;
 
     /** Only the transport is mocked, so it can fail on demand; the rest is real. */
     @MockitoBean private EventPublisher eventPublisher;
@@ -190,6 +201,30 @@ class OutboxTest {
                 .isEqualTo(payloadAtBookingTime);
     }
 
+    /**
+     * There is no {@code BookingCancelled} event. A cancellation that recorded one, or
+     * recorded the booking again, would have the poller send a second event for it.
+     */
+    @Test
+    @DisplayName("cancelling a booking, first time or retried, writes no event")
+    void cancellingWritesNoEvent() {
+        flightService.create(new CreateFlightRequest("OB012", "EWR", "LHR", 20,
+                Instant.now().plus(Duration.ofHours(6))));
+        BookingDto booking = bookingService.book(
+                new BookingRequest("OB012", "Test Passenger", 2, "outbox-cancel"));
+        String id = String.valueOf(booking.bookingId());
+        assertThat(eventsFor(id)).hasSize(1);
+
+        assertThat(bookingService.cancel(booking.bookingId()).cancelledAt()).isNotNull();
+        assertThat(eventsFor(id)).as("the cancellation recorded nothing").hasSize(1);
+
+        bookingService.cancel(booking.bookingId());
+        assertThat(eventsFor(id))
+                .as("nor did the retried cancellation, which releases nothing")
+                .extracting(OutboxEvent::getEventType)
+                .containsExactly("BookingCreated");
+    }
+
     // -----------------------------------------------------------------
     // The poller.
     // -----------------------------------------------------------------
@@ -226,6 +261,68 @@ class OutboxTest {
 
         // Once, not three times: the WHERE published_at IS NULL in claimUnpublished.
         verify(eventPublisher).publish(eq("BookingCreated"), eq(payload), anyMap());
+    }
+
+    /**
+     * The send runs in the claim's transaction, so the row stays locked until it is
+     * marked. A claim committed on its own would leave the row unlocked and unmarked
+     * during the send, and another replica's claim would take it and send it again.
+     * The probe is a plain {@code FOR UPDATE}, which waits on the lock where the
+     * claim's {@code SKIP LOCKED} would step over it.
+     */
+    @Test
+    @DisplayName("the claimed row stays locked while it is sent, until the drain commits")
+    void theClaimedRowStaysLockedThroughTheSend() throws Exception {
+        flightService.create(new CreateFlightRequest("OB013", "EWR", "LHR", 20,
+                Instant.now().plus(Duration.ofHours(6))));
+        BookingDto booking = bookingService.book(
+                new BookingRequest("OB013", "Test Passenger", 1, "outbox-lock"));
+        String id = String.valueOf(booking.bookingId());
+        OutboxEvent row = eventsFor(id).getFirst();
+
+        CountDownLatch sending = new CountDownLatch(1);
+        CountDownLatch releaseSend = new CountDownLatch(1);
+        // The drain also sends rows other tests left unsent; only this one is held.
+        doAnswer(invocation -> {
+            if (row.getPayload().equals(invocation.getArgument(1))) {
+                sending.countDown();
+                releaseSend.await(30, TimeUnit.SECONDS);
+            }
+            return null;
+        }).when(eventPublisher).publish(anyString(), anyString(), anyMap());
+
+        // The releasing countDown sits inside the try-with-resources: close() waits
+        // for the drain, and the drain waits on that latch.
+        try (ExecutorService pool = Executors.newFixedThreadPool(2)) {
+            try {
+                Future<?> drain = pool.submit(outboxPublisher::drainOutbox);
+                assertThat(sending.await(30, TimeUnit.SECONDS))
+                        .as("the drain should have claimed the row and reached its send")
+                        .isTrue();
+
+                // Waits up to the 3s LOCK_TIMEOUT in application.yml, so it outlasts
+                // the check below and then gets the row once the drain commits.
+                Future<Long> probe = pool.submit(() ->
+                        new TransactionTemplate(transactionManager).execute(status ->
+                                jdbcTemplate.queryForObject(
+                                        "SELECT id FROM outbox_events WHERE id = ? FOR UPDATE",
+                                        Long.class, row.getId())));
+
+                // Not a performance bound: with no lock held the probe returns at once.
+                assertThatExceptionOfType(TimeoutException.class)
+                        .as("another transaction locked the row while it was being sent")
+                        .isThrownBy(() -> probe.get(500, TimeUnit.MILLISECONDS));
+
+                releaseSend.countDown();
+                drain.get(30, TimeUnit.SECONDS);
+                assertThat(probe.get(30, TimeUnit.SECONDS)).isEqualTo(row.getId());
+            } finally {
+                releaseSend.countDown();
+            }
+        }
+
+        verify(eventPublisher).publish(eq("BookingCreated"), eq(row.getPayload()), anyMap());
+        assertThat(eventsFor(id).getFirst().getPublishedAt()).isNotNull();
     }
 
     /**
