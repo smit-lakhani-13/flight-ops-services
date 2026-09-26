@@ -179,4 +179,18 @@ class FlightTest {
         assertThat(FlightStatus.ARRIVED.isBookable()).isFalse();
         assertThat(FlightStatus.CANCELLED.isBookable()).isFalse();
     }
+
+    @Test
+    @DisplayName("every status is classified as taking booking cancellations or not")
+    void everyStatusIsClassifiedForCancellations() {
+        // Not the inverse of isBookable: a cancelled flight still takes them, because
+        // refunds happen on cancelled flights. A flown one does not.
+        assertThat(FlightStatus.values()).hasSize(6);
+        assertThat(FlightStatus.SCHEDULED.acceptsCancellations()).isTrue();
+        assertThat(FlightStatus.BOARDING.acceptsCancellations()).isTrue();
+        assertThat(FlightStatus.DELAYED.acceptsCancellations()).isTrue();
+        assertThat(FlightStatus.CANCELLED.acceptsCancellations()).isTrue();
+        assertThat(FlightStatus.DEPARTED.acceptsCancellations()).isFalse();
+        assertThat(FlightStatus.ARRIVED.acceptsCancellations()).isFalse();
+    }
 }
