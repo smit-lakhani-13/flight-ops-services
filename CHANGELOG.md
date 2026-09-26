@@ -53,6 +53,25 @@ still blank.
   from `main` no longer reports itself as 1.2.0 in `/actuator/info` and the
   OpenAPI document.
 
+- **Readiness no longer checks the database.** The readiness group included
+  `db`, whose indicator borrows from the same pool of ten as requests. Every
+  replica shares the database, so a dead one, or one hot flight's lock
+  waiters filling each pod's pool, would fail the probe on every pod at once.
+  The kubelet and the load balancer would then withdraw them all, a busy
+  flight would become an outage for every flight, and it would repeat as the
+  pools drained. The group in `src/main/resources/application.yml` is now
+  `readinessState` alone, so during a database outage readiness answers 200
+  and each pod answers `503 DATABASE_UNAVAILABLE` with `Retry-After`.
+  `/actuator/health` still reports `db` and answers 503.
+  `HealthGroupsTest#readinessLeavesTheDatabaseOut` and
+  `HealthGroupsTest#rootHealthReportsTheDatabase` pin both halves.
+  `doc/OPERATIONS.md` points the database alert at the `db` component and
+  `hikaricp_connections_pending` instead of at readiness. Readiness used to
+  answer 503 in a database outage, and this release treats that change as
+  outside the versioning rule above, because the probe endpoints answer the
+  kubelet and the load balancer, not API clients, and no answer under
+  `/api/**` changes.
+
 ### Fixed
 
 - **Tests that proved less than their names said.**
@@ -162,6 +181,27 @@ still blank.
   the passenger name checks above. Markdown prose lines over 80 columns are
   rewrapped where they can break, except in `README.md` and the released
   sections here.
+
+- **A full pool made callers wait 30 s for their 503.** The `postgres` and
+  `prod` profiles kept Hikari's default 30 s `connection-timeout`, longer than
+  callers usually wait. A client gave up and retried while its abandoned
+  request still queued and later ran, and never saw the
+  `503 DATABASE_UNAVAILABLE` with `Retry-After` that
+  `GlobalExceptionHandler#handleDatabaseUnavailable` answers. Both profiles now
+  wait 5 s: longer than the 3 s `lock_timeout`, and well inside the timeouts
+  callers usually set. The default H2 profile keeps 30 s for its concurrency tests.
+  `DataSourceSettingsTest` checks the value each profile resolves to.
+
+- **The booking path's isolation level was left to the server.**
+  `BookingWriter#insertNewBooking` re-reads the idempotency key once it holds
+  the flight row lock, and that read sees a competing booking only under READ
+  COMMITTED. Nothing pinned the level, so a server whose
+  `default_transaction_isolation` was REPEATABLE READ would abort every queued
+  booking, cancellation and replay with SQLSTATE `40001`, reported as
+  `503 LOCK_TIMEOUT`. The pool now sets
+  `spring.datasource.hikari.transaction-isolation` to
+  `TRANSACTION_READ_COMMITTED`, ADR 0002 records the dependency, and
+  `DataSourceSettingsTest` checks that both PostgreSQL profiles resolve it.
 
 ## 1.2.0 — 2026-09-26
 

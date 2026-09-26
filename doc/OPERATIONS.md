@@ -99,8 +99,15 @@ away from the credential every client holds.
 The two probes ask different questions, and mixing them up is a classic
 outage. A readiness failure takes one pod out of the load balancer, and a
 liveness failure restarts it. Liveness checks only `livenessState`, and
-readiness checks `readinessState` and `db`. Point liveness at the database and
-a database blip restarts every replica at once.
+readiness checks only `readinessState`. Neither checks the database, because
+every replica shares it. Point liveness at the database and a database blip
+restarts every replica at once. Point readiness at it and the same blip, or
+one hot flight's lock waiters filling the pool, takes every pod out at once,
+and the load balancer has no target left for any request. Instead the pods
+stay in, and each answers `503 DATABASE_UNAVAILABLE` with `Retry-After` once
+the pool's `connection-timeout`, 5 s in `prod`, runs out. `/actuator/health`
+still includes `db`, and [alert 6](#what-to-alert-on) reads it there
+(`HealthGroupsTest#readinessLeavesTheDatabaseOut`).
 
 ## Metrics
 
@@ -267,7 +274,7 @@ In the order they matter:
 | 3 | `rate(bookings_lock_timeout_total[5m]) > 0` | users are getting 503s on flight row contention |
 | 4 | SQS `ApproximateNumberOfMessagesVisible` on the **DLQ** `> 0` | a message was received three times without success, usually three Lambda failures on it. Declared as `lambda/template.yaml#BookingEventDLQAlarm`, never deployed, with no notification target |
 | 5 | SQS `ApproximateAgeOfOldestMessage` on the main queue above 600 s for 5 minutes | the Lambda is behind at its concurrency cap of five, throttled by a dry account pool, or not polling; retries alone take about 540 s. Declared as `lambda/template.yaml#BookingEventBacklogAlarm`, never deployed, with no notification target |
-| 6 | readiness failing on any pod for 5 min | usually the database |
+| 6 | `db` is `DOWN` in `/actuator/health` (the `ops` view) on any pod for 5 min, or `hikaricp_connections_pending` stays above 0 for 5 min | the database is unreachable, so callers get `503 DATABASE_UNAVAILABLE` within 5 s, or the pool is full, so callers queue for a connection and any that wait the full 5 s get the same 503. Readiness leaves the database out, so the pods stay Ready and no probe shows it. If alert 3 fires too, look for a hot flight first ([the playbook](#503s-with-retry-after-a-lock-timeout-storm)) |
 | 7 | RDS `DatabaseConnections` above 50 | more than the service's own pools can open: 4 pods × 10, or 5 × 10 during a rollout surge. Something else is connecting, or `maxReplicas` went up without a bigger instance class (fewer than 112 connections; read the limit with `SHOW max_connections`). See [DEPLOYMENT.md §7](DEPLOYMENT.md#7-what-breaks-first) |
 
 ## Playbooks
