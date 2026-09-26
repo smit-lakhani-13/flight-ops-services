@@ -1,5 +1,6 @@
 package com.smit.flightops;
 
+import com.jayway.jsonpath.JsonPath;
 import com.smit.flightops.config.SecurityConfig;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -15,7 +16,11 @@ import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -24,6 +29,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -150,6 +156,42 @@ class SecurityRulesTest {
                 .andExpect(jsonPath("$.code").value("FORBIDDEN"));
     }
 
+    /**
+     * jsonPath reads the body whatever the header says, so the header is asserted on its
+     * own. The charset is read from the header because the mock response reports UTF-8
+     * for any JSON type, set or not.
+     */
+    @Test
+    @DisplayName("the 401 and the 403 are sent as UTF-8 JSON")
+    void challengesAndRefusalsAreUtf8Json() throws Exception {
+        MediaType utf8Json = new MediaType(MediaType.APPLICATION_JSON, StandardCharsets.UTF_8);
+
+        mockMvc.perform(get("/api/v1/flights/UA123"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(content().contentType(utf8Json));
+
+        mockMvc.perform(get("/api/v1/flights/UA123").with(httpBasic(OPS_USER, OPS_PASSWORD)))
+                .andExpect(status().isForbidden())
+                .andExpect(content().contentType(utf8Json));
+    }
+
+    /**
+     * The 401 is written outside Spring MVC, by the container's ObjectMapper, so a
+     * date setting there reaches it. It must stay the ISO-8601 string that the other
+     * error bodies carry, not an epoch number.
+     */
+    @Test
+    @DisplayName("the 401's timestamp is an ISO-8601 string")
+    void aChallengeTimestampIsAnIsoString() throws Exception {
+        String json = mockMvc.perform(get("/api/v1/flights/UA123"))
+                .andExpect(status().isUnauthorized())
+                .andReturn().getResponse().getContentAsString();
+
+        Object timestamp = JsonPath.read(json, "$.timestamp");
+        assertThat(timestamp).isInstanceOf(String.class);
+        assertThatCode(() -> Instant.parse((String) timestamp)).doesNotThrowAnyException();
+    }
+
     @Test
     @DisplayName("the api credential authenticates and is still forbidden from the metrics endpoint")
     void apiCredentialsCannotReadMetrics() throws Exception {
@@ -257,6 +299,20 @@ class SecurityRulesTest {
                 .andExpect(status().isUnauthorized());
         mockMvc.perform(get("/some/other/thing"))
                 .andExpect(status().isUnauthorized());
+    }
+
+    /**
+     * The container forwards a firewall refusal or a TRACE to /error with no
+     * credentials. Challenged there, the caller would get a 401 about the error page
+     * instead of the 400 or 405 that happened. A direct GET forwards no status, so the
+     * controller answers 404.
+     */
+    @Test
+    @DisplayName("the error path answers an anonymous caller instead of challenging it")
+    void theErrorPathIsOpenToAnonymousCallers() throws Exception {
+        mockMvc.perform(get("/error"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("RESOURCE_NOT_FOUND"));
     }
 
     /**

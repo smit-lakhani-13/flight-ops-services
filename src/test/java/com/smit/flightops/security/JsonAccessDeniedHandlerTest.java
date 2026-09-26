@@ -9,12 +9,14 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.MediaType;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 import org.springframework.security.access.AccessDeniedException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
+import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -76,5 +78,39 @@ class JsonAccessDeniedHandlerTest {
 
         assertThat(appender.list).singleElement().satisfies(event ->
                 assertThat(event.getFormattedMessage()).contains("DELETE /api/v1/flights/UA123 for an authenticated caller"));
+    }
+
+    /**
+     * A client that branches on the Content-Type reads the code only with the header.
+     * The charset is read from the header, because the mock response reports UTF-8
+     * for any JSON type whether or not the handler set it.
+     */
+    @Test
+    @DisplayName("the 403 is sent as UTF-8 JSON")
+    void theRefusalIsUtf8Json() throws Exception {
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        handler.handle(new MockHttpServletRequest("DELETE", "/api/v1/flights/UA123"), response,
+                new AccessDeniedException("denied"));
+
+        assertThat(response.getContentType()).isNotNull();
+        assertThat(MediaType.parseMediaType(response.getContentType()))
+                .isEqualTo(new MediaType(MediaType.APPLICATION_JSON, StandardCharsets.UTF_8));
+    }
+
+    /**
+     * ErrorResponseWriter takes its own Clock, apart from the advice's and
+     * ApiErrorController's, so each writer's timestamp is pinned on its own.
+     */
+    @Test
+    @DisplayName("the 403's timestamp is the injected clock's instant")
+    void theTimestampComesFromTheClock() throws Exception {
+        MockHttpServletResponse response = new MockHttpServletResponse();
+
+        handler.handle(new MockHttpServletRequest("DELETE", "/api/v1/flights/UA123"), response,
+                new AccessDeniedException("denied"));
+
+        JsonNode body = MAPPER.readTree(response.getContentAsString());
+        assertThat(body.get("timestamp").asString()).isEqualTo("2026-01-01T00:00:00Z");
     }
 }
