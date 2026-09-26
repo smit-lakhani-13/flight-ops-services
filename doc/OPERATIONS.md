@@ -30,7 +30,7 @@ JVM.
 |---|---|---|
 | `SERVER_PORT` | `8080` | HTTP port |
 | `DB_URL` | `jdbc:postgresql://localhost:5432/flightops` in `postgres`. **None in `prod`** | JDBC URL. Unset in `prod`, startup fails with `'url' must start with "jdbc"`. The default profile uses H2 and does not read it |
-| `DB_USER` | `postgres` in `postgres`. None in `prod` | database user |
+| `DB_USER` | `postgres` in `postgres`. None in `prod` | database user, for the connection pool and for Flyway alike. In the cluster it is the RDS master user. See [The database user](#the-database-user) |
 | `DB_PASSWORD` | *(none)* | **Required** in `postgres` and `prod`. Unset, startup fails at Flyway's first connection with `password authentication failed`, which does not name the variable. See the `postgres` profile in `application.yml` |
 | `API_PASSWORD` | `{noop}dev-secret`. None in `prod` | the `api` account. **Must carry an `{id}` prefix** the encoder knows, such as `{bcrypt}$2y$10$…`. Unprefixed, or unset in `prod`, startup fails naming `app.security.api-password (API_PASSWORD)`. An unknown id stops startup too. See [the playbook](#pods-crash-loop-at-startup-and-the-log-names-appsecurityapi-password) |
 | `OPS_PASSWORD` | `{noop}dev-ops`. None in `prod` | the `ops` account. Same prefix rule, named `app.security.ops-password (OPS_PASSWORD)` |
@@ -38,8 +38,8 @@ JVM.
 | `SQS_QUEUE_URL` | *(empty)* | required when the publisher is `sqs` |
 | `AWS_REGION` | `ap-south-1` | |
 | `OUTBOX_ENABLED` | `true` | `false` stops the drain and the pruner. Rows still accumulate |
-| `OUTBOX_POLL_INTERVAL` | `1000` | milliseconds between drain attempts |
-| `OUTBOX_BATCH_SIZE` | `100` | rows claimed per pass. With the default interval, about 100 events a second per replica |
+| `OUTBOX_POLL_INTERVAL` | `1000` | milliseconds from the end of one drain to the start of the next |
+| `OUTBOX_BATCH_SIZE` | `100` | rows claimed per pass. They are sent one at a time, so a replica drains about `batch / (poll interval + batch × send latency)` events a second, with both times in seconds: under 100 with the defaults, and never more than `1 / send latency` however large the batch. See [the throughput playbook](#events-stop-arriving-outbox_pending-climbs) |
 | `OUTBOX_MAX_ATTEMPTS` | `10` | after this many failures a row is dead and is never claimed again |
 | `OUTBOX_RETRY_BACKOFF` | `2s` | how long the **first** retry of a failed row waits, doubling per attempt. Zero disables backoff and is a test-only setting |
 | `OUTBOX_MAX_RETRY_BACKOFF` | `5m` | the cap on that doubling. With the defaults, ten attempts span about 13.5 minutes (810 s of waits). Before the backoff existed they took ten seconds |
@@ -56,6 +56,33 @@ To check this table has not drifted:
 ```bash
 grep -oE '\$\{[A-Z_]+' src/main/resources/application.yml | sort -u
 ```
+
+### The database user
+
+The service and its migrations share one database login. The `prod` profile
+sets no `spring.flyway.user`, so Flyway, which runs inside each pod at
+startup, connects with the pool's `DB_USER` and `DB_PASSWORD`. In the cluster
+that login is the RDS master user. `deploy/aws/data.yaml` passes its
+`DBUsername` parameter, `flightops` by default, as the `MasterUsername`.
+`deploy/k8s/base/configmap.yaml` sets `DB_USER` to `flightops`, and
+`deploy/aws/up.sh` writes the master password into `flight-ops-secret` as
+`DB_PASSWORD`. On RDS the master user is a member of `rds_superuser`, and the
+service's login owns every table, because Flyway created them with it.
+
+So nothing in the database stands between the web tier and the schema. Code
+running in a pod, or anyone who can read the Secret, can drop the seat checks
+that V2 added (`ck_flights_seat_floor`, `ck_flights_seat_ceiling`) or a whole
+table, and can create roles and databases. The data stack keeps no backups
+(`BackupRetentionPeriod: 0`), so there is nothing to restore from.
+
+The fix is two logins, and it is not built. A migration user owns the schema,
+and only the step that runs Flyway holds its password: an initContainer or a
+Job, with `SPRING_FLYWAY_ENABLED=false` on the application container. A
+runtime user gets `SELECT`, `INSERT`, `UPDATE` and `DELETE` on the tables and
+`USAGE` on their sequences, and nothing else. A compromised pod could still
+delete rows, but it could no longer change the schema or use the rights of
+`rds_superuser`. [ARCHITECTURE.md](ARCHITECTURE.md#still-open) lists it as
+still open.
 
 ## Profiles
 
@@ -375,8 +402,30 @@ anyone has tried to log in. Set a real hash, as in
 ### Events stop arriving; `outbox_pending` climbs
 
 ```bash
-kubectl logs -n flight-ops -l app=flight-ops | grep -i outbox | tail -20
+kubectl logs -n flight-ops -l app=flight-ops --tail=-1 --prefix \
+  | grep -i outbox | tail -20
 ```
+
+Keep `--tail=-1`. With a label selector, `kubectl logs` reads only the last
+10 lines of each pod unless `--tail` is given, and `--since` alone does not
+lift that. Bookings and successful sends log too, so those 10 lines are
+whatever came last. A row's `exhausted` line, the one that says an event will
+not be retried unless someone re-drives it, is logged once and soon falls out
+of them. kubectl prints one pod's log after the other, so the last 20 matches
+can all come from one pod, and `--prefix` names the pod on each line.
+
+On `prod` each line is one ECS JSON object, and the grep matches the logger
+name, `com.smit.flightops.service.OutboxPublisher`, as well as the message.
+A failed send logs `failed to publish on attempt`, or, when it was the row's
+last attempt, `exhausted 10 attempts and will not be retried` (10 being the
+default `OUTBOX_MAX_ATTEMPTS`). A drain with any failure then logs
+`Outbox drain published N of M claimed events`. A successful send logs
+`Published BookingCreated to SQS` from `SqsEventPublisher`, which the grep
+leaves out. The grep also finds `OutboxPruner`'s hourly
+`Pruned N outbox event(s)` line, which only says that old published rows were
+deleted. When the publisher is created at startup it logs
+`Outbox publisher started with event transport 'sqs'`, which answers step 3
+below while the pod's log still reaches back that far.
 
 Then check, in order:
 
@@ -392,8 +441,49 @@ produce the same climbing gauge:
 
 | | `outbox_pending` | `outbox_publish_total{result="failure"}` | What it is |
 |---|---|---|---|
-| Rows arrive faster than the drain | climbing | flat | throughput. Raise `OUTBOX_BATCH_SIZE`, or lower `OUTBOX_POLL_INTERVAL` |
+| Rows arrive faster than the drain | climbing | flat | throughput. Each replica sends one row at a time, which caps it at `1 / send latency`. Below the cap, shorten `OUTBOX_POLL_INTERVAL`. At the cap, add replicas. See below |
 | The transport is refusing | climbing | climbing | an outage or a misconfiguration. The rows are waiting out their backoff. With the defaults they reach `outbox_dead` about 13.5 minutes after the first failure |
+
+When it is throughput, send latency sets the limit.
+`OutboxPublisher#drainOutbox` sends the rows it claimed one at a time, each a
+blocking `SendMessage`, and the next drain starts `OUTBOX_POLL_INTERVAL` after
+the last one ends. One replica therefore drains about
+
+```
+batch / (poll interval + batch × send latency)
+```
+
+events a second, with both times in seconds, and never more than
+`1 / send latency`, whatever the settings. Lowering `OUTBOX_POLL_INTERVAL` or
+raising `OUTBOX_BATCH_SIZE` brings a replica closer to that cap, and does
+little once `batch × send latency` is well above the interval. Prefer the
+interval. A larger batch holds its row locks, its transaction and a pooled
+connection for `batch × send latency` on every drain, while a shorter
+interval only runs the claim query more often.
+[DEPLOYMENT.md §7](DEPLOYMENT.md#7-what-breaks-first) works the numbers
+through.
+
+At the cap, add replicas. `SKIP LOCKED` gives each one a disjoint batch, so
+each adds up to another `1 / send latency`. The HPA watches only CPU, and a
+drain waiting on SQS uses little, so a backlog alone does not make it add
+any. Raise its floor, up to the `maxReplicas: 4` that the database's
+connection limit sets:
+
+```bash
+kubectl patch hpa flight-ops-hpa -n flight-ops -p '{"spec":{"minReplicas":4}}'
+```
+
+The next apply of the overlay puts back the `minReplicas: 2` in
+`deploy/k8s/base/hpa.yaml`, so change it there too if the load will last.
+
+To measure rather than assume, take one pod's success rate while the backlog
+lasts: `rate(outbox_publish_total{result="success"}[5m])`. While nothing
+scrapes the pods ([What is not wired up](#what-is-not-wired-up)), read the
+counter from the pod's `/actuator/prometheus` twice, a minute apart, and
+divide the difference by 60. Every drain claims a full batch while the
+backlog lasts, so that rate is what the pod can drain at its settings, and
+`(batch / rate - poll interval) / batch` is roughly its send latency, the
+claim and the commit included.
 
 To see what a row is waiting for, ask the table. A row whose `next_attempt_at`
 is in the future is deferred, and the poller will try it again:

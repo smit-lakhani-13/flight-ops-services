@@ -618,10 +618,31 @@ Reasoned from the configuration, not measured under load, the order would be:
    request gets 503 with `Retry-After`. Different flights never contend, so this
    limit depends on concurrency per flight and not on total traffic.
 
-3. **Outbox drain rate.** One publisher polls every second and claims up to 100
-   rows with `FOR UPDATE SKIP LOCKED`, so the ceiling is roughly 100 events per
-   second per replica. The `outbox.pending` gauge shows the backlog before
-   anyone notices it downstream.
+3. **Outbox drain rate.** Each replica's publisher claims up to 100 rows with
+   `FOR UPDATE SKIP LOCKED` and sends them one at a time, each a blocking
+   `SendMessage`
+   (`src/main/java/com/smit/flightops/service/SqsEventPublisher.java#publish`).
+   The job is `fixedDelay`, so the next drain starts a second after the last
+   one ends. With a send latency of L seconds, a replica drains about
+   `100 / (1 + 100 × L)` events a second. 100 a second is a bound it never
+   reaches, and `1 / L` is its ceiling whatever the batch size or interval.
+   Nothing here has measured L. If it were 20 ms, a drain would spend 2 s
+   sending, for 100 / 3, about 33 events a second. A batch of 1000 would give
+   1000 / 21, about 48, and hold its row locks and a pooled connection for
+   20 s each drain. A 100 ms interval would give 100 / 2.1, also about 48,
+   with no longer hold. The SQS client bounds each send at 5 s, retries
+   included
+   (`src/main/java/com/smit/flightops/config/AwsConfig.java#sqsClient`), so a
+   drain of 100 whose sends all time out takes up to 500 s. More replicas
+   raise the total, each claiming a disjoint batch, up to the four of point 1,
+   and the CPU-based HPA does not add them for a backlog alone. Past that,
+   short of the larger instance class point 1 describes, the change is in
+   code: `SendMessageBatch`, in the SQS SDK the service already uses, takes
+   up to ten messages a call, and the drain would have to map each entry's
+   failure back to its row. The `outbox.pending` gauge shows the backlog
+   before anyone notices it downstream.
+   [OPERATIONS.md](OPERATIONS.md#events-stop-arriving-outbox_pending-climbs)
+   has the playbook, and how to measure L.
 
 4. **Lambda concurrency.** The SQS event source sets
    `ScalingConfig.MaximumConcurrency: 5`, so a backlog runs at most five

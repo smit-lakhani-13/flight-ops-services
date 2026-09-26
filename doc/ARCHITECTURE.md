@@ -342,9 +342,9 @@ Each of these choices prevents a specific failure:
    add a write to the booking transaction's hot path
    (`src/main/java/com/smit/flightops/repository/OutboxEventRepository.java#deletePublishedBefore`).
 
-The outbox costs a table, a poller, up to one poll interval of latency and a
-retention job. In return I get one recorded event per booking, at-least-once
-delivery and a backlog I can query:
+The outbox costs a table, a poller, a retention job and some latency: up to
+one poll interval plus the drain already under way. In return I get one
+recorded event per booking, at-least-once delivery and a backlog I can query:
 `SELECT count(*) FROM outbox_events WHERE published_at IS NULL` is both a lag
 metric and an alert.
 
@@ -430,6 +430,11 @@ first query.
 runs on PostgreSQL 17 in a container. It asserts that `flyway_schema_history`
 holds versions 1 to 8, and as many as there are migration files on the
 classpath, so a misnamed file that Flyway skips fails the test.
+
+Flyway runs inside the service at startup and logs in as the connection pool
+does. In the cluster that login is the RDS master user, which therefore owns
+every table. [Still open](#still-open) says what that allows and what would
+replace it.
 
 ```mermaid
 erDiagram
@@ -785,3 +790,4 @@ The README keeps a short version of this table under
 | What happens | What should happen | The fix |
 |---|---|---|
 | There is no rate limiting. A single caller with valid credentials can take every connection in the pool. | A token bucket per principal at the gateway, or Bucket4j in front of the write endpoints. | Out of scope for the service. It belongs at the ingress, and I would sooner say so than add a half-measure here. |
+| The service and Flyway both log in as the RDS master user, a member of `rds_superuser`, and that login owns every table. Code running in a pod, or anyone who can read `flight-ops-secret`, can drop the seat checks V2 added or a whole table, and the data stack keeps no backups to restore from. [OPERATIONS.md](OPERATIONS.md#the-database-user) traces where the login comes from. | Two logins. A migration user owns the schema, and only the step that runs Flyway holds its password. A runtime user gets `SELECT`, `INSERT`, `UPDATE` and `DELETE` on the tables and `USAGE` on their sequences. It could still delete rows, but not change the schema. | Not built. Flyway would move to an initContainer or a Job with its own Secret key, and the application container would get `SPRING_FLYWAY_ENABLED=false` and the runtime login. A new migration would grant the runtime user its rights, written so that it still runs where no such role exists, as on the test and compose databases. The instance is not publicly accessible, so `deploy/aws/up.sh` would set the runtime password from a pod inside the cluster. |
