@@ -479,6 +479,14 @@ it was applied. Never edit an applied migration; add a new one. On a demo
 database, drop and recreate it. On any other, first establish which version is
 correct, then run `flyway repair`.
 
+`Detected failed migration to version 11` means the `CREATE INDEX
+CONCURRENTLY` in `V11__flights_departure_time_index.sql` stopped part way,
+for example on the 3s `lock_timeout` while it waited for older transactions.
+It runs outside a transaction, so nothing was rolled back. Run
+`DROP INDEX CONCURRENTLY IF EXISTS idx_flights_departure_time;`, then
+`flyway repair`, then start the service again. Without the drop, the
+migration's `IF NOT EXISTS` would pass over the INVALID index it left.
+
 ### RDS unreachable
 
 The database security group admits the cluster SG and the shared node SG on

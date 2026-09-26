@@ -386,17 +386,18 @@ unknown flight number is an empty page.
 `controller/SortPolicy.java#stable` applies the same rules to both endpoints.
 Each endpoint publishes the properties it sorts by:
 
-| Endpoint | Sortable properties | `ignorecase` applies to |
-|---|---|---|
-| `GET /api/v1/flights` | `id`, `flightNumber`, `origin`, `destination`, `totalSeats`, `availableSeats`, `status`, `departureTime` | `flightNumber`, `origin`, `destination` |
-| `GET /api/v1/bookings` | `id`, `createdAt`, `passengerName`, `seats`, `cancelledAt` | `passengerName` |
+| Endpoint | Sortable properties | Can be null | `ignorecase` applies to |
+|---|---|---|---|
+| `GET /api/v1/flights` | `id`, `flightNumber`, `origin`, `destination`, `totalSeats`, `availableSeats`, `status`, `departureTime` | none | `flightNumber`, `origin`, `destination` |
+| `GET /api/v1/bookings` | `id`, `createdAt`, `passengerName`, `seats`, `cancelledAt` | `cancelledAt` | `passengerName` |
 
 The lists are `controller/FlightController.java#SORTABLE` and
-`controller/BookingController.java#SORTABLE`, each with a `TEXTUAL` subset.
-They are checked against what the endpoint offers, not against the entity.
-`version` is left out on flights, because ordering by it shows how often a row
-was written. `idempotencyKey` is left out on bookings, because sorting by it
-would give other clients' keys back a comparison at a time.
+`controller/BookingController.java#SORTABLE`, each with a `TEXTUAL` and a
+`NULLABLE` subset. They are checked against what the endpoint offers, not
+against the entity. `version` is left out on flights, because ordering by it
+shows how often a row was written. `idempotencyKey` is left out on bookings,
+because sorting by it would give other clients' keys back a comparison at a
+time.
 
 - **An unknown property** is `400 UNKNOWN_SORT_PROPERTY`, with the message
   `'deptime' is not a sortable property.` The message echoes the name the
@@ -412,6 +413,18 @@ would give other clients' keys back a comparison at a time.
 - **A tiebreaker.** `id` ascending is appended unless the caller already
   sorted by `id`, because a sort on a column that is not unique lets page 0
   and page 1 overlap or skip rows.
+- **Null values sort last**, ascending or descending, on a property that can
+  be null. `cancelledAt` is the only one, so `?sort=cancelledAt,asc` lists
+  cancellations oldest first and `,desc` newest first, and in both the active
+  bookings come after them. The `sort` parameter cannot say where nulls go,
+  and left to themselves H2 and PostgreSQL put them at opposite ends
+  (`ErrorContractTest.java#activeBookingsSortAfterCancelledOnes`,
+  `controller/SortPolicyTest.java#nullablePropertyPutsNullsLastInBothDirections`,
+  `repository/BookingRepositoryTest.java#nullCancelledAtSortsLastInBothDirections`).
+  Every other sortable property is a `NOT NULL` column, so its order, like
+  the `id` tiebreaker, says nothing about nulls. That leaves a descending
+  sort such as `?sort=id,desc` free to read an index backwards on PostgreSQL
+  (`controller/SortPolicyTest.java#notNullPropertyCarriesNoNullHandling`).
 - **Overflow.** When `page * size`, after the size is clamped, is larger than
   2147483647, the answer is `400 MALFORMED_REQUEST` with the message
   `page * size must not exceed 2147483647.` Spring Data computes the row

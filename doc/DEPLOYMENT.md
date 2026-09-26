@@ -104,7 +104,7 @@ repository. Leave the variable out and Hikari sends the literal string
 
 The `postgres` profile also changes who owns the schema. Flyway applies the
 migrations in `src/main/resources/db/migration/`, from `V1__init.sql` to
-`V8__drop_unused_active_booking_index.sql`, and Hibernate runs
+`V11__flights_departure_time_index.sql`, and Hibernate runs
 `ddl-auto: validate`. An entity that no longer matches the tables, columns or
 column types then fails startup instead of altering them. Validation does not
 compare check constraints or indexes.

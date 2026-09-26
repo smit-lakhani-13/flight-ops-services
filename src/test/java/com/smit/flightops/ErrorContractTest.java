@@ -172,6 +172,35 @@ class ErrorContractTest {
                 .andExpect(status().isOk());
     }
 
+    /**
+     * The whole path for the one sortable property that can be null: the
+     * request's {@code sort}, {@code SortPolicy} with
+     * {@code BookingController#NULLABLE}, and the declared bookings query on H2.
+     * The later booking is the one cancelled, so the id tiebreaker alone would
+     * give the opposite order. Ascending is the case that fails if
+     * {@code cancelledAt} leaves that list or {@code SortPolicy} stops putting
+     * its nulls last, because H2 on its own puts NULL first there.
+     */
+    @Test
+    @DisplayName("sort=cancelledAt lists the active booking after the cancelled one, ascending and descending")
+    void activeBookingsSortAfterCancelledOnes() throws Exception {
+        createFlight("ZZ303", "AMS", "LIS", "2099-03-01T08:00:00Z");
+        book("ZZ303", "Still Active", 1, "contract-nulls-1");
+        long cancelled = book("ZZ303", "Now Cancelled", 1, "contract-nulls-2");
+        mockMvc.perform(delete("/api/v1/bookings/" + cancelled)).andExpect(status().isOk());
+
+        for (String direction : List.of("asc", "desc")) {
+            String json = mockMvc.perform(get("/api/v1/bookings")
+                            .param("flightNumber", "ZZ303")
+                            .param("sort", "cancelledAt," + direction))
+                    .andExpect(status().isOk())
+                    .andReturn().getResponse().getContentAsString();
+            assertThat(JsonPath.<List<String>>read(json, "$.content[*].passengerName"))
+                    .as(direction)
+                    .containsExactly("Now Cancelled", "Still Active");
+        }
+    }
+
     @Test
     @DisplayName("the booking list is paged: two bookings at size=1 are two pages with different rows")
     void bookingListIsPaged() throws Exception {
@@ -551,14 +580,17 @@ class ErrorContractTest {
                 .andExpect(status().isCreated());
     }
 
-    private void book(String flightNumber, String passengerName, int seats, String key) throws Exception {
-        mockMvc.perform(post("/api/v1/bookings")
+    /** Returns the new booking's id. */
+    private long book(String flightNumber, String passengerName, int seats, String key) throws Exception {
+        String json = mockMvc.perform(post("/api/v1/bookings")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"flightNumber":"%s","passengerName":"%s","seats":%d,
                                  "idempotencyKey":"%s"}
                                 """.formatted(flightNumber, passengerName, seats, key)))
-                .andExpect(status().isCreated());
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        return JsonPath.<Number>read(json, "$.bookingId").longValue();
     }
 
     private String bookingsPage(String flightNumber, int page) throws Exception {

@@ -6,6 +6,7 @@ import com.smit.flightops.exception.InsufficientSeatsException;
 import jakarta.persistence.*;
 import org.hibernate.annotations.Check;
 import org.hibernate.annotations.Checks;
+import org.hibernate.annotations.ColumnDefault;
 
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
@@ -13,14 +14,20 @@ import java.util.Objects;
 
 @Entity
 // No @Index for flightNumber: unique = true already gives it one, as in Booking.
+// idx_flights_departure_time mirrors V11__flights_departure_time_index.sql, which
+// serves the flight list's default order.
 @Table(name = "flights", indexes = {
-    @Index(name = "idx_origin_dest", columnList = "origin,destination")
+    @Index(name = "idx_origin_dest", columnList = "origin,destination"),
+    @Index(name = "idx_flights_departure_time", columnList = "departureTime,id")
 })
 // The four checks V2__seat_and_route_invariants.sql adds to flights, declared so
 // the create-drop H2 schema has them too and a test cannot pass by breaking one. V2
 // is the source of truth; this list only shapes the H2 schema. ddl-auto: validate does
 // not compare check constraints, so nothing catches this list drifting from V2;
 // change both together.
+// V10__flight_status_check.sql's ck_flights_status is not repeated here: on H2,
+// Hibernate declares status as an ENUM of FlightStatus's constants, which stores no
+// other value.
 @Checks({
     @Check(name = "ck_flights_seat_floor", constraints = "available_seats >= 0"),
     @Check(name = "ck_flights_seat_ceiling", constraints = "available_seats <= total_seats"),
@@ -47,8 +54,14 @@ public class Flight {
 
     @Column(nullable = false) private Instant departureTime;
 
-    /** Optimistic locking: a conflicting concurrent commit fails instead of overwriting the other write. */
+    /**
+     * Optimistic locking: a conflicting concurrent commit fails instead of overwriting the other write.
+     * NOT NULL DEFAULT 0, as V9__flights_version_not_null.sql makes it: Hibernate cannot
+     * increment a null version, so a row inserted without one could never be written again.
+     */
     @Version
+    @Column(nullable = false)
+    @ColumnDefault("0")
     private Long version;
 
     protected Flight() {}

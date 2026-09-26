@@ -31,6 +31,16 @@ spring:
   flyway:
     # Migrations are PostgreSQL-specific; H2 uses Hibernate's generated schema.
     enabled: false
+    postgresql:
+      # For the postgres and prod profiles, which switch Flyway on. By default
+      # Flyway takes its lock with pg_try_advisory_xact_lock, in a transaction
+      # it holds open on a second connection while each migration runs. V11's
+      # CREATE INDEX CONCURRENTLY runs outside a transaction and waits for older
+      # transactions to finish, so Flyway should not keep one of its own open
+      # beside it. false takes a session-level lock instead, on the one
+      # connection that runs the migrations, and a second instance starting at
+      # the same time still waits its turn.
+      transactional-lock: false
 
   jackson:
     deserialization:
