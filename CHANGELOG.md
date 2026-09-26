@@ -163,6 +163,65 @@ still blank.
   rewrapped where they can break, except in `README.md` and the released
   sections here.
 
+- **A misspelt profile left the service on in-memory H2.** The base document's
+  H2 datasource applies under every profile, and only `postgres` and `prod`
+  replace it. Profile names are case-sensitive, so
+  `SPRING_PROFILES_ACTIVE=Prod` matched no document, and each pod would start
+  on its own H2, seed the demo flights, pass readiness and publish to the real
+  queue. `config/EmbeddedDatabaseGuard.java#refuseInMemoryH2WithDbUrl` now
+  stops startup when `DB_URL` is set and the datasource is still in-memory H2,
+  naming the active profiles and saying `SPRING_PROFILES_ACTIVE` must include
+  `prod` or `postgres`. It keys on `DB_URL`, which the ConfigMap and
+  `compose.yaml` set, so a developer with `DB_URL` exported has default-profile
+  runs and the H2 tests refused too, and the message says to unset it.
+  `doc/OPERATIONS.md` describes the guard under Profiles.
+
+- **`OUTBOX_ENABLED=yes` bound true and stopped the drain.**
+  `OutboxPublisher` and `OutboxPruner` were switched by
+  `@ConditionalOnProperty(havingValue = "true")`, which compares the string,
+  while `OutboxProperties` binds `on`, `yes` and `1` as true. Any of those
+  created neither bean, and outbox rows piled up unsent and unpruned with no
+  error. Both classes are now switched by
+  `config/OutboxEnabledCondition.java#getMatchOutcome`, which binds
+  `app.outbox.enabled` as the record does, with the same default of true, so
+  the two cannot disagree. A value that is not a boolean stops startup, naming
+  the property. So does an empty `OUTBOX_ENABLED=`, which Spring converts to
+  null: the condition binds a primitive `boolean`, like the record, so it
+  refuses the null where a `Boolean` would read it as unset and match.
+  `OutboxEnabledConditionTest` checks the condition on both classes. The
+  record's `enabled`, which no code reads, now defaults to true as well;
+  before, a missing property bound false while the beans ran.
+
+### Security
+
+- **Bearer tokens need an audience, and a key set needs an issuer.** Boot
+  builds a `JwtDecoder` from `issuer-uri`, `jwk-set-uri` or
+  `public-key-location`, but checks the `aud` claim only when `audiences` is
+  set, and the `iss` claim only when `issuer-uri` is. Setting `issuer-uri`
+  alone accepted a token the issuer signed for any other client in the tenant,
+  and `jwk-set-uri` alone accepted a token signed by any key in the set.
+  `config/SecurityConfig.java#requireIssuerAndAudience` now stops startup
+  without `audiences` when any of the three is set, and without `issuer-uri`
+  beside `jwk-set-uri`, naming the property and the reason. The startup log
+  names what the decoder checks. `SecurityConfigJwtTest` covers each case.
+
+- **No `{noop}` passwords under `prod`.** A `{noop}` value is the password
+  itself, so anyone who could read the Secret or the pod's environment could
+  log in with it. `config/SecurityConfig.java#refuseUnhashed` now stops a
+  `prod` start on one, naming `app.security.api-password (API_PASSWORD)` or
+  `app.security.ops-password (OPS_PASSWORD)` and never the value. The default
+  profile keeps `{noop}dev-secret` and `{noop}dev-ops`.
+
+- **Local compose listens on loopback only.** `compose.yaml` published
+  `8080:8080`, which listens on every interface, and on Linux Docker's own
+  firewall rules bypass a host firewall such as ufw. Anyone on the same network
+  could then log in with the demo passwords the README prints. It now
+  publishes `127.0.0.1:8080:8080`, and the commented database mapping is
+  `127.0.0.1:5432:5432`, as is the `docker run` recipe for PostgreSQL in
+  `doc/DEPLOYMENT.md` and in the `postgres` profile's comment in
+  `application.yml`. `doc/DEPLOYMENT.md` says what a public single-instance
+  setup needs instead.
+
 ## 1.2.0 — 2026-09-26
 
 The [fourth review pass](doc/DEFECT-LOG.md#fourth-review-pass), a full audit

@@ -3,7 +3,9 @@ spring:
     name: flight-ops-service
 
   # Default profile: in-memory H2, Hibernate owns the schema and demo data is seeded
-  # on boot, so `./mvnw spring-boot:run` works with no setup.
+  # on boot, so `./mvnw spring-boot:run` works with no setup. Only the postgres and
+  # prod documents replace this URL, so EmbeddedDatabaseGuard stops startup when
+  # DB_URL is set and this URL is still the one in use.
   datasource:
     url: jdbc:h2:mem:flightops;DB_CLOSE_DELAY=-1
     username: sa
@@ -123,10 +125,11 @@ app:
   #   spring.security.oauth2.resourceserver.jwt.issuer-uri: https://your-idp.example.com/
   #   spring.security.oauth2.resourceserver.jwt.audiences: [flight-ops-service]
   #
-  # issuer-uri alone checks the signature, issuer and lifetime, so it accepts a
-  # token the same issuer minted for another client in the tenant. `audiences` has
+  # issuer-uri alone checks the signature, issuer and lifetime, so it would accept
+  # a token the same issuer minted for another client in the tenant. `audiences` has
   # been a Boot property since 2.7; it installs a JwtClaimValidator for the aud
-  # claim inside the decoder. See SECURITY.md.
+  # claim inside the decoder. SecurityConfig stops startup when a decoder property
+  # is set without audiences, or jwk-set-uri without issuer-uri. See SECURITY.md.
   events:
     # log | sqs: which EventPublisher is wired in. sqs also needs SQS_QUEUE_URL,
     # or SqsEventPublisher stops startup.
@@ -206,7 +209,7 @@ logging:
 ---
 # postgres: real PostgreSQL on localhost, Flyway owns the schema.
 #   docker run --name pg -e POSTGRES_PASSWORD=pass -e POSTGRES_DB=flightops \
-#     -p 5432:5432 -d postgres:17-alpine
+#     -p 127.0.0.1:5432:5432 -d postgres:17-alpine
 #   DB_PASSWORD=pass ./mvnw spring-boot:run -Dspring-boot.run.profiles=postgres
 spring:
   config:
@@ -271,6 +274,7 @@ app:
   security:
     # No defaults. A missing value stops startup naming the property, because the
     # literal ${API_PASSWORD} fails the {id} prefix check in ApiSecurityProperties.
+    # A {noop} value stops it too: SecurityConfig refuses unhashed passwords here.
     api-password: ${API_PASSWORD}
     ops-password: ${OPS_PASSWORD}
   events:

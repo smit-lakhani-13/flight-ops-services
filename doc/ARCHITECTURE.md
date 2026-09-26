@@ -516,7 +516,9 @@ and restore the seats the booking had just debited.
 │   │                   constraint, and IsoInstantDeserializer, which takes only
 │   │                   an ISO-8601 instant
 │   └── config/         SecurityConfig, OpenApiConfig, AwsConfig, the
-│                       @ConfigurationProperties records, TimeConfig, DataSeeder
+│                       @ConfigurationProperties records, TimeConfig,
+│                       DataSeeder, EmbeddedDatabaseGuard and
+│                       OutboxEnabledCondition
 ├── src/main/resources/
 │   ├── application.yml         profiles: default (H2), postgres, prod
 │   └── db/migration/           the Flyway migrations, which own the PostgreSQL
@@ -753,7 +755,7 @@ costs:
 | Seam | Swap in | Cost |
 |---|---|---|
 | `EventPublisher` | A JMS broker (Solace PubSub+, TIBCO EMS), Kafka, EventBridge | `EventPublisher` itself does not change, because the payload is already serialised. A JMS broker would take a publisher behind `@ConditionalOnProperty`, a `ConnectionFactory` bean and the vendor's client library, a mode in `src/main/java/com/smit/flightops/config/EventProperties.java#MODES`, a test, and a new consumer, because the Lambda reads `SQSEvent`. [ADR 0015](../adr/0015-event-transport.md) sets out each option from the vendors' documentation; none has been built or run here |
-| `spring.security.oauth2.resourceserver.jwt.issuer-uri` and `.audiences` | Cognito, Okta, Entra | Configuration: set both. `issuer-uri` alone accepts a token the issuer minted for another client in the tenant. The rules already treat a JWT scope and a Basic authority identically |
+| `spring.security.oauth2.resourceserver.jwt.issuer-uri` and `.audiences` | Cognito, Okta, Entra | Configuration: set both. `issuer-uri` alone would accept a token the issuer minted for another client in the tenant, so `src/main/java/com/smit/flightops/config/SecurityConfig.java#requireIssuerAndAudience` stops startup without `audiences`. The rules already treat a JWT scope and a Basic authority identically |
 | `Clock` (`src/main/java/com/smit/flightops/config/TimeConfig.java`) | A fixed clock in a test | Already used everywhere |
 | `management.opentelemetry.tracing.export.otlp.endpoint` | An OTLP collector | An environment variable. Ids are already generated and already on every log line |
 | The outbox poller | Debezium reading the WAL | A replication slot, a connector to operate, and a disk that fills if the consumer stops. I considered it and rejected it at this size |
@@ -769,7 +771,7 @@ The README keeps a short version of this table under
 
 | Current | Production would be | Why it is this way |
 |---|---|---|
-| Two users in an `InMemoryUserDetailsManager` | Cognito, Okta or Entra behind `issuer-uri` and `audiences` | The rules are real and tested, and the user store is a stub. The resource-server half is wired and activates when an issuer is configured, so the swap is configuration: set both properties, as [SECURITY.md](../SECURITY.md#authentication-and-authorisation) shows. |
+| Two users in an `InMemoryUserDetailsManager` | Cognito, Okta or Entra behind `issuer-uri` and `audiences` | The rules are real and tested, and the user store is a stub. The resource-server half is wired and activates when an issuer and an audience are configured, so the swap is configuration: set both properties, as [SECURITY.md](../SECURITY.md#authentication-and-authorisation) shows. |
 | Idempotent replay returns 201 | 200, arguably | It answers with the original status, Stripe-style, and the booking the key created, so the body matches the first response until the booking is cancelled, when `cancelledAt` is set. "201 Created" for something not created this time is a fair challenge. I documented it and left it. |
 | Idempotency keys never expire. The key is a `NOT NULL` column of the booking row under `uk_bookings_idempotency_key`, so the unique index grows by one entry per booking | Keys valid for a stated window (Stripe's documentation says a key may be removed once it is at least 24 hours old), after which a replay is a new request | Cancellation sets a timestamp and never deletes the row (`src/main/resources/db/migration/V4__booking_cancellation.sql`), so a cancelled booking keeps its key and a late replay returns it instead of booking again (`src/test/java/com/smit/flightops/ErrorContractTest.java#replayAfterCancellationDoesNotRebook`). A window would bound the index, but a replay after it would book again, a contract change clients have to be told about. It would also need a new migration, because applied ones are never edited. |
 | A poller drains the outbox | Debezium reading the WAL | A poll every second (`app.outbox.poll-interval` defaults to 1000 ms) costs one indexed query per replica per second and adds up to a second of latency. CDC removes both and adds Kafka Connect, a connector to operate and a replication slot that fills the disk if the consumer stops. |

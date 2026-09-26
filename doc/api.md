@@ -35,35 +35,39 @@ algorithm to use, and `{noop}` means the value is not hashed, so it marks a
 value as not secret. A deployment would pass `{bcrypt}` hashes in
 `API_PASSWORD` and `OPS_PASSWORD`.
 
-The `prod` profile has no defaults, and two startup checks stand between a bad
-value and a login:
+The `prod` profile has no defaults, and three startup checks stand between
+a bad value and a login:
 
 - `ApiSecurityProperties` rejects any value without an `{id}` prefix. A
   deployment that forgets `API_PASSWORD` therefore fails at startup, and the
   message names `app.security.api-password (API_PASSWORD)`.
+- `SecurityConfig` refuses a `{noop}` value under `prod`
+  (`config/SecurityConfig.java#refuseUnhashed`), so a deployment's passwords
+  are hashes. The default profile keeps `{noop}dev-secret`.
 - `SecurityConfig` then asks the encoder to verify each value once
   (`config/SecurityConfig.java#assertVerifiable`). An id the encoder does not
   know, such as `{foo}`, also stops startup, and so does `{argon2}`, because
   the build has no BouncyCastle.
 
-Neither check prints the value. Without them, `@ConfigurationProperties` would
+No check prints the value. Without them, `@ConfigurationProperties` would
 bind the literal string `${API_PASSWORD}` as the password, and the service
 would start and then fail every login as that user with a 500.
-[SECURITY.md](../SECURITY.md#secrets) has the detail of both checks, and the
+[SECURITY.md](../SECURITY.md#secrets) has the detail of the checks, and the
 malformed value they let through.
 
 ### Basic or bearer
 
 Callers use HTTP Basic or a bearer token. Bearer tokens are validated as an
 OAuth2 resource server once
-`spring.security.oauth2.resourceserver.jwt.issuer-uri` is set. With no issuer
-there is no `JwtDecoder` bean, and the service starts with Basic alone. A
-token's `scope` claim maps to the same `SCOPE_` strings the `api` user holds,
-so the rules do not know which mechanism authenticated a request. Set
-`audiences` with the issuer;
-[SECURITY.md](../SECURITY.md#authentication-and-authorisation) says why, and
-also holds the rule for each path, the `/error` rule and the reason the last
-rule is `denyAll()`.
+`spring.security.oauth2.resourceserver.jwt.issuer-uri` and `audiences` are both
+set. Any of `issuer-uri`, `jwk-set-uri` or `public-key-location` without
+`audiences` stops startup, naming the missing property. With none of the three
+set there is no `JwtDecoder` bean, and the service starts with Basic alone. A
+token's `scope` claim maps to the same `SCOPE_` strings the `api` user holds, so
+the rules do not know which mechanism authenticated a request.
+[SECURITY.md](../SECURITY.md#authentication-and-authorisation) says why the
+audience is required, and also holds the rule for each path, the `/error` rule
+and the reason the last rule is `denyAll()`.
 
 ### 401 and 403
 
@@ -80,11 +84,11 @@ curl -s -u api:dev-secret localhost:8080/actuator/metrics  # api on an ops endpo
 ```
 
 A wrong password gets the same 401 and the same message, so the body never says
-whether the user exists. Once the resource server is on, a rejected bearer
-token gets `Bearer realm="flight-ops-service", error="invalid_token"` as its
-challenge. With no issuer set, a bearer token is ignored and the request gets
-the `Basic` 401 above. [SECURITY.md](../SECURITY.md#401-and-403) explains why
-the two statuses stay apart.
+whether the user exists. Once the resource server is on, a rejected bearer token
+gets `Bearer realm="flight-ops-service", error="invalid_token"` as its
+challenge. With the resource server off, a bearer token is ignored and the
+request gets the `Basic` 401 above. [SECURITY.md](../SECURITY.md#401-and-403)
+explains why the two statuses stay apart.
 
 ## Operations
 
