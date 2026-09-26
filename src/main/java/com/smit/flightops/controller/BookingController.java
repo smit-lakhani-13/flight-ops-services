@@ -13,6 +13,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
@@ -141,6 +142,8 @@ public class BookingController {
      * {@code createdAt} is not unique and pages would otherwise overlap or skip
      * rows, and rejects a property the endpoint does not offer. The repository
      * method declares its own {@code @Query}, so Spring Data never checks it.
+     * {@link QueryParams} and {@code @ParameterObject} do what they do on
+     * {@link FlightController#search}.
      */
     @Operation(summary = "List the bookings on a flight")
     @ApiResponses({
@@ -149,8 +152,8 @@ public class BookingController {
                     flight number is an empty page."""),
             @ApiResponse(responseCode = "400", description = """
                     `UNKNOWN_SORT_PROPERTY` — `sort` names a property this endpoint does not offer. \
-                    `MALFORMED_REQUEST` — `flightNumber` is missing, or `page` times `size` is \
-                    larger than 2147483647.""",
+                    `MALFORMED_REQUEST` — `flightNumber` is missing or has a control character \
+                    once trimmed, or `page` times `size` is larger than 2147483647.""",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "401", description = "`UNAUTHENTICATED`",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
@@ -160,9 +163,10 @@ public class BookingController {
     @GetMapping
     public Page<BookingDto> byFlight(
             @RequestParam String flightNumber,
-            @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.ASC)
+            @ParameterObject @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.ASC)
             Pageable pageable) {
-        return bookingService.findByFlightNumber(flightNumber, SortPolicy.stable(pageable, SORTABLE, TEXTUAL));
+        return bookingService.findByFlightNumber(QueryParams.withoutControlCharacters("flightNumber", flightNumber),
+                                                 SortPolicy.stable(pageable, SORTABLE, TEXTUAL));
     }
 
     /**

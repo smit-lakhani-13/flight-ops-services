@@ -245,7 +245,12 @@ work is written down. What is missing is a domain.
   An unpaired UTF-16 surrogate is refused for the same reason, with
   `must not contain unpaired surrogates`: `getBytes(UTF_8)` turns it into
   `?`, so two different names would share a fingerprint. `BookingControllerTest`
-  covers all three.
+  covers all three. The query filters `origin`, `destination` and
+  `flightNumber` refuse control characters too, with `400 MALFORMED_REQUEST`
+  before any query runs
+  (`src/main/java/com/smit/flightops/controller/QueryParams.java#withoutControlCharacters`).
+  PostgreSQL refused a NUL there with SQLState 22021, which reached the caller
+  as a misleading `409 DUPLICATE_REQUEST`.
 
 - The writes read JSON only. swagger-core puts a YAML reader on the classpath,
   and none of the `spring.jackson` settings reach it, so each `POST` and `PATCH`

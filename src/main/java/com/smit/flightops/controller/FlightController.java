@@ -14,6 +14,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.web.PageableDefault;
@@ -78,13 +79,18 @@ public class FlightController {
      * Paged, so the response is bounded however large the table grows.
      * {@link SortPolicy} checks {@code sort} against {@link #SORTABLE} and adds
      * {@code id} as a tiebreaker, since two flights can leave at the same minute.
+     * {@link QueryParams} refuses a control character inside a filter.
+     * {@code @ParameterObject} publishes {@code page}, {@code size} and
+     * {@code sort} as three query parameters with these defaults; without it the
+     * document asks for one required object named {@code pageable}.
      */
     @Operation(summary = "Search flights by origin and destination")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "A page of flights, by departure time unless `sort` says otherwise."),
             @ApiResponse(responseCode = "400", description = """
                     `UNKNOWN_SORT_PROPERTY` — `sort` names a property this endpoint does not offer. \
-                    `MALFORMED_REQUEST` — `page` times `size` is larger than 2147483647.""",
+                    `MALFORMED_REQUEST` — `page` times `size` is larger than 2147483647, or \
+                    `origin` or `destination` has a control character once trimmed.""",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "401", description = "`UNAUTHENTICATED`",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
@@ -94,8 +100,11 @@ public class FlightController {
     @GetMapping
     public Page<FlightDto> search(@RequestParam(required = false) String origin,
                                   @RequestParam(required = false) String destination,
-                                  @PageableDefault(size = 20, sort = "departureTime") Pageable pageable) {
-        return flightService.search(origin, destination, SortPolicy.stable(pageable, SORTABLE, TEXTUAL));
+                                  @ParameterObject @PageableDefault(size = 20, sort = "departureTime")
+                                  Pageable pageable) {
+        return flightService.search(QueryParams.withoutControlCharacters("origin", origin),
+                                    QueryParams.withoutControlCharacters("destination", destination),
+                                    SortPolicy.stable(pageable, SORTABLE, TEXTUAL));
     }
 
     /**
