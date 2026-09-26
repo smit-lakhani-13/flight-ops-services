@@ -120,7 +120,10 @@ become a second home for a credential.
 I checked what happens without the two writers by swapping Spring's defaults
 back in. Those call `sendError`, and the container forwards to `/error`.
 `ApiErrorController` then answers with the right code and its generic message
-about the method and the path, and a 403 leaves no log line.
+about the method and the path. At the time, a 403 left no log line.
+`RequestIdFilter` now logs the status of each 4xx it answers outside
+`/actuator/`, so the 403 would leave only that filter's INFO line, which does
+not say why the request was refused.
 
 ### The OpenAPI document is public and the API is not
 

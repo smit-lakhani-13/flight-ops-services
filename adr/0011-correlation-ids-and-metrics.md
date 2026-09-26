@@ -42,7 +42,10 @@ I configured no OTLP exporter endpoint.
 * A 401 carries an id, and a 401 is the response people ring up about. A
   filter ordered after the security chain would have left those without one,
   because Spring Security rejects the request before `DispatcherServlet` is
-  reached.
+  reached. The filter also logs one INFO line for each answer of 400 or above
+  outside `/actuator/`, so the id a caller quotes finds a line in the log. A
+  failure that escapes the chain gets none, because `ApiErrorController` logs
+  it under the same id.
 
 * **Inbound ids are checked.** The id lands in a log line and in a response
   header, so an unchecked value is two injection sinks: `\r\n` forges a second

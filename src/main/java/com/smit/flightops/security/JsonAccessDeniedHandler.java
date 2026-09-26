@@ -53,8 +53,11 @@ public class JsonAccessDeniedHandler implements AccessDeniedHandler {
      * A path is meant to arrive percent-encoded, so visible ASCII loses nothing here,
      * and {@code String.replaceAll} with a negated class is the form CodeQL's
      * log-injection query treats as a sanitiser.
+     *
+     * <p>Public because {@code RequestIdFilter} writes the same path on its line for
+     * every answer of 400 or above.
      */
-    static String printable(String uri) {
+    public static String printable(String uri) {
         return uri == null ? "null" : uri.replaceAll("[^\\x21-\\x7E]", "?");
     }
 }
