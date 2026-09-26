@@ -53,6 +53,12 @@ public class FlightController {
     /** The sortable properties that are strings: the only ones {@code ignorecase} applies to. */
     private static final Set<String> TEXTUAL = Set.of("flightNumber", "origin", "destination");
 
+    /**
+     * The sortable properties that can be null, where {@link SortPolicy} puts nulls
+     * last: none, because every one is a NOT NULL column.
+     */
+    private static final Set<String> NULLABLE = Set.of();
+
     private final FlightService flightService;
 
     public FlightController(FlightService flightService) {
@@ -95,7 +101,7 @@ public class FlightController {
     public Page<FlightDto> search(@RequestParam(required = false) String origin,
                                   @RequestParam(required = false) String destination,
                                   @PageableDefault(size = 20, sort = "departureTime") Pageable pageable) {
-        return flightService.search(origin, destination, SortPolicy.stable(pageable, SORTABLE, TEXTUAL));
+        return flightService.search(origin, destination, SortPolicy.stable(pageable, SORTABLE, TEXTUAL, NULLABLE));
     }
 
     /**

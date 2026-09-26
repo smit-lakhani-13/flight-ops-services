@@ -1,0 +1,55 @@
+-- The index behind the flight list's default order.
+--
+-- With no origin or destination, GET /api/v1/flights calls
+-- FlightRepository.findAll with FlightController's default sort,
+-- departureTime. SortPolicy appends id as a tiebreaker, and it pins nulls
+-- last only on a column that can be null, which neither of these is. So the
+-- page is read in the order
+--
+--   departure_time ASC, id ASC
+--
+-- which Hibernate renders as ORDER BY departure_time, id. Until now no index
+-- on flights could give that order: the primary key, the unique index on
+-- flight_number and idx_origin_dest all start with another column. So every
+-- such call read the whole table and sorted it, even for a page of one row,
+-- and flights are soft-cancelled and never deleted, so the table only grows.
+--
+-- A b-tree stores ASC NULLS LAST unless told otherwise, and a plain ASC in
+-- an ORDER BY means NULLS LAST on PostgreSQL, so this index holds exactly
+-- that order, and the first page becomes an index scan that stops at the
+-- LIMIT. It removes the sort and nothing else: OFFSET still walks the rows it
+-- skips, and the page's count(*) still reads every row. A Slice would drop
+-- the count, but that changes the page object the API returns. A plain DESC
+-- means NULLS FIRST, the exact reverse, so ?sort=departureTime,desc can read
+-- the index backwards; only rows that share a departure time are then sorted
+-- by the ascending id tiebreaker.
+--
+-- Updates pay nothing for it. A booking, its cancellation and a status change
+-- alter only available_seats, status and version, none of which is indexed,
+-- so the flight-row UPDATE stays eligible for a HOT update, which adds no
+-- index entry. departure_time is set once, when the flight is created.
+--
+-- CONCURRENTLY builds the index without blocking writes, and it cannot run in
+-- a transaction. Flyway's PostgreSQL parser recognises the statement and runs
+-- the migration outside one with no script config, but only while it is the
+-- only statement in the file: with spring.flyway.mixed at its default, false,
+-- a transactional statement beside it makes Flyway refuse the file. The
+-- spring.flyway.postgresql.transactional-lock line in application.yml is for
+-- this statement too, and says why.
+--
+-- Outside a transaction a failure is not rolled back. The build waits for
+-- older transactions to finish, the ones writing to flights among them, and
+-- each wait is bounded by the 3s lock_timeout. A build that fails leaves an
+-- INVALID index, which no query reads and writes may still maintain, and
+-- Flyway records V11 as failed. IF NOT EXISTS would then skip the build on
+-- the next run, and the broken index would pass for a good one. So recover by
+-- hand: DROP INDEX CONCURRENTLY IF EXISTS idx_flights_departure_time, run
+-- flyway repair and start again. IF EXISTS covers a build that failed before
+-- it created the index. IF NOT EXISTS is for the other case, a database where
+-- the index was already built by hand.
+--
+-- Flyway runs only in the postgres and prod profiles. H2 in the default
+-- profile builds its schema from the entities, where Flight's @Table declares
+-- the same index, so this statement never reaches H2.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_flights_departure_time
+    ON flights (departure_time, id);

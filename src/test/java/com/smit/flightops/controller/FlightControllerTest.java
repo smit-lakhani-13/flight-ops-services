@@ -526,6 +526,9 @@ class FlightControllerTest {
         var pageable = pageCaptor.getValue();
         assertThat(pageable.getPageNumber()).isEqualTo(2);
         assertThat(pageable.getPageSize()).isEqualTo(5);
-        assertThat(pageable.getSort().getOrderFor("departureTime")).isNotNull();
+        // The whole order, null handling included, as V11's (departure_time, id) index holds it.
+        assertThat(pageable.getSort()).containsExactly(
+                org.springframework.data.domain.Sort.Order.asc("departureTime"),
+                org.springframework.data.domain.Sort.Order.asc("id"));
     }
 }

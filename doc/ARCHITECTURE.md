@@ -422,13 +422,13 @@ compile error until someone decides whether the new status accepts bookings.
 
 ## Data model
 
-The schema is three tables and eight migrations. Flyway owns the PostgreSQL
+The schema is three tables and eleven migrations. Flyway owns the PostgreSQL
 schema, and `ddl-auto: validate` checks the entity mapping against it. A
 mapping that drifts from the migrations fails at startup instead of at the
 first query.
 `src/test/java/com/smit/flightops/BookingIntegrationTest.java#migrationRanAndSchemaValidates`
 runs on PostgreSQL 17 in a container. It asserts that `flyway_schema_history`
-holds versions 1 to 8, and as many as there are migration files on the
+holds versions 1 to 11, and as many as there are migration files on the
 classpath, so a misnamed file that Flyway skips fails the test.
 
 ```mermaid
@@ -441,9 +441,9 @@ erDiagram
         varchar destination
         integer total_seats
         integer available_seats "ck: 0 <= available <= total"
-        varchar status
+        varchar status "V10, ck: a FlightStatus constant"
         timestamptz departure_time
-        bigint version
+        bigint version "V9, NOT NULL DEFAULT 0"
     }
     BOOKINGS {
         bigserial id PK
@@ -480,6 +480,9 @@ erDiagram
 | `V6__outbox_traceparent.sql` | `traceparent` | Diagnostics only: nullable, and with no index |
 | `V7__outbox_next_attempt_at.sql` | `next_attempt_at` | A failed send waits before it is retried. Without it, the ten-attempt ceiling was used up in ten seconds at a one-second poll |
 | `V8__drop_unused_active_booking_index.sql` | Drops `idx_bookings_active` | The planner only uses a partial index when the query repeats its predicate, and no query here filters on `cancelled_at`. It was write cost with no reader |
+| `V9__flights_version_not_null.sql` | `version` NOT NULL DEFAULT 0 | Hibernate cannot increment a null version, so a flight inserted by plain SQL without one could never be booked, cancelled or changed again |
+| `V10__flight_status_check.sql` | `ck_flights_status`, listing the `FlightStatus` constants | V2 left `status` out. H2's schema already refused any other value, while PostgreSQL stored it and every read of that flight then failed |
+| `V11__flights_departure_time_index.sql` | `idx_flights_departure_time` on `(departure_time, id)` | The default flight list's order, which no index gave. `CREATE INDEX CONCURRENTLY` cannot run in a transaction, so it is alone in its file |
 
 `version` on `flights` is JPA's optimistic-locking column, and it does real
 work today. `BookingWriter#insertNewBooking` and `BookingWriter#cancelBooking`

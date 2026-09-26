@@ -163,6 +163,60 @@ still blank.
   rewrapped where they can break, except in `README.md` and the released
   sections here.
 
+- **A flight inserted without a version could never be written again.**
+  `flights.version` was a nullable `BIGINT` with no default, so a flight
+  written by plain SQL, as the `DataSeeder` Javadoc suggests for reference
+  data, got NULL. Hibernate cannot increment a null version, so every booking,
+  cancellation and status change on that flight failed at flush with a 500.
+  `src/main/resources/db/migration/V9__flights_version_not_null.sql` sets any
+  NULL to 0 and makes the column `NOT NULL DEFAULT 0`, and `Flight#version`
+  says the same, so the H2 schema matches.
+
+- **PostgreSQL stored any flight status.** V2 gave four flight invariants a
+  check and left `status` out, while the H2 schema Hibernate generates already
+  refused anything but a `FlightStatus` constant. A status written by hand as
+  `CANCELED` or `cancelled` was stored, and every read of that flight then
+  failed with a 500. `V10__flight_status_check.sql` adds `ck_flights_status`
+  as `NOT VALID` and then runs `VALIDATE CONSTRAINT`, the two statements V2's
+  header describes for a large table. Here both run in one migration and one
+  transaction, so the `ACCESS EXCLUSIVE` lock the first takes is held through
+  the scan and none of the large-table benefit is obtained; on a table this
+  size that costs nothing, and V10's header says to move the `VALIDATE` to a
+  migration of its own on a large one. A new constant now needs a migration
+  that replaces the check, as the `FlightStatus` Javadoc says.
+  `SchemaConstraintsPostgresTest` shows PostgreSQL refusing a bad status and a
+  NULL version and booking a flight inserted without one,
+  `FlightRepositoryTest` shows H2 refusing the same rows, and the CI step "The
+  PostgreSQL tests ran" now requires the new class.
+
+- **The default flight list sorted the whole table.** `GET /api/v1/flights`
+  with no filter orders by `departure_time, id`, and no index gave that order,
+  so every call read and sorted every flight ever created, even for a page of
+  one. `V11__flights_departure_time_index.sql` builds
+  `idx_flights_departure_time` on `(departure_time, id)` with
+  `CREATE INDEX CONCURRENTLY`, alone in its file so that Flyway runs it
+  outside a transaction, and `Flight` declares it for H2. The base document of
+  `application.yml` sets `spring.flyway.postgresql.transactional-lock: false`,
+  so Flyway no longer holds a transaction open on a second connection while
+  the index builds. The page's `count(*)` still reads every row.
+
+- **Null values sorted at opposite ends on H2 and PostgreSQL.** The `sort`
+  parameter cannot say where nulls go, so `?sort=cancelledAt,asc` listed the
+  active bookings first on H2 and last on PostgreSQL, and `,desc` the other
+  way round. `SortPolicy#stable` now puts nulls last, in both directions, on
+  the properties each controller lists in `NULLABLE`, today only the
+  booking's `cancelledAt`. So the active bookings come last in both
+  directions on both databases, and `doc/api.md` says so. On PostgreSQL that
+  changes `,desc`, which used to list them first; the contract had never said
+  where they went. Every other sortable property is a `NOT NULL` column, and
+  its order, like the `id` tiebreaker, carries no null handling: PostgreSQL
+  cannot read `DESC NULLS LAST` backwards off an ascending index, so
+  `?sort=id,desc` would lose its scan of the primary key.
+
+- **`scripts/numbers.sh` lists the migrations by version number.**
+  `git ls-files` sorts by bytes, which would have put `V10` and `V11` before
+  `V2` once they were committed.
+
 ## 1.2.0 — 2026-09-26
 
 The [fourth review pass](doc/DEFECT-LOG.md#fourth-review-pass), a full audit

@@ -4,6 +4,7 @@ import com.smit.flightops.config.DataSeeder;
 import com.smit.flightops.dto.BookingDto;
 import com.smit.flightops.dto.BookingRequest;
 import com.smit.flightops.dto.CreateFlightRequest;
+import com.smit.flightops.entity.Booking;
 import com.smit.flightops.entity.Flight;
 import com.smit.flightops.exception.InsufficientSeatsException;
 import com.smit.flightops.repository.BookingRepository;
@@ -14,7 +15,9 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.DefaultApplicationArguments;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
@@ -40,7 +43,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * The tests that need a real PostgreSQL: the Flyway migrations,
- * {@code ddl-auto: validate}, and concurrent transactions.
+ * {@code ddl-auto: validate}, concurrent transactions and PostgreSQL's own null
+ * order.
  *
  * <ol>
  *   <li><b>The migrations match the entities.</b> Under {@code validate}, a table or
@@ -51,6 +55,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  *   <li><b>One key books once.</b> Twenty threads replaying one key produce one row,
  *       under the {@code FOR UPDATE} lock and the in-lock re-read; the unique
  *       constraint is the backstop for one key on two flights.</li>
+ *   <li><b>Nulls sort last here too.</b> PostgreSQL sorts NULL highest, the
+ *       opposite of H2, so the null order {@code SortPolicy} pins on
+ *       {@code cancelledAt} has to reach the SQL for both databases to agree.</li>
  * </ol>
  *
  * <p>{@code disabledWithoutDocker = true} skips the class on a machine with no
@@ -137,13 +144,13 @@ class BookingIntegrationTest {
     }
 
     @Test
-    @DisplayName("Flyway applied V1-V8 and Hibernate validated the entities against them")
+    @DisplayName("Flyway applied V1-V11 and Hibernate validated the entities against them")
     void migrationRanAndSchemaValidates() throws Exception {
         List<String> applied = jdbcTemplate.queryForList(
                 "SELECT version FROM flyway_schema_history WHERE success = true ORDER BY installed_rank",
                 String.class);
 
-        assertThat(applied).containsExactly("1", "2", "3", "4", "5", "6", "7", "8");
+        assertThat(applied).containsExactly("1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11");
         // A file on the classpath that Flyway did not pick up, such as a misnamed one.
         assertThat(applied).hasSameSizeAs(new PathMatchingResourcePatternResolver()
                 .getResources("classpath:db/migration/V*.sql"));
@@ -238,5 +245,42 @@ class BookingIntegrationTest {
 
         assertThat(availableSeats(flightNumber)).isEqualTo(2);
         assertThat(bookingRepository.findByIdempotencyKey("pg-oversell")).isEmpty();
+    }
+
+    /**
+     * The PostgreSQL half of
+     * {@code BookingRepositoryTest#nullCancelledAtSortsLastInBothDirections}, with the
+     * orders {@code SortPolicyTest} shows {@code SortPolicy} returning. Left to
+     * itself PostgreSQL puts the active booking last on ASC and first on DESC, so
+     * DESC is the case that fails here if {@code nulls last} is lost on the way to
+     * the SQL.
+     */
+    @Test
+    @DisplayName("a null cancelledAt sorts last both ascending and descending on PostgreSQL too")
+    void nullCancelledAtSortsLastOnPostgres() {
+        String flightNumber = createFlight("CC004", 10);
+        Flight flight = flightRepository.findByFlightNumber(flightNumber).orElseThrow();
+        Instant createdAt = Instant.parse("2026-09-20T11:00:00Z");
+        Booking early = new Booking(flight, "Early Cancel", 1, "pg-nulls-1", null, createdAt);
+        early.cancel(createdAt.plus(Duration.ofHours(1)));
+        Booking late = new Booking(flight, "Late Cancel", 1, "pg-nulls-2", null, createdAt);
+        late.cancel(createdAt.plus(Duration.ofHours(2)));
+        bookingRepository.save(early);
+        bookingRepository.save(late);
+        bookingRepository.save(new Booking(flight, "Still Active", 1, "pg-nulls-3", null, createdAt));
+
+        assertThat(passengersByCancelledAt(flightNumber, Sort.Direction.ASC))
+                .containsExactly("Early Cancel", "Late Cancel", "Still Active");
+        assertThat(passengersByCancelledAt(flightNumber, Sort.Direction.DESC))
+                .containsExactly("Late Cancel", "Early Cancel", "Still Active");
+    }
+
+    private List<String> passengersByCancelledAt(String flightNumber, Sort.Direction direction) {
+        Sort sort = Sort.by(
+                new Sort.Order(direction, "cancelledAt").nullsLast(),
+                Sort.Order.asc("id"));
+        return bookingRepository.findByFlightNumber(flightNumber, PageRequest.of(0, 10, sort))
+                .map(Booking::getPassengerName)
+                .getContent();
     }
 }

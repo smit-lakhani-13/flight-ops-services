@@ -6,7 +6,9 @@ import org.hibernate.Hibernate;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jpa.test.autoconfigure.TestEntityManager;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -21,7 +23,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * The unique index on {@code idempotency_key} exists (the backstop for one key on two
- * flights), and the {@code JOIN FETCH} avoids the lazy load.
+ * flights), the {@code JOIN FETCH} avoids the lazy load, and the declared query honours
+ * the null order {@code SortPolicy} pins.
  */
 @DataJpaTest
 class BookingRepositoryTest {
@@ -96,6 +99,41 @@ class BookingRepositoryTest {
                 .as("@ManyToOne is LAZY, so an initialised proxy proves the JOIN FETCH ran")
                 .isTrue();
         assertThat(bookings.get(0).getFlight().getFlightNumber()).isEqualTo("UA123");
+    }
+
+    /**
+     * {@code cancelledAt} is the one nullable property either list offers for sorting.
+     * The orders are the ones {@code SortPolicy} returns for {@code ?sort=cancelledAt,asc}
+     * and {@code ,desc}: nulls last on {@code cancelledAt}, then a plain {@code id}
+     * ascending. Left to itself H2 sorts NULL lowest, so the active booking would come
+     * first here on ASC, where PostgreSQL puts it last; on DESC the two swap.
+     */
+    @Test
+    @DisplayName("a null cancelledAt sorts last both ascending and descending under the orders SortPolicy returns")
+    void nullCancelledAtSortsLastInBothDirections() {
+        Flight flight = flight("UA123");
+        Booking early = new Booking(flight, "Early Cancel", 1, "demo-1", null, CREATED_AT);
+        early.cancel(CREATED_AT.plus(Duration.ofHours(1)));
+        Booking late = new Booking(flight, "Late Cancel", 1, "demo-2", null, CREATED_AT);
+        late.cancel(CREATED_AT.plus(Duration.ofHours(2)));
+        bookingRepository.saveAndFlush(early);
+        bookingRepository.saveAndFlush(late);
+        bookingRepository.saveAndFlush(new Booking(flight, "Still Active", 1, "demo-3", null, CREATED_AT));
+        entityManager.clear();
+
+        assertThat(passengersByCancelledAt(Sort.Direction.ASC))
+                .containsExactly("Early Cancel", "Late Cancel", "Still Active");
+        assertThat(passengersByCancelledAt(Sort.Direction.DESC))
+                .containsExactly("Late Cancel", "Early Cancel", "Still Active");
+    }
+
+    private List<String> passengersByCancelledAt(Sort.Direction direction) {
+        Sort sort = Sort.by(
+                new Sort.Order(direction, "cancelledAt").nullsLast(),
+                Sort.Order.asc("id"));
+        return bookingRepository.findByFlightNumber("UA123", PageRequest.of(0, 10, sort))
+                .map(Booking::getPassengerName)
+                .getContent();
     }
 
     @Test
