@@ -333,6 +333,14 @@ work is written down. What is missing is a domain.
   step fails the job on any error other than `ImageNotFoundException`, so a
   missing permission cannot pass for a missing image.
 
+- The load balancer controller's IRSA role gets the policy the controller's
+  maintainers publish for v3.5.0, unchanged. `up.sh` creates it from
+  `deploy/aws/lbc-iam-policy-v3.5.0.json` and checks the file's sha256 first,
+  so a change to what the controller may do is a reviewed diff, never a
+  download. The policy is named `flight-ops-lbc-v3.5.0`, not AWS's
+  `AWSLoadBalancerControllerIAMPolicy`, so the scripts never attach or delete
+  another cluster's copy.
+
 - The Lambda's role comes from SAM policy templates in `lambda/template.yaml`,
   and it is wider than the handler needs. `DynamoDBWritePolicy` grants
   `PutItem`, `UpdateItem` and `BatchWriteItem` on the table and its indexes, and

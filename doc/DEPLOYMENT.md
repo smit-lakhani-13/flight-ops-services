@@ -180,8 +180,10 @@ ALERT_EMAIL=you@example.com ./deploy/aws/up.sh  # ~50 minutes
 
 The preflight checks the tools, the credentials and `./mvnw -v`, which must
 report JDK 21 because the enforcer rule in `lambda/pom.xml` accepts nothing
-else. No system Maven is needed. `gettext`, which provides `envsubst`, is
-needed only to run `deploy/aws/render-aws.sh` by hand.
+else. It also checks the sha256 of the load balancer controller's
+[IAM policy file](#the-load-balancer-controllers-iam-policy). No system Maven
+is needed. `gettext`, which provides `envsubst`, is needed only to run
+`deploy/aws/render-aws.sh` by hand.
 
 `up.sh` runs in twelve steps. Step 1 prints the cost table and asks you to type
 `yes`, and nothing before that costs anything. Steps 2 to 8 build the
@@ -306,10 +308,83 @@ described above.
 7. **IRSA.** The pods' AWS identity, with no access keys. Cluster setup that
    happens once. No deploy repeats it.
 8. **Load balancer controller and metrics-server.** Also set up once, and no
-   deploy repeats it.
+   deploy repeats it. The controller's IAM policy comes from a file in this
+   repository, as the next section describes.
 9. **Namespace and Secret.** Generated passwords, never written to disk. The API
    and ops passwords are bcrypt-hashed. The database password is stored as it
    is, because the JDBC driver needs it.
+
+### The load balancer controller's IAM policy
+
+The controller's IRSA role gets the IAM policy that the controller's
+maintainers publish with each release, as the install guide's iam_policy.json
+in the kubernetes-sigs/aws-load-balancer-controller repository. `up.sh` does
+not download it. A tag is a mutable pointer in someone else's repository, so a
+download would put whatever the tag pointed at that day on the role. The copy
+for the release `up.sh` installs is committed as
+`deploy/aws/lbc-iam-policy-v3.5.0.json`, byte for byte, upstream's
+indentation included, so a diff against the next release shows only what
+changed:
+
+- Source, fetched on 26 September 2026:
+  [iam_policy.json at v3.5.0](https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v3.5.0/docs/install/iam_policy.json)
+- Tag: `v3.5.0`, in `deploy/aws/up.sh#LBC_POLICY_TAG`, matching the Helm chart
+  version in `deploy/aws/up.sh#LBC_CHART_VERSION`
+- sha256: `16f232c9d9f79366fe949c4550ad517a202380058a9e48d45a4e215044a20a6a`,
+  in `deploy/aws/up.sh#LBC_POLICY_SHA256`
+
+Step 1 checks the file against the sum with
+`deploy/aws/lib.sh#require_sha256`, before anything bills, and step 8 checks
+it again just before it creates the policy from it. `deploy/aws/selftest.sh`
+makes the same check in CI. A file changed without its sum stops all three,
+so a change to what the controller may do arrives as a reviewed diff.
+
+The policy is named `flight-ops-lbc-v3.5.0`, from
+`deploy/aws/lib.sh#LBC_POLICY_PREFIX` and the tag, and tagged
+`Project=flight-ops`. AWS's install guide calls the same policy
+`AWSLoadBalancerControllerIAMPolicy`, so an account with another cluster may
+already hold one by that name, perhaps from an older release. `up.sh` never
+attaches it, and `down.sh` never deletes it. `down.sh` deletes every customer
+managed policy whose name starts with `flight-ops-lbc-`, after the cluster
+delete has removed the role it was attached to.
+
+To move to a new release, change the tag, the file, the sum and the documents
+that name them in one commit:
+
+1. Download the new release's file beside the old one, and read the diff.
+   Every added action is a new permission for the controller.
+
+   ```bash
+   old=$(sed -n 's/^LBC_POLICY_TAG=\([^ ]*\).*/\1/p' deploy/aws/up.sh)
+   new=v3.6.0   # the new release
+   repo=kubernetes-sigs/aws-load-balancer-controller
+   curl -fsSL -o "deploy/aws/lbc-iam-policy-$new.json" \
+     "https://raw.githubusercontent.com/$repo/$new/docs/install/iam_policy.json"
+   diff -u "deploy/aws/lbc-iam-policy-$old.json" \
+     "deploy/aws/lbc-iam-policy-$new.json"
+   shasum -a 256 "deploy/aws/lbc-iam-policy-$new.json"   # or sha256sum
+   ```
+
+2. Delete the old file with `git rm`. In `deploy/aws/up.sh`, set
+   `LBC_POLICY_TAG` to the new tag, `LBC_CHART_VERSION` to the chart that
+   installs that release, and `LBC_POLICY_SHA256` to the sum just printed.
+   The policy's name follows the tag.
+3. Update every document that names the release. In this section, that is
+   the source link, the fetch date, the tag, the sum and the policy's name.
+   `SECURITY.md`, `deploy/aws/README.md` (the "Who creates what" row, the
+   checksum row under "When something goes wrong" and the file table) and the
+   file tree in `doc/ARCHITECTURE.md` name the file, the policy or both.
+   `git grep -n -F "$old"` lists what is left. Leave the changelog's released
+   sections as they are, and add an Unreleased entry instead. The fixture
+   ARNs in `deploy/aws/selftest.sh` need no change.
+4. Run `deploy/aws/selftest.sh`, which fails while the file and the sum
+   disagree, and `python3 scripts/refcheck.py`, which fails while a document
+   still cites the old file. Both must pass.
+
+Make the move while no cluster exists. On a running cluster, a re-run of
+`up.sh` creates the new policy but leaves the controller's role on the old
+one, because eksctl does not change a service account it has already
+created.
 
 ### The manifests
 
@@ -503,16 +578,19 @@ image-pull error, so set the CLI default to match:
 aws configure set region ap-south-1
 ```
 
-The three stacks `up.sh` deploys itself (the foundation, the data stack and
-the Lambda) carry the tag `Project=flight-ops`. It passes
-`--tags Project=flight-ops` to each one, and CloudFormation copies stack tags
-to the resources that take them. `deploy/aws/cluster.yaml` puts the same tag
-on what eksctl creates from it: the cluster, its VPC and NAT gateway, and the
-node group. A few things are left untagged: the four EKS addons, the two IAM
-roles made by `eksctl create iamserviceaccount`, the load balancer controller's
-IAM policy, and the shared SAM bucket. None of them bills more than cents. The
-addons and the roles go with the cluster, and `down.sh` deletes the policy by
-name. The catch-all query is:
+The three stacks `up.sh` deploys itself (the foundation, the data stack and the
+Lambda) carry the tag `Project=flight-ops`. It passes `--tags
+Project=flight-ops` to each one, and CloudFormation copies stack tags to the
+resources that take them. `deploy/aws/cluster.yaml` puts the same tag on what
+eksctl creates from it: the cluster, its VPC and NAT gateway, and the node
+group. `up.sh` creates the load balancer controller's IAM policy outside any
+stack, so it tags that policy itself, and `down.sh` deletes it by its
+`flight-ops-lbc-` prefix and warns if it cannot. The tag shows the policy in the
+console; the catch-all query below does not list it, for the reason section 6
+gives. A few things are left untagged: the four EKS addons, the two IAM roles
+made by `eksctl create iamserviceaccount`, and the shared SAM bucket. None of
+them bills more than cents, and the addons and the roles go with the cluster.
+The catch-all query is:
 
 ```bash
 aws resourcegroupstaggingapi get-resources --tag-filters Key=Project,Values=flight-ops
@@ -562,9 +640,9 @@ Type `delete` when it asks. The deletes take about 20 minutes. Then the script
 runs fourteen checks and exits non-zero if any of them finds something. They
 cover both kinds of load balancer, clusters, instances, NAT gateways, volumes,
 Elastic IPs, RDS instances and snapshots, stacks, log groups, secrets and ECR,
-plus a catch-all query for anything tagged `Project=flight-ops`. The
-catch-all runs in ap-south-1, and AWS reports IAM resources from us-east-1, so
-it sees no IAM role or OIDC provider. IAM bills nothing, and the stacks check
+plus a catch-all query for anything tagged `Project=flight-ops`. The catch-all
+runs in ap-south-1, and AWS reports IAM resources from us-east-1, so it sees no
+IAM role, IAM policy or OIDC provider. IAM bills nothing, and the stacks check
 still catches an eksctl stack that failed to delete, IRSA roles and all. With
 `--keep-foundation` there are thirteen, because that flag leaves the ECR
 repository behind and skips its check. It also leaves the foundation stack and
