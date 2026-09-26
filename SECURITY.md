@@ -94,12 +94,16 @@ with `authenticated()` any caller with credentials could reach it.
 ### 401 and 403
 
 No credentials, or credentials that do not verify, get `401 UNAUTHENTICATED`.
-Valid credentials without the authority get `403 FORBIDDEN`. The filter that
-rejects a password or token answers the 401 itself. Past that point, Spring's
-`ExceptionTranslationFilter` picks between the two by whether the
-authentication is anonymous. A 401 tells a client to retry with credentials.
-A 403 tells it that retrying will not help. Collapsing the two sends a correct
-client into a credential refresh loop over a permissions problem.
+A body over the size limit gets `413 PAYLOAD_TOO_LARGE` first when its
+declared `Content-Length` shows it, or when it is a form-encoded `PUT`,
+`PATCH` or `DELETE`, because that limit runs ahead of Spring Security (see
+[Data exposure](#data-exposure)). Valid credentials without the authority get
+`403 FORBIDDEN`. The filter that rejects a password or token answers the 401
+itself. Past that point, Spring's `ExceptionTranslationFilter` picks between
+the two by whether the authentication is anonymous. A 401 tells a client to
+retry with credentials. A 403 tells it that retrying will not help. Collapsing
+the two sends a correct client into a credential refresh loop over a
+permissions problem.
 
 The 401's `WWW-Authenticate` challenge follows the credential that failed. A
 rejected bearer token gets
@@ -258,6 +262,15 @@ work is written down. What is missing is a domain.
   text, a status sent as a number and a departure time that is not an ISO-8601
   instant are each `400 MALFORMED_REQUEST`. None of them is converted into a
   value the client did not write.
+
+- A request body over 16 KiB gets `413 PAYLOAD_TOO_LARGE` before anything
+  parses it (`RequestBodyLimitFilter`). Jackson builds a whole string field
+  before Bean Validation checks its `@Size`, so without the cap one field of
+  millions of characters would hold tens of MB of heap, and a few such
+  requests at once could exhaust the heap and end the JVM through
+  `-XX:+ExitOnOutOfMemoryError`. The filter runs ahead of Spring Security,
+  because Spring's `FormContentFilter` reads a form-encoded `PUT`, `PATCH` or
+  `DELETE` body in full before the credentials are checked.
 
 - Error responses are `{code, message, timestamp}`, or
   `{code, fieldErrors, timestamp}` for a validation failure. They never carry

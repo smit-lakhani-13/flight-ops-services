@@ -12,13 +12,15 @@ import java.time.Clock;
 
 /**
  * Writes the {@code {code, message, timestamp}} error body straight to the servlet
- * response, for the 401s and 403s Spring Security produces. Those are decided in a
- * servlet filter before {@code DispatcherServlet} runs, so {@code GlobalExceptionHandler}
- * never sees them. It uses the container's {@link ObjectMapper} and {@link Clock}, so
- * the timestamp is formatted and taken the same way as in every other error body.
+ * response, for the 401s and 403s Spring Security produces and the 413s
+ * {@link RequestBodyLimitFilter} decides itself. Those are decided in a servlet filter
+ * before {@code DispatcherServlet} runs, so {@code GlobalExceptionHandler} never sees
+ * them. It uses the container's {@link ObjectMapper} and {@link Clock}, so the
+ * timestamp is formatted and taken the same way as in every other error body.
  *
  * @see JsonAuthenticationEntryPoint
  * @see JsonAccessDeniedHandler
+ * @see RequestBodyLimitFilter
  */
 @Component
 public class ErrorResponseWriter {
@@ -34,7 +36,7 @@ public class ErrorResponseWriter {
     /**
      * @param code a stable machine-readable code from the error-code table in doc/api.md:
      *        {@code UNAUTHENTICATED} from the entry point, {@code FORBIDDEN} from the
-     *        access-denied handler
+     *        access-denied handler, {@code PAYLOAD_TOO_LARGE} from the body limit
      * @throws IOException if the servlet output stream cannot be obtained. A write to
      *         a client that has disconnected can fail with Jackson 3's unchecked
      *         {@code JacksonIOException} instead
