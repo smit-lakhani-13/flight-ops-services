@@ -12,6 +12,15 @@ spring:
       maximum-pool-size: 10
       minimum-idle: 2
       connection-timeout: 30000
+      # BookingWriter locks the flight row, then re-reads the idempotency key.
+      # That re-read sees a booking the previous holder committed only under
+      # READ COMMITTED, where each statement takes a fresh snapshot. Under
+      # REPEATABLE READ PostgreSQL aborts the waiter with 40001 instead, and
+      # the caller gets 503 LOCK_TIMEOUT. Pinned on the pool, so a server whose
+      # default_transaction_isolation says otherwise changes nothing; Hikari
+      # sets it once per new connection, not per transaction. Here, so both
+      # PostgreSQL profiles inherit it. H2's default is the same level.
+      transaction-isolation: TRANSACTION_READ_COMMITTED
       # H2's spelling of the postgres profile's 3s lock_timeout, so local runs and
       # tests bound a lock wait the way production does.
       connection-init-sql: SET LOCK_TIMEOUT 3000
@@ -98,13 +107,19 @@ management:
       show-details: when-authorized
       roles: OPS
       group:
-        # db is in readiness and not in liveness. A database outage should take pods
-        # out of the Service, not restart them: a restart cannot fix the database,
-        # and every replica would fail liveness at once and restart in a loop.
+        # db is in neither group. /actuator/health still reports it, and the
+        # database alert in doc/OPERATIONS.md reads it there. Not liveness: a
+        # restart cannot fix the database, and every replica would fail at once
+        # and restart in a loop. Not readiness: every replica shares the
+        # database, so a dead one, or a pool full of one hot flight's lock
+        # waiters, would withdraw every pod at once and leave the load balancer
+        # no target for any request. A pod that stays in the Service answers
+        # 503 DATABASE_UNAVAILABLE with Retry-After once the pool's
+        # connection-timeout runs out.
         liveness:
           include: livenessState
         readiness:
-          include: readinessState,db
+          include: readinessState
 
 app:
   security:
@@ -231,6 +246,17 @@ spring:
       # service takes. PostgreSQL raises 55P03, which GlobalExceptionHandler answers
       # with 503 and Retry-After. See ADR 0002.
       connection-init-sql: SET lock_timeout = '3s'
+      # How long a request waits for a pooled connection before
+      # GlobalExceptionHandler answers 503 DATABASE_UNAVAILABLE with
+      # Retry-After. Hikari's default, 30s, outlasts most callers, who give up
+      # and retry while the abandoned request still queues and later runs. The
+      # bounds go in order: the 3s lock_timeout above, then this 5s wait, both
+      # well inside the timeouts callers usually set. Longer than lock_timeout,
+      # so a request queued behind lock waiters gets a connection when they
+      # give up rather than failing first. No probe borrows a connection, so
+      # neither bound can fail one. The base document keeps 30s, so the H2
+      # concurrency tests, which share its pool of ten, are unaffected.
+      connection-timeout: 5000
   jpa:
     hibernate:
       # Flyway creates the schema; Hibernate fails fast if the entities drift from it.
@@ -261,6 +287,9 @@ spring:
       # other. Without it prod inherits the base document's H2 line,
       # SET LOCK_TIMEOUT 3000, which PostgreSQL rejects, and the pool never starts.
       connection-init-sql: SET lock_timeout = '3s'
+      # Repeated from postgres, which gives the reason. Without it prod waits
+      # the base document's 30s for a connection.
+      connection-timeout: 5000
   jpa:
     hibernate:
       ddl-auto: validate

@@ -615,8 +615,11 @@ Reasoned from the configuration, not measured under load, the order would be:
 2. **Seat lock contention.** Concurrent bookings for the *same flight* queue
    behind `SELECT ... FOR UPDATE`. That queue is what prevents overselling, so
    it is expected. `SET lock_timeout = '3s'` bounds the wait, and after that a
-   request gets 503 with `Retry-After`. Different flights never contend, so this
-   limit depends on concurrency per flight and not on total traffic.
+   request gets 503 with `Retry-After`. Different flights never contend for the
+   lock, so this limit depends on concurrency per flight and not on total
+   traffic. They do share each pod's pool, though: a hot flight's waiters each
+   hold a connection, so other requests on that pod can wait for one, 5 s at
+   most before `503 DATABASE_UNAVAILABLE`.
 
 3. **Outbox drain rate.** One publisher polls every second and claims up to 100
    rows with `FOR UPDATE SKIP LOCKED`, so the ceiling is roughly 100 events per

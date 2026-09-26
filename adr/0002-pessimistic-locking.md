@@ -84,6 +84,22 @@ waits (`DDL_LOCK_TIMEOUT` covers DDL only); this service has not been run
 against Oracle. [ADR 0016](0016-oracle-port.md) proposes, from that
 documentation and without an Oracle run, where the bound would move.
 
+**Addendum (2026-09-26).** Locking the flight row and then re-reading the
+idempotency key depends on READ COMMITTED, where the re-read takes a fresh
+snapshot and sees what the previous holder committed (under REPEATABLE READ
+PostgreSQL aborts the waiter with SQLSTATE `40001`), so the pool pins that
+level with `spring.datasource.hikari.transaction-isolation` in
+`src/main/resources/application.yml` instead of trusting the server's default.
+
+**Correction (2026-09-26).** The bullet on the bounded wait says the failure
+stays on one endpoint as a 503. The lock wait does: `lock_timeout` ends it, as
+a 503, on the requests that wait for the flight row lock, which are bookings,
+cancellations and flight status changes. But each waiter holds a pooled
+connection while it waits, so a hot flight's waiters can fill a pod's pool of
+ten. Other requests on that pod, for any flight, then wait for a connection,
+5 s at most in the `postgres` and `prod` profiles, and get
+`503 DATABASE_UNAVAILABLE` if none comes free.
+
 ## Alternatives considered
 
 * **Optimistic locking.** The better default for low contention, and the worst
