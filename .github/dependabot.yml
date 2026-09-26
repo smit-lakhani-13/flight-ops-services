@@ -106,12 +106,19 @@ updates:
   # the version, so it can move the build stage's JDK within Maven 3 (PR #1
   # proposed 3-eclipse-temurin-26), and the maven rule does not stop that. The
   # enforcer's requireJavaVersion [21,22) does: the image job fails on any
-  # other JDK. Maven 4 is its own upgrade. OS fixes do not come from here.
-  # 21-jre-alpine is a floating tag, so a fresh build pulls what it points to.
+  # other JDK. Maven 4 is its own upgrade.
+  #
+  # Both FROM lines are tag@sha256:digest, so a build pulls those bytes and
+  # not whatever the tag points to that day. Dependabot keeps the digests
+  # current: when upstream rebuilds a tag, it opens a pull request that moves
+  # the digest and keeps the tag. OS and JRE fixes arrive only that way now,
+  # and until one is merged a fixable CRITICAL in the pinned base fails the
+  # image job's scan on every pull request. So this entry runs weekly, where
+  # the others run monthly.
   - package-ecosystem: docker
     directory: "/"
     schedule:
-      interval: monthly
+      interval: weekly
     open-pull-requests-limit: 2
     labels: ["docker"]
     ignore:

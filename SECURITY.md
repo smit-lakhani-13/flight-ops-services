@@ -210,8 +210,9 @@ reverse, and the ADR is where to start.
 ## Transport
 
 Nothing is deployed, so nothing is on the internet today. This section
-describes what `deploy/k8s/components/ingress` would create the day someone
-applies it.
+describes the two legs a deploy would have: the Ingress that
+`deploy/k8s/components/ingress` would create the day someone applies it, and
+the connection from the pods to RDS.
 
 That Ingress listens on **port 80 with no TLS**. Basic credentials would cross
 the internet base64-encoded, and anyone who captures them can decode them.
@@ -223,6 +224,14 @@ to stop them. The HTTPS recipe (ACM, DNS validation, three Ingress annotations
 and `server.forward-headers-strategy`) is in
 [doc/DEPLOYMENT.md §8](doc/DEPLOYMENT.md#8-http-and-what-https-would-take). The
 work is written down. What is missing is a domain.
+
+The leg from the pods to RDS would be TLS with the server verified. The data
+stack's `JdbcUrl` output sets `sslmode=verify-full` and points the driver at
+the RDS CA bundle in the image, so it refuses a server whose certificate does
+not chain to that bundle or does not name the endpoint. The driver's default,
+`prefer`, would take any certificate, or none.
+[doc/DEPLOYMENT.md](doc/DEPLOYMENT.md#the-database-connection) says where the
+bundle comes from and how to refresh it.
 
 ## Data exposure
 
@@ -344,7 +353,7 @@ work is written down. What is missing is a domain.
 
 | | |
 |---|---|
-| Dependency updates | Dependabot, monthly, on both Maven modules, the Actions workflows and the Dockerfile base images |
+| Dependency updates | Dependabot, monthly on both Maven modules and the Actions workflows, and weekly on the Dockerfile base images. Both `FROM` lines name a tag and a digest, so a build pulls the bytes the digest names, and Dependabot moves the digest when the tag is rebuilt. The Dockerfile frontend line, `# syntax=docker/dockerfile:1`, is still a tag |
 | SBOM | CycloneDX, `target/bom.json` and `lambda/target/bom.json`, on every build, both typed `application`. The service jar also carries the one the Spring Boot parent writes, `target/classes/META-INF/sbom/application.cdx.json` |
 | Upper-bound dependency check | `maven-enforcer` `requireUpperBoundDeps`. A transitive downgrade fails the build |
 | Coverage floor | JaCoCo. The build fails under 80% line or 50% branch coverage |
@@ -359,7 +368,7 @@ work is written down. What is missing is a domain.
    right place for a limit is the ingress or a WAF, not application code.
    Neither has one, so nothing limits a client today, and that is a real gap.
 
-2. **No TLS.** See [Transport](#transport).
+2. **No TLS at the ingress.** See [Transport](#transport).
 
 3. **Kubernetes Secrets.** Secrets live in Kubernetes Secrets, not in Secrets
    Manager.

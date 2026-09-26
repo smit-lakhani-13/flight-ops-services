@@ -34,9 +34,13 @@ lambda/
 Dockerfile
 .dockerignore
 
-# Anything that could carry credentials
+# Anything that could carry credentials. certs/rds-global-bundle.pem holds
+# public CA certificates, and the runtime stage copies it. A bare `*.pem`
+# matches only the root, so it is not excluded today; the exception keeps it
+# in if the rule is ever widened to `**/*.pem`.
 .env
 .env.*
 *.pem
+!certs/rds-global-bundle.pem
 *.key
 **/secret.yaml

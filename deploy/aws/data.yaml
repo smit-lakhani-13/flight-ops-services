@@ -152,11 +152,19 @@ Outputs:
   DbPort:
     Value: !GetAtt Database.Endpoint.Port
 
+  # The one place the deployed JDBC URL is built. Without sslmode the driver
+  # uses `prefer`: it checks neither the certificate nor the host name, and
+  # falls back to plaintext if the server declines TLS, so anything between a
+  # pod and RDS could answer in its place. verify-full refuses a certificate
+  # that does not chain to the RDS CA bundle or does not name this endpoint.
+  # sslrootcert is the path the Dockerfile copies certs/rds-global-bundle.pem
+  # to; move one and the other must move with it.
   JdbcUrl:
     Description: >-
       The value the DB_URL repository variable and the aws overlay expect.
-      Copy it as it is; there is no password in it.
-    Value: !Sub 'jdbc:postgresql://${Database.Endpoint.Address}:${Database.Endpoint.Port}/${DBName}'
+      Copy it as it is, and quote it in a shell: the query string holds ? and
+      &. There is no password in it.
+    Value: !Sub 'jdbc:postgresql://${Database.Endpoint.Address}:${Database.Endpoint.Port}/${DBName}?sslmode=verify-full&sslrootcert=/app/certs/rds-global-bundle.pem'
 
   DbSecurityGroupId:
     Value: !GetAtt DBSecurityGroup.GroupId

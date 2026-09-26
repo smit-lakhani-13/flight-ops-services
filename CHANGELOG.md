@@ -163,6 +163,26 @@ still blank.
   rewrapped where they can break, except in `README.md` and the released
   sections here.
 
+- **The image is built from pinned base images.** Both `FROM` lines in the
+  `Dockerfile` named only a tag, so every build took whatever the tag pointed
+  to that day, and the deploy job's own build could push a base other than the
+  one the `image` job had built and started. Each line now names the tag and a
+  sha256 digest. The docker entry in `.github/dependabot.yml` moves the digest
+  when upstream rebuilds the tag, and it now runs weekly, because OS and JRE
+  fixes reach a pinned base only that way. The `# syntax=docker/dockerfile:1`
+  frontend line still floats.
+
+- **The database connection verifies the server.**
+  `deploy/aws/data.yaml#JdbcUrl` had no `sslmode`, so the driver used
+  `prefer`: it checked neither the certificate nor the host name and fell back
+  to plaintext when the server declined TLS, so anything on the path could
+  stand in for RDS. The URL now sets `sslmode=verify-full`, with `sslrootcert`
+  naming the RDS global CA bundle, committed as `certs/rds-global-bundle.pem`
+  and copied into the image. `doc/DEPLOYMENT.md` gives its source, checksum
+  and refresh steps, and `SECURITY.md` covers the database leg under
+  Transport. A `DB_URL` repository variable copied from the old output must be
+  replaced by hand. Local runs, compose and CI keep their own URLs.
+
 ## 1.2.0 — 2026-09-26
 
 The [fourth review pass](doc/DEFECT-LOG.md#fourth-review-pass), a full audit

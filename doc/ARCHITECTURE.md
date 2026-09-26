@@ -554,6 +554,9 @@ and restore the seats the booking had just debited.
 │                               (defined, not run end to end)
 ├── Dockerfile                  multi-stage: a JDK and Maven build stage, then
 │                               a JRE runtime
+├── certs/                      the RDS CA bundle the runtime image copies;
+│                               doc/DEPLOYMENT.md has its source and refresh
+│                               steps
 ├── pom.xml, mvnw               the service's build; the wrapper pins Maven
 ├── README.md, CHANGELOG.md, CONTRIBUTING.md, SECURITY.md, LICENSE
 └── .github/                    workflows/build-and-deploy.yml (build,

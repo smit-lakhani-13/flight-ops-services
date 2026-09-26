@@ -4,8 +4,9 @@
 
 # ---------- Stage 1: build ----------
 # `mvn`, not `./mvnw`: this base image already pins Maven 3.9 beside JDK 21,
-# which is the wrapper's job elsewhere. The image tag is the pin at this layer.
-FROM maven:3.9-eclipse-temurin-21 AS build
+# which is the wrapper's job elsewhere. The digest is the pin at this layer;
+# the runtime stage's comment says how it moves.
+FROM maven:3.9-eclipse-temurin-21@sha256:aabe2f8902f17a63be0d223846322678a2d3e62d18ca0aef5648bcb02f6bfe4b AS build
 WORKDIR /app
 
 # The pom first, so dependencies download again only when pom.xml changes. The
@@ -20,9 +21,14 @@ COPY src ./src
 RUN --mount=type=cache,target=/root/.m2 mvn clean package -DskipTests -B
 
 # ---------- Stage 2: runtime ----------
-# A major version, never :latest. A production pipeline would pin the digest
-# (@sha256:...), so a rebuild of the same commit gets the same base.
-FROM eclipse-temurin:21-jre-alpine
+# A major version, never :latest, and a digest (@sha256:...), so a rebuild of
+# the same commit gets the same base. A tag is a pointer anyone upstream can
+# move, and the digest names the bytes. The tag stays for the reader and for
+# Dependabot: the docker entry in .github/dependabot.yml opens a pull request
+# with the new digest when the tag is rebuilt, which is how OS and JRE fixes
+# now arrive. The frontend on the first line, docker/dockerfile:1, is still a
+# tag and is not pinned.
+FROM eclipse-temurin:21-jre-alpine@sha256:51ab5e3302e7141ce665ca3ea85e8b5cd648eafbc3c0c90dd79d6537684e4555
 WORKDIR /app
 
 # CI passes --build-arg GIT_SHA=$GITHUB_SHA. The default keeps a local build
@@ -45,6 +51,13 @@ LABEL org.opencontainers.image.title="flight-ops-service" \
 #   Error: container has runAsNonRoot and image has non-numeric user (spring),
 #   cannot verify user is non-root
 RUN addgroup -g 1001 -S spring && adduser -u 1001 -S spring -G spring
+
+# The CA bundle for the database's certificate. The JdbcUrl output of
+# deploy/aws/data.yaml sets sslmode=verify-full and points sslrootcert here, so
+# the driver checks the server's certificate and host name. Root-owned and
+# 0444, so UID 1001 can read it and not change it. doc/DEPLOYMENT.md says where
+# it comes from and how to refresh it.
+COPY --chmod=444 certs/rds-global-bundle.pem /app/certs/rds-global-bundle.pem
 
 COPY --from=build /app/target/*.jar app.jar
 

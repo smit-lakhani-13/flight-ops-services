@@ -21,8 +21,10 @@
 #   AWS_ACCOUNT_ID=123456789012 \
 #   IMAGE_TAG=$(git rev-parse HEAD) \
 #   SQS_QUEUE_URL=https://sqs.ap-south-1.amazonaws.com/123456789012/booking-events \
-#   DB_URL=jdbc:postgresql://host:5432/flightops \
+#   DB_URL='<the JdbcUrl output of deploy/aws/data.yaml>' \
 #     deploy/aws/render-aws.sh | kubectl apply -f -
+#
+# DB_URL goes in single quotes, because its query string holds ? and &.
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
