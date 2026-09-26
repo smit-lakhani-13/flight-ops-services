@@ -1,14 +1,27 @@
 package com.smit.flightops.entity;
 
 import com.smit.flightops.exception.FlightNotBookableException;
+import com.smit.flightops.exception.IllegalFlightTransitionException;
 import com.smit.flightops.exception.InsufficientSeatsException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.stream.Stream;
 
+import static com.smit.flightops.entity.FlightStatus.ARRIVED;
+import static com.smit.flightops.entity.FlightStatus.BOARDING;
+import static com.smit.flightops.entity.FlightStatus.CANCELLED;
+import static com.smit.flightops.entity.FlightStatus.DELAYED;
+import static com.smit.flightops.entity.FlightStatus.DEPARTED;
+import static com.smit.flightops.entity.FlightStatus.SCHEDULED;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /** Unit tests on the aggregate, with no Spring and no database: the seat invariant is a domain rule. */
@@ -192,5 +205,100 @@ class FlightTest {
         assertThat(FlightStatus.CANCELLED.acceptsCancellations()).isTrue();
         assertThat(FlightStatus.DEPARTED.acceptsCancellations()).isFalse();
         assertThat(FlightStatus.ARRIVED.acceptsCancellations()).isFalse();
+    }
+
+    // ------------------------------------------------------------------
+    // Transitions: the graph in FlightStatus.canTransitionTo, as Flight
+    // enforces it.
+    // ------------------------------------------------------------------
+
+    /** Reaches {@code status} only through moves the graph allows, as a client would. */
+    private Flight at(FlightStatus status) {
+        Flight flight = flight();
+        switch (status) {
+            case SCHEDULED -> { }
+            case BOARDING, DELAYED, DEPARTED -> flight.updateStatus(status);
+            case ARRIVED -> {
+                flight.updateStatus(DEPARTED);
+                flight.updateStatus(ARRIVED);
+            }
+            case CANCELLED -> flight.cancel();
+        }
+        assertThat(flight.getStatus()).as("the flight under test").isEqualTo(status);
+        return flight;
+    }
+
+    private static Stream<Arguments> refused(FlightStatus from, FlightStatus... to) {
+        return Stream.of(to).map(next -> Arguments.of(from, next));
+    }
+
+    /**
+     * Every pair of distinct statuses the diagram in ARCHITECTURE.md does not
+     * draw, written out rather than derived from canTransitionTo, which is what
+     * is under test. Nineteen of the thirty moves between distinct statuses.
+     */
+    static Stream<Arguments> refusedMoves() {
+        return Stream.of(
+                refused(SCHEDULED, ARRIVED),
+                refused(BOARDING, SCHEDULED, ARRIVED),
+                refused(DELAYED, SCHEDULED, ARRIVED),
+                refused(DEPARTED, SCHEDULED, BOARDING, DELAYED, CANCELLED),
+                refused(ARRIVED, SCHEDULED, BOARDING, DELAYED, DEPARTED, CANCELLED),
+                refused(CANCELLED, SCHEDULED, BOARDING, DELAYED, DEPARTED, ARRIVED))
+                .flatMap(pairs -> pairs);
+    }
+
+    @ParameterizedTest
+    @MethodSource("refusedMoves")
+    @DisplayName("a move the graph does not allow throws and leaves the status where it was")
+    void refusedMovesAreRefused(FlightStatus from, FlightStatus to) {
+        // A flown flight back at BOARDING, or a cancelled one at DELAYED, is
+        // bookable again, so a loosened arm would sell seats.
+        Flight flight = at(from);
+
+        assertThatExceptionOfType(IllegalFlightTransitionException.class)
+                .as("%s to %s", from, to)
+                .isThrownBy(() -> flight.updateStatus(to));
+
+        assertThat(flight.getStatus()).as("after refusing %s to %s", from, to).isEqualTo(from);
+    }
+
+    @Test
+    @DisplayName("a departed or arrived flight cannot be cancelled, and keeps its status")
+    void aFlownFlightCannotBeCancelled() {
+        for (FlightStatus status : new FlightStatus[]{DEPARTED, ARRIVED}) {
+            Flight flight = at(status);
+
+            assertThatExceptionOfType(IllegalFlightTransitionException.class)
+                    .as("cancelling a %s flight", status)
+                    .isThrownBy(flight::cancel);
+
+            assertThat(flight.getStatus()).as("after cancelling a %s flight", status).isEqualTo(status);
+        }
+    }
+
+    @Test
+    @DisplayName("a BOARDING or DELAYED flight can still be cancelled")
+    void boardingAndDelayedCanBeCancelled() {
+        // A delay that turns into a cancellation is the usual way a flight is cancelled.
+        for (FlightStatus status : new FlightStatus[]{BOARDING, DELAYED}) {
+            Flight flight = at(status);
+
+            flight.cancel();
+
+            assertThat(flight.getStatus()).as("after cancelling a %s flight", status).isEqualTo(CANCELLED);
+        }
+    }
+
+    @ParameterizedTest
+    @EnumSource(FlightStatus.class)
+    @DisplayName("every status may move to itself, so a retried PATCH is not a conflict")
+    void everyStatusMayMoveToItself(FlightStatus status) {
+        Flight flight = at(status);
+
+        flight.updateStatus(status);
+
+        assertThat(status.canTransitionTo(status)).isTrue();
+        assertThat(flight.getStatus()).isEqualTo(status);
     }
 }
