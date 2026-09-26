@@ -39,6 +39,20 @@ public enum FlightStatus {
     }
 
     /**
+     * Whether a booking on a flight in this status may still be cancelled. Not
+     * the inverse of {@link #isBookable()}: a cancelled flight still takes
+     * cancellations, because refunds happen on cancelled flights. A departed or
+     * arrived flight does not, because cancelling then would rewrite the record
+     * of a flight that has already flown.
+     */
+    public boolean acceptsCancellations() {
+        return switch (this) {
+            case SCHEDULED, BOARDING, DELAYED, CANCELLED -> true;
+            case DEPARTED, ARRIVED -> false;
+        };
+    }
+
+    /**
      * Whether this status may become {@code next}. The judgement calls:
      *
      * <ul>

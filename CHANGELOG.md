@@ -55,6 +55,16 @@ still blank.
 
 ### Fixed
 
+- **A booking on a flight that had flown could still be cancelled.**
+  `DELETE /api/v1/bookings/{bookingId}` never read the flight's status, so on
+  a `DEPARTED` or `ARRIVED` flight it answered 200, marked the booking
+  cancelled and put its seats back, rewriting the record of a flight that had
+  already flown. `BookingWriter#cancelBooking` now refuses an active booking
+  on such a flight with `409 BOOKING_NOT_CANCELLABLE` and changes nothing,
+  using the new `FlightStatus#acceptsCancellations`. A booking cancelled
+  before departure still answers 200 with its original `cancelledAt`, and one
+  on a `CANCELLED` flight can still be cancelled.
+
 - **Tests that proved less than their names said.**
   `BearerTokenChallengeTest#aSignedTokensScopeMapsOntoTheRules` signs an RS256
   token with the `flights:read` scope and checks that it can read a flight but

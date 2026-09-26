@@ -4,6 +4,8 @@ import com.jayway.jsonpath.JsonPath;
 import com.smit.flightops.config.SecurityConfig;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -481,6 +483,47 @@ class ErrorContractTest {
         assertThat(availableSeats("UA789")).isEqualTo(afterCancel);
     }
 
+    /** Through DEPARTED either way, because the state machine refuses SCHEDULED to ARRIVED. */
+    @ParameterizedTest
+    @CsvSource({"DEPARTED, ZZ400", "ARRIVED, ZZ401"})
+    @DisplayName("an active booking on a departed or arrived flight is 409 BOOKING_NOT_CANCELLABLE, and nothing changes")
+    void cancellingOnAFlownFlightIsRefused(String flightStatus, String flightNumber) throws Exception {
+        createFlight(flightNumber, "BOM", "GOI", "2099-01-01T10:00:00Z");
+        long bookingId = book(flightNumber, "Ada Lovelace", 2, "contract-flown-" + flightStatus);
+        changeStatus(flightNumber, "DEPARTED");
+        changeStatus(flightNumber, flightStatus);
+
+        mockMvc.perform(delete("/api/v1/bookings/" + bookingId))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("BOOKING_NOT_CANCELLABLE"))
+                .andExpect(jsonPath("$.message").value(containsString(flightStatus)));
+
+        // A 409 that still wrote would tell the client nothing changed when it had.
+        assertThat(availableSeats(flightNumber)).isEqualTo(48);
+        mockMvc.perform(get("/api/v1/bookings/" + bookingId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.cancelledAt").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("a booking cancelled before departure still answers 200 with its original cancelledAt after it")
+    void cancellationRepeatedAfterDepartureIsStillANoOp() throws Exception {
+        createFlight("ZZ402", "BOM", "GOI", "2099-01-01T10:00:00Z");
+        long bookingId = book("ZZ402", "Ada Lovelace", 2, "contract-flown-repeat");
+
+        String cancelled = mockMvc.perform(delete("/api/v1/bookings/" + bookingId))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+        String cancelledAt = JsonPath.read(cancelled, "$.cancelledAt");
+        changeStatus("ZZ402", "DEPARTED");
+
+        // Idempotency comes before the status check, so the retry is not refused.
+        mockMvc.perform(delete("/api/v1/bookings/" + bookingId))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.cancelledAt").value(cancelledAt));
+        assertThat(availableSeats("ZZ402")).isEqualTo(50);
+    }
+
     // ------------------------------------------------------------------
     // The envelope
     // ------------------------------------------------------------------
@@ -551,14 +594,24 @@ class ErrorContractTest {
                 .andExpect(status().isCreated());
     }
 
-    private void book(String flightNumber, String passengerName, int seats, String key) throws Exception {
-        mockMvc.perform(post("/api/v1/bookings")
+    private long book(String flightNumber, String passengerName, int seats, String key) throws Exception {
+        String created = mockMvc.perform(post("/api/v1/bookings")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"flightNumber":"%s","passengerName":"%s","seats":%d,
                                  "idempotencyKey":"%s"}
                                 """.formatted(flightNumber, passengerName, seats, key)))
-                .andExpect(status().isCreated());
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        return Long.parseLong(created.replaceAll(".*\"bookingId\":(\\d+).*", "$1"));
+    }
+
+    private void changeStatus(String flightNumber, String newStatus) throws Exception {
+        mockMvc.perform(patch("/api/v1/flights/" + flightNumber + "/status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"status":"%s"}""".formatted(newStatus)))
+                .andExpect(status().isOk());
     }
 
     private String bookingsPage(String flightNumber, int page) throws Exception {

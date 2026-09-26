@@ -98,7 +98,7 @@ the two statuses stay apart.
 | `POST` | `/api/v1/bookings` | `flights:write` | 201 + `Location` | 400, 404, 409, 415, 503 |
 | `GET` | `/api/v1/bookings/{bookingId}` | `flights:read` | 200 | 400, 404 |
 | `GET` | `/api/v1/bookings?flightNumber=&page=&size=&sort=` | `flights:read` | 200 (paginated) | 400 |
-| `DELETE` | `/api/v1/bookings/{bookingId}` | `flights:write` | 200 | 400, 404, 503 |
+| `DELETE` | `/api/v1/bookings/{bookingId}` | `flights:write` | 200 | 400, 404, 409, 503 |
 | `GET` | `/actuator/health`, `/actuator/health/liveness`, `/actuator/health/readiness` | none | 200 | 401 on a wrong password; 503 while the status is `DOWN` or `OUT_OF_SERVICE`, so a database outage takes `/health` and `/readiness` to 503 and leaves liveness at 200 |
 | `GET` | `/actuator`, `/actuator/info`, `/actuator/metrics`, `/actuator/prometheus` | `ROLE_OPS` | 200 | 401, 403 |
 
@@ -115,8 +115,13 @@ A few behaviours the table does not show:
 - A replayed booking answers 201 with the booking the key first created. See
   [Retries](#retries).
 - Both `DELETE`s are safe to repeat. A cancelled flight answers 204 again, and
-  a cancelled booking answers 200 with its original `cancelledAt`. Nothing is
-  deleted: a cancelled row keeps its history.
+  a cancelled booking answers 200 with its original `cancelledAt`, even after
+  its flight has departed. Nothing is deleted: a cancelled row keeps its
+  history.
+- A booking still active on a `DEPARTED` or `ARRIVED` flight cannot be
+  cancelled. Its `DELETE` answers `409 BOOKING_NOT_CANCELLABLE` and the seats
+  stay sold (`entity/FlightStatus.java#acceptsCancellations`). A booking on a
+  `CANCELLED` flight can still be cancelled.
 
 Not every 503 has the same test behind it. A booking and a booking
 cancellation wait out a real row lock in `LockTimeoutTest`, and the booking
@@ -157,10 +162,11 @@ columns, so the client gets a fixed string and the detail goes to the log at
 WARN. The project's own exception messages are written for clients, and those
 pass through: `FlightNotFoundException`, `BookingNotFoundException`,
 `InsufficientSeatsException`, `FlightNotBookableException`,
-`DuplicateFlightException`, `IllegalFlightTransitionException`,
-`IdempotencyKeyConflictException` and `UnknownSortPropertyException`. So does
-Spring MVC's own `ErrorResponse` detail, such as
-`Method 'POST' is not supported.`, which names only the request.
+`BookingNotCancellableException`, `DuplicateFlightException`,
+`IllegalFlightTransitionException`, `IdempotencyKeyConflictException` and
+`UnknownSortPropertyException`. So does Spring MVC's own `ErrorResponse`
+detail, such as `Method 'POST' is not supported.`, which names only the
+request.
 
 Two cases get a fixed message instead:
 
@@ -217,6 +223,7 @@ included.
 | `BOOKING_NOT_FOUND` | 404 | no such booking id; its own code, so a booking 404 does not claim the flight is missing |
 | `INSUFFICIENT_SEATS` | 409 | fewer seats remain than requested; a retry with fewer seats can succeed |
 | `FLIGHT_NOT_BOOKABLE` | 409 | the flight is `CANCELLED`, `DEPARTED` or `ARRIVED`; a retry can never succeed |
+| `BOOKING_NOT_CANCELLABLE` | 409 | the booking is still active and its flight is `DEPARTED` or `ARRIVED`; a retry can never succeed. A booking already cancelled answers 200 instead |
 | `DUPLICATE_FLIGHT` | 409 | the flight number already exists |
 | `CONCURRENT_MODIFICATION` | 409 | `@Version` rejected a stale write |
 | `DUPLICATE_REQUEST` | 409 | two flight-creation requests raced on `flight_number` and the constraint chose one; a raced booking recovers instead |
