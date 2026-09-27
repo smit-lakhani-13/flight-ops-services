@@ -30,7 +30,7 @@ async function checkLayout(page: Page, where: string, touch: boolean, signedIn =
     }
     if (touch) {
       const targets = document.querySelectorAll<HTMLElement>(
-        'nav[aria-label="Main"] a, button, input:not([type="hidden"]), select',
+        'nav[aria-label="Main"] a, main a:not(table a), button, input:not([type="hidden"]), select',
       );
       for (const el of targets) {
         const box = el.getBoundingClientRect();

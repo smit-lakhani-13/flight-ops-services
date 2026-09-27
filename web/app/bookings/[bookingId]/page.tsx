@@ -133,7 +133,7 @@ function BookingDetail({ bookingId }: { bookingId: string }) {
             {
               label: "Flight",
               value: (
-                <TextLink href={`/flights/${b.flightNumber}`} className="font-mono">
+                <TextLink href={`/flights/${b.flightNumber}`} className="font-mono" standalone>
                   {b.flightNumber}
                 </TextLink>
               ),

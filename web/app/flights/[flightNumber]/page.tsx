@@ -101,7 +101,8 @@ function FlightDetail({ flightNumber }: { flightNumber: string }) {
   const readError = flight !== null && answered === null ? flight.error : null;
 
   // Try again goes away once the flight arrives, so the focus goes to the
-  // page's heading rather than falling back to the page.
+  // page's heading rather than falling back to the page. It reads the
+  // bookings again too: an outage that failed the flight failed them as well.
   const retried = useRef(false);
   useEffect(() => {
     if (!retried.current || flightPending || readError !== null) return;
@@ -112,6 +113,7 @@ function FlightDetail({ flightNumber }: { flightNumber: string }) {
     retried.current = true;
     setMutedCode(null);
     reloadFlight();
+    reloadBookings();
   }
 
   async function transition(next: FlightStatus): Promise<ClassifiedError | null> {
@@ -260,7 +262,8 @@ function FlightDetail({ flightNumber }: { flightNumber: string }) {
             {bookings.data.page.totalPages > 1 && <Pager page={bookings.data.page} onPage={setBookingPage} />}
           </>
         ) : (
-          <ErrorBanner error={bookings.error} />
+          // When the flight's own read failed too, its banner has said so.
+          <ErrorBanner error={bookings.error} announce={readError === null} />
         )}
       </Card>
     </div>

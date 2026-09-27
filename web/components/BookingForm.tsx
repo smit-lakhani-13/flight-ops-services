@@ -301,7 +301,7 @@ function OutcomeCard({ outcome, firstBooking }: { outcome: Outcome; firstBooking
         <h3 className="font-semibold">{TITLES[outcome.action]}</h3>
         <HttpStatus status={result.status} />
         {booking ? (
-          <TextLink href={`/bookings/${booking.bookingId}`}>
+          <TextLink href={`/bookings/${booking.bookingId}`} standalone>
             <span data-testid="booking-id">booking #{booking.bookingId}</span>
           </TextLink>
         ) : (

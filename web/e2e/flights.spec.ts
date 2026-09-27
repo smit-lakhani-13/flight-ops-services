@@ -1,5 +1,5 @@
-import { expect, test } from "@playwright/test";
-import { API_ACCOUNT, basic, createFlight, go, openFlight, signIn, uniqueFlightNumber } from "./support";
+import { expect, test, type Route } from "@playwright/test";
+import { API_ACCOUNT, basic, createBooking, createFlight, go, openFlight, signIn, uniqueFlightNumber } from "./support";
 
 test("search narrows the list by airport", async ({ page }) => {
   await signIn(page);
@@ -25,17 +25,23 @@ test("creating a flight shows the API's message per field, then opens the new fl
   await form.getByLabel("Origin").fill("JF1");
   await form.getByLabel("Destination").fill("SFO");
   await form.getByLabel("Seats").fill("0");
+  // An empty Departs goes as null, so the service names it too.
+  await form.getByLabel("Departs").fill("");
   await form.getByRole("button", { name: "Create flight" }).click();
 
   await expect(form.getByLabel("Flight number")).toHaveAttribute("aria-invalid", "true");
   await expect(form.getByLabel("Origin")).toHaveAttribute("aria-invalid", "true");
   await expect(form.getByLabel("Seats")).toHaveAttribute("aria-invalid", "true");
+  await expect(form.getByLabel("Departs")).toHaveAttribute("aria-invalid", "true");
   await expect(form.getByTestId("error-banner")).toHaveAttribute("data-code", "VALIDATION_FAILED");
 
   const flightNumber = uniqueFlightNumber();
   await form.getByLabel("Flight number").fill(flightNumber.toLowerCase());
   await form.getByLabel("Origin").fill("JFK");
   await form.getByLabel("Seats").fill("12");
+  const departs = new Date(Date.now() + 7 * 24 * 3600 * 1000);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  await form.getByLabel("Departs").fill(`${departs.getFullYear()}-${pad(departs.getMonth() + 1)}-${pad(departs.getDate())}T10:00`);
   await form.getByRole("button", { name: "Create flight" }).click();
 
   // The service stores it upper-case and answers with a Location, which the
@@ -43,6 +49,76 @@ test("creating a flight shows the API's message per field, then opens the new fl
   await expect(page).toHaveURL(new RegExp(`/flights/${flightNumber}$`));
   await expect(page.getByTestId("flight-status")).toHaveText("SCHEDULED");
   await expect(page.getByTestId("seats-left")).toContainText("12/12");
+});
+
+test("Try again after an outage reads the flight and its bookings again", async ({ page, request }) => {
+  const flightNumber = uniqueFlightNumber();
+  await createFlight(request, flightNumber);
+  const bookingId = await createBooking(request, flightNumber);
+  await signIn(page);
+
+  // What the console's own server answers while the service is down, for
+  // this flight's two reads only.
+  const down = (route: Route) =>
+    route.fulfill({
+      status: 502,
+      json: { code: "CONSOLE_UPSTREAM_UNREACHABLE", message: "The console could not reach the API. Is the service running?" },
+    });
+  await page.route((url) => url.pathname === `/api/v1/flights/${flightNumber}`, down);
+  await page.route((url) => url.pathname === "/api/v1/bookings" && url.searchParams.get("flightNumber") === flightNumber, down);
+  await openFlight(page, flightNumber);
+  await expect(page.getByTestId("error-banner")).toHaveAttribute("data-code", "CONSOLE_UPSTREAM_UNREACHABLE");
+
+  await page.unrouteAll();
+  await page.getByRole("button", { name: "Try again" }).click();
+  await expect(page.getByTestId("flight-status")).toHaveText("SCHEDULED");
+  await expect(page.getByTestId("booking-table")).toContainText(`#${bookingId}`);
+  await expect(page.getByTestId("error-banner")).toHaveCount(0);
+});
+
+test("a Try again that fails as well is announced once, and a failed Refresh on the bookings still is", async ({ page, request }) => {
+  const flightNumber = uniqueFlightNumber();
+  await createFlight(request, flightNumber);
+  await signIn(page);
+  await openFlight(page, flightNumber);
+  await expect(page.getByTestId("flight-status")).toHaveText("SCHEDULED");
+  const card = (title: string) => page.locator("section").filter({ has: page.getByRole("heading", { name: title }) });
+  const bookingsBanner = card("Bookings on this flight").getByTestId("error-banner");
+  const alerts = page.locator('[data-testid="error-banner"][role="alert"]');
+  const down = (route: Route) =>
+    route.fulfill({
+      status: 502,
+      json: { code: "CONSOLE_UPSTREAM_UNREACHABLE", message: "The console could not reach the API. Is the service running?" },
+    });
+  const flightUrl = (url: URL) => url.pathname === `/api/v1/flights/${flightNumber}`;
+  const bookingsUrl = (url: URL) => url.pathname === "/api/v1/bookings" && url.searchParams.get("flightNumber") === flightNumber;
+
+  // The service goes down. The cancel fails, and so does the read it starts,
+  // which keeps the flight on screen under that read's quiet error.
+  await page.route(flightUrl, down);
+  await page.route(bookingsUrl, down);
+  await page.getByRole("button", { name: "Cancel flight" }).click();
+  await page.getByRole("button", { name: "Yes, cancel it" }).click();
+  const tryAgain = page.getByRole("button", { name: "Try again" });
+  await expect(tryAgain).toBeVisible();
+  await expect(alerts).toHaveCount(1);
+
+  // Try again, still down: the flight's read error is an alert again, and the
+  // bookings card shows the same outage without announcing it a second time.
+  await tryAgain.click();
+  await expect(bookingsBanner).toBeVisible();
+  await expect(tryAgain).not.toHaveAttribute("aria-busy", "true");
+  await expect(alerts).toHaveCount(2);
+  await expect(bookingsBanner).not.toHaveAttribute("role", "alert");
+
+  // The flight comes back and the bookings stay down. The card's own Refresh
+  // is a press of its own, so its failure is an alert.
+  await page.unroute(flightUrl, down);
+  await tryAgain.click();
+  await expect(page.getByTestId("flight-status")).toHaveText("SCHEDULED");
+  await expect(tryAgain).toHaveCount(0);
+  await card("Bookings on this flight").getByRole("button", { name: "Refresh" }).click();
+  await expect(bookingsBanner).toHaveAttribute("role", "alert");
 });
 
 test("a status the service allows moves the flight; any other gets its 409", async ({ page, request }) => {
