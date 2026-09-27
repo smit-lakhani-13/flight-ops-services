@@ -117,7 +117,11 @@ still blank.
   on such a flight with `409 BOOKING_NOT_CANCELLABLE` and changes nothing,
   using the new `FlightStatus#acceptsCancellations`. A booking cancelled
   before departure still answers 200 with its original `cancelledAt`, and one
-  on a `CANCELLED` flight can still be cancelled.
+  on a `CANCELLED` flight can still be cancelled. The new 409 changes what the
+  contract returns for a request it accepted, which the versioning rule above
+  calls a major. This release treats it as a fix, because the 200 it replaces
+  rewrote the record of a flight that had already flown, and relying on
+  that 200 meant relying on the defect.
 
 - **Tests that proved less than their names said.**
   `BearerTokenChallengeTest#aSignedTokensScopeMapsOntoTheRules` signs an RS256

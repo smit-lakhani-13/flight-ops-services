@@ -137,8 +137,9 @@ cancellation wait out a real row lock in `LockTimeoutTest`, and the booking
 does on PostgreSQL in CI too (`LockTimeoutPostgresTest`). The 503s for a
 status change, a flight cancellation and `DATABASE_UNAVAILABLE` are checked
 only in the `@WebMvcTest` slice, with the service mocked
-(`FlightControllerTest`). No test takes the database down to watch
-`/actuator/health` answer 503.
+(`FlightControllerTest`). `HealthGroupsTest` stubs the `db` health indicator
+`DOWN` and checks that `/actuator/health` answers 503 while readiness and
+liveness stay 200. No test takes a real database down.
 
 ## Request rules
 
@@ -488,7 +489,7 @@ and every operation the document lists still does, for the reasons in
 to `denyAll()`, so a `POST` to `/v3/api-docs` without credentials is a 401.
 The document declares one `basicAuth` scheme and applies it to every
 operation. It declares no bearer scheme, because the JWT half of
-`SecurityConfig` activates only when an issuer is configured.
+`SecurityConfig` activates only when a `JwtDecoder` is configured.
 
 `SWAGGER_UI_ENABLED=false` sets `springdoc.swagger-ui.enabled` in
 `application.yml` and turns Swagger UI off. `/swagger-ui.html` then answers
