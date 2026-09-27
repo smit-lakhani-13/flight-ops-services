@@ -41,7 +41,8 @@ class BookingEventContractTest {
                 return mapper.readTree(Files.readString(candidate));
             }
         }
-        throw new IllegalStateException("contracts/booking-created-v1.json not found from " + Path.of("").toAbsolutePath());
+        throw new IllegalStateException("contracts/booking-created-v1.json not found from "
+                + Path.of("").toAbsolutePath());
     }
 
     private static List<String> fieldNames(JsonNode node) {

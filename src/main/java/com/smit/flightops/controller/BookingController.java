@@ -104,11 +104,13 @@ public class BookingController {
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "404", description = "`FLIGHT_NOT_FOUND`",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
-            @ApiResponse(responseCode = "413", description =
-                    "`PAYLOAD_TOO_LARGE`: the body is larger than the limit, 16384 bytes by default, and is refused without being read in full.",
+            @ApiResponse(responseCode = "413", description = """
+                    `PAYLOAD_TOO_LARGE`: the body is larger than the limit, 16384 bytes by default, \
+                    and is refused without being read in full.""",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
-            @ApiResponse(responseCode = "415", description =
-                    "`UNSUPPORTED_MEDIA_TYPE` — the `Content-Type` is missing or is not `application/json`. YAML is refused too.",
+            @ApiResponse(responseCode = "415", description = """
+                    `UNSUPPORTED_MEDIA_TYPE` — the `Content-Type` is missing or is not `application/json`. \
+                    YAML is refused too.""",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "409", description = """
                     `INSUFFICIENT_SEATS` — fewer seats remain than requested, and a \

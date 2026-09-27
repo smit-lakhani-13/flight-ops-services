@@ -220,7 +220,8 @@ class LockTimeoutTest {
     }
 
     @Test
-    @DisplayName("with nothing holding the lock the same request succeeds, so the timeout is not just rejecting everything")
+    @DisplayName("with nothing holding the lock the same request succeeds, "
+                 + "so the timeout is not just rejecting everything")
     void uncontendedBookingStillSucceeds() throws Exception {
         double timeoutsBefore = lockTimeoutCount();
 

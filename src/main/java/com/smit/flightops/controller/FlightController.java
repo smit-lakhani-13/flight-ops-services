@@ -92,7 +92,8 @@ public class FlightController {
      */
     @Operation(summary = "Search flights by origin and destination")
     @ApiResponses({
-            @ApiResponse(responseCode = "200", description = "A page of flights, by departure time unless `sort` says otherwise."),
+            @ApiResponse(responseCode = "200", description =
+                    "A page of flights, by departure time unless `sort` says otherwise."),
             @ApiResponse(responseCode = "400", description = """
                     `UNKNOWN_SORT_PROPERTY`: `sort` names a property this endpoint does not offer. \
                     `MALFORMED_REQUEST`: `page` times `size` is larger than 2147483647, or \
@@ -140,11 +141,13 @@ public class FlightController {
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "403", description = "`FORBIDDEN` — `flights:write` is required.",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
-            @ApiResponse(responseCode = "413", description =
-                    "`PAYLOAD_TOO_LARGE`: the body is larger than the limit, 16384 bytes by default, and is refused without being read in full.",
+            @ApiResponse(responseCode = "413", description = """
+                    `PAYLOAD_TOO_LARGE`: the body is larger than the limit, 16384 bytes by default, \
+                    and is refused without being read in full.""",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
-            @ApiResponse(responseCode = "415", description =
-                    "`UNSUPPORTED_MEDIA_TYPE` — the `Content-Type` is missing or is not `application/json`. YAML is refused too.",
+            @ApiResponse(responseCode = "415", description = """
+                    `UNSUPPORTED_MEDIA_TYPE` — the `Content-Type` is missing or is not `application/json`. \
+                    YAML is refused too.""",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "409", description = """
                     `DUPLICATE_FLIGHT` — a flight with this number exists. `DUPLICATE_REQUEST` — \
@@ -186,11 +189,13 @@ public class FlightController {
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "404", description = "`FLIGHT_NOT_FOUND`",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
-            @ApiResponse(responseCode = "413", description =
-                    "`PAYLOAD_TOO_LARGE`: the body is larger than the limit, 16384 bytes by default, and is refused without being read in full.",
+            @ApiResponse(responseCode = "413", description = """
+                    `PAYLOAD_TOO_LARGE`: the body is larger than the limit, 16384 bytes by default, \
+                    and is refused without being read in full.""",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
-            @ApiResponse(responseCode = "415", description =
-                    "`UNSUPPORTED_MEDIA_TYPE` — the `Content-Type` is missing or is not `application/json`. YAML is refused too.",
+            @ApiResponse(responseCode = "415", description = """
+                    `UNSUPPORTED_MEDIA_TYPE` — the `Content-Type` is missing or is not `application/json`. \
+                    YAML is refused too.""",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "409", description = """
                     `ILLEGAL_STATUS_TRANSITION` — the flight cannot reach that status \

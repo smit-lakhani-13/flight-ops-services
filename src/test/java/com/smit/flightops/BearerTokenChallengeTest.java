@@ -105,7 +105,8 @@ class BearerTokenChallengeTest {
                         .header(HttpHeaders.AUTHORIZATION, bearer)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"flightNumber":"UA123","passengerName":"Jane Doe","seats":1,"idempotencyKey":"jwt-denied-1"}
+                                {"flightNumber":"UA123","passengerName":"Jane Doe","seats":1,\
+                                "idempotencyKey":"jwt-denied-1"}
                                 """))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("FORBIDDEN"));

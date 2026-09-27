@@ -239,7 +239,8 @@ class SecurityRulesTest {
         mockMvc.perform(post("/api/v1/bookings")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"flightNumber":"UA123","passengerName":"Jane Doe","seats":1,"idempotencyKey":"sec-denied-1"}
+                                {"flightNumber":"UA123","passengerName":"Jane Doe","seats":1,\
+                                "idempotencyKey":"sec-denied-1"}
                                 """))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("FORBIDDEN"));
@@ -261,7 +262,8 @@ class SecurityRulesTest {
                         .with(httpBasic(API_USER, API_PASSWORD))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                {"flightNumber":"UA123","passengerName":"Jane Doe","seats":1,"idempotencyKey":"sec-allowed-1"}
+                                {"flightNumber":"UA123","passengerName":"Jane Doe","seats":1,\
+                                "idempotencyKey":"sec-allowed-1"}
                                 """))
                 .andExpect(status().isCreated());
     }

@@ -64,9 +64,12 @@ class FlightRepositoryTest {
         save("UA123", "EWR", "LHR", 180);
         save("UA789", "EWR", "SFO", 200);
 
-        assertThat(flightRepository.findByOriginAndDestination("EWR", "LHR", PageRequest.of(0, 10)).getContent()).hasSize(1);
-        assertThat(flightRepository.findByOriginAndDestination("EWR", "SFO", PageRequest.of(0, 10)).getContent()).hasSize(1);
-        assertThat(flightRepository.findByOriginAndDestination("ORD", "LHR", PageRequest.of(0, 10)).getContent()).isEmpty();
+        assertThat(flightRepository.findByOriginAndDestination("EWR", "LHR", PageRequest.of(0, 10)).getContent())
+                .hasSize(1);
+        assertThat(flightRepository.findByOriginAndDestination("EWR", "SFO", PageRequest.of(0, 10)).getContent())
+                .hasSize(1);
+        assertThat(flightRepository.findByOriginAndDestination("ORD", "LHR", PageRequest.of(0, 10)).getContent())
+                .isEmpty();
     }
 
     @Test
