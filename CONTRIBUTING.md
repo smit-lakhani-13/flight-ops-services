@@ -216,8 +216,8 @@ for a commit on `main` that got no push run.
 | `infra-lint` | `cfn-lint`, `sam validate` | a CloudFormation or SAM template is malformed |
 | `infra-lint` | `shellcheck` v0.11.0, `bash -n` | any tracked `*.sh` has a lint finding or a syntax error |
 | `infra-lint` | `deploy/aws/selftest.sh` | `down.sh`, `cost-check.sh`, `ecr-image-exists.sh` or `up.sh`'s checks in `lib.sh` reach a wrong verdict against stub `aws`, `kubectl`, `helm`, `eksctl`, `sleep` and `mvnw` |
-| `trivy-fs` | Trivy | a CRITICAL/HIGH vulnerability **with a fix available**, or a committed secret that Trivy rates CRITICAL/HIGH |
-| `dependency-review` | dependency-review | the pull request *adds* a dependency with a high-severity advisory. The job needs the repository's dependency graph. If the graph is switched off, the job names the setting in its summary and passes, because no commit can fix a repository setting. A probe that answers anything other than 200, 403 or 404 (an outage, a token problem) fails the job, so "the API had a bad minute" never looks like "the feature is off" |
+| `trivy-fs` | Trivy | a CRITICAL/HIGH vulnerability **with a fix available**, in a runtime or a development dependency, or a committed secret that Trivy rates CRITICAL/HIGH |
+| `dependency-review` | dependency-review | the pull request *adds* a runtime or development dependency with a high-severity advisory. The job needs the repository's dependency graph. If the graph is switched off, the job names the setting in its summary and passes, because no commit can fix a repository setting. A probe that answers anything other than 200, 403 or 404 (an outage, a bad token), or a 403 for a spent rate limit or a missing permission, fails the job, so "the API had a bad minute" never looks like "the feature is off" |
 | `docs-check` | `scripts/refcheck.py` | a backticked `path` or `path#symbol` in any Markdown file does not resolve |
 | `docs-check` | `scripts/linkcheck.py` | a relative link or heading anchor is broken |
 | `docs-check` | `scripts/numbers.sh --check-readme` | a README line that names `adr/` gives a count of records other than the number of ADR files in `adr/` (or no such line exists, or two disagree), or the index in `adr/README.md` does not link each ADR file exactly once (a missing, extra or repeated row) |
@@ -413,6 +413,9 @@ manages its versions.
 
 - The console's entry groups its updates into two pull requests, one for the
   runtime dependencies and one for the tooling, and allows two open at once.
+
+- Every group takes minors and patches only, so each major arrives in a pull
+  request of its own.
 
 - The `junit-bom` and Testcontainers ignores cover majors, minors and patches.
   `<junit.version>` and `<testcontainers.version>` in `lambda/pom.xml` copy

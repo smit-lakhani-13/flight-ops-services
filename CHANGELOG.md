@@ -282,6 +282,28 @@ says not yet.
   separately. Dependabot can move the build stage's JDK within Maven 3, and it
   is the enforcer that stops such a bump, by failing the image job.
 
+- **The vulnerability gates skipped the console's development packages.**
+  Most of `web/package-lock.json` is development packages, the bundler, the
+  test runners, the linter and the type-checker, which the `web` job installs
+  and runs. Trivy leaves them out unless told otherwise, and dependency-review
+  fails only on runtime ones by default, so a fixable HIGH in any of them
+  passed both gates. `trivy-fs` now sets `TRIVY_INCLUDE_DEV_DEPS`, and
+  dependency-review fails on `runtime, development`. `npm audit` reports
+  nothing in either scope today.
+
+- **The dependency-graph probe took every 403 for a switched-off graph.**
+  dependency-review then passed with a warning to switch on a graph that was
+  on. GitHub also answers 403 for a spent rate limit and for a token that
+  lacks a permission. The probe now keeps the answer's body, and a 403 that
+  names either fails the job, as CONTRIBUTING.md already said a token problem
+  would.
+
+- **Dependabot's groups carried majors.** No group set `update-types`, so a
+  major went into the month's grouped pull request beside the patches, though
+  CONTRIBUTING.md says a major gets a pull request of its own and a check by
+  hand. Every group in `.github/dependabot.yml` now takes minors and patches
+  only.
+
 - **The memory budget gave half of what the JVM uses outside the heap.** The
   deployment's comment allowed 128Mi for everything outside the heap. Native
   memory tracking on a laptop JDK 21, default profile, measured about 260 MiB

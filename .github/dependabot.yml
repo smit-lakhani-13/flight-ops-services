@@ -25,6 +25,11 @@
 #        eslint-config-next loads declare peer ranges that stop at ESLint 9
 #    Every other dependency, and the minors and patches of the rest, still
 #    flow automatically.
+#
+# 3. Every group takes minors and patches only, so a major arrives in a pull
+#    request of its own, which CONTRIBUTING.md asks to be checked by hand.
+#    While an entry's limit is taken, that pull request waits for the others
+#    to merge.
 version: 2
 
 updates:
@@ -41,12 +46,15 @@ updates:
       # updates bury everything else.
       aws-sdk:
         patterns: ["software.amazon.awssdk:*"]
+        update-types: ["minor", "patch"]
       spring:
         patterns: ["org.springframework*:*"]
+        update-types: ["minor", "patch"]
       # Test-only dependencies cannot reach production, so they move and are
       # reviewed together.
       test:
         patterns: ["org.junit*:*", "org.mockito:*", "org.testcontainers:*", "com.tngtech.archunit:*"]
+        update-types: ["minor", "patch"]
     ignore:
       - dependency-name: "org.springframework.boot:spring-boot-starter-parent"
         update-types: ["version-update:semver-major"]
@@ -62,8 +70,10 @@ updates:
     groups:
       aws:
         patterns: ["software.amazon.awssdk:*", "com.amazonaws:*"]
+        update-types: ["minor", "patch"]
       test:
         patterns: ["org.junit*:*", "org.mockito:*"]
+        update-types: ["minor", "patch"]
     ignore:
       # Every update type. <junit.version> in lambda/pom.xml copies what Boot's
       # BOM manages for the service module, so the repository runs one JUnit
@@ -93,7 +103,8 @@ updates:
 
   # Every action is pinned to a commit SHA (the reason is above the first
   # `uses:` in build-and-deploy.yml), so without this entry the pins freeze.
-  # One grouped PR a month rewrites each SHA and the version comment beside it.
+  # One grouped PR a month rewrites each SHA and the version comment beside it
+  # for minors and patches; a major action release opens its own PR.
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
@@ -103,6 +114,7 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   # Both image tags in the Dockerfile, the maven build stage and the JRE
   # runtime. For 21-jre-alpine Dependabot keeps the suffix, so the ignore below
@@ -131,7 +143,8 @@ updates:
       - dependency-name: "maven"
         update-types: ["version-update:semver-major"]
 
-  # The console. One grouped PR for what ships in it and one for the tooling.
+  # The console. One grouped PR for what ships in it and one for the tooling,
+  # each for minors and patches.
   # Tailwind, the linters and the test runners are all development
   # dependencies: Tailwind compiles to CSS at build time, and the rest never
   # reach the browser or the server.
@@ -144,8 +157,10 @@ updates:
     groups:
       runtime:
         dependency-type: production
+        update-types: ["minor", "patch"]
       tooling:
         dependency-type: development
+        update-types: ["minor", "patch"]
     ignore:
       - dependency-name: "next"
         update-types: ["version-update:semver-major"]

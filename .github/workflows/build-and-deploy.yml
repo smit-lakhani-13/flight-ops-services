@@ -414,6 +414,11 @@ jobs:
       # database. This is the upstream default order plus a third mirror, and
       # trivy walks the list.
       TRIVY_DB_REPOSITORY: mirror.gcr.io/aquasec/trivy-db:2,ghcr.io/aquasecurity/trivy-db:2,public.ecr.aws/aquasecurity/trivy-db:2
+      # Trivy leaves out npm development dependencies unless told otherwise,
+      # and most of the console's lockfile is those: the bundler, the test
+      # runners, the linter and the type-checker. The web job installs and
+      # runs them, so both vulnerability passes below report them too.
+      TRIVY_INCLUDE_DEV_DEPS: 'true'
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -491,7 +496,7 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          code=$(curl -sS -o /dev/null -w '%{http_code}' \
+          code=$(curl -sS -o "$RUNNER_TEMP/graph.json" -w '%{http_code}' \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H 'Accept: application/vnd.github+json' \
             "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/dependency-graph/compare/$BASE_SHA...$HEAD_SHA")
@@ -505,9 +510,16 @@ jobs:
           # 403 and 404 mean the feature is off, the only case tolerated here.
           # Anything else (000 for a connection failure, 5xx, 401) is GitHub
           # having a bad minute. Treating it as "off" would let the gate stop
-          # running unnoticed, so it fails and a re-run fixes it.
+          # running unnoticed, so it fails and a re-run fixes it. GitHub also
+          # answers 403 for a spent rate limit and for a token that lacks a
+          # permission, and says so in the body, so those fail as well.
           case "$code" in
-            403|404) : ;;
+            403|404)
+              if grep -qiE 'rate limit|not accessible by integration' "$RUNNER_TEMP/graph.json"; then
+                echo "::error title=dependency-review probe failed::the dependency graph API answered $code for a rate limit or a token permission, not a switched-off graph; re-run the job"
+                exit 1
+              fi
+              ;;
             *)
               echo "::error title=dependency-review probe failed::the dependency graph API answered $code, which does not mean the feature is disabled — re-run the job"
               exit 1
@@ -532,6 +544,9 @@ jobs:
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           fail-on-severity: high
+          # Development too, for the reason TRIVY_INCLUDE_DEV_DEPS gives in
+          # trivy-fs: CI installs and runs the console's tooling.
+          fail-on-scopes: runtime, development
           # The job summary has the report. A PR comment would need
           # pull-requests: write, which is worth more than the convenience.
           comment-summary-in-pr: never
