@@ -361,7 +361,7 @@ Documentation is part of the change and ships with it:
 | Maven | 3.9.16 | `.mvn/wrapper/maven-wrapper.properties` |
 | Node | 24 | `web/.nvmrc`, which CI reads, and `engines` in `web/package.json` |
 | Next.js | 16.3.6 | `web/package.json`, exact pins throughout, resolved by `web/package-lock.json` |
-| React | 19.2.8 | `web/package.json` |
+| React | 19.3.0 | `web/package.json` |
 | TypeScript | 5.9.3 | `web/package.json` |
 
 `pom.xml` changes two dependency versions that Boot manages: it sets
