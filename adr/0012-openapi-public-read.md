@@ -54,14 +54,15 @@ curl -s -o /dev/null -w '%{http_code}\n' localhost:8080/api/v1/flights
 
 * The Swagger UI stays on in the AWS configuration (`deploy/aws/up.sh` prints
   its URL at the end), and `SWAGGER_UI_ENABLED=false` turns it off while
-  keeping the JSON. A client generator reads the JSON, and the console sends
+  keeping the JSON. A client generator reads the JSON, and the Swagger UI sends
   live requests, so the two carry different risk. On a service with a real
-  user base the console would be off in production and on everywhere else.
+  user base the Swagger UI would be off in production and on everywhere else.
 
 * **The document is tested.** `OpenApiTest` fetches `/v3/api-docs` anonymously
   and asserts that `/api/v1/flights` is still `401`. It also compares the
-  documented page schema against the keys of a real authenticated response, so
-  the `{content, page{...}}` shape cannot drift from what is published.
+  top-level keys of the documented flight page schema with those of a real
+  authenticated response, so `content` and `page` cannot drift from what is
+  published. The fields inside `page` are not compared.
 
 * Every operation carries `@Operation` and `@ApiResponses`, 401 and 403
   included. `OpenApiTest.RESPONSES` lists the documented status codes of each

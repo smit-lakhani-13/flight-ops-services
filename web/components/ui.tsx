@@ -7,10 +7,10 @@ import { AlertIcon, SpinnerIcon } from "./icons";
 
 // The primitives every page shares, in Tailwind classes alone, so the console
 // carries no component library to keep patched. Three rules hold for all of
-// them. Below Tailwind's xl breakpoint (1280 px), and on any touch screen, a
-// control is at least 44 px tall and a field's text is at least 16 px, so a
-// finger can hit it and iOS does not zoom on focus; a desk from 1280 up keeps
-// its density. Every control shows the accent outline when the keyboard
+// them. Below Tailwind's xl breakpoint (1280 px), and wherever touch is the
+// main pointer, a control is at least 44 px tall and a field's text is at
+// least 16 px, so a finger can hit it and iOS does not zoom on focus; a desk
+// from 1280 up keeps its density. Every control shows the accent outline when the keyboard
 // reaches it. Nothing moves but colour.
 
 /** What a page shows where a value is absent: an em dash, which the specs match. */

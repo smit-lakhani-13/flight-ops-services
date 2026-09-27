@@ -1,10 +1,11 @@
 # Defect log
 
 These are the defects I found in this service and how I fixed them. I
-reproduced most of them against a running instance before changing the code.
-Where I found one by reading the code or its documentation instead, the entry
-says so. Each entry says what I saw, why it happened, what I changed, the test
-that pins it where one exists, and the commit the fix landed in. The README's
+reproduced some of them against a running instance before changing the code.
+Others I found by reading the code or its documentation, or from a failing
+test or build. Each entry says what I saw, why it happened, what I changed and
+the test that pins it where one exists, and the entry or its review pass names
+the commit the fix landed in. The README's
 [Found in self-review](../README.md#found-in-self-review) section links a few
 of these entries. This log keeps the defects with a lesson in them;
 [CHANGELOG.md](../CHANGELOG.md) records what changed in each release.
@@ -94,9 +95,10 @@ It uses the same exhaustive `switch` with no `default`, for the same reason.
 
 `FlightTest.cancelledFlightIsNotBookable`, `releaseSeatsIsNotStatusGuarded`,
 `everyStatusIsClassified` and `cancelIsIdempotent` pin the entity rules.
-`ErrorContractTest.cancelledFlightCannotBeRevived` pins the graph through the
-real stack. The status guard is in the first commit, [`4a9a5b9`]. The transition
-graph came in [`eac8cc4`].
+`ErrorContractTest.cancelledFlightCannotBeRevived` pins the un-cancelling move
+through the real stack, and `FlightTest.java#refusedMovesAreRefused` pins every
+refused move. The status guard is in the first commit, [`4a9a5b9`]. The
+transition graph came in [`eac8cc4`].
 
 ## A Location header that led to a 404
 
@@ -234,8 +236,9 @@ org.hibernate.LazyInitializationException: Could not initialize proxy [Flight#4]
 ```
 
 `Booking.flight` is `@ManyToOne(fetch = LAZY)`, and `BookingDto.from`
-dereferences it. `BookingService.findById` had no `@Transactional` and called
-the inherited `JpaRepository.findById`. The race fix had given
+dereferences it. `BookingService.findById` had no `@Transactional`, because the
+race fix in [`d4e0113`] removed the class-level one, and it called the
+inherited `JpaRepository.findById`. The same fix had given
 `findByIdempotencyKey` a `JOIN FETCH`, as `findByFlightNumber` already had, and
 this plain lookup had none. The repository's own short-lived session had closed
 by the time the DTO mapping ran.
@@ -285,7 +288,7 @@ lock and one of ten pool connections. An SQS endpoint that accepted the
 connection and stopped answering would have blocked every booking for that
 flight until the socket gave up. I bounded it at 5s overall and 2s per attempt
 in [`eac8cc4`]. The attempt timeout alone would have been a subtle mistake,
-because three retries of 2s is a 6s call.
+because the standard retry mode's three attempts of 2s make a 6s call.
 
 Then I took the publish out of the transaction. No ordering of a database write
 and a queue send is atomic:
@@ -349,7 +352,7 @@ A failed row now waits `app.outbox.retry-backoff` (2s), doubling per attempt up
 to a `max-retry-backoff` cap (5m). The claim skips a row whose time has not
 come, so ten attempts span about thirteen and a half minutes (810 seconds of
 waits). The doubling is a bounded loop. A shift, `base << (attempt - 1)`, is
-one character shorter and wrong at attempt 64.
+one character shorter, and with the 2s base it turns negative at attempt 54.
 
 `OutboxRetryBackoffTest.aBurstOfDrainsDoesNotBurnTheCeiling` and
 `theWaitDoublesUpToTheCap` pin it. The backoff landed in [`50e8871`].
@@ -425,7 +428,8 @@ The same read found more:
   opt-in behind `--delete-sam-bucket`.
 
 - It treated an unreachable cluster as "no ingress". That skipped the Ingress
-  deletion, the step its own header calls the expensive mistake.
+  deletion, the step its own header puts first, because a load balancer left
+  behind bills until someone finds it.
 
 - Deleting the foundation stack also deleted the GitHub OIDC provider. There is
   one per account, shared by every repository that authenticates Actions to
@@ -434,14 +438,15 @@ The same read found more:
 When I made these fixes, CI ran only `shellcheck` and `bash -n` over the
 scripts, because a real test needs an AWS account. The fixes are in [`b576b6f`].
 Since [`86b9e41`], `deploy/aws/selftest.sh` runs `down.sh` against stubbed tools
-in CI's `infra-lint` job. `down.sh` now finishes with fourteen checks, and
-[DEPLOYMENT.md](DEPLOYMENT.md) lists them.
+in CI's `infra-lint` job, though no case yet makes a sweep query fail, so
+nothing tests that `deploy/aws/down.sh#q` turns one into a FAIL. `down.sh` now
+finishes with fourteen checks, and [DEPLOYMENT.md](DEPLOYMENT.md) lists them.
 
 ## The Boot 4 upgrade
 
 Spring Boot 3.5 left OSS support on 30 June 2026, and 3.5.16 was its last
 patch. Dependabot opened the 3.5.16 → 4.1.1 bump and the build failed. This is
-what it took, in the order the compiler found it:
+what it took, and not all of it was a compile error:
 
 - `spring-boot-starter-web` became `spring-boot-starter-webmvc`. The old
   artifact still resolves, but Boot's own POM describes it as deprecated. It is
@@ -565,9 +570,11 @@ now cancels a booking and returns its seats (`V4__booking_cancellation.sql`).
 Cancellation is a timestamp on the row. The booking keeps its idempotency key,
 and a replay of the original request returns the cancelled booking. Cancelling
 twice is a 200 no-op, because a client retrying a cancel that already succeeded
-should not be told it failed. `ErrorContractTest.cancellingTwiceIsNotAConflict`,
-`cancellationReturnsSeatsExactlyOnce` and `replayAfterCancellationDoesNotRebook`
-pin it.
+should not be told it failed.
+`ErrorContractTest.java#cancellationReturnsSeatsExactlyOnce`, where a second
+cancel is a 200 and returns no seats,
+`ErrorContractTest.java#replayAfterCancellationDoesNotRebook` and
+`BookingWriterTest.java#secondCancellationIsANoOp` pin it.
 
 ### Time from the wall clock
 
@@ -597,9 +604,12 @@ in [`5835267`].
 ## Second review pass
 
 I ran the second pass against the first, looking for failures that stay green
-everywhere a developer looks. Three of these would take the service down in
-production while every probe, every test and every local run passed. All of
-them landed in [`c47729d`].
+everywhere a developer looks. Three of these would have taken the service
+down once deployed, while every probe, every run on H2 and every test that
+runs without Docker passed. All of
+them landed in [`c47729d`], apart from two later additions: the `Bearer`
+challenge and its test in [`5cb8fa4`], and the Surefire zone pin in
+[`db00444`] and [`056eb61`].
 
 ### A missing API_PASSWORD started the service
 
@@ -708,9 +718,9 @@ A 500 in a three-replica deployment meant grepping by timestamp and hoping. It
 was the largest operability gap, and it had been open the longest.
 `RequestIdFilter` now puts a request id in the MDC ahead of Spring Security. It
 echoes the id on every response the application handles, 401 and 403 included.
-`traceId` and `spanId` sit beside it, and the `prod` profile emits ECS JSON so
-all four are queryable fields. An inbound id must match
-`^[A-Za-z0-9._:-]{1,128}$`, and anything else is replaced.
+`traceId` and `spanId` sit beside it with the service name, and the `prod`
+profile emits ECS JSON so all four are queryable fields. An inbound id must
+match `^[A-Za-z0-9._:-]{1,128}$`, and anything else is replaced.
 `RequestIdFilterTest.refusesToEchoSomethingDangerous` and
 `SecurityRulesTest.everyResponseCarriesARequestId` pin it. It landed in
 [`d18f58b`].
@@ -727,9 +737,10 @@ This is the [poison row](#a-poison-row) story above. The ceiling landed in
 
 ## Fourth review pass
 
-This pass was a full audit of every tracked file. I reproduced each confirmed
-finding, or pinned it with a test that fails without the fix, before changing
-the code. The deploy path is the exception, and its entry says why.
+This pass was a full audit of every file tracked at the time; the console in
+`web/` came later and is not part of it. I reproduced each confirmed finding,
+or pinned it with a test that fails without the fix, before changing the code.
+The deploy path is the exception, and its entry says why.
 
 ### A fractional seat count booked fewer seats
 

@@ -146,7 +146,7 @@ resulting failure blames the property.
 The table below breaks the tests in the two builds of [Building](#building)
 down by layer. Every count here comes from `scripts/numbers.sh`, and its
 per-class listing is what the table adds up. Do not edit a count by hand; this
-recomputes every count the docs claim:
+recomputes file, line and test counts and the project, Boot and Java versions:
 
 ```bash
 scripts/numbers.sh
@@ -206,7 +206,7 @@ for a commit on `main` that got no push run.
 | `build` | "Build and test", "Build and test the Lambda consumer" | a module does not compile, or a test in it fails |
 | `build` | `maven-enforcer` | wrong JDK, wrong Maven, duplicate dependency versions, or a transitive downgrade (`requireUpperBoundDeps`) |
 | `build` | JaCoCo | bundle coverage below 80% line or 50% branch |
-| `build` | ArchUnit | a layering rule is broken (9 rules in `ArchitectureTest`) |
+| `build` | ArchUnit | any of the 9 rules in `ArchitectureTest` is broken; [Architecture rules](#architecture-rules) lists them |
 | `build` | "Java lines fit in 120 columns" | a tracked Java file in either module has a line longer than the 120 columns `.editorconfig` sets |
 | `build` | "The PostgreSQL tests ran" | `BookingIntegrationTest`, `SchemaConstraintsPostgresTest`, `service/OutboxPrunePostgresTest` or `LockTimeoutPostgresTest` has no readable report, no tests, or a skipped test |
 | `build` | "The emulator tests ran" | `service/SqsEventPublisherElasticMqTest` or the Lambda's `BookingEventHandlerDynamoDbLocalTest` has no readable report, no tests, or a skipped test |
@@ -242,7 +242,7 @@ No Trivy finding is silenced, and there is no `.trivyignore`. Trivy reads one
 from the repository root if it is ever added. Each entry would carry the CVE
 id, a reason a reviewer can disagree with (why the code is unreachable, or why
 the risk is accepted; never just "false positive") and an expiry date. A CVE
-with no released fix never needs an entry, because every scan here passes
+with no released fix never needs an entry, because every CVE scan here passes
 `ignore-unfixed`; one that is inconvenient to fix needs a dependency bump.
 
 Run the doc gates before you push. They are fast, and they catch real mistakes:
@@ -258,9 +258,9 @@ If the console changed, run its checks from `web/` as well:
 npm run lint && npm run build && npx tsc --noEmit && npm test
 ```
 
-They have already caught errors in this repository's own documentation: a
-method name that did not exist, and a README count that was wrong. That is why
-they fail CI and are more than warnings.
+The doc gates have already caught errors in this repository's own
+documentation: a method name that did not exist, and a README count that was
+wrong. That is why they fail CI and are more than warnings.
 
 `scripts/sweeps.sh --tree-only` skips the history walk. The home-directory
 check ignores the path part of a URL. The script also reads case-insensitive
@@ -407,9 +407,9 @@ manages its versions.
   `eclipse-temurin` and `maven` in the two base images (majors),
   `org.springframework.boot:spring-boot-starter-parent` (majors),
   `org.junit:junit-bom` and `org.testcontainers:*` under `/lambda`, and in
-  `web/` the majors of `next`, `eslint-config-next` and `eslint`. The ESLint
-  plugins that `eslint-config-next` loads declare peer ranges that stop at
-  ESLint 9.
+  `web/` the majors of `next`, `eslint-config-next` and `eslint`. The React,
+  JSX accessibility and import plugins that `eslint-config-next` loads declare
+  peer ranges that stop at ESLint 9.
 
 - The console's entry groups its updates into two pull requests, one for the
   runtime dependencies and one for the tooling, and allows two open at once.
@@ -432,7 +432,8 @@ manages its versions.
 
 ## Reporting a bug
 
-Include the version (from `/actuator/info`), the `X-Request-Id` from the
+Include the version (from `/actuator/info` with the `ops` account, or
+`info.version` in the public `/v3/api-docs`), the `X-Request-Id` from the
 response, and what you expected. Every response the application handles
 carries the request id, 401 and 403 included, and with it the request is one
 `grep` away. Tomcat's own 400 page and a `TRACE` refusal carry none.

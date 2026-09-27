@@ -28,8 +28,8 @@ the API's security rules.
 
 The console is a Next.js application under `web/`, and the browser talks only
 to the console's own origin. Every call goes to `/api/...` there, and a route
-handler, `web/lib/proxy.ts#forward`, passes an allow-listed subset on to the
-API at `API_BASE_URL`:
+handler hands it to `web/lib/proxy.ts#forward`, which passes an allow-listed
+subset on to the API at `API_BASE_URL`:
 
 * `/api/v1/...` with `GET`, `HEAD`, `POST`, `PATCH` and `DELETE`;
 * the actuator's health, liveness, readiness and metrics, read-only.
@@ -41,8 +41,9 @@ and nor does `OPTIONS`, which Next answers itself on every `/api/` path with
 `204` and no CORS headers. Four request headers go upstream: `Authorization`,
 `Content-Type`, `Accept` and `X-Request-Id`. Six response headers come back,
 with `Location` cut to its path. `WWW-Authenticate` and `Set-Cookie` never reach
-the browser. Bodies are capped at 64 KiB, the upstream call at 15 s, and a
-request the browser marks `Sec-Fetch-Site: cross-site` is refused with 403.
+the browser. Request bodies are capped at 64 KiB, the upstream call at 15 s,
+and a request the browser marks `Sec-Fetch-Site: cross-site` is refused with
+403.
 
 The credential stays in React state. It is never written to `localStorage`,
 `sessionStorage` or a cookie, and the console's server copies it onto each
@@ -61,8 +62,9 @@ The API does not change: no CORS mapping, no cookie, no new endpoint.
   cookie, has no CORS policy and takes JSON-only writes. The console's origin
   sets no cookie either, and because the Basic challenge is dropped, the
   browser never caches a credential for it. A forged cross-site request to the
-  console arrives with no `Authorization` header and meets the API's own 401,
-  if the `Sec-Fetch-Site` check has not refused it first.
+  console arrives with no `Authorization` header, so if the `Sec-Fetch-Site`
+  check has not refused it first, the API treats it as anonymous: it reaches
+  only the public health endpoints, and anything else is refused.
 * **The proxy is where the console could widen what a browser reaches.** The
   allow-list is one function. Unit tests in `web/lib/proxy.test.ts` and the
   end-to-end tests assert that `env`, `prometheus`, the OpenAPI document and
@@ -72,15 +74,19 @@ The API does not change: no CORS mapping, no cookie, no new endpoint.
   still one `curl` away.
 * **A reload loses the credential.** That is the cost of storing nothing, and
   the end-to-end tests check that nothing survives it.
-* **The console repeats one rule.** It copies the flight transition table from
+* **The console repeats two rules.** It copies the flight transition table from
   `src/main/java/com/smit/flightops/entity/FlightStatus.java#canTransitionTo`
-  to decide which buttons to offer. `web/lib/transitions.test.ts` reads the
-  Java file and fails if the copies disagree, and the service still decides:
-  the console can send any status and show the 409.
-* **The layout is a rule the tests hold.** Below 1280 px and on any touch
-  screen, every control is at least 44 px tall and every field has 16 px text.
-  A Playwright spec checks that on every page at eleven Chromium viewports.
-  That is emulation: nothing has run in Safari.
+  and the bookable statuses from
+  `src/main/java/com/smit/flightops/entity/FlightStatus.java#isBookable` to
+  decide which buttons and labels to offer. `web/lib/transitions.test.ts`
+  reads the Java file and fails if the copies disagree, and the service still
+  decides: the console can send any status and show the 409.
+* **The layout is a rule the tests hold.** Below 1280 px, and at any width
+  when touch is the main pointer, every control except a link inside a table
+  is at least 44 px tall and every field has 16 px text. A Playwright spec
+  checks that on every page at eight emulated touch viewports, all narrower
+  than 1280 px. At all eleven Chromium viewports it also checks that no page
+  scrolls sideways. That is emulation: nothing has run in Safari.
 * **Built and tested, never hosted.** CI lints, type-checks, unit-tests and
   builds the console, then drives it with Playwright against the service's own
   jar. There is no image, manifest or deploy step for it.

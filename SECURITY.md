@@ -68,9 +68,10 @@ spring.security.oauth2.resourceserver.jwt.audiences: [flight-ops-service]
 Both are Spring Boot properties. `audiences` installs a claim validator inside
 the decoder, so a refactor of `config/SecurityConfig` cannot lose the check.
 Neither is set today: no `JwtDecoder` bean exists, and the service logs
-`No JwtDecoder configured` at startup. The two callers are machine identities
-that do not need an authorisation server. `src/main/resources/application.yml`
-repeats the block with the reasoning.
+`No JwtDecoder configured` at startup. The two accounts stand for a service and
+a scraper, and the console signs a person in with one of them; real users would
+need an identity provider. `src/main/resources/application.yml` repeats the
+block with the reasoning.
 
 HTTP Basic checks credentials against two in-memory accounts, which stand in
 for an identity provider. `api` holds `SCOPE_flights:read` and
@@ -179,8 +180,9 @@ the API still has no CORS policy ([adr/0017](adr/0017-web-console.md)).
   race, and neither logs nor keeps it. A reload signs out.
 * `WWW-Authenticate` and `Set-Cookie` never reach the browser, so it never
   opens its Basic prompt and never caches a credential for the console's
-  origin. A forged cross-site request to the console carries no credential
-  and meets the API's own 401.
+  origin. A forged cross-site request to the console carries no credential,
+  so if the checks below have not refused it first, the API answers it as it
+  would any anonymous caller.
 * Only `Authorization`, `Content-Type`, `Accept` and `X-Request-Id` go
   upstream. Cookies, `Origin`, `Host` and forwarding headers stay behind.
 * A path outside the allow-list answers 404 without reaching the API; `env`,
@@ -239,8 +241,8 @@ the API still has no CORS policy ([adr/0017](adr/0017-web-console.md)).
   (or `OPS_PASSWORD is not set`) or `the value is not shown`. Bean Validation
   would have printed the rejected value on a `Value:` line of Boot's startup
   report, so a plaintext password set without its prefix would have reached the
-  pod log. For an unknown id, the self-check's message names the id and not the
-  hash.
+  pod log. For an unknown id, the self-check's message quotes the text in the
+  value's leading braces as the id, and no test checks that it quotes no more.
 
 - **Generated passwords.** `deploy/aws/up.sh` generates three passwords with
   `openssl rand`. The database password goes, unhashed, into the RDS stack (a
@@ -472,11 +474,11 @@ bundle comes from and how to refresh it.
 | Dependency updates | Dependabot, monthly on both Maven modules, the console's npm packages and the Actions workflows, and weekly on the Dockerfile base images. Both `FROM` lines name a tag and a digest, so a build pulls the bytes the digest names, and Dependabot moves the digest when the tag is rebuilt. The Dockerfile frontend line, `# syntax=docker/dockerfile:1`, is still a tag |
 | SBOM | CycloneDX, `target/bom.json` and `lambda/target/bom.json`, on every build, both typed `application`. The service jar also carries the one the Spring Boot parent writes, `target/classes/META-INF/sbom/application.cdx.json` |
 | Upper-bound dependency check | `maven-enforcer` `requireUpperBoundDeps`. A transitive downgrade fails the build |
-| Coverage floor | JaCoCo. The build fails under 80% line or 50% branch coverage |
+| Coverage floor | JaCoCo, on the service module: its build fails under 80% line or 50% branch coverage. The Lambda module has no coverage gate |
 | Architecture rules | ArchUnit, 9 rules. A violation fails the build; it is not just reported |
 | Vulnerability and secret scanning | Trivy scans the filesystem for vulnerabilities and committed secrets on every push or pull request to `main`, and fails on a fixable HIGH or CRITICAL. The `image` job scans the image it has just built, on the same triggers, and fails on a fixable CRITICAL. That is the only image scan in CI. The deploy job, which is gated off and has never run, would push the bytes the `image` job built and scanned, handed over as a run artefact and checked against the checksum that job recorded, and it runs no build and no scanner beside its AWS credentials. No image has ever been pushed. Only the filesystem scan uploads SARIF, and only on a push to `main`. A pull request from a fork has a read-only token, so the upload would fail on permissions and say nothing about the code. The image scan reports in the job log, and ECR's own scan-on-push would cover the image in the registry |
 | Static analysis | CodeQL `security-extended` on the Java in both modules and the console's TypeScript, on every push or pull request to `main`, weekly, and by hand |
-| Pinned actions | Every `uses:` is a full commit SHA with the version as a trailing comment, and Dependabot rewrites the comment along with the SHA. A tag is a mutable pointer in someone else's repository. Re-pointing `@v4` at a malicious commit needs no access to this repository, and that is what happened to `tj-actions/changed-files` in March 2025. The cost is a pull request for every patch release. A pin fixes the action's own code, not a tool it downloads when it runs, such as the Trivy CLI. So Trivy runs only in jobs that hold no AWS credentials. The one tool the deploy job still downloads is kubectl, by version, with no checksum held in this repository. It is installed before the AWS keys are exported, but every kubectl step after that runs with them: apply, rollout, smoke test and the failure diagnostics |
+| Pinned actions | Every `uses:` is a full commit SHA with the version as a trailing comment, and Dependabot rewrites the comment along with the SHA. A tag is a mutable pointer in someone else's repository. Re-pointing `@v4` at a malicious commit needs no access to this repository, and that is what happened to `tj-actions/changed-files` in March 2025. The cost is reviewing Dependabot's monthly grouped pull request, which rewrites each outdated SHA and its comment, and a pull request of its own for each major. A pin fixes the action's own code, not a tool it downloads when it runs, such as the Trivy CLI. So Trivy runs only in jobs that hold no AWS credentials. The one tool the deploy job still downloads is kubectl, by version, with no checksum held in this repository. It is installed before the AWS keys are exported, but every kubectl step after that runs with them: apply, rollout, smoke test and the failure diagnostics |
 
 ## Known limitations
 
@@ -517,7 +519,8 @@ bundle comes from and how to refresh it.
    from the test suite. No independent party has tried to break it.
 
 8. **No Content-Security-Policy on the console.** Next.js inlines the scripts
-   that start each page, so a policy that allows them needs a nonce per
-   request and dynamic rendering. The console is not hosted and renders no
-   user content as HTML, so it sends the three headers above and no policy.
+   that start each page, so a policy that allows them without `'unsafe-inline'`
+   needs a nonce or a hash for each, and a nonce per request needs dynamic
+   rendering. The console is not hosted and renders no user content as HTML,
+   so it sends the three headers above and no policy.
    Hosting it would be the moment to add one.

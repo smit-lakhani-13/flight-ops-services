@@ -14,10 +14,11 @@ retry) and pessimistic (`SELECT ... FOR UPDATE`, serialise at read).
 
 ## Decision
 
-Pessimistic. `FlightRepository#findByFlightNumberForUpdate` takes
-`LockModeType.PESSIMISTIC_WRITE` on the flight row. Every path that changes
-seats or bookings (booking and cancellation alike) takes that lock first and
-the booking row second.
+Pessimistic.
+`src/main/java/com/smit/flightops/repository/FlightRepository.java#findByFlightNumberForUpdate`
+takes `LockModeType.PESSIMISTIC_WRITE` on the flight row. Every path that
+changes seats or bookings (booking and cancellation alike) takes that lock
+first and the booking row second.
 
 The wait is bounded with `SET lock_timeout = '3s'`, issued once per connection
 as HikariCP's `connection-init-sql` in `src/main/resources/application.yml`. A
@@ -65,7 +66,9 @@ on the reason above. Only the old reason was wrong.
   fail. It did not get a turn.
 
 * The `version` column on `flights` does real work, although the booking paths
-  do not rely on it. `FlightService#updateStatus` and `FlightService#cancel`
+  do not rely on it.
+  `src/main/java/com/smit/flightops/service/FlightService.java#updateStatus`
+  and `src/main/java/com/smit/flightops/service/FlightService.java#cancel`
   load the flight without the row lock. If one of them races a booking on the
   same flight, `version` catches the stale write at flush and the caller gets
   `409 CONCURRENT_MODIFICATION`. Without it, the stale UPDATE would put back

@@ -144,7 +144,7 @@ public class OutboxPublisher {
      * When a row that just failed its {@code attempt}-th attempt may be claimed again:
      * {@code retry-backoff} doubled per attempt, capped at {@code max-retry-backoff}.
      * Null (claimable next tick) when backoff is zero, which only tests use. A loop
-     * that stops at the cap, because a shift overflows at attempt 64.
+     * that stops at the cap, because a shift of the default 2s base turns negative at attempt 54.
      */
     private Instant nextAttemptAt(Instant now, int attempt) {
         long baseMillis = properties.retryBackoff().toMillis();

@@ -47,7 +47,7 @@ Controller, which is published as a chart. The application has no chart.
 
 * **SAM understands Lambda's wiring.** Maven builds the shaded jar, and
   `CodeUri` in `lambda/template.yaml` points at it.
-  `sam deploy --template-file lambda/template.yaml` uploads the jar and deploys
+  `sam deploy` (see `deploy/aws/up.sh` step 3) uploads the jar and deploys
   the stack. The `Events` shorthand and a policy template wire the queue, the
   event source mapping and the IAM role in a few lines. `sam local invoke` runs
   the handler against a fixture before anything is deployed. No table exists
@@ -58,16 +58,20 @@ Controller, which is published as a chart. The application has no chart.
 * **CloudFormation for the rest.** The two remaining stacks are plain
   CloudFormation. That keeps the tool count at one for everything eksctl and
   SAM do not cover, and both of those are CloudFormation underneath too. So
-  `aws cloudformation list-stacks` shows the whole system, and the teardown
-  sweep has one place to look.
+  `aws cloudformation list-stacks` shows most of the system, but not all of it:
+  the load balancer controller's IAM policy and the load balancer it creates
+  sit outside any stack. `down.sh` deletes the policy by its name prefix, and
+  its sweep finds the load balancer by name and by tag.
 
 * **The real cost is state.** Terraform's state file is what makes
   `terraform destroy` reliable, because it knows what it created. Here, resource
-  tags (`Project=flight-ops` on everything) do that job, together with the
-  closing sweep in `down.sh`. The sweep runs fourteen checks by name and by
+  tags (`Project=flight-ops` on almost everything) do that job, together with
+  the closing sweep in `down.sh`. The sweep runs fourteen checks by name and by
   tag. It exits non-zero if anything survives, or if a check could not be
-  answered. This is a weaker guarantee than state and a stronger one than a
-  runbook, and it can be checked from a fresh shell with no local file.
+  answered; `deploy/aws/selftest.sh` tests only the first, against stubbed
+  tools, and the sweep has never run against AWS. This is a weaker guarantee
+  than state and a stronger one than a runbook, and it can be checked from a
+  fresh shell with no local file.
 
 * **No plan step.** `terraform plan` is valuable, and I give it up here. To make
   up for it, `up.sh` is idempotent, prints the cost before the first billable
@@ -87,6 +91,12 @@ reason that is left. The old bullet, and the Terraform entry below, also counted
 the build against Terraform. Both tools now take the jar from Maven, so neither
 does. The decision stands on the other reasons. Only the build reason was wrong.
 
+**Correction (2026-09-27).** The third bullet used to say that
+`aws cloudformation list-stacks` shows the whole system, so the teardown sweep
+has one place to look. The load balancer controller's IAM policy and the load
+balancer it creates sit outside any stack, and the bullet now names them and
+how `down.sh` finds them. The decision stands on the other reasons.
+
 ## Alternatives considered
 
 * **Terraform for everything.** Correct for a long-lived estate. Here it is a
@@ -101,9 +111,10 @@ does. The decision stands on the other reasons. Only the build reason was wrong.
 * **`eksctl` for the database too.** It does not create RDS.
 
 * **An application Helm chart.** Templating for one application with one
-  environment, where kustomize's overlay expresses the same four substitutions
-  without a template language. Helm earns its cost when a chart is published
-  for others to configure.
+  environment, where the kustomize overlay leaves four values as placeholders
+  and `envsubst` in `deploy/aws/render-aws.sh` fills them, with no template
+  language. Helm earns its cost when a chart is published for others to
+  configure.
 
 * **Console clicking and a runbook.** Faster the first time and unreproducible
   every time after, with nothing to lint and nothing to diff.

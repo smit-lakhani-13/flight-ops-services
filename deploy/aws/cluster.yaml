@@ -28,7 +28,7 @@ metadata:
     Environment: lab
 
 # API_AND_CONFIG_MAP, for the access entry up.sh creates. A malformed aws-auth
-# ConfigMap edit can lock everyone out; an access entry is validated.
+# ConfigMap edit can cut off every role it maps; an access entry is validated.
 accessConfig:
   authenticationMode: API_AND_CONFIG_MAP
   # The identity that runs `eksctl create cluster` gets cluster-admin.

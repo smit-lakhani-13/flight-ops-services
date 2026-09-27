@@ -16,7 +16,7 @@ I chose flight bookings because seat inventory is a real consistency problem: ma
 
 **Evidence:** 627 tests in the service, 15 of them on PostgreSQL 17 through Testcontainers; [17 decision records](adr/README.md), each with the options it rejected; a [defect log](doc/DEFECT-LOG.md) that includes four review passes over my own code; and a CI that fails on coverage floors, ArchUnit layering rules and Trivy findings, with CodeQL over the Java and the TypeScript.
 
-[![Ten replays of one idempotency key from the console: ten 201s, one booking, one seat debited](doc/assets/console-race-card.png)](doc/assets/console-race.png)
+[![Ten concurrent requests on one idempotency key from the console: ten 201s, one booking, one seat debited](doc/assets/console-race-card.png)](doc/assets/console-race.png)
 
 Ten identical booking requests sent at once on one idempotency key: ten `201`s, one booking id, one seat taken. The console fires them from its own server, because a browser on HTTP/1.1 would queue all but six of them ([why](web/README.md#why-the-race-runs-on-the-server)). The browser reaches the API only through that server, so the API gained no CORS policy ([ADR 0017](adr/0017-web-console.md)); the console is built and tested in CI, never hosted.
 
@@ -86,7 +86,7 @@ Every job below runs on every push or pull request to `main`, except `dependency
 | `docs-check` | A cited file that does not exist or does not name the cited symbol; a broken relative link or heading anchor; this README's decision-record count or the index in `adr/README.md` disagreeing with `adr/`; a hygiene sweep of the tracked files and the commit messages |
 | `dependency-review` | A pull request that adds a dependency with a high-severity advisory |
 
-CodeQL runs the `security-extended` queries over the Java and the console's TypeScript on every push or pull request to `main`, and weekly. [CONTRIBUTING.md](CONTRIBUTING.md#what-ci-enforces) lists every step.
+CodeQL runs the `security-extended` queries over the Java and the console's TypeScript on every push or pull request to `main`, and weekly. [CONTRIBUTING.md](CONTRIBUTING.md#what-ci-enforces) lists each job and the gates that fail it.
 
 ## Design decisions
 
@@ -105,7 +105,7 @@ All 17 decision records: [adr/README.md](adr/README.md).
 
 ## Found in self-review
 
-Four entries from the defect log are below. I reproduced most of the log's defects against a running instance before fixing them, and each entry in the log gives the symptom, the cause, the test that pins the fix where one exists, and the commit.
+Four entries from the defect log are below. I reproduced some of the log's defects against a running instance before fixing them, and found others by reading the code or its documentation, or from a failing test or build; each entry gives the symptom, the cause and the test that pins the fix where one exists, and the entry or its review pass names the commit.
 
 - [Seats sold on a cancelled flight](doc/DEFECT-LOG.md#seats-sold-on-a-cancelled-flight): `Flight.reserveSeats` checked the seat count and ignored the status, and every test passed.
 - [One idempotency key, two answers](doc/DEFECT-LOG.md#one-idempotency-key-two-answers): ten racing replays of one booking got a mix of 201 and 409.

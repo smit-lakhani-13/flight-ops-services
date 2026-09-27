@@ -54,11 +54,14 @@ a bad value and a login:
   pbkdf2 ids get past the self-check. The default profile keeps
   `{noop}dev-secret`.
 
-No check prints the value. Without them, `@ConfigurationProperties` would
-bind the literal string `${API_PASSWORD}` as the password, and the service
-would start and then fail every login as that user with a 500.
-[SECURITY.md](../SECURITY.md#secrets) has the detail of the checks, and the
-malformed value they let through.
+No check prints the value. For an unknown id, the self-check's message names
+the id and not the hash, but only the other two checks have a test that the
+value stays out of the message. Without the checks, `@ConfigurationProperties`
+would bind the literal string `${API_PASSWORD}` as the password, and the
+service would start and then fail every login as that user with a 500.
+[SECURITY.md](../SECURITY.md#secrets) has the detail of the checks, and its
+[Known limitations](../SECURITY.md#known-limitations) section names the
+malformed value that passes all three.
 
 ### Basic or bearer
 
@@ -188,12 +191,13 @@ Both controllers produce and read JSON only.
   document declares that 503 on every operation.
 
 Tomcat refuses some requests before Spring sees them: `%2F`, `%5C`, `%00` or
-`%zz` in the path, a raw `|`, or a 20KB header. Those get Tomcat's own HTML
-400 page with no `X-Request-Id`. A path that Spring Security's firewall
+`%zz` in the path, a raw `|`, or a request line and headers over 8 KB in all
+(`server.max-http-request-header-size`, left at Spring Boot's default). Those
+get Tomcat's own HTML 400 page with no `X-Request-Id`. A path that Spring
+Security's firewall
 refuses, such as one with `;` or `//` in it, gets `400 BAD_REQUEST` in the
-usual JSON envelope instead, from `ApiErrorController`. An unknown path under
-an exposed actuator endpoint, such as `/actuator/metrics/nope` asked for as
-`ops`, returns an empty 404.
+usual JSON envelope instead, from `ApiErrorController`. An unknown metric name,
+such as `/actuator/metrics/nope` asked for as `ops`, returns an empty 404.
 
 Jackson and Hibernate exception text names internal classes, tables and columns,
 so the client gets a fixed string and the detail goes to the log at WARN. The
@@ -266,15 +270,15 @@ included.
 | `CONCURRENT_MODIFICATION` | 409 | `@Version` rejected a stale write |
 | `DUPLICATE_REQUEST` | 409 | two flight-creation requests raced on `flight_number` and the constraint chose one; a raced booking recovers instead |
 | `IDEMPOTENCY_KEY_REUSED` | 409 | the key was first used for a different request. That is a client bug; a true replay returns the original booking |
-| `ILLEGAL_STATUS_TRANSITION` | 409 | the flight cannot go from its status to the requested one (`BOARDING → ARRIVED`, anything out of `ARRIVED` or `CANCELLED`, or a `DELETE` on a flight that has departed or arrived) |
+| `ILLEGAL_STATUS_TRANSITION` | 409 | the flight cannot go from its status to the requested one: a move back to `SCHEDULED`, to `ARRIVED` from anything but `DEPARTED`, out of `DEPARTED` to anything but `ARRIVED`, or out of `ARRIVED` or `CANCELLED`, so a `DELETE` on a flight that has departed or arrived is refused too. A move to the status the flight already has is allowed (`entity/FlightStatus.java#canTransitionTo`) |
 | `LOCK_TIMEOUT` | 503 + `Retry-After: 1` | a write waited out the 3s `lock_timeout` on the flight row: a booking or a booking cancellation on its `SELECT … FOR UPDATE`, or a status change or flight cancellation queued behind one. The request was valid and the row was busy, so retry after `Retry-After` |
 | `DATABASE_UNAVAILABLE` | 503 + `Retry-After: 1` | no database connection: the pool stayed empty for its whole connection timeout, or the database did not answer. The request was valid and can succeed later, so it is a 503 and not a 500, and it is logged at WARN with no stack trace |
 | `UNKNOWN_SORT_PROPERTY` | 400 | the sort property is not on the endpoint's published list; see [Paging and sorting](#paging-and-sorting) |
 | `UNAUTHENTICATED` | 401 | no credentials, or credentials that do not verify; written by `JsonAuthenticationEntryPoint` |
 | `FORBIDDEN` | 403 | authenticated, without the authority this path needs; written by `JsonAccessDeniedHandler` |
 | `VALIDATION_FAILED` | 400 | Bean Validation, per field, including `@DistinctEndpoints`, which refuses a flight from EWR to EWR. A field that breaks more than one rule gets one message, taken in this order: null, blank, size or range, pattern, any other rule. So an empty airport code gets `must not be blank`, not `size must be between 3 and 3`. A flight number with a space, `/` or `%` inside gets `must contain only letters and digits`. An airport code with a digit, symbol or padding gets `must contain only letters`. A passenger name with a control character gets `must not contain control characters`, one with an unpaired UTF-16 surrogate gets `must not contain unpaired surrogates`, one with a text-direction control (U+202A to U+202E, U+2066 to U+2069, U+200E, U+200F or U+061C) or a line or paragraph separator (U+2028, U+2029) gets `must not contain text-direction controls or line separators`, and one made only of spaces, no-break spaces or format characters such as U+200B, U+FEFF and the direction controls above gets `must not be blank`; for the last two that message comes from a pattern, so such a name past 255 characters gets the size message instead. An idempotency key with a character other than letters, digits and `. _ : -` gets `must contain only letters, digits and . _ : -`. A missing or null `departureTime` gets `must not be null` |
-| `MALFORMED_REQUEST` | 400 | unreadable body, a field the request schema does not list, a key sent twice in one object, an unknown enum constant or one sent as a number, a `seats` or `totalSeats` that is missing, null, quoted, or written with a decimal point or an exponent (`2.0` included), a `departureTime` that is not an ISO-8601 instant with `Z` or an offset (a missing or null one is `VALIDATION_FAILED`), bad path variable, missing query parameter, a filter with a control character once trimmed (see [Paging and sorting](#paging-and-sorting)), a value the database refuses as invalid data (SQLState class 22), or `page * size` above 2147483647 on either list endpoint |
-| `RESOURCE_NOT_FOUND` | 404 | unmapped path |
+| `MALFORMED_REQUEST` | 400 | unreadable body, a field the request schema does not list, a key sent twice in one object, an unknown enum constant or one sent as a number, a `seats` or `totalSeats` that is missing, null, quoted, or written with a decimal point or an exponent (`2.0` included), a `departureTime` that is not an ISO-8601 instant with `Z` or an offset, or is one later than `9999-12-31T23:59:59.999999Z` (a missing or null one is `VALIDATION_FAILED`), bad path variable, missing query parameter, a filter with a control character once trimmed (see [Paging and sorting](#paging-and-sorting)), a value the database refuses as invalid data (SQLState class 22), or `page * size` above 2147483647 on either list endpoint |
+| `RESOURCE_NOT_FOUND` | 404 | an unmapped path the security rules let through, such as `GET /api/v1/does-not-exist` with `flights:read`; a path no rule names, such as `/some/other/thing`, gets 403 from `anyRequest().denyAll()`, or 401 without credentials |
 | `METHOD_NOT_ALLOWED` | 405 | a verb the security rules allow on a path that does not map it, such as `POST` on `/api/v1/flights/UA123`; the `Allow` header lists the mapped verbs. Tomcat refuses `TRACE` before any filter runs, so its 405 comes from `ApiErrorController`, with the servlet's full `Allow` list and no `X-Request-Id`. `PUT` and `OPTIONS` get 403 from `anyRequest().denyAll()`, or 401 without credentials |
 | `PAYLOAD_TOO_LARGE` | 413 | a request body over `app.http.max-body-bytes`, 16384 bytes by default. `RequestBodyLimitFilter` refuses a declared `Content-Length` over it before the body is read and before the credentials are checked. A chunked body is refused with the same code once the read passes the limit |
 | `UNSUPPORTED_MEDIA_TYPE` | 415 | a `Content-Type` that is missing or is not `application/json`, YAML included; the `Accept` header names JSON |

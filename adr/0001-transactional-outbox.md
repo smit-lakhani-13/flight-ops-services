@@ -33,8 +33,10 @@ the table afterwards and sends to SQS.
 The writer is annotated `Propagation.MANDATORY`, so it refuses to run outside a
 transaction. This annotation matters most. With the default `REQUIRED` the
 method would still work: Spring Data would open its own transaction, the row
-would appear, and every test would pass. The atomicity that justifies the whole
-pattern would be gone, and nothing would fail.
+would appear, and every booking test would pass. The atomicity that justifies
+the whole pattern would be gone, and only
+`src/test/java/com/smit/flightops/OutboxTest.java#recordingOutsideATransactionIsRefused`,
+which pins the annotation, would fail.
 
 I build and serialise the event at booking time, in the writer. The payload
 then describes what happened at that moment, whatever the row looks like by the

@@ -91,9 +91,10 @@ ALERT_EMAIL=you@example.com ./deploy/aws/up.sh
 
 About 50 minutes, nearly all of it waiting. Twelve numbered steps; step 1 prints
 the cost table and asks you to type `yes`, and nothing before that costs
-anything. Every step checks whether its resource already exists, so if a run
-fails halfway (a throttled API, a laptop that slept), run the same command
-again instead of unpicking it by hand. If eksctl stopped part way through
+anything. Every step either checks whether its resource already exists or
+uses a command that is safe to repeat, so if a run fails halfway (a throttled
+API, a laptop that slept), run the same command again instead of unpicking it
+by hand. If eksctl stopped part way through
 step 4 after EKS listed the cluster, the re-run finishes it, creating whichever
 of its networking addons, OIDC provider and node group is missing. A stop in
 the first minutes, before EKS lists the cluster, needs its CloudFormation stack
@@ -216,10 +217,10 @@ file.
 
 Two orderings in that script matter:
 
-- **Ingress first.** Delete the namespace with an Ingress still in it, and the
-  controller, deleted at the same moment, never receives the event that would
-  delete the ALB. The load balancer survives, attached to nothing, and bills
-  until someone finds it.
+- **Ingress first.** The controller runs in `kube-system`, not in the
+  application namespace. Uninstall it or delete the cluster while the Ingress
+  still exists, and nothing is left to delete the ALB. The load balancer
+  survives, attached to nothing, and bills until someone finds it.
 
 - **Database before the cluster.** Its security group lives in
   eksctl's VPC, and the VPC delete blocks on it. eksctl then fails after twenty
@@ -250,7 +251,7 @@ deletes anything names `DEPLOY_ENABLED`, and the end of a clean run lists both.
 | What you see | What it is |
 |---|---|
 | `kubectl get ingress` shows no ADDRESS, forever, no error | the load balancer controller is not running, or its IRSA role is missing. `kubectl logs -n kube-system deploy/aws-load-balancer-controller` |
-| Pods `CrashLoopBackOff`, log shows `APPLICATION FAILED TO START` on `app.security.api-password (API_PASSWORD)` | `API_PASSWORD` (or `OPS_PASSWORD`) is missing from the Secret, or has no `{id}` prefix. The message never shows the value. `kubectl get secret flight-ops-secret -n flight-ops -o jsonpath='{.data}'` should list `DB_PASSWORD`, `API_PASSWORD`, `OPS_PASSWORD` |
+| Pods `CrashLoopBackOff`, log shows `APPLICATION FAILED TO START` on `app.security.api-password (API_PASSWORD)` | `API_PASSWORD` (or `OPS_PASSWORD`) is missing from the Secret, or has no `{id}` prefix. The message never shows the value. `kubectl describe secret flight-ops-secret -n flight-ops` should list `DB_PASSWORD`, `API_PASSWORD` and `OPS_PASSWORD`, each with its size and never its value |
 | Pods `CrashLoopBackOff`, Flyway reports `password authentication failed` | `DB_PASSWORD` in the Secret does not match the database. A re-run of `up.sh` that creates the data stack again writes the new password into the Secret at step 9 |
 | A rollout or a scale-up makes no progress, and `kubectl get events -n flight-ops` shows `FailedCreate` naming the webhook `mpod.elbv2.k8s.aws` | the namespace's readiness gate label sends every pod create to the load balancer controller, and the controller is not answering. The old pods keep serving. `kubectl get deploy -n kube-system aws-load-balancer-controller` |
 | Pods `CrashLoopBackOff`, log shows `app.security.api-password cannot be verified by the configured DelegatingPasswordEncoder` | the password carries an algorithm id no encoder verifies, such as `{bcrpyt}`, and the log adds `There is no password encoder mapped for the id`. An `{argon2}` or `{scrypt}` hash stops startup the same way, because the build leaves out BouncyCastle |
