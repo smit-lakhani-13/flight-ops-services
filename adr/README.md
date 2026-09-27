@@ -21,21 +21,21 @@ status line says so.
 
 | # | Decision | Status | Taken in |
 |---|---|---|---|
-| [0001](0001-transactional-outbox.md) | A transactional outbox, not a send after commit | accepted | `e83d846` |
-| [0002](0002-pessimistic-locking.md) | Pessimistic row locks for seat inventory, with a bounded wait | accepted | `4a9a5b9`, `eac8cc4` |
-| [0003](0003-identity-ids.md) | Database-assigned IDENTITY ids | accepted | `4a9a5b9` |
-| [0004](0004-request-fingerprint.md) | Idempotency is the key *and* a fingerprint of the request | accepted | `eac8cc4` |
-| [0005](0005-one-rule-set-for-basic-and-jwt.md) | One authorisation rule set for Basic and JWT | accepted | `e83d846` |
-| [0006](0006-stateless-sessions-no-csrf.md) | Stateless sessions, and CSRF protection off | accepted | `e83d846` |
-| [0007](0007-spring-boot-4.md) | Spring Boot 4.1 and Java 21 | accepted | `7b45b5b` |
-| [0008](0008-standalone-lambda-consumer.md) | A standalone, frameworkless Lambda consumer on arm64 | accepted | `4a9a5b9` |
-| [0009](0009-eksctl-and-sam-over-terraform.md) | eksctl, SAM and kustomize rather than Terraform | accepted | `4a9a5b9`, `92922cd` |
-| [0010](0010-region-ap-south-1.md) | Everything in `ap-south-1` | accepted | `4a9a5b9`, `92922cd` |
-| [0011](0011-correlation-ids-and-metrics.md) | Correlation ids, domain counters, and no exporter | accepted | `d18f58b`, `a6efc1c` |
-| [0012](0012-openapi-public-read.md) | The OpenAPI document is public; the API it describes is not | accepted | `82ea9b4`, `ccad5b4`, `2fb66de` |
-| [0013](0013-outbox-ceiling-and-retention.md) | The outbox is bounded: an attempt ceiling and a retention window | accepted | `a6efc1c`, `50e8871` |
-| [0014](0014-quality-gates.md) | The build fails on architecture, coverage and dependency drift | accepted | `631f5f0`, `f8d2d4b` |
-| [0015](0015-event-transport.md) | Events go to an SQS standard queue, not a JMS broker | accepted | `4a9a5b9` |
+| [0001](0001-transactional-outbox.md) | A transactional outbox, not a send after commit | accepted | [`e83d846`] |
+| [0002](0002-pessimistic-locking.md) | Pessimistic row locks for seat inventory, with a bounded wait | accepted | [`4a9a5b9`], [`eac8cc4`] |
+| [0003](0003-identity-ids.md) | Database-assigned IDENTITY ids | accepted | [`4a9a5b9`] |
+| [0004](0004-request-fingerprint.md) | Idempotency is the key *and* a fingerprint of the request | accepted | [`eac8cc4`] |
+| [0005](0005-one-rule-set-for-basic-and-jwt.md) | One authorisation rule set for Basic and JWT | accepted | [`e83d846`] |
+| [0006](0006-stateless-sessions-no-csrf.md) | Stateless sessions, and CSRF protection off | accepted | [`e83d846`] |
+| [0007](0007-spring-boot-4.md) | Spring Boot 4.1 and Java 21 | accepted | [`7b45b5b`] |
+| [0008](0008-standalone-lambda-consumer.md) | A standalone, frameworkless Lambda consumer on arm64 | accepted | [`4a9a5b9`] |
+| [0009](0009-eksctl-and-sam-over-terraform.md) | eksctl, SAM and kustomize rather than Terraform | accepted | [`4a9a5b9`], [`92922cd`] |
+| [0010](0010-region-ap-south-1.md) | Everything in `ap-south-1` | accepted | [`4a9a5b9`], [`92922cd`] |
+| [0011](0011-correlation-ids-and-metrics.md) | Correlation ids, domain counters, and no exporter | accepted | [`d18f58b`], [`a6efc1c`] |
+| [0012](0012-openapi-public-read.md) | The OpenAPI document is public; the API it describes is not | accepted | [`82ea9b4`], [`ccad5b4`], [`2fb66de`] |
+| [0013](0013-outbox-ceiling-and-retention.md) | The outbox is bounded: an attempt ceiling and a retention window | accepted | [`a6efc1c`], [`50e8871`] |
+| [0014](0014-quality-gates.md) | The build fails on architecture, coverage and dependency drift | accepted | [`631f5f0`], [`f8d2d4b`] |
+| [0015](0015-event-transport.md) | Events go to an SQS standard queue, not a JMS broker | accepted | [`4a9a5b9`] |
 | [0016](0016-oracle-port.md) | What porting to Oracle would change | proposed; from documentation, never built or run | none |
 | [0017](0017-web-console.md) | The console reaches the API through its own server, not through CORS | accepted | the change that added `web/` |
 
@@ -51,3 +51,17 @@ citation stops being true.
 If you cannot write a real "Alternatives considered" for a record, it is
 probably a description of how the code works. That belongs in
 [`doc/ARCHITECTURE.md`](../doc/ARCHITECTURE.md).
+
+[`e83d846`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/e83d846
+[`4a9a5b9`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/4a9a5b9
+[`eac8cc4`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/eac8cc4
+[`7b45b5b`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/7b45b5b
+[`92922cd`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/92922cd
+[`d18f58b`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/d18f58b
+[`a6efc1c`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/a6efc1c
+[`82ea9b4`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/82ea9b4
+[`ccad5b4`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/ccad5b4
+[`2fb66de`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/2fb66de
+[`50e8871`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/50e8871
+[`631f5f0`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/631f5f0
+[`f8d2d4b`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/f8d2d4b

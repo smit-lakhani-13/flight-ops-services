@@ -63,9 +63,12 @@ stops the billing.
 
 ```bash
 brew install awscli eksctl kubernetes-cli helm aws-sam-cli openjdk@21
-aws configure                       # region ap-south-1
-aws sts get-caller-identity         # must print your account id
+aws configure
+aws sts get-caller-identity
 ```
+
+Give `aws configure` the region `ap-south-1`, and check that
+`aws sts get-caller-identity` prints your account id.
 
 `up.sh` builds the Lambda jar with the Maven wrapper, which needs JDK 21 on
 `JAVA_HOME`; step 1 checks this before anything bills. It also uses `openssl`
@@ -178,9 +181,12 @@ controller or anything else on the cluster.
 ## Checking the cost
 
 ```bash
-./deploy/aws/cost-check.sh        # last 7 days, by service, plus the forecast
+./deploy/aws/cost-check.sh
 ./deploy/aws/cost-check.sh 14
 ```
+
+With no argument it covers the last 7 days, by service, plus the forecast; the
+argument sets the number of days.
 
 Run it the morning after `up.sh` and then daily. Cost Explorer lags 8 to 24
 hours, so the current day is always incomplete; read the forecast, not

@@ -1,6 +1,6 @@
 # 7. Spring Boot 4.1 and Java 21
 
-Status: accepted (recorded 2026-09-22, decision taken in commit `7b45b5b`)
+Status: accepted (recorded 2026-09-22, decision taken in commit [`7b45b5b`])
 
 ## Context
 
@@ -16,7 +16,7 @@ service already written, but it would get no more free patches.
 On 22 September I upgraded to Spring Boot 4.1.1 on Java 21 (`pom.xml`). That
 included the move from `com.fasterxml.jackson` to `tools.jackson` in the
 application. The `spring-boot-starter-opentelemetry` observability stack came
-later, in `d18f58b` (see [ADR 0011](0011-correlation-ids-and-metrics.md)).
+later, in [`d18f58b`] (see [ADR 0011](0011-correlation-ids-and-metrics.md)).
 
 ## Consequences
 
@@ -52,7 +52,7 @@ later, in `d18f58b` (see [ADR 0011](0011-correlation-ids-and-metrics.md)).
   snapshot of the previous generation. The upgrade is the kind of work I want
   the repository to show. It needed renames of dependencies, packages and
   types, and [the defect log](../doc/DEFECT-LOG.md) lists them. The Jackson 2
-  conflict came later, when springdoc was added in `82ea9b4`, and the enforcer
+  conflict came later, when springdoc was added in [`82ea9b4`], and the enforcer
   caught it.
 
 * **Boot 4.0.** 4.1.0 had been the current line since 10 June 2026, three
@@ -66,5 +66,9 @@ during the same week. Boot 3.5 left open-source support on 30 June 2026, and
 It also listed the `{content, page{...}}` page shape as a consequence of
 Boot 4, and said the upgrade surfaced the Jackson 2 conflict. The first commit
 already set that page shape on 3.5.16, and the Jackson 2 conflict came with
-springdoc in `82ea9b4`, after the upgrade. The decision stands, on a stronger
+springdoc in [`82ea9b4`], after the upgrade. The decision stands, on a stronger
 reason.
+
+[`7b45b5b`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/7b45b5b
+[`d18f58b`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/d18f58b
+[`82ea9b4`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/82ea9b4

@@ -1,6 +1,6 @@
 # 6. Stateless sessions, and CSRF protection off
 
-Status: accepted (recorded 2026-09-22, decision taken in commit `e83d846`)
+Status: accepted (recorded 2026-09-22, decision taken in commit [`e83d846`])
 
 ## Context
 
@@ -64,3 +64,5 @@ decision. It reaches the API through its own server
 ([ADR 0017](0017-web-console.md)), so the API still sets no cookie, has no
 CORS policy and takes JSON-only writes. The console drops `WWW-Authenticate`,
 so the browser never shows its Basic prompt or caches the credentials.
+
+[`e83d846`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/e83d846

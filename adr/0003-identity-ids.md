@@ -1,6 +1,6 @@
 # 3. Database-assigned IDENTITY ids
 
-Status: accepted (recorded 2026-09-22, decision taken in commit `4a9a5b9`)
+Status: accepted (recorded 2026-09-22, decision taken in commit [`4a9a5b9`])
 
 ## Context
 
@@ -55,3 +55,5 @@ PostgreSQL never rolls a sequence back, so both leave gaps. The last
 consequence used to say the outbox claim and the pruner rely on `ORDER BY id`
 being insertion order to stay correct. It is only roughly insertion order, and
 neither query needs it for correctness.
+
+[`4a9a5b9`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/4a9a5b9

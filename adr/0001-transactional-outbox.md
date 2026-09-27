@@ -1,6 +1,6 @@
 # 1. A transactional outbox, not a send after commit
 
-Status: accepted (recorded 2026-09-22, decision taken in commit `e83d846`)
+Status: accepted (recorded 2026-09-22, decision taken in commit [`e83d846`])
 
 ## Context
 
@@ -74,3 +74,5 @@ publish a `BookingCreated` describing the booking.
 
 * **Accepting the lost event.** Defensible for analytics. Not for the record
   that a seat was sold.
+
+[`e83d846`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/e83d846

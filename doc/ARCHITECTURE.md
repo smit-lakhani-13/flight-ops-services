@@ -138,15 +138,15 @@ Reading it in the source, in order:
 
 | Step | Where | What it is responsible for |
 |---|---|---|
-| Correlation | `src/main/java/com/smit/flightops/observability/RequestIdFilter.java#doFilterInternal` | Runs ahead of Spring Security, so a 401 also carries `X-Request-Id`. Logs one INFO line for each answer of 400 or above outside `/actuator/`, except a failure that escapes the chain, which `ApiErrorController` logs |
-| Body limit | `src/main/java/com/smit/flightops/security/RequestBodyLimitFilter.java#doFilterInternal` | Refuses a body over 16 KiB with 413 before anything parses more than the limit: a declared `Content-Length` unread, a chunked body once the read passes the limit |
-| Authorisation | `src/main/java/com/smit/flightops/config/SecurityConfig.java#apiSecurityFilterChain` | One rule set for Basic and JWT alike |
-| Binding and validation | `src/main/java/com/smit/flightops/dto/BookingRequest.java` | Bean Validation on the record components: the flight number is letters and digits, and the passenger name needs one character that is neither whitespace nor a format character, and has no control character or unpaired surrogate. Failures become 400 before any service code runs. Jackson refuses a `seats` with a decimal point or an exponent, `2.0` included (`accept-float-as-int` is off in `src/main/resources/application.yml`), a missing or null one, which a primitive `int` cannot hold, and `"2"` as text (`allow-coercion-of-scalars: false`), each as `400 MALFORMED_REQUEST`. The writes that take a body read JSON only, so any other `Content-Type`, YAML included, gets 415 first |
-| Idempotency | `src/main/java/com/smit/flightops/service/BookingService.java#book` | Decides replay, conflict or insert. Holds no transaction of its own |
-| The write | `src/main/java/com/smit/flightops/service/BookingWriter.java#insertNewBooking` | The transaction, the row lock, the key re-check under the lock, the seat arithmetic and the outbox row |
-| The race loser | `src/main/java/com/smit/flightops/service/BookingWriter.java#recoverReplay` | Reads the winner in a fresh read-only transaction. `BookingService#book` holds no transaction, so the loser's has already rolled back. If `book` ever becomes transactional, `REQUIRES_NEW` still keeps the read in its own transaction |
-| The event | `src/main/java/com/smit/flightops/service/OutboxWriter.java#recordBookingCreated` | `Propagation.MANDATORY`: it refuses to run outside the booking's transaction |
-| The response | `src/main/java/com/smit/flightops/controller/BookingController.java#book` | 201 with a `Location` header. `UriComponentsBuilder` builds it from the id the database assigned |
+| Correlation | `RequestIdFilter.java#doFilterInternal` | Runs ahead of Spring Security, so a 401 also carries `X-Request-Id`. Logs one INFO line for each answer of 400 or above outside `/actuator/`, except a failure that escapes the chain, which `ApiErrorController` logs |
+| Body limit | `RequestBodyLimitFilter.java#doFilterInternal` | Refuses a body over 16 KiB with 413 before anything parses more than the limit: a declared `Content-Length` unread, a chunked body once the read passes the limit |
+| Authorisation | `SecurityConfig.java#apiSecurityFilterChain` | One rule set for Basic and JWT alike |
+| Binding and validation | `BookingRequest.java` | Bean Validation on the record components: the flight number is letters and digits, and the passenger name needs one character that is neither whitespace nor a format character, and has no control character or unpaired surrogate. Failures become 400 before any service code runs. Jackson refuses a `seats` with a decimal point or an exponent, `2.0` included (`accept-float-as-int` is off in `application.yml`), a missing or null one, which a primitive `int` cannot hold, and `"2"` as text (`allow-coercion-of-scalars: false`), each as `400 MALFORMED_REQUEST`. The writes that take a body read JSON only, so any other `Content-Type`, YAML included, gets 415 first |
+| Idempotency | `BookingService.java#book` | Decides replay, conflict or insert. Holds no transaction of its own |
+| The write | `BookingWriter.java#insertNewBooking` | The transaction, the row lock, the key re-check under the lock, the seat arithmetic and the outbox row |
+| The race loser | `BookingWriter.java#recoverReplay` | Reads the winner in a fresh read-only transaction. `BookingService#book` holds no transaction, so the loser's has already rolled back. If `book` ever becomes transactional, `REQUIRES_NEW` still keeps the read in its own transaction |
+| The event | `OutboxWriter.java#recordBookingCreated` | `Propagation.MANDATORY`: it refuses to run outside the booking's transaction |
+| The response | `BookingController.java#book` | 201 with a `Location` header. `UriComponentsBuilder` builds it from the id the database assigned |
 
 The path depends on details in that table that are easy to miss:
 
@@ -299,17 +299,33 @@ sequenceDiagram
     participant Q as SQS
     participant Pr as OutboxPruner
 
-    W->>DB: INSERT (payload, traceparent), in the booking's transaction
+    W->>DB: INSERT, inside the booking's transaction
     loop every poll-interval
-        P->>DB: SELECT ... WHERE published_at IS NULL AND attempts < maxAttempts<br/>AND (next_attempt_at IS NULL OR next_attempt_at <= now)<br/>ORDER BY id FOR UPDATE SKIP LOCKED
+        P->>DB: claim a batch (FOR UPDATE SKIP LOCKED)
         P->>Pub: publish(eventType, payload, headers)
         Pub->>Q: SendMessage + traceparent attribute
-        P->>DB: published_at = now  (or attempts++, last_error, next_attempt_at)
+        P->>DB: mark published, or record the failure
     end
     loop every prune-interval
         Pr->>DB: DELETE published rows older than retention, in batches
     end
 ```
+
+The writer stores the payload and the request's `traceparent`. The claim is
+this query (`OutboxEventRepository.java#claimUnpublished`):
+
+```sql
+SELECT * FROM outbox_events
+ WHERE published_at IS NULL
+   AND attempts < :maxAttempts
+   AND (next_attempt_at IS NULL OR next_attempt_at <= :now)
+ ORDER BY id
+ LIMIT :batchSize
+   FOR UPDATE SKIP LOCKED
+```
+
+A sent row gets `published_at`. A failed one has its `attempts` raised by one
+and its `last_error` and `next_attempt_at` set (`OutboxEvent.java#markFailed`).
 
 Each of these choices prevents a specific failure:
 
@@ -784,10 +800,10 @@ costs:
 
 | Seam | Swap in | Cost |
 |---|---|---|
-| `EventPublisher` | A JMS broker (Solace PubSub+, TIBCO EMS), Kafka, EventBridge | `EventPublisher` itself does not change, because the payload is already serialised. A JMS broker would take a publisher behind `@ConditionalOnProperty`, a `ConnectionFactory` bean and the vendor's client library, a mode in `src/main/java/com/smit/flightops/config/EventProperties.java#MODES`, a test, and a new consumer, because the Lambda reads `SQSEvent`. [ADR 0015](../adr/0015-event-transport.md) sets out each option from the vendors' documentation; none has been built or run here |
-| `spring.security.oauth2.resourceserver.jwt.issuer-uri` and `.audiences` | Cognito, Okta, Entra | Configuration: set both. `issuer-uri` alone would accept a token the issuer minted for another client in the tenant, so `src/main/java/com/smit/flightops/config/SecurityConfig.java#requireIssuerAndAudience` stops startup without `audiences`. The rules already treat a JWT scope and a Basic authority identically |
-| `Clock` (`src/main/java/com/smit/flightops/config/TimeConfig.java`) | A fixed clock in a test | Already used everywhere |
-| `management.opentelemetry.tracing.export.otlp.endpoint` | An OTLP collector | An environment variable. Ids are already generated and already on every log line |
+| `EventPublisher` | A JMS broker (Solace PubSub+, TIBCO EMS), Kafka, EventBridge | `EventPublisher` itself does not change, because the payload is already serialised. A JMS broker would take a publisher behind `@ConditionalOnProperty`, a `ConnectionFactory` bean and the vendor's client library, a mode in `EventProperties.java#MODES`, a test, and a new consumer, because the Lambda reads `SQSEvent`. [ADR 0015](../adr/0015-event-transport.md) sets out each option from the vendors' documentation; none has been built or run here |
+| `issuer-uri` and `audiences` | Cognito, Okta, Entra | Configuration: set `spring.security.oauth2.resourceserver.jwt.issuer-uri` and `.audiences`. `issuer-uri` alone would accept a token the issuer minted for another client in the tenant, so `SecurityConfig.java#requireIssuerAndAudience` stops startup without `audiences`. The rules already treat a JWT scope and a Basic authority identically |
+| `Clock` (`TimeConfig.java`) | A fixed clock in a test | Already used everywhere |
+| The OTLP tracing endpoint | An OTLP collector | Set `management.opentelemetry.tracing.export.otlp.endpoint`, for example as the environment variable `MANAGEMENT_OPENTELEMETRY_TRACING_EXPORT_OTLP_ENDPOINT`. Ids are already generated and already on every log line |
 | The outbox poller | Debezium reading the WAL | A replication slot, a connector to operate, and a disk that fills if the consumer stops. I considered it and rejected it at this size |
 | The database | Oracle | Two native outbox queries rewritten, the session-wide lock-wait bound narrowed to per-query hints, and a second set of migrations. [ADR 0016](../adr/0016-oracle-port.md) sets this out from documentation, as a proposal; none of it has been built or run |
 
@@ -795,22 +811,85 @@ costs:
 
 ## Trade-offs
 
-Each row is a choice I made, set against what a production system would do.
-The README keeps a short version of this table under
+Each item is a choice I made, set against what a production system would do.
+The README keeps a short version of this list under
 [Trade-offs and still open](../README.md#trade-offs-and-still-open).
 
-| Current | Production would be | Why it is this way |
-|---|---|---|
-| Two users in an `InMemoryUserDetailsManager` | Cognito, Okta or Entra behind `issuer-uri` and `audiences` | The rules are real and tested, and the user store is a stub. The resource-server half is wired and activates when an issuer and an audience are configured, so the swap is configuration: set both properties, as [SECURITY.md](../SECURITY.md#authentication-and-authorisation) shows. |
-| Idempotent replay returns 201 | 200, arguably | It answers with the original status, Stripe-style, and the booking the key created, so the body matches the first response until the booking is cancelled, when `cancelledAt` is set. "201 Created" for something not created this time is a fair challenge. I documented it and left it. |
-| Idempotency keys never expire. The key is a `NOT NULL` column of the booking row under `uk_bookings_idempotency_key`, so the unique index grows by one entry per booking | Keys valid for a stated window (Stripe's documentation says a key may be removed once it is at least 24 hours old), after which a replay is a new request | Cancellation sets a timestamp and never deletes the row (`src/main/resources/db/migration/V4__booking_cancellation.sql`), so a cancelled booking keeps its key and a late replay returns it instead of booking again (`src/test/java/com/smit/flightops/ErrorContractTest.java#replayAfterCancellationDoesNotRebook`). A window would bound the index, but a replay after it would book again, a contract change clients have to be told about. It would also need a new migration, because applied ones are never edited. |
-| A poller drains the outbox | Debezium reading the WAL | A poll every second (`app.outbox.poll-interval` defaults to 1000 ms) costs at most one indexed query per replica per second, and adds up to a poll interval plus the sends ahead of an event, and another interval for each full batch ahead of it ([The outbox](#the-outbox)). CDC removes both and adds Kafka Connect, a connector to operate and a replication slot that fills the disk if the consumer stops. |
-| Retention is a batched `DELETE` on a schedule | A partitioned table, dropping old partitions | Detaching and dropping an old partition is O(1) and a delete is not, which matters from roughly the first hundred million rows. Below that, partitions add a maintenance job and an outage when that job fails. The pruner is one short class, and each run is bounded: batches of 1,000 rows by default, and at most 50 batches (`src/main/java/com/smit/flightops/service/OutboxPruner.java#MAX_BATCHES_PER_RUN`). |
-| No circuit breaker | Resilience4j | Besides the database, SQS is the one outbound dependency (and the token issuer, once one is configured). The outbox already absorbs an SQS failure: a down queue leaves rows unpublished, and a later drain retries them after a backoff, up to the attempt ceiling in [The outbox](#the-outbox). Each send is bounded at 5 s (`src/main/java/com/smit/flightops/config/AwsConfig.java#sqsClient`) and runs on the poller, never on a request thread. |
-| Contract tests share a JSON file | Pact, with a broker and a `can-i-deploy` gate in CI | The file catches the change that breaks the consumer, which is the whole job while both modules live in one repository. A broker pays off when the consumers are other teams' services. |
-| The service's traces are generated and not exported. The trace id crosses the queue as a message attribute, and the Lambda logs it | An OTLP collector on both sides, so the queue hop is one waterfall | Trace and span ids are on the service's request log lines, and the request id is on every response the application handles. `BookingEventHandler` logs the producer's `traceparent`, so two log greps follow one booking end to end. Export from the service is one property away ([Where the seams are](#where-the-seams-are)). The Lambda would need an exporter in a function kept small for its cold start: 10.3 MiB, with a 34 KB HTTP client (`lambda/pom.xml`). No cold start has been measured. |
-| H2 uses `create-drop` | Flyway and `validate`, as PostgreSQL already has | The migrations are written for PostgreSQL, and running them on a throwaway in-memory database buys nothing. The PostgreSQL tests in CI apply them and validate the entities against the result. |
-| `lambda/events/*.json` are written by hand, and their `md5OfBody` and `md5OfMessageAttributes` values are placeholders | Messages captured from a real queue | Nothing in the code reads either field. The files are fixtures for the tests and for `sam local invoke`, and none of them is captured queue traffic. |
+- **Two users in an `InMemoryUserDetailsManager`.** Production would be Cognito,
+  Okta or Entra behind `issuer-uri` and `audiences`. The rules are real and
+  tested, and the user store is a stub. The resource-server half is wired and
+  activates when an issuer and an audience are configured, so the swap is
+  configuration: set both properties, as
+  [SECURITY.md](../SECURITY.md#authentication-and-authorisation) shows.
+
+- **Idempotent replay returns 201.** Production would be 200, arguably. It
+  answers with the original status, Stripe-style, and the booking the key
+  created, so the body matches the first response until the booking is
+  cancelled, when `cancelledAt` is set. "201 Created" for something not created
+  this time is a fair challenge. I documented it and left it.
+
+- **Idempotency keys never expire.** The key is a `NOT NULL` column of the
+  booking row under `uk_bookings_idempotency_key`, so the unique index grows by
+  one entry per booking. Production would be keys valid for a stated window
+  (Stripe's documentation says a key may be removed once it is at least 24 hours
+  old), after which a replay is a new request. Cancellation sets a timestamp and
+  never deletes the row (`V4__booking_cancellation.sql`), so a cancelled booking
+  keeps its key and a late replay returns it instead of booking again
+  (`ErrorContractTest.java#replayAfterCancellationDoesNotRebook`). A window
+  would bound the index, but a replay after it would book again, a contract
+  change clients have to be told about. It would also need a new migration,
+  because applied ones are never edited.
+
+- **A poller drains the outbox.** Production would be Debezium reading the WAL.
+  A poll every second (`app.outbox.poll-interval` defaults to 1000 ms) costs at
+  most one indexed query per replica per second, and adds up to a poll interval
+  plus the sends ahead of an event, and another interval for each full batch
+  ahead of it ([The outbox](#the-outbox)). CDC removes both and adds Kafka
+  Connect, a connector to operate and a replication slot that fills the disk if
+  the consumer stops.
+
+- **Retention is a batched `DELETE` on a schedule.** Production would be a
+  partitioned table, dropping old partitions. Detaching and dropping an old
+  partition is O(1) and a delete is not, which matters from roughly the first
+  hundred million rows. Below that, partitions add a maintenance job and an
+  outage when that job fails. The pruner is one short class, and each run is
+  bounded: batches of 1,000 rows by default, and at most 50 batches
+  (`OutboxPruner.java#MAX_BATCHES_PER_RUN`).
+
+- **No circuit breaker.** Production would be Resilience4j. Besides the
+  database, SQS is the one outbound dependency (and the token issuer, once one
+  is configured). The outbox already absorbs an SQS failure: a down queue leaves
+  rows unpublished, and a later drain retries them after a backoff, up to the
+  attempt ceiling in [The outbox](#the-outbox). Each send is bounded at 5 s
+  (`AwsConfig.java#sqsClient`) and runs on the poller, never on a request
+  thread.
+
+- **Contract tests share a JSON file.** Production would be Pact, with a broker
+  and a `can-i-deploy` gate in CI. The file catches the change that breaks the
+  consumer, which is the whole job while both modules live in one repository. A
+  broker pays off when the consumers are other teams' services.
+
+- **The service's traces are generated and not exported.** The trace id crosses
+  the queue as a message attribute, and the Lambda logs it. Production would be
+  an OTLP collector on both sides, so the queue hop is one waterfall. Trace and
+  span ids are on the service's request log lines, and the request id is on
+  every response the application handles. `BookingEventHandler` logs the
+  producer's `traceparent`, so two log greps follow one booking end to end.
+  Export from the service is one property away
+  ([Where the seams are](#where-the-seams-are)). The Lambda would need an
+  exporter in a function kept small for its cold start: 10.3 MiB, with a 34 KB
+  HTTP client (`lambda/pom.xml`). No cold start has been measured.
+
+- **H2 uses `create-drop`.** Production would be Flyway and `validate`, as
+  PostgreSQL already has. The migrations are written for PostgreSQL, and running
+  them on a throwaway in-memory database buys nothing. The PostgreSQL tests in
+  CI apply them and validate the entities against the result.
+
+- **`lambda/events/*.json` are written by hand, and their `md5OfBody` and
+  `md5OfMessageAttributes` values are placeholders.** Production would be
+  messages captured from a real queue. Nothing in the code reads either field.
+  The files are fixtures for the tests and for `sam local invoke`, and none of
+  them is captured queue traffic.
 
 ### Still open
 

@@ -1,8 +1,8 @@
 # 9. eksctl, SAM and kustomize rather than Terraform
 
 Status: accepted (recorded 2026-09-22, decision taken with the deployment
-tooling; `cluster.yaml` and `template.yaml` date from `4a9a5b9`, and the rest
-landed in `92922cd`)
+tooling; `cluster.yaml` and `template.yaml` date from [`4a9a5b9`], and the rest
+landed in [`92922cd`])
 
 ## Context
 
@@ -107,3 +107,6 @@ does. The decision stands on the other reasons. Only the build reason was wrong.
 
 * **Console clicking and a runbook.** Faster the first time and unreproducible
   every time after, with nothing to lint and nothing to diff.
+
+[`4a9a5b9`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/4a9a5b9
+[`92922cd`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/92922cd

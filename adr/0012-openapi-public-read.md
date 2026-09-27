@@ -1,8 +1,8 @@
 # 12. The OpenAPI document is public; the API it describes is not
 
-Status: accepted (recorded 2026-09-22, decision taken in commit `82ea9b4`; the
-annotation scope was widened in `ccad5b4` and `2fb66de`, and recorded in place
-on 2026-09-23)
+Status: accepted (recorded 2026-09-22, decision taken in commit [`82ea9b4`]; the
+annotation scope was widened in [`ccad5b4`] and [`2fb66de`], and recorded in
+place on 2026-09-23)
 
 ## Context
 
@@ -36,11 +36,12 @@ a method the running instance rejects is worse than advertising none.
 `src/test/java/com/smit/flightops/OpenApiTest.java#theSecurityRequirementIsDocumentedOnceAndAppliesToEverything`
 pins both.
 
-To see both halves on a local run:
+To see both halves on a local run, the first command lists the documented paths
+with no credentials, and the second prints 401:
 
 ```bash
-curl -s localhost:8080/v3/api-docs | jq '.paths | keys'      # no credentials needed
-curl -s -o /dev/null -w '%{http_code}\n' localhost:8080/api/v1/flights   # 401
+curl -s localhost:8080/v3/api-docs | jq '.paths | keys'
+curl -s -o /dev/null -w '%{http_code}\n' localhost:8080/api/v1/flights
 ```
 
 ## Consequences
@@ -103,8 +104,12 @@ read listed 401 or 403, which come from the security filter chain where
 springdoc cannot see them. The flight status change left out the 503 it
 returns behind a booking's row lock. A generated client learns its error cases
 from this document, so every operation now lists its success status, 401 and
-403, and the error codes its own logic returns (`ccad5b4`). The three writes
+403, and the error codes its own logic returns ([`ccad5b4`]). The three writes
 with a body also list 415, since they read JSON only and refuse a YAML body
-(`2fb66de`). Statuses that Spring MVC raises for any endpoint are not listed:
+([`2fb66de`]). Statuses that Spring MVC raises for any endpoint are not listed:
 406 for an `Accept` header the API cannot serve, and 500. The summaries stay
 one line, so the old concern about noise still shapes the text.
+
+[`82ea9b4`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/82ea9b4
+[`ccad5b4`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/ccad5b4
+[`2fb66de`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/2fb66de

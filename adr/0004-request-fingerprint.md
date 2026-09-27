@@ -1,6 +1,6 @@
 # 4. Idempotency is the key *and* a fingerprint of the request
 
-Status: accepted (recorded 2026-09-22, decision taken in commit `eac8cc4`)
+Status: accepted (recorded 2026-09-22, decision taken in commit [`eac8cc4`])
 
 ## Context
 
@@ -71,3 +71,5 @@ confirm a guess, as the bullet now says.
 
 * **Replay anyway.** Ignoring the mismatch and replaying the first booking is
   the original defect, restated as a policy.
+
+[`eac8cc4`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/eac8cc4

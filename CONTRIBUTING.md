@@ -13,11 +13,13 @@ a known failure on 25. CI, the image and the Lambda runtime all use 21
 `lambda/template.yaml`), so a build on 25 would be one that CI never checked.
 
 ```bash
-export JAVA_HOME=/opt/homebrew/opt/openjdk@21      # Homebrew, Apple Silicon
-# export JAVA_HOME=/usr/local/opt/openjdk@21       # Homebrew, Intel
+export JAVA_HOME=/opt/homebrew/opt/openjdk@21
 export PATH="$JAVA_HOME/bin:$PATH"
-java -version                                      # must say 21
+java -version
 ```
+
+`java -version` must say 21. That path is Homebrew's on Apple Silicon; on an
+Intel Mac, Homebrew installs the JDK under `/usr/local/opt/openjdk@21`.
 
 On macOS, set `JAVA_HOME` yourself. `/usr/libexec/java_home -v 21` finds only
 the JDKs registered with macOS, and Homebrew's are not registered. When the
@@ -27,11 +29,12 @@ only JDK it knows is 17, it still exits 0 and prints the path of the 17. A
 ## Building
 
 `lambda/` is a separate module with no parent and its own dependency tree, so
-it has its own Maven build:
+it has its own Maven build. The first command builds the service and the second
+the consumer:
 
 ```bash
-./mvnw -B clean verify                       # the service
-./mvnw -B -f lambda/pom.xml clean verify     # the consumer
+./mvnw -B clean verify
+./mvnw -B -f lambda/pom.xml clean verify
 ```
 
 The gate is `verify`. The enforcer rules bind to `validate`, so `test` runs
@@ -84,10 +87,18 @@ profile never sees it, and neither does a laptop with no Docker.
 ## Running it
 
 ```bash
-./mvnw spring-boot:run       # H2 in memory, seeded, no setup
-scripts/demo.sh              # the eight acts, with pauses
-scripts/demo.sh --fast       # without
+./mvnw spring-boot:run
 ```
+
+That starts the service on H2 in memory, seeded, with no setup. In a second
+terminal, from the same directory:
+
+```bash
+scripts/demo.sh
+```
+
+That runs the eight acts, with pauses; `scripts/demo.sh --fast` runs them
+without.
 
 Against real PostgreSQL:
 
@@ -98,8 +109,10 @@ docker compose up --build
 The console in `web/` needs Node 24 and the service running on port 8080:
 
 ```bash
-cd web && npm ci && npm run build && npm start    # http://localhost:3000
+cd web && npm ci && npm run build && npm start
 ```
+
+Then open <http://localhost:3000>.
 
 [web/README.md](web/README.md) has its pages, its proxy rules and its tests.
 
@@ -129,10 +142,11 @@ resulting failure blames the property.
 
 The table below breaks the tests in the two builds of [Building](#building)
 down by layer. Every count here comes from `scripts/numbers.sh`, and its
-per-class listing is what the table adds up. Do not edit a count by hand:
+per-class listing is what the table adds up. Do not edit a count by hand; this
+recomputes every count the docs claim:
 
 ```bash
-scripts/numbers.sh          # recomputes every count the docs claim
+scripts/numbers.sh
 ```
 
 | Layer | Tests | Tooling |

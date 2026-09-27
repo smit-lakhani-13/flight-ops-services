@@ -1,8 +1,8 @@
 # 10. Everything in `ap-south-1`
 
 Status: accepted (recorded 2026-09-22, decision taken with the deployment
-tooling; the region was already set in `4a9a5b9`, and the `lib.sh` pin landed
-in `92922cd`)
+tooling; the region was already set in [`4a9a5b9`], and the `lib.sh` pin landed
+in [`92922cd`])
 
 ## Context
 
@@ -69,3 +69,6 @@ caller's profile default.
 
 * **Multi-region.** Nothing here has an availability requirement that justifies
   a second region, and the demo cost would double.
+
+[`4a9a5b9`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/4a9a5b9
+[`92922cd`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/92922cd

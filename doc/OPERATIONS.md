@@ -250,7 +250,12 @@ curl -si -u api:dev-secret -H 'X-Request-Id: ticket-4471' \
   -H 'Content-Type: application/json' \
   -d '{"flightNumber":"UA123","passengerName":"Test Passenger","seats":2,"idempotencyKey":"k1"}' \
   | grep -i x-request-id
-# X-Request-Id: ticket-4471
+```
+
+The answer carries the caller's id back:
+
+```text
+X-Request-Id: ticket-4471
 ```
 
 An inbound id reaches a log line and a response header. A `\r\n` in it could
@@ -734,9 +739,12 @@ HASH="{bcrypt}$(printf '%s' "$NEW" | htpasswd -niBC 10 "" | tr -d ':\n')"
 kubectl patch secret flight-ops-secret -n flight-ops \
   -p "{\"stringData\":{\"API_PASSWORD\":\"$HASH\"}}"
 kubectl rollout restart deployment/flight-ops -n flight-ops
+printf 'new password: %s\n' "$NEW"
 ```
 
-For the ops password, patch `OPS_PASSWORD` instead.
+For the ops password, patch `OPS_PASSWORD` instead. The last line prints the
+new password. Hand it to the callers before closing the shell: the Secret holds
+only its bcrypt hash, so `$NEW` is the only copy.
 
 The restart is required. The password is injected as an environment variable,
 and environment variables are read once at container start. A mounted volume
