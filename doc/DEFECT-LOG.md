@@ -704,7 +704,9 @@ zone bug fails the test on a UTC runner as well.
 following the example would have started a pod with neither set, which is the
 first bug in this section. Both keys are in the example now, with the
 `htpasswd -bnBC 10 "" 'pw' | tr -d ':\n'` recipe and a note that leaving them
-out fails startup. No test covers the example file.
+out fails startup. No test covers the example file. The recipe has since moved
+to stdin, because `htpasswd -b` puts the password in the process list and the
+shell history.
 
 ## Third review pass
 

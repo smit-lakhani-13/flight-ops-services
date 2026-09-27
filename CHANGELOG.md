@@ -852,6 +852,12 @@ says not yet.
   plain or encoded, is among its arguments. The database password is still an
   argument of `aws cloudformation deploy` at step 6.
 
+- **No password on a command line in the manual recipes.** The example
+  Secret's comment hashed the password with `htpasswd -b`, which puts it in the
+  process list and the shell history, and the rotation recipe in
+  `doc/OPERATIONS.md` passed the new hash to `kubectl patch -p`. Both now use
+  stdin, as `up.sh` does.
+
 - **A passenger name could turn the text around it.** The right-to-left
   override, U+202E, reorders the characters after it wherever the name is shown:
   in the console's booking table and detail page, or in any client that reads it
