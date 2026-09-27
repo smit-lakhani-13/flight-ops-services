@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type KeyboardEvent } from "react";
 import { useRequestLog } from "@/lib/request-log";
 import { CheckIcon, CloseIcon, CopyIcon, ListIcon } from "./icons";
-import { Button, EmptyState, HttpStatus, MUTED, NONE, STATUS_EDGE, statusClass } from "./ui";
+import { Button, EmptyState, HttpStatus, Identifier, MUTED, NONE, STATUS_EDGE, statusClass } from "./ui";
 
 // The ids here are the ones to search for in the API's log: every line it
 // writes for a request carries the X-Request-Id it echoed. The drawer sits over
@@ -13,15 +13,43 @@ import { Button, EmptyState, HttpStatus, MUTED, NONE, STATUS_EDGE, statusClass }
 // click inside it keeps the focus there, so Escape still works after a click on
 // a button that disables itself, and Clear keeps the drawer at its height until
 // the next call, so a second click on it lands in the drawer too. Below 640 px
-// a row shows the call, the answer and the id sent; the time, the echo, the
-// Location and the duration join from there up, and a long call wraps rather
+// a row has two cells: the call with the id sent under it, and the answer,
+// whose code breaks only after an underscore. A table cannot move one cell's
+// content under another's with CSS alone, so the drawer reads the width and
+// draws that shape itself; a copy button that had the focus when the width
+// crossed 640 px hands it to its twin in the new shape, so Escape still works.
+// From 640 px up the time, the id sent, the echo, the
+// Location and the duration each have a column, and a long call wraps rather
 // than widening every row. On a short screen, or at a high zoom, the whole
 // drawer scrolls as one, and the scroll padding keeps a focused row clear of
 // the sticky headings. A copied id is said once, in the drawer's one status
 // line, while its button keeps its name and its title: a title that changed
 // would change the focused button's description, which a screen reader can
 // say as well.
-const WIDE = "hidden sm:table-cell";
+
+/** Tailwind's sm breakpoint, in rem as Tailwind writes it. */
+const WIDE_SCREEN = "(min-width: 40rem)";
+
+/**
+ * Whether the screen is 640 px or wider; true where there is no matchMedia to
+ * ask. `beforeChange` runs when the width crosses 640 px, before the other
+ * shape is drawn, while the old one is still on the page.
+ */
+function useWideScreen(beforeChange: () => void): boolean {
+  const subscribe = useCallback(
+    (onChange: () => void) => {
+      const query = window.matchMedia?.(WIDE_SCREEN);
+      const changed = () => {
+        beforeChange();
+        onChange();
+      };
+      query?.addEventListener("change", changed);
+      return () => query?.removeEventListener("change", changed);
+    },
+    [beforeChange],
+  );
+  return useSyncExternalStore(subscribe, () => window.matchMedia?.(WIDE_SCREEN).matches ?? true, () => true);
+}
 
 export function RequestLog({ onClose }: { onClose: (returnFocus: boolean) => void }) {
   const { entries, clear } = useRequestLog();
@@ -31,9 +59,26 @@ export function RequestLog({ onClose }: { onClose: (returnFocus: boolean) => voi
   const [copied, setCopied] = useState<string>();
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const title = useId();
+  // The other shape draws every row afresh, which takes a focused copy button
+  // off the page and would drop the focus outside the drawer.
+  const refocus = useRef<string | null>(null);
+  const noteFocus = useCallback(() => {
+    const focused = document.activeElement;
+    refocus.current = focused instanceof HTMLElement && drawer.current?.contains(focused) ? (focused.dataset.copy ?? null) : null;
+  }, []);
+  const wide = useWideScreen(noteFocus);
 
   useEffect(() => close.current?.focus(), []);
   useEffect(() => () => clearTimeout(copiedTimer.current), []);
+  useLayoutEffect(() => {
+    const value = refocus.current;
+    refocus.current = null;
+    if (value === null) return;
+    const twin = [...(drawer.current?.querySelectorAll<HTMLElement>("[data-copy]") ?? [])].find(
+      (button) => button.dataset.copy === value,
+    );
+    (twin ?? drawer.current)?.focus();
+  }, [wide]);
 
   const onCopied = useCallback((value: string) => {
     setCopied(value);
@@ -96,7 +141,7 @@ export function RequestLog({ onClose }: { onClose: (returnFocus: boolean) => voi
           <table className="w-full text-left text-xs" data-testid="request-log" aria-labelledby={title}>
             <thead className={MUTED}>
               <tr>
-                {HEADINGS.map(({ label, className }) => (
+                {(wide ? HEADINGS : NARROW_HEADINGS).map(({ label, className }) => (
                   <th
                     key={label}
                     scope="col"
@@ -110,29 +155,54 @@ export function RequestLog({ onClose }: { onClose: (returnFocus: boolean) => voi
             <tbody className="font-mono">
               {entries.map((entry) => {
                 const kind = statusClass(entry.status);
+                const sent = <CopyButton value={entry.requestId} copied={copied === entry.requestId} onCopied={onCopied} />;
+                if (!wide) {
+                  return (
+                    <tr key={entry.id} data-status-class={kind} className="border-t border-slate-100 first:border-t-0 dark:border-slate-800">
+                      <td className={`border-l-4 py-1.5 pr-2 pl-4 ${STATUS_EDGE[kind]}`}>
+                        <span className="block wrap-anywhere">
+                          {entry.method} {entry.path}
+                        </span>
+                        <span className="flex items-center gap-1">
+                          {sent}
+                          <span data-testid="sent-id" className="min-w-0 wrap-anywhere">
+                            {entry.requestId}
+                          </span>
+                        </span>
+                      </td>
+                      <td className="px-2 py-1.5 align-top">
+                        <HttpStatus status={entry.status} />
+                        {entry.code && (
+                          <span className="mt-1 block">
+                            <Identifier value={entry.code} />
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                }
                 return (
                   <tr key={entry.id} data-status-class={kind} className="border-t border-slate-100 first:border-t-0 dark:border-slate-800">
-                    <td className={`${WIDE} border-l-4 py-1.5 pr-2 pl-6 whitespace-nowrap ${STATUS_EDGE[kind]}`}>
+                    <td className={`border-l-4 py-1.5 pr-2 pl-6 whitespace-nowrap ${STATUS_EDGE[kind]}`}>
                       {new Date(entry.at).toLocaleTimeString()}
                     </td>
-                    {/* The status edge moves to this cell while the time is hidden. */}
-                    <td className={`min-w-24 border-l-4 py-1.5 pr-2 pl-4 wrap-anywhere sm:min-w-48 sm:border-l-0 sm:pl-2 ${STATUS_EDGE[kind]}`}>
+                    <td className="min-w-48 px-2 py-1.5 wrap-anywhere">
                       {entry.method} {entry.path}
                     </td>
-                    <td className="px-2 py-1.5 wrap-anywhere sm:whitespace-nowrap">
+                    <td className="px-2 py-1.5 whitespace-nowrap">
                       <HttpStatus status={entry.status} /> {entry.code}
                     </td>
-                    <td className="px-2 py-1 wrap-anywhere sm:whitespace-nowrap">
+                    <td className="px-2 py-1 whitespace-nowrap">
                       <span className="inline-flex items-center gap-1">
-                        <CopyButton value={entry.requestId} copied={copied === entry.requestId} onCopied={onCopied} />
+                        {sent}
                         <span data-testid="sent-id">{entry.requestId}</span>
                       </span>
                     </td>
-                    <td className={`${WIDE} px-2 py-1.5 whitespace-nowrap`} data-testid="echoed-id">
+                    <td className="px-2 py-1.5 whitespace-nowrap" data-testid="echoed-id">
                       {entry.echoedRequestId === entry.requestId ? "same" : (entry.echoedRequestId ?? NONE)}
                     </td>
-                    <td className={`${WIDE} px-2 py-1.5 whitespace-nowrap`}>{entry.location ?? ""}</td>
-                    <td className={`${WIDE} py-1.5 pr-6 pl-2 text-right tabular-nums`}>{entry.ms}</td>
+                    <td className="px-2 py-1.5 whitespace-nowrap">{entry.location ?? ""}</td>
+                    <td className="py-1.5 pr-6 pl-2 text-right tabular-nums">{entry.ms}</td>
                   </tr>
                 );
               })}
@@ -145,13 +215,18 @@ export function RequestLog({ onClose }: { onClose: (returnFocus: boolean) => voi
 }
 
 const HEADINGS = [
-  { label: "Time", className: `${WIDE} pr-2 pl-7` },
-  { label: "Call", className: "pr-2 pl-5 sm:pl-2" },
+  { label: "Time", className: "pr-2 pl-7" },
+  { label: "Call", className: "px-2" },
   { label: "Status", className: "px-2" },
   { label: "X-Request-Id sent", className: "px-2" },
-  { label: "Echoed", className: `${WIDE} px-2` },
-  { label: "Location", className: `${WIDE} px-2` },
-  { label: "ms", className: `${WIDE} pr-6 pl-2 text-right` },
+  { label: "Echoed", className: "px-2" },
+  { label: "Location", className: "px-2" },
+  { label: "ms", className: "pr-6 pl-2 text-right" },
+];
+
+const NARROW_HEADINGS = [
+  { label: "Call and X-Request-Id sent", className: "pr-2 pl-5" },
+  { label: "Status", className: "px-2" },
 ];
 
 // A copy button beside an id. The clipboard can refuse (an insecure origin, a
@@ -173,6 +248,7 @@ function CopyButton({ value, copied, onCopied }: { value: string; copied: boolea
       iconOnly
       aria-label={`Copy ${value}`}
       title="Copy"
+      data-copy={value}
       icon={copied ? <CheckIcon className="size-4 text-emerald-600 dark:text-emerald-400" /> : <CopyIcon />}
       onClick={copy}
     />

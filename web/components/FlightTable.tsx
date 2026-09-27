@@ -1,5 +1,5 @@
 import type { Flight } from "@/lib/types";
-import { formatInstant, MUTED, SeatBar, StatusBadge, TextLink } from "./ui";
+import { formatInstant, LINK_CELL, MUTED, SeatBar, StatusBadge, TextLink } from "./ui";
 
 // The page shows its own empty state, with an action, when there are no rows.
 // From 768 px the table scrolls inside its card and keeps its header in view;
@@ -33,8 +33,10 @@ export function FlightTable({ flights }: { flights: Flight[] }) {
         <tbody>
           {flights.map((flight) => (
             <tr key={flight.flightNumber} className="border-b border-slate-100 last:border-0 dark:border-slate-800">
-              <td className={`py-2.5 font-mono ${gap}`}>
-                <TextLink href={`/flights/${flight.flightNumber}`}>{flight.flightNumber}</TextLink>
+              <td className={`${LINK_CELL} py-2.5 font-mono ${gap}`}>
+                <TextLink href={`/flights/${flight.flightNumber}`} fillCell>
+                  {flight.flightNumber}
+                </TextLink>
                 <div className="mt-1 font-sans sm:hidden">
                   <StatusBadge status={flight.status} testId={false} />
                 </div>

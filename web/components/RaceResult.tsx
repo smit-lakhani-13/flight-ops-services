@@ -1,6 +1,6 @@
 import { summariseRace } from "@/lib/race-summary";
 import { isErrorBody, type RaceReport } from "@/lib/types";
-import { HttpStatus, MUTED, NONE, Stat, STATUS_EDGE, statusClass, TextLink } from "./ui";
+import { HttpStatus, LINK_CELL, MUTED, NONE, Stat, STATUS_EDGE, statusClass, TextLink } from "./ui";
 
 export function RaceResult({ report, before, after }: { report: RaceReport; before: number | null; after: number | null }) {
   const { statuses, bookingIds } = summariseRace(report.rows);
@@ -49,9 +49,11 @@ export function RaceResult({ report, before, after }: { report: RaceReport; befo
                   <td className="py-1.5 pr-3">
                     <HttpStatus status={row.status} />
                   </td>
-                  <td className="py-1.5 pr-3 whitespace-nowrap">
+                  <td className={`${LINK_CELL} py-1.5 pr-3 whitespace-nowrap`}>
                     {typeof body?.bookingId === "number" ? (
-                      <TextLink href={`/bookings/${body.bookingId}`}>booking #{body.bookingId}</TextLink>
+                      <TextLink href={`/bookings/${body.bookingId}`} fillCell>
+                        booking #{body.bookingId}
+                      </TextLink>
                     ) : isErrorBody(row.body) ? (
                       row.body.code
                     ) : (

@@ -84,7 +84,7 @@ says not yet.
   `web/README.md` maps each page to the calls it makes. The pages are laid out
   for phones, tablets and desktops, with touch-sized controls and 16 px field
   text below 1280 px or when touch is the main pointer, and a Playwright spec
-  checks every page at eleven Chromium viewports and the keyboard's outline on
+  checks every page at twelve Chromium viewports and the keyboard's outline on
   every stop of the sign-in page. Built and tested in CI, never hosted.
 
 - **CI checks the console on every push or pull request to `main`.** A new

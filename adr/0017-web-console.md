@@ -83,10 +83,14 @@ The API does not change: no CORS mapping, no cookie, no new endpoint.
   decides: the console can send any status and show the 409.
 * **The layout is a rule the tests hold.** Below 1280 px, and at any width
   when touch is the main pointer, every control except a link inside a table
-  is at least 44 px tall and every field has 16 px text. A Playwright spec
-  checks that on every page at eight emulated touch viewports, all narrower
-  than 1280 px. At all eleven Chromium viewports it also checks that no page
-  scrolls sideways. That is emulation: nothing has run in Safari.
+  is at least 44 px tall and every field has 16 px text. A link inside a table
+  keeps its row short, and its hit area is the whole cell instead. A
+  Playwright spec checks the height and the text on every page at nine
+  emulated touch viewports, one of them a 1366 px tablet, wider than the
+  1280 px where a mouse gets the denser layout. At all twelve Chromium
+  viewports it also checks that no page scrolls sideways and that a tap
+  anywhere in a table link's cell lands on the link. That is emulation:
+  nothing has run in Safari.
 * **Built and tested, never hosted.** CI lints, type-checks, unit-tests and
   builds the console, then drives it with Playwright against the service's own
   jar. There is no image, manifest or deploy step for it.
