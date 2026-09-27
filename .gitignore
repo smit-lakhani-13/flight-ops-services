@@ -66,12 +66,16 @@ Desktop.ini
 #  deploy/k8s/secret.example.yaml IS committed: it holds placeholder values.
 #  A file named secret.yaml, in any folder, is a copy with real values, and it
 #  stays local.
+#
+#  certs/rds-global-bundle.pem IS committed: public CA certificates and no
+#  key, which the image needs to verify the database's certificate.
 # ------------------------------------------------------------------------------
 **/secret.yaml
 .env
 .env.*
 !.env.example
 *.pem
+!certs/rds-global-bundle.pem
 *.key
 *.p12
 *.jks

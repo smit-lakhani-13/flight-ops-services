@@ -259,9 +259,62 @@ ships as a jar and not an image, so this applies to the service image only.
 The `image` job records the size on every run. In CI run 36032424801 on
 2026-09-24 the image measured 299.5 MB (299477691 bytes), as
 `docker image inspect` reports it on the runner. The image has never been
-pushed, so no registry has reported a size for it. The runtime base,
-`eclipse-temurin:21-jre-alpine`, is a tag and not a digest, so the figure
-moves when that tag is rebuilt or a dependency changes.
+pushed, so no registry has reported a size for it. The measurement predates
+the database CA bundle below, which adds 165,408 bytes. Both base images are
+pinned by digest as well as tag, so the figure moves when a Dependabot pull
+request moves the runtime base's digest or a dependency changes.
+
+### The database connection
+
+The data stack's `JdbcUrl` output in `deploy/aws/data.yaml` is the one place
+the deployed JDBC URL is built. It ends in
+`?sslmode=verify-full&sslrootcert=/app/certs/rds-global-bundle.pem`, so the
+driver accepts only a server whose certificate chains to a CA in that file and
+names the endpoint it dialled. Without `sslmode` the driver would use
+`prefer`, which checks neither and falls back to plaintext when the server
+declines TLS. `up.sh`, the aws overlay and the `prod` profile pass the URL on
+unchanged. Localhost, the `postgres` profile, `compose.yaml` and CI have their
+own URLs with no TLS, and none of them changes. Neither does the `image` job's
+check that the image will not start without a database, because the image
+still has no URL until `DB_URL` gives it one.
+
+The file is the RDS global CA bundle, committed as
+`certs/rds-global-bundle.pem`. The `Dockerfile` copies it into the runtime
+stage, root-owned and read-only, at the path the URL names. It holds public
+certificates and no key.
+
+| | |
+|---|---|
+| Source | `https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem` |
+| SHA-256 | `e5bb2084ccf45087bda1c9bffdea0eb15ee67f0b91646106e466714f9de3c7e3` |
+| Certificates | 108 |
+| Fetched | 2026-09-26 |
+
+Refresh it when AWS publishes a new bundle, and before the instance moves to a
+CA the committed file does not hold:
+
+```bash
+curl -sSf -o certs/rds-global-bundle.pem \
+  https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
+shasum -a 256 certs/rds-global-bundle.pem
+grep -c 'BEGIN CERTIFICATE' certs/rds-global-bundle.pem
+```
+
+Put the new checksum, count and date in the table and commit them with the
+file. The `Dockerfile` copies the bundle at build time, so pods get the new
+one only with the next image that is built and deployed.
+
+The deploy job renders whatever the `DB_URL` repository variable holds. A
+variable set from a data stack whose output had no `sslmode` keeps that old
+URL until someone replaces it, in single quotes because of the `?` and `&`:
+
+```bash
+gh variable set DB_URL --body '<the JdbcUrl output>'
+```
+
+`up.sh` leaves an existing data stack alone, so a stack created from the older
+template still outputs the old URL. Append the query string above to that
+value by hand.
 
 ### The deploy job, gated off
 
@@ -322,7 +375,7 @@ described above.
 | `deploy/k8s/secret.example.yaml` | a template. `up.sh` generates the real Secret and never writes it to disk |
 
 CI renders the overlay with
-`AWS_ACCOUNT_ID=… IMAGE_TAG=… SQS_QUEUE_URL=… DB_URL=… ./deploy/aws/render-aws.sh`,
+`AWS_ACCOUNT_ID=… IMAGE_TAG=… SQS_QUEUE_URL=… DB_URL='…' ./deploy/aws/render-aws.sh`,
 and a person can run the same command. It exits 2 if any of the four is unset
 or empty, and 3 if a `${…}` placeholder survives substitution. So a missing
 value is a failed command, and never a manifest holding the literal
