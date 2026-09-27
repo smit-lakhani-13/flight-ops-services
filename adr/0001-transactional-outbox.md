@@ -48,8 +48,9 @@ publish a `BookingCreated` describing the booking.
   events instead, which is worse. The consumer absorbs duplicates with a
   conditional write (see [ADR 0008](0008-standalone-lambda-consumer.md)).
 
-* Events arrive with up to one poll interval of latency. A booking confirmation
-  does not notice that. Anything needing sub-second delivery would.
+* Events arrive up to one poll interval late, and later when a drain is under
+  way or a backlog is ahead of them. A booking confirmation does not notice
+  that. Anything needing sub-second delivery would.
 
 * The backlog is a table, so it can be queried, alerted on and re-driven. This
   is the operational advantage over a direct send, and it only counts if

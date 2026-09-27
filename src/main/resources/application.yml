@@ -134,7 +134,8 @@ app:
   outbox:
     # Runs on every replica; SKIP LOCKED in the claim makes that safe without a leader.
     enabled: ${OUTBOX_ENABLED:true}
-    # Milliseconds between drains. A healthy event waits about this long at most.
+    # Milliseconds between drains. An event waits up to this long, plus the sends
+    # ahead of it.
     poll-interval: ${OUTBOX_POLL_INTERVAL:1000}
     # Rows claimed per drain; bounds how long one replica holds the row locks.
     batch-size: ${OUTBOX_BATCH_SIZE:100}

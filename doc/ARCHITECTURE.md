@@ -342,9 +342,12 @@ Each of these choices prevents a specific failure:
    add a write to the booking transaction's hot path
    (`src/main/java/com/smit/flightops/repository/OutboxEventRepository.java#deletePublishedBefore`).
 
-The outbox costs a table, a poller, a retention job and some latency: up to
-one poll interval plus the drain already under way. In return I get one
-recorded event per booking, at-least-once delivery and a backlog I can query:
+The outbox costs a table, a poller, a retention job and some latency: the rest
+of any drain under way, up to one poll interval, and the sends ahead of the
+event in its own drain, which can be seconds with a full batch and more under a
+backlog ([DEPLOYMENT.md](DEPLOYMENT.md#7-what-breaks-first) works it through).
+In return I get one recorded event per booking, at-least-once delivery and a
+backlog I can query:
 `SELECT count(*) FROM outbox_events WHERE published_at IS NULL` is both a lag
 metric and an alert.
 
@@ -777,7 +780,7 @@ The README keeps a short version of this table under
 | Two users in an `InMemoryUserDetailsManager` | Cognito, Okta or Entra behind `issuer-uri` and `audiences` | The rules are real and tested, and the user store is a stub. The resource-server half is wired and activates when an issuer is configured, so the swap is configuration: set both properties, as [SECURITY.md](../SECURITY.md#authentication-and-authorisation) shows. |
 | Idempotent replay returns 201 | 200, arguably | It answers with the original status, Stripe-style, and the booking the key created, so the body matches the first response until the booking is cancelled, when `cancelledAt` is set. "201 Created" for something not created this time is a fair challenge. I documented it and left it. |
 | Idempotency keys never expire. The key is a `NOT NULL` column of the booking row under `uk_bookings_idempotency_key`, so the unique index grows by one entry per booking | Keys valid for a stated window (Stripe's documentation says a key may be removed once it is at least 24 hours old), after which a replay is a new request | Cancellation sets a timestamp and never deletes the row (`src/main/resources/db/migration/V4__booking_cancellation.sql`), so a cancelled booking keeps its key and a late replay returns it instead of booking again (`src/test/java/com/smit/flightops/ErrorContractTest.java#replayAfterCancellationDoesNotRebook`). A window would bound the index, but a replay after it would book again, a contract change clients have to be told about. It would also need a new migration, because applied ones are never edited. |
-| A poller drains the outbox | Debezium reading the WAL | A poll every second (`app.outbox.poll-interval` defaults to 1000 ms) costs one indexed query per replica per second and adds up to a second of latency. CDC removes both and adds Kafka Connect, a connector to operate and a replication slot that fills the disk if the consumer stops. |
+| A poller drains the outbox | Debezium reading the WAL | A poll every second (`app.outbox.poll-interval` defaults to 1000 ms) costs at most one indexed query per replica per second, and adds up to a poll interval plus the sends ahead of an event ([The outbox](#the-outbox)). CDC removes both and adds Kafka Connect, a connector to operate and a replication slot that fills the disk if the consumer stops. |
 | Retention is a batched `DELETE` on a schedule | A partitioned table, dropping old partitions | Detaching and dropping an old partition is O(1) and a delete is not, which matters from roughly the first hundred million rows. Below that, partitions add a maintenance job and an outage when that job fails. The pruner is one short class, and each run is bounded: batches of 1,000 rows by default, and at most 50 batches (`src/main/java/com/smit/flightops/service/OutboxPruner.java#MAX_BATCHES_PER_RUN`). |
 | No circuit breaker | Resilience4j | Besides the database, SQS is the one outbound dependency (and the token issuer, once one is configured). The outbox already absorbs an SQS failure: a down queue leaves rows unpublished, and a later drain retries them after a backoff, up to the attempt ceiling in [The outbox](#the-outbox). Each send is bounded at 5 s (`src/main/java/com/smit/flightops/config/AwsConfig.java#sqsClient`) and runs on the poller, never on a request thread. |
 | Contract tests share a JSON file | Pact, with a broker and a `can-i-deploy` gate in CI | The file catches the change that breaks the consumer, which is the whole job while both modules live in one repository. A broker pays off when the consumers are other teams' services. |
