@@ -14,20 +14,22 @@
 -- such call read the whole table and sorted it, even for a page of one row,
 -- and flights are soft-cancelled and never deleted, so the table only grows.
 --
--- A b-tree stores ASC NULLS LAST unless told otherwise, and a plain ASC in
--- an ORDER BY means NULLS LAST on PostgreSQL, so this index holds exactly
--- that order, and the first page becomes an index scan that stops at the
--- LIMIT. It removes the sort and nothing else: OFFSET still walks the rows it
+-- A b-tree stores ASC NULLS LAST unless told otherwise, and a plain ASC in an
+-- ORDER BY means NULLS LAST on PostgreSQL, so this index holds exactly that
+-- order. On a table large enough for it to pay, the planner can answer the
+-- first page with an index scan that stops at the LIMIT; no test checks the
+-- plan. It removes the sort and nothing else: OFFSET still walks the rows it
 -- skips, and the page's count(*) still reads every row. A Slice would drop
 -- the count, but that changes the page object the API returns. A plain DESC
 -- means NULLS FIRST, the exact reverse, so ?sort=departureTime,desc can read
 -- the index backwards; only rows that share a departure time are then sorted
 -- by the ascending id tiebreaker.
 --
--- Updates pay nothing for it. A booking, its cancellation and a status change
--- alter only available_seats, status and version, none of which is indexed,
--- so the flight-row UPDATE stays eligible for a HOT update, which adds no
--- index entry. departure_time is set once, when the flight is created.
+-- An update that PostgreSQL can make HOT pays nothing for it. A booking, its
+-- cancellation and a status change alter only available_seats, status and
+-- version, none of which is indexed, so the flight-row UPDATE stays eligible
+-- for a HOT update, which adds no index entry. departure_time is set once,
+-- when the flight is created.
 --
 -- CONCURRENTLY builds the index without blocking writes, and it cannot run in
 -- a transaction. Flyway's PostgreSQL parser recognises the statement and runs
