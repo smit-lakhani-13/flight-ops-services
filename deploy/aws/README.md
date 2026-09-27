@@ -106,7 +106,7 @@ passwords and waits for `saved`. Step 10 prints four values and waits for
 Secret    AWS_ACCOUNT_ID   123456789012
 Variable  DEPLOY_ENABLED   true
 Variable  SQS_QUEUE_URL    https://sqs.ap-south-1.amazonaws.com/…/booking-events
-Variable  DB_URL           jdbc:postgresql://…:5432/flightops
+Variable  DB_URL           jdbc:postgresql://…:5432/flightops?sslmode=verify-full&sslrootcert=/app/certs/rds-global-bundle.pem
 ```
 
 Before you set `DEPLOY_ENABLED`, rename the deploy job in
@@ -235,6 +235,7 @@ still billed at month end.
 | `up.sh` waits 30 minutes at step 10, then stops | CI never created the deployment. Check the workflow run: the deploy job is skipped unless `DEPLOY_ENABLED` is `true` and the run is on `main` |
 | Pods run but nothing reaches SQS | IRSA is not attached. `kubectl describe pod` should show `AWS_WEB_IDENTITY_TOKEN_FILE` |
 | Connection timeouts to RDS | the security group admits the cluster SG and the shared node SG. Confirm with `aws ec2 describe-security-groups` that the ids in `data.yaml`'s parameters match the live cluster |
+| Pods `CrashLoopBackOff`, Flyway reports `SSL error:`, `could not be verified by hostnameverifier` or `Could not open SSL root certificate file` | the driver refused the database's certificate, because `DB_URL` sets `sslmode=verify-full`. `SSL error:` with `PKIX path building failed`: the certificate does not chain to a CA in `certs/rds-global-bundle.pem`, usually because the instance moved to a CA the committed bundle does not hold. Refresh the bundle as [doc/DEPLOYMENT.md](../../doc/DEPLOYMENT.md#the-database-connection) says, and deploy the new image. The host name message: `DB_URL` names a host the certificate does not, such as a custom DNS name, so use the `JdbcUrl` output as it is. The root certificate message: `DB_URL` has `sslmode=verify-full` but no `sslrootcert`, so the driver looked for `~/.postgresql/root.crt`. Set `DB_URL` to the whole `JdbcUrl` output. If the message names `/app/certs/rds-global-bundle.pem`, the running image lacks the bundle or `DB_URL` has a wrong path: check the image tag and the path in `DB_URL` |
 | `eksctl delete cluster` fails after 20 min | the data stack is still up. Delete it, then re-run `down.sh` |
 | CI stops at "Is this commit already in ECR?" | `describe-images` failed with something other than `ImageNotFoundException`, usually a missing `ecr:DescribeImages` on the CI role. The step log shows the CLI's message |
 | CI stops at "Configure AWS credentials (OIDC)" with `Not authorized to perform sts:AssumeRoleWithWebIdentity` | the role did not accept the token. Its trust policy pins `sub` to `repo:<GitHubOwner>/<GitHubRepo>:ref:refs/heads/main`, with the owner and repo `foundation.yaml` was deployed with (default `smit-lakhani-13/flight-ops-services`). A wrong `AWS_ACCOUNT_ID` secret gives the same message |

@@ -55,6 +55,30 @@ still blank.
 
 ### Fixed
 
+- **A request body had no size limit.** Jackson builds a whole string field
+  before Bean Validation checks its `@Size`, so a `passengerName` of millions
+  of characters held tens of MB of heap, and a few such requests at once could
+  exhaust the heap and end the JVM. Spring's `FormContentFilter` also read a
+  form-encoded `PUT`, `PATCH` or `DELETE` body in full before the credentials
+  were checked. A body over `app.http.max-body-bytes` (`HTTP_MAX_BODY_BYTES`),
+  16384 bytes by default, now gets `413 PAYLOAD_TOO_LARGE` before anything
+  parses more than the limit. `RequestBodyLimitFilter` refuses a declared
+  `Content-Length` over the limit unread, ahead of Spring Security, and counts
+  a chunked body as it is read. `GlobalExceptionHandler#handleMalformed`
+  answers a chunked JSON body over the limit with the same 413, not
+  `400 MALFORMED_REQUEST`. The OpenAPI document declares the 413 on the three
+  writes, and `doc/api.md` lists the code.
+
+- **A booking on a flight that had flown could still be cancelled.**
+  `DELETE /api/v1/bookings/{bookingId}` never read the flight's status, so on
+  a `DEPARTED` or `ARRIVED` flight it answered 200, marked the booking
+  cancelled and put its seats back, rewriting the record of a flight that had
+  already flown. `BookingWriter#cancelBooking` now refuses an active booking
+  on such a flight with `409 BOOKING_NOT_CANCELLABLE` and changes nothing,
+  using the new `FlightStatus#acceptsCancellations`. A booking cancelled
+  before departure still answers 200 with its original `cancelledAt`, and one
+  on a `CANCELLED` flight can still be cancelled.
+
 - **Tests that proved less than their names said.**
   `BearerTokenChallengeTest#aSignedTokensScopeMapsOntoTheRules` signs an RS256
   token with the `flights:read` scope and checks that it can read a flight but
@@ -162,6 +186,26 @@ still blank.
   the passenger name checks above. Markdown prose lines over 80 columns are
   rewrapped where they can break, except in `README.md` and the released
   sections here.
+
+- **The image is built from pinned base images.** Both `FROM` lines in the
+  `Dockerfile` named only a tag, so every build took whatever the tag pointed
+  to that day, and the deploy job's own build could push a base other than the
+  one the `image` job had built and started. Each line now names the tag and a
+  sha256 digest. The docker entry in `.github/dependabot.yml` moves the digest
+  when upstream rebuilds the tag, and it now runs weekly, because OS and JRE
+  fixes reach a pinned base only that way. The `# syntax=docker/dockerfile:1`
+  frontend line still floats.
+
+- **The database connection verifies the server.**
+  `deploy/aws/data.yaml#JdbcUrl` had no `sslmode`, so the driver used
+  `prefer`: it checked neither the certificate nor the host name and fell back
+  to plaintext when the server declined TLS, so anything on the path could
+  stand in for RDS. The URL now sets `sslmode=verify-full`, with `sslrootcert`
+  naming the RDS global CA bundle, committed as `certs/rds-global-bundle.pem`
+  and copied into the image. `doc/DEPLOYMENT.md` gives its source, checksum
+  and refresh steps, and `SECURITY.md` covers the database leg under
+  Transport. A `DB_URL` repository variable copied from the old output must be
+  replaced by hand. Local runs, compose and CI keep their own URLs.
 
 ### Security
 
