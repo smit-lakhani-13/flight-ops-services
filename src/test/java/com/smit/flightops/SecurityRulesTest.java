@@ -261,11 +261,12 @@ class SecurityRulesTest {
 
     /**
      * RequestIdFilter runs ahead of the security chain, so the 401 and 403 responses, the
-     * ones a caller most often rings up about, carry an id too.
+     * ones a caller most often rings up about, carry an id too, and the id a caller quotes
+     * from a 401 finds a line in the log.
      */
     @Test
-    @DisplayName("an unauthenticated 401 still carries X-Request-Id, and echoes the caller's")
-    void everyResponseCarriesARequestId() throws Exception {
+    @DisplayName("an unauthenticated 401 still carries X-Request-Id, echoes the caller's, and logs a line under it")
+    void everyResponseCarriesARequestId(CapturedOutput output) throws Exception {
         mockMvc.perform(get("/api/v1/flights/UA123"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(header().exists("X-Request-Id"));
@@ -273,6 +274,9 @@ class SecurityRulesTest {
         mockMvc.perform(get("/api/v1/flights/UA123").header("X-Request-Id", "support-ticket-4471"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(header().string("X-Request-Id", "support-ticket-4471"));
+        assertThat(output.getOut().lines().filter(line -> line.contains(",support-ticket-4471] ")))
+                .singleElement()
+                .satisfies(line -> assertThat(line).contains("GET /api/v1/flights/UA123 -> 401"));
 
         mockMvc.perform(get("/api/v1/flights/UA123").with(httpBasic(OPS_USER, OPS_PASSWORD)))
                 .andExpect(status().isForbidden())

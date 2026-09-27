@@ -78,9 +78,9 @@ image's default with `ENV SPRING_PROFILES_ACTIVE=prod`, and
 RDS, IRSA and the SQS publisher and has no default passwords. Run bare, with no
 `DB_URL`, the image stops at startup with `'url' must start with "jdbc"`.
 Without that default it would start on in-memory H2 and serve the `{noop}` dev
-passwords. The deploy job checks for that failure before it pushes an image, in
-the step "The image will not start without a database". The `image` job runs
-the same check on every push or pull request to `main`.
+passwords. The `image` job checks for that failure on every push or pull
+request to `main`, in the step "The image will not start without a database",
+and the deploy job would push only an image that passed it.
 
 ### PostgreSQL without compose
 
@@ -180,8 +180,10 @@ ALERT_EMAIL=you@example.com ./deploy/aws/up.sh  # ~50 minutes
 
 The preflight checks the tools, the credentials and `./mvnw -v`, which must
 report JDK 21 because the enforcer rule in `lambda/pom.xml` accepts nothing
-else. No system Maven is needed. `gettext`, which provides `envsubst`, is
-needed only to run `deploy/aws/render-aws.sh` by hand.
+else. It also checks the sha256 of the load balancer controller's
+[IAM policy file](#the-load-balancer-controllers-iam-policy). No system Maven
+is needed. `gettext`, which provides `envsubst`, is needed only to run
+`deploy/aws/render-aws.sh` by hand.
 
 `up.sh` runs in twelve steps. Step 1 prints the cost table and asks you to type
 `yes`, and nothing before that costs anything. Steps 2 to 8 build the
@@ -216,20 +218,30 @@ URL. It skips the demo when the Secret came from an earlier run, because it
 no longer knows the passwords.
 
 CI deploys the application, and the script does not. The image tag is the
-commit SHA, and only the job that built the image knows it. A laptop build
-would tag whatever happened to be checked out, including uncommitted work. The
+commit SHA of the CI run that built the image. A laptop build would tag
+whatever happened to be checked out, including uncommitted work. The
 split also keeps every password away from GitHub. `up.sh` writes the database
 password and the bcrypt hashes of the API and ops passwords into a Kubernetes
 Secret, and prints the API and ops passwords to the terminal. CI applies a
 Deployment that refers to the Secret by name.
 
-Before it builds, the deploy job asks ECR whether the commit's image is already
-there, in the step "Is this commit already in ECR?". It runs
+The deploy job builds and scans nothing. The `image` job builds the image,
+starts it with no database and scans it, holding no AWS credentials. On a run
+that can deploy, it saves the image and records the archive's sha256 before its
+scan runs, and uploads it as a run artefact kept for one day once the scan
+passes. The deploy job downloads the archive, checks that sha256, loads the
+image, tags it with the commit SHA and pushes it. So the image is scanned once,
+and the registry gets the bytes that were scanned. A "Re-run failed jobs" more
+than a day later finds no artefact unless the image is already in ECR; re-run
+all jobs instead.
+
+Before it downloads the image, the deploy job asks ECR whether the commit's
+image is already there, in the step "Is this commit already in ECR?". It runs
 [`deploy/aws/ecr-image-exists.sh`](../deploy/aws/ecr-image-exists.sh), which
 calls `ecr:DescribeImages` and reports the image missing only on
 `ImageNotFoundException`. Any other error fails the job. Guessing "missing"
-would rebuild the image and then fail at the push, because the repository's tags
-are immutable.
+would push the image again and fail, because the repository's tags are
+immutable.
 
 Every step checks whether its resource exists before creating it. To resume an
 interrupted run, run the same command again. If eksctl stopped part way through
@@ -259,9 +271,62 @@ ships as a jar and not an image, so this applies to the service image only.
 The `image` job records the size on every run. In CI run 36032424801 on
 2026-09-24 the image measured 299.5 MB (299477691 bytes), as
 `docker image inspect` reports it on the runner. The image has never been
-pushed, so no registry has reported a size for it. The runtime base,
-`eclipse-temurin:21-jre-alpine`, is a tag and not a digest, so the figure
-moves when that tag is rebuilt or a dependency changes.
+pushed, so no registry has reported a size for it. The measurement predates
+the database CA bundle below, which adds 165,408 bytes. Both base images are
+pinned by digest as well as tag, so the figure moves when a Dependabot pull
+request moves the runtime base's digest or a dependency changes.
+
+### The database connection
+
+The data stack's `JdbcUrl` output in `deploy/aws/data.yaml` is the one place
+the deployed JDBC URL is built. It ends in
+`?sslmode=verify-full&sslrootcert=/app/certs/rds-global-bundle.pem`, so the
+driver accepts only a server whose certificate chains to a CA in that file and
+names the endpoint it dialled. Without `sslmode` the driver would use
+`prefer`, which checks neither and falls back to plaintext when the server
+declines TLS. `up.sh`, the aws overlay and the `prod` profile pass the URL on
+unchanged. Localhost, the `postgres` profile, `compose.yaml` and CI have their
+own URLs with no TLS, and none of them changes. Neither does the `image` job's
+check that the image will not start without a database, because the image
+still has no URL until `DB_URL` gives it one.
+
+The file is the RDS global CA bundle, committed as
+`certs/rds-global-bundle.pem`. The `Dockerfile` copies it into the runtime
+stage, root-owned and read-only, at the path the URL names. It holds public
+certificates and no key.
+
+| | |
+|---|---|
+| Source | `https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem` |
+| SHA-256 | `e5bb2084ccf45087bda1c9bffdea0eb15ee67f0b91646106e466714f9de3c7e3` |
+| Certificates | 108 |
+| Fetched | 2026-09-26 |
+
+Refresh it when AWS publishes a new bundle, and before the instance moves to a
+CA the committed file does not hold:
+
+```bash
+curl -sSf -o certs/rds-global-bundle.pem \
+  https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
+shasum -a 256 certs/rds-global-bundle.pem
+grep -c 'BEGIN CERTIFICATE' certs/rds-global-bundle.pem
+```
+
+Put the new checksum, count and date in the table and commit them with the
+file. The `Dockerfile` copies the bundle at build time, so pods get the new
+one only with the next image that is built and deployed.
+
+The deploy job renders whatever the `DB_URL` repository variable holds. A
+variable set from a data stack whose output had no `sslmode` keeps that old
+URL until someone replaces it, in single quotes because of the `?` and `&`:
+
+```bash
+gh variable set DB_URL --body '<the JdbcUrl output>'
+```
+
+`up.sh` leaves an existing data stack alone, so a stack created from the older
+template still outputs the old URL. Append the query string above to that
+value by hand.
 
 ### The deploy job, gated off
 
@@ -306,10 +371,85 @@ described above.
 7. **IRSA.** The pods' AWS identity, with no access keys. Cluster setup that
    happens once. No deploy repeats it.
 8. **Load balancer controller and metrics-server.** Also set up once, and no
-   deploy repeats it.
+   deploy repeats it. The controller's IAM policy comes from a file in this
+   repository, as the next section describes.
 9. **Namespace and Secret.** Generated passwords, never written to disk. The API
    and ops passwords are bcrypt-hashed. The database password is stored as it
    is, because the JDBC driver needs it.
+
+### The load balancer controller's IAM policy
+
+The controller's IRSA role gets the IAM policy that the controller's
+maintainers publish with each release, as the install guide's iam_policy.json
+in the kubernetes-sigs/aws-load-balancer-controller repository. `up.sh` does
+not download it. A tag is a mutable pointer in someone else's repository, so a
+download would put whatever the tag pointed at that day on the role. The copy
+for the release `up.sh` installs is committed as
+`deploy/aws/lbc-iam-policy-v3.5.0.json`, byte for byte, upstream's
+indentation included, so a diff against the next release shows only what
+changed:
+
+- Source, fetched on 26 September 2026:
+  [iam_policy.json at v3.5.0](https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v3.5.0/docs/install/iam_policy.json)
+- Tag: `v3.5.0`, in `deploy/aws/up.sh#LBC_POLICY_TAG`, matching the Helm chart
+  version in `deploy/aws/up.sh#LBC_CHART_VERSION`
+- sha256: `16f232c9d9f79366fe949c4550ad517a202380058a9e48d45a4e215044a20a6a`,
+  in `deploy/aws/up.sh#LBC_POLICY_SHA256`
+
+Step 1 checks the file against the sum with
+`deploy/aws/lib.sh#require_sha256`, before anything bills, and step 8 checks
+it again just before it creates the policy from it. `deploy/aws/selftest.sh`
+makes the same check in CI. A file changed without its sum stops all three,
+so a change to what the controller may do arrives as a reviewed diff.
+
+The policy is named `flight-ops-lbc-v3.5.0`, from
+`deploy/aws/lib.sh#LBC_POLICY_PREFIX` and the tag, and tagged
+`Project=flight-ops`. AWS's install guide calls the same policy
+`AWSLoadBalancerControllerIAMPolicy`, so an account with another cluster may
+already hold one by that name, perhaps from an older release. `up.sh` never
+attaches it, and `down.sh` never deletes it. `down.sh` deletes every customer
+managed policy whose name starts with `flight-ops-lbc-`, after the cluster
+delete has removed the role it was attached to.
+
+To move to a new release, change the tag, the file, the sum and the documents
+that name them in one commit:
+
+1. Download the new release's file beside the old one, and read the diff.
+   Every added action is a new permission for the controller.
+
+   ```bash
+   old=$(sed -n 's/^LBC_POLICY_TAG=\([^ ]*\).*/\1/p' deploy/aws/up.sh)
+   new=v3.6.0   # the new release
+   repo=kubernetes-sigs/aws-load-balancer-controller
+   curl -fsSL -o "deploy/aws/lbc-iam-policy-$new.json" \
+     "https://raw.githubusercontent.com/$repo/$new/docs/install/iam_policy.json"
+   diff -u "deploy/aws/lbc-iam-policy-$old.json" \
+     "deploy/aws/lbc-iam-policy-$new.json"
+   shasum -a 256 "deploy/aws/lbc-iam-policy-$new.json"   # or sha256sum
+   ```
+
+2. Delete the old file with `git rm`. In `deploy/aws/up.sh`, set
+   `LBC_POLICY_TAG` to the new tag, `LBC_CHART_VERSION` to the chart that
+   installs that release, and `LBC_POLICY_SHA256` to the sum just printed.
+   The policy's name follows the tag.
+3. Update every document that names the release. In this section, that is
+   the source link, the fetch date, the tag, the sum and the policy's name.
+   `SECURITY.md`, `deploy/aws/README.md` (the "Who creates what" row, the
+   checksum row under "When something goes wrong" and the file table) and the
+   file tree in `doc/ARCHITECTURE.md` name the file, the policy or both.
+   `git grep -n -F "$old"` lists what is left. Leave the changelog's released
+   sections as they are, and add an Unreleased entry instead. The fixture
+   ARNs in `deploy/aws/selftest.sh` need no change.
+4. Run `deploy/aws/selftest.sh`, which fails while the file and the sum
+   disagree, and `python3 scripts/refcheck.py`, which fails while a path in a
+   code span still names the old file. It does not read the file tree in
+   `doc/ARCHITECTURE.md` or the README's checksum row, so the `git grep`
+   in step 3 is what finds those. Both must pass.
+
+Make the move while no cluster exists. On a running cluster, a re-run of
+`up.sh` creates the new policy but leaves the controller's role on the old
+one, because eksctl does not change a service account it has already
+created.
 
 ### The manifests
 
@@ -322,7 +462,7 @@ described above.
 | `deploy/k8s/secret.example.yaml` | a template. `up.sh` generates the real Secret and never writes it to disk |
 
 CI renders the overlay with
-`AWS_ACCOUNT_ID=… IMAGE_TAG=… SQS_QUEUE_URL=… DB_URL=… ./deploy/aws/render-aws.sh`,
+`AWS_ACCOUNT_ID=… IMAGE_TAG=… SQS_QUEUE_URL=… DB_URL='…' ./deploy/aws/render-aws.sh`,
 and a person can run the same command. It exits 2 if any of the four is unset
 or empty, and 3 if a `${…}` placeholder survives substitution. So a missing
 value is a failed command, and never a manifest holding the literal
@@ -503,16 +643,19 @@ image-pull error, so set the CLI default to match:
 aws configure set region ap-south-1
 ```
 
-The three stacks `up.sh` deploys itself (the foundation, the data stack and
-the Lambda) carry the tag `Project=flight-ops`. It passes
-`--tags Project=flight-ops` to each one, and CloudFormation copies stack tags
-to the resources that take them. `deploy/aws/cluster.yaml` puts the same tag
-on what eksctl creates from it: the cluster, its VPC and NAT gateway, and the
-node group. A few things are left untagged: the four EKS addons, the two IAM
-roles made by `eksctl create iamserviceaccount`, the load balancer controller's
-IAM policy, and the shared SAM bucket. None of them bills more than cents. The
-addons and the roles go with the cluster, and `down.sh` deletes the policy by
-name. The catch-all query is:
+The three stacks `up.sh` deploys itself (the foundation, the data stack and the
+Lambda) carry the tag `Project=flight-ops`. It passes `--tags
+Project=flight-ops` to each one, and CloudFormation copies stack tags to the
+resources that take them. `deploy/aws/cluster.yaml` puts the same tag on what
+eksctl creates from it: the cluster, its VPC and NAT gateway, and the node
+group. `up.sh` creates the load balancer controller's IAM policy outside any
+stack, so it tags that policy itself, and `down.sh` deletes it by its
+`flight-ops-lbc-` prefix and warns if it cannot. The tag shows the policy in the
+console; the catch-all query below does not list it, for the reason section 6
+gives. A few things are left untagged: the four EKS addons, the two IAM roles
+made by `eksctl create iamserviceaccount`, and the shared SAM bucket. None of
+them bills more than cents, and the addons and the roles go with the cluster.
+The catch-all query is:
 
 ```bash
 aws resourcegroupstaggingapi get-resources --tag-filters Key=Project,Values=flight-ops
@@ -562,9 +705,9 @@ Type `delete` when it asks. The deletes take about 20 minutes. Then the script
 runs fourteen checks and exits non-zero if any of them finds something. They
 cover both kinds of load balancer, clusters, instances, NAT gateways, volumes,
 Elastic IPs, RDS instances and snapshots, stacks, log groups, secrets and ECR,
-plus a catch-all query for anything tagged `Project=flight-ops`. The
-catch-all runs in ap-south-1, and AWS reports IAM resources from us-east-1, so
-it sees no IAM role or OIDC provider. IAM bills nothing, and the stacks check
+plus a catch-all query for anything tagged `Project=flight-ops`. The catch-all
+runs in ap-south-1, and AWS reports IAM resources from us-east-1, so it sees no
+IAM role, IAM policy or OIDC provider. IAM bills nothing, and the stacks check
 still catches an eksctl stack that failed to delete, IRSA roles and all. With
 `--keep-foundation` there are thirteen, because that flag leaves the ECR
 repository behind and skips its check. It also leaves the foundation stack and
@@ -615,22 +758,47 @@ Reasoned from the configuration, not measured under load, the order would be:
 2. **Seat lock contention.** Concurrent bookings for the *same flight* queue
    behind `SELECT ... FOR UPDATE`. That queue is what prevents overselling, so
    it is expected. `SET lock_timeout = '3s'` bounds the wait, and after that a
-   request gets 503 with `Retry-After`. Different flights never contend, so this
-   limit depends on concurrency per flight and not on total traffic.
+   request gets 503 with `Retry-After`. Different flights never contend for the
+   lock, so this limit depends on concurrency per flight and not on total
+   traffic. They do share each pod's pool, though: a hot flight's waiters each
+   hold a connection, so other requests on that pod can wait for one, 5 s at
+   most before `503 DATABASE_UNAVAILABLE`.
 
-3. **Outbox drain rate.** One publisher polls every second and claims up to 100
-   rows with `FOR UPDATE SKIP LOCKED`, so the ceiling is roughly 100 events per
-   second per replica. The `outbox.pending` gauge shows the backlog before
-   anyone notices it downstream.
+3. **Outbox drain rate.** Each replica's publisher claims up to 100 rows with
+   `FOR UPDATE SKIP LOCKED` and sends them one at a time, each a blocking
+   `SendMessage`
+   (`src/main/java/com/smit/flightops/service/SqsEventPublisher.java#publish`).
+   The job is `fixedDelay`, so the next drain starts a second after the last
+   one ends. With a send latency of L seconds, a replica drains about
+   `100 / (1 + 100 × L)` events a second. 100 a second is a bound it never
+   reaches, and `1 / L` is its ceiling whatever the batch size or interval.
+   Nothing here has measured L. If it were 20 ms, a drain would spend 2 s
+   sending, for 100 / 3, about 33 events a second. A batch of 1000 would give
+   1000 / 21, about 48, and hold its row locks and a pooled connection for
+   20 s each drain. A 100 ms interval would give 100 / 2.1, also about 48,
+   with no longer hold. The SQS client bounds each send at 5 s, retries
+   included
+   (`src/main/java/com/smit/flightops/config/AwsConfig.java#sqsClient`), so a
+   drain of 100 whose sends all time out takes up to 500 s. More replicas
+   raise the total, each claiming a disjoint batch, up to the four of point 1,
+   and the CPU-based HPA does not add them for a backlog alone. Past that,
+   short of the larger instance class point 1 describes, the change is in
+   code: `SendMessageBatch`, in the SQS SDK the service already uses, takes
+   up to ten messages a call, and the drain would have to map each entry's
+   failure back to its row. The `outbox.pending` gauge shows the backlog
+   before anyone notices it downstream.
+   [OPERATIONS.md](OPERATIONS.md#events-stop-arriving-outbox_pending-climbs)
+   has the playbook, and how to measure L.
 
 4. **Lambda concurrency.** The SQS event source sets
    `ScalingConfig.MaximumConcurrency: 5`, so a backlog runs at most five
    invocations. It reserves nothing from the account pool and limits only the
    poller, and `lambda/template.yaml` explains the trade-off. Messages over the
    cap wait in the queue, and their receive count is not raised, so a long
-   backlog is slow and does not reach the DLQ. An account pool that runs dry can
-   still throttle, and that does raise the count towards `maxReceiveCount: 3`.
-   Raise the cap before raising traffic; AWS accepts 2 to 1000.
+   backlog is slow and does not reach the DLQ. A message still waiting 10 days
+   after it was sent is deleted. An account pool that runs dry can still
+   throttle, and that does raise the count towards `maxReceiveCount: 3`. Raise
+   the cap before raising traffic; AWS accepts 2 to 1000.
 
 5. **Node IP addresses, not CPU.** With the VPC CNI each pod takes a real VPC
    IP, and a t3.medium holds at most 17 pods. Two nodes hold the HPA's ceiling

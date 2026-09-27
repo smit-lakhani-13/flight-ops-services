@@ -155,7 +155,7 @@ before you open the log.
 | `infra-lint` | every trigger |
 | `trivy-fs` | every trigger |
 | `docs-check` | every trigger |
-| `image` | every trigger. It builds and starts the image and never pushes it |
+| `image` | every trigger. It builds, starts and scans the image and never pushes it. On a run that can deploy, it hands the image to `deploy` as a run artefact |
 | `dependency-review` | **pull requests only**. It diffs what the PR adds against the base, and a push has no base to diff against |
 | `deploy` | gated off: a push or manual run on `main` **and** `vars.DEPLOY_ENABLED == 'true'`. That variable is unset, so the job reports as skipped. Its display name, `deploy (gated off)`, says so in the checks list |
 
@@ -186,10 +186,9 @@ for a commit on `main` that got no push run.
 | `docs-check` | `scripts/sweeps.sh` | a co-author trailer line or an appended "Generated with" signature appears in a tracked file or in a commit message on any ref, an absolute home-directory path appears in a tracked file, a pattern from the `SWEEP_PATTERNS` secret matches a tracked file path, a file's contents or a commit message, or `SWEEP_PATTERNS` is empty on a push or a manual run |
 | `image` | `docker build` | the `Dockerfile` does not build |
 | `image` | "The image will not start without a database" | the image, run with no environment, does not stop with `'url' must start with` |
-| `image` | Trivy, on the image | the image the job built has a CRITICAL vulnerability with a fix available |
+| `image` | Trivy, on the image | the image the job built has a CRITICAL vulnerability with a fix available. It is the only image scan: `deploy` pushes this image and runs no scan of its own |
 | `deploy` | "Is this commit already in ECR?" | `describe-images` fails with anything other than `ImageNotFoundException` |
-| `deploy` | "The image will not start without a database" | the image, run with no environment, does not stop with `'url' must start with` |
-| `deploy` | Trivy, on the image | the built image has a CRITICAL vulnerability with a fix available. It runs before the push |
+| `deploy` | "Load the image and tag it for ECR" | the downloaded archive's sha256 is not the one the `image` job recorded when it saved the image |
 | `deploy` | rollout and smoke test | the rollout does not finish in 12 minutes, or readiness is not `UP`, or `/v3/api-docs` is not served through a port-forward |
 
 No Trivy finding is silenced, and there is no `.trivyignore`. Trivy reads one
@@ -304,7 +303,7 @@ Documentation is part of the change and ships with it:
 | Jackson 2 | 2.22.2 | `<jackson-2-bom.version>` in `pom.xml`, over Boot's 2.21.5; `<jackson.version>` in `lambda/pom.xml` |
 | Flyway | 12.4.0 | Spring Boot |
 | springdoc-openapi | 3.1.1 | `<springdoc.version>` in `pom.xml` |
-| AWS SDK for Java | 2.55.2 | `<aws.sdk.version>` in both POMs |
+| AWS SDK for Java | 2.55.3 | `<aws.sdk.version>` in both POMs |
 | JUnit | 6.0.3 | Spring Boot in the service; `<junit.version>` in `lambda/pom.xml` |
 | Maven | 3.9.16 | `.mvn/wrapper/maven-wrapper.properties` |
 
@@ -333,10 +332,11 @@ and how to handle its pull requests.
 
 ## Dependabot
 
-Dependabot runs monthly on both Maven modules, the Actions workflows and the
-Dockerfile base images. `.github/dependabot.yml` sets the interval and the
-grouping. The Lambda module has its own entry, because with no parent POM
-nothing else manages its versions.
+Dependabot runs monthly on both Maven modules and the Actions workflows, and
+weekly on the Dockerfile base images, which are pinned by digest: a pinned base
+gets OS and JRE fixes only through its pull requests. `.github/dependabot.yml`
+sets the interval and the grouping. The Lambda module has its own entry,
+because with no parent POM nothing else manages its versions.
 
 - `open-pull-requests-limit` is set on every entry (3, 2, 1 and 2), because the
   default is 5 per entry. The four entries at the default can open twenty pull

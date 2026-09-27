@@ -92,14 +92,14 @@ the two statuses stay apart.
 |---|---|---|---|---|
 | `GET` | `/api/v1/flights/{flightNumber}` | `flights:read` | 200 | 404 |
 | `GET` | `/api/v1/flights?origin=&destination=&page=&size=&sort=` | `flights:read` | 200 (paginated) | 400 |
-| `POST` | `/api/v1/flights` | `flights:write` | 201 + `Location` | 400, 409, 415 |
-| `PATCH` | `/api/v1/flights/{flightNumber}/status` | `flights:write` | 200 | 400, 404, 409, 415, 503 |
+| `POST` | `/api/v1/flights` | `flights:write` | 201 + `Location` | 400, 409, 413, 415 |
+| `PATCH` | `/api/v1/flights/{flightNumber}/status` | `flights:write` | 200 | 400, 404, 409, 413, 415, 503 |
 | `DELETE` | `/api/v1/flights/{flightNumber}` | `flights:write` | 204 | 404, 409, 503 |
-| `POST` | `/api/v1/bookings` | `flights:write` | 201 + `Location` | 400, 404, 409, 415, 503 |
+| `POST` | `/api/v1/bookings` | `flights:write` | 201 + `Location` | 400, 404, 409, 413, 415, 503 |
 | `GET` | `/api/v1/bookings/{bookingId}` | `flights:read` | 200 | 400, 404 |
 | `GET` | `/api/v1/bookings?flightNumber=&page=&size=&sort=` | `flights:read` | 200 (paginated) | 400 |
-| `DELETE` | `/api/v1/bookings/{bookingId}` | `flights:write` | 200 | 400, 404, 503 |
-| `GET` | `/actuator/health`, `/actuator/health/liveness`, `/actuator/health/readiness` | none | 200 | 401 on a wrong password; 503 while the status is `DOWN` or `OUT_OF_SERVICE`, so a database outage takes `/health` and `/readiness` to 503 and leaves liveness at 200 |
+| `DELETE` | `/api/v1/bookings/{bookingId}` | `flights:write` | 200 | 400, 404, 409, 503 |
+| `GET` | `/actuator/health`, `/actuator/health/liveness`, `/actuator/health/readiness` | none | 200 | 401 on a wrong password; 503 while the status is `DOWN` or `OUT_OF_SERVICE`, so a database outage takes `/health` to 503 and leaves liveness and readiness at 200 |
 | `GET` | `/actuator`, `/actuator/info`, `/actuator/metrics`, `/actuator/prometheus` | `ROLE_OPS` | 200 | 401, 403 |
 
 Every `/api/**` row also answers 401 without valid credentials, a wrong
@@ -115,8 +115,13 @@ A few behaviours the table does not show:
 - A replayed booking answers 201 with the booking the key first created. See
   [Retries](#retries).
 - Both `DELETE`s are safe to repeat. A cancelled flight answers 204 again, and
-  a cancelled booking answers 200 with its original `cancelledAt`. Nothing is
-  deleted: a cancelled row keeps its history.
+  a cancelled booking answers 200 with its original `cancelledAt`, even after
+  its flight has departed. Nothing is deleted: a cancelled row keeps its
+  history.
+- A booking still active on a `DEPARTED` or `ARRIVED` flight cannot be
+  cancelled. Its `DELETE` answers `409 BOOKING_NOT_CANCELLABLE` and the seats
+  stay sold (`entity/FlightStatus.java#acceptsCancellations`). A booking on a
+  `CANCELLED` flight can still be cancelled.
 
 Not every 503 has the same test behind it. A booking and a booking
 cancellation wait out a real row lock in `LockTimeoutTest`, and the booking
@@ -141,8 +146,16 @@ Both controllers produce and read JSON only.
   uploads.
 - The header decides, so a YAML body sent as `application/json` is
   `400 MALFORMED_REQUEST`.
+- A declared `Content-Length` over 16384 bytes gets `413 PAYLOAD_TOO_LARGE`
+  on any path, without reading the body and before the credentials are
+  checked. A body without one, such as a chunked body, gets the same 413 once
+  a read passes the limit, so nothing parses more than 16384 bytes; a path
+  that never reads its body never counts it. A valid body is normally under
+  1 KB. `HTTP_MAX_BODY_BYTES` sets the limit, through
+  `app.http.max-body-bytes`.
 - Any `/api/**` row can also answer `503 DATABASE_UNAVAILABLE`, with
-  `Retry-After`, when the service cannot reach its database.
+  `Retry-After`, when the service cannot reach its database. The OpenAPI
+  document declares that 503 on every operation.
 
 Tomcat refuses some requests before Spring sees them: `%2F`, `%5C`, `%00` or
 `%zz` in the path, a raw `|`, or a 20KB header. Those get Tomcat's own HTML
@@ -152,23 +165,24 @@ usual JSON envelope instead, from `ApiErrorController`. An unknown path under
 an exposed actuator endpoint, such as `/actuator/metrics/nope` asked for as
 `ops`, returns an empty 404.
 
-Jackson and Hibernate exception text names internal classes, tables and
-columns, so the client gets a fixed string and the detail goes to the log at
-WARN. The project's own exception messages are written for clients, and those
-pass through: `FlightNotFoundException`, `BookingNotFoundException`,
+Jackson and Hibernate exception text names internal classes, tables and columns,
+so the client gets a fixed string and the detail goes to the log at WARN. The
+project's own exception messages are written for clients, and those pass
+through: `FlightNotFoundException`, `BookingNotFoundException`,
 `InsufficientSeatsException`, `FlightNotBookableException`,
-`DuplicateFlightException`, `IllegalFlightTransitionException`,
-`IdempotencyKeyConflictException` and `UnknownSortPropertyException`. So does
-Spring MVC's own `ErrorResponse` detail, such as
-`Method 'POST' is not supported.`, which names only the request.
+`BookingNotCancellableException`, `DuplicateFlightException`,
+`IllegalFlightTransitionException`, `IdempotencyKeyConflictException`,
+`UnknownSortPropertyException` and `PayloadTooLargeException`. So does Spring
+MVC's own `ErrorResponse` detail, such as `Method 'POST' is not supported.`,
+which names only the request.
 
-Two cases get a fixed message instead:
+These get a fixed message instead:
 
 - A `POST` or `PATCH` with no `Content-Type`. Spring would say
   `Content-Type 'null' is not supported.`, so it gets
   `The request has no Content-Type. Send application/json.`
-- A stray `IllegalArgumentException` gets
-  `The request contained an invalid value.`
+- A stray `IllegalArgumentException`, and a database data error (SQLState
+  class 22), get `The request contained an invalid value.`
 
 The fixed strings for the other codes are in
 `exception/GlobalExceptionHandler.java`: `CONCURRENT_MODIFICATION`,
@@ -200,13 +214,13 @@ Three classes write them:
 | Writer | What it answers |
 |---|---|
 | `exception/GlobalExceptionHandler.java` | every exception a controller lets through, and Spring MVC's own 404, 405, 406 and 415 |
-| `security/ErrorResponseWriter.java` | the 401 and 403, for `JsonAuthenticationEntryPoint` and `JsonAccessDeniedHandler`. Spring Security decides those before the `DispatcherServlet` runs, so the handler above never sees them |
+| `security/ErrorResponseWriter.java` | the 401 and 403, for `JsonAuthenticationEntryPoint` and `JsonAccessDeniedHandler`, and the 413 that `RequestBodyLimitFilter` decides itself. Those are decided before the `DispatcherServlet` runs, so the handler above never sees them |
 | `exception/ApiErrorController.java` | `/error`, where the container forwards a failure raised outside Spring MVC, such as a path the firewall refuses or a `TRACE` |
 
 Each sets `Content-Type: application/json` itself, whatever the `Accept`
 header asked for. No controller contains a `try`/`catch`. All three take the
 timestamp from the one injected `Clock`. `RequestIdFilter` returns
-`X-Request-Id` on every response the application handles, 401 and 403
+`X-Request-Id` on every response the application handles, 401, 403 and 413
 included.
 
 ## Error codes
@@ -217,6 +231,7 @@ included.
 | `BOOKING_NOT_FOUND` | 404 | no such booking id; its own code, so a booking 404 does not claim the flight is missing |
 | `INSUFFICIENT_SEATS` | 409 | fewer seats remain than requested; a retry with fewer seats can succeed |
 | `FLIGHT_NOT_BOOKABLE` | 409 | the flight is `CANCELLED`, `DEPARTED` or `ARRIVED`; a retry can never succeed |
+| `BOOKING_NOT_CANCELLABLE` | 409 | the booking is still active and its flight is `DEPARTED` or `ARRIVED`; a retry can never succeed. A booking already cancelled answers 200 instead |
 | `DUPLICATE_FLIGHT` | 409 | the flight number already exists |
 | `CONCURRENT_MODIFICATION` | 409 | `@Version` rejected a stale write |
 | `DUPLICATE_REQUEST` | 409 | two flight-creation requests raced on `flight_number` and the constraint chose one; a raced booking recovers instead |
@@ -228,9 +243,10 @@ included.
 | `UNAUTHENTICATED` | 401 | no credentials, or credentials that do not verify; written by `JsonAuthenticationEntryPoint` |
 | `FORBIDDEN` | 403 | authenticated, without the authority this path needs; written by `JsonAccessDeniedHandler` |
 | `VALIDATION_FAILED` | 400 | Bean Validation, per field, including `@DistinctEndpoints`, which refuses a flight from EWR to EWR. A field that breaks more than one rule gets one message, taken in this order: null, blank, size or range, pattern, any other rule. So an empty airport code gets `must not be blank`, not `size must be between 3 and 3`. A flight number with a space, `/` or `%` inside gets `must contain only letters and digits`. An airport code with a digit, symbol or padding gets `must contain only letters`. A passenger name with a control character gets `must not contain control characters`, one with an unpaired UTF-16 surrogate gets `must not contain unpaired surrogates`, and one made only of spaces, no-break spaces or format characters such as U+200B and U+FEFF gets `must not be blank`; for the last two that message comes from a pattern, so such a name past 255 characters gets the size message instead. An idempotency key with a character other than letters, digits and `. _ : -` gets `must contain only letters, digits and . _ : -`. A missing or null `departureTime` gets `must not be null` |
-| `MALFORMED_REQUEST` | 400 | unreadable body, an unknown enum constant or one sent as a number, a `seats` or `totalSeats` that is missing, null, quoted, or written with a decimal point or an exponent (`2.0` included), a `departureTime` that is not an ISO-8601 instant with `Z` or an offset (a missing or null one is `VALIDATION_FAILED`), bad path variable, missing query parameter, or `page * size` above 2147483647 on either list endpoint |
+| `MALFORMED_REQUEST` | 400 | unreadable body, an unknown enum constant or one sent as a number, a `seats` or `totalSeats` that is missing, null, quoted, or written with a decimal point or an exponent (`2.0` included), a `departureTime` that is not an ISO-8601 instant with `Z` or an offset (a missing or null one is `VALIDATION_FAILED`), bad path variable, missing query parameter, a filter with a control character once trimmed (see [Paging and sorting](#paging-and-sorting)), a value the database refuses as invalid data (SQLState class 22), or `page * size` above 2147483647 on either list endpoint |
 | `RESOURCE_NOT_FOUND` | 404 | unmapped path |
 | `METHOD_NOT_ALLOWED` | 405 | a verb the security rules allow on a path that does not map it, such as `POST` on `/api/v1/flights/UA123`; the `Allow` header lists the mapped verbs. Tomcat refuses `TRACE` before any filter runs, so its 405 comes from `ApiErrorController`, with the servlet's full `Allow` list and no `X-Request-Id`. `PUT` and `OPTIONS` get 403 from `anyRequest().denyAll()`, or 401 without credentials |
+| `PAYLOAD_TOO_LARGE` | 413 | a request body over `app.http.max-body-bytes`, 16384 bytes by default. `RequestBodyLimitFilter` refuses a declared `Content-Length` over it before the body is read and before the credentials are checked. A chunked body is refused with the same code once the read passes the limit |
 | `UNSUPPORTED_MEDIA_TYPE` | 415 | a `Content-Type` that is missing or is not `application/json`, YAML included; the `Accept` header names JSON |
 | `REQUEST_REJECTED` | 4xx | any other Spring MVC client error, such as the 406 for a non-JSON `Accept` |
 | `BAD_REQUEST` | 4xx | any other client error the container forwards to `/error`, such as a path the firewall refuses; written by `ApiErrorController` in the same envelope |
@@ -374,6 +390,12 @@ not rejected: `?size=5000` answers 200 and asks the service for 100 rows
 is Spring Data's own handling, observed over HTTP and not pinned by a test
 here.
 
+The OpenAPI document lists `page`, `size` and `sort` as three optional query
+parameters with the defaults above, because both `Pageable` parameters carry
+springdoc's `@ParameterObject`
+(`OpenApiTest.java#theListEndpointsPublishPageSizeAndSort`). It does not show
+the cap of 100.
+
 The response is `{content, page}`, with `page` holding `size`, `number`,
 `totalElements` and `totalPages` (`serialization-mode: via-dto` in
 `application.yml`).
@@ -381,7 +403,14 @@ The response is `{content, page}`, with `page` holding `size`, `number`,
 The filters: `origin` and `destination` are both optional on the flight
 search, and each is trimmed and upper-cased before the query. `flightNumber`
 is required on the bookings list, is trimmed and upper-cased too, and an
-unknown flight number is an empty page.
+unknown flight number is an empty page. A filter that still holds a control
+character (`\p{Cc}`) once trimmed, such as `?origin=J%00K`, is
+`400 MALFORMED_REQUEST` with the message
+`origin must not contain control characters.`, and no query runs
+(`controller/QueryParams.java#withoutControlCharacters`). PostgreSQL refuses
+a NUL in a text value, and H2 does not, so the check keeps the two databases
+giving the same answer. Nothing else about a filter is checked: `?origin=J-K`
+is an empty page, like any other code no flight has.
 
 `controller/SortPolicy.java#stable` applies the same rules to both endpoints.
 Each endpoint publishes the properties it sorts by:
@@ -459,3 +488,12 @@ Nothing in `application.yml` turns the documents off:
 `springdoc.api-docs.enabled` is fixed at `true`. Swagger UI opens with "Try
 it out" enabled (`try-it-out-enabled: true`), so the page sends live requests
 with whatever credentials are entered in it.
+
+`config/OpenApiConfig.java#sharedResponses` adds what every operation shares
+and no annotation can see, so a new operation gets it too: the
+`503 DATABASE_UNAVAILABLE`, which it appends to the `LOCK_TIMEOUT` 503 on the
+four writes that take the flight row lock, `Retry-After` as a header on every
+503, and `X-Request-Id` as a header on every response it lists. In the
+schemas, `BookingDto.cancelledAt` is `string` or `null`, and the flight status
+is one `FlightStatus` enum that `FlightDto.status` and `StatusUpdate.status`
+both refer to (`OpenApiTest.java#theResponseSchemasMatchTheWire`).
