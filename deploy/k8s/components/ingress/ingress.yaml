@@ -45,7 +45,8 @@ metadata:
     alb.ingress.kubernetes.io/target-type: ip
 
     # The ALB checks health on its own, apart from the kubelet. Readiness
-    # answers its question: should traffic go here?
+    # answers its question: should traffic go here? It leaves out the
+    # database, so a database outage does not fail every target at once.
     alb.ingress.kubernetes.io/healthcheck-path: /actuator/health/readiness
     alb.ingress.kubernetes.io/healthcheck-interval-seconds: "15"
     alb.ingress.kubernetes.io/healthy-threshold-count: "2"

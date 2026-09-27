@@ -110,6 +110,7 @@ sequenceDiagram
 
     C->>F: POST /api/v1/bookings
     F->>F: X-Request-Id validated or minted, MDC set
+    Note over F,S: RequestBodyLimitFilter refuses a body over 16 KiB with 413
     F->>S: continue chain
     S->>S: authenticate, require SCOPE_flights:write
     S->>Ctl: @Valid BookingRequest
@@ -138,6 +139,7 @@ Reading it in the source, in order:
 | Step | Where | What it is responsible for |
 |---|---|---|
 | Correlation | `src/main/java/com/smit/flightops/observability/RequestIdFilter.java#doFilterInternal` | Runs ahead of Spring Security, so a 401 also carries `X-Request-Id`. Logs one INFO line for each answer of 400 or above outside `/actuator/`, except a failure that escapes the chain, which `ApiErrorController` logs |
+| Body limit | `src/main/java/com/smit/flightops/security/RequestBodyLimitFilter.java#doFilterInternal` | Refuses a body over 16 KiB with 413 before anything parses more than the limit: a declared `Content-Length` unread, a chunked body once the read passes the limit |
 | Authorisation | `src/main/java/com/smit/flightops/config/SecurityConfig.java#apiSecurityFilterChain` | One rule set for Basic and JWT alike |
 | Binding and validation | `src/main/java/com/smit/flightops/dto/BookingRequest.java` | Bean Validation on the record components: the flight number is letters and digits, and the passenger name needs one character that is neither whitespace nor a format character, and has no control character or unpaired surrogate. Failures become 400 before any service code runs. Jackson refuses a `seats` with a decimal point or an exponent, `2.0` included (`accept-float-as-int` is off in `src/main/resources/application.yml`), a missing or null one, which a primitive `int` cannot hold, and `"2"` as text (`allow-coercion-of-scalars: false`), each as `400 MALFORMED_REQUEST`. The writes that take a body read JSON only, so any other `Content-Type`, YAML included, gets 415 first |
 | Idempotency | `src/main/java/com/smit/flightops/service/BookingService.java#book` | Decides replay, conflict or insert. Holds no transaction of its own |
@@ -173,7 +175,9 @@ The path depends on details in that table that are easy to miss:
   attached as suppressed. It logs a WARN that ends `not a lost race`. A
   constraint violation on that path gets `409 DUPLICATE_REQUEST` from
   `src/main/java/com/smit/flightops/exception/GlobalExceptionHandler.java#handleDataIntegrity`,
-  where it used to get a 500.
+  where it used to get a 500. A data error there, SQLState class 22 such as
+  a NUL that PostgreSQL refuses, gets `400 MALFORMED_REQUEST` from the same
+  handler.
   `src/test/java/com/smit/flightops/service/BookingServiceTest.java#aViolationWithNoWinnerIsRethrown`
   pins the rethrow and the suppressed exception.
 
@@ -342,9 +346,12 @@ Each of these choices prevents a specific failure:
    add a write to the booking transaction's hot path
    (`src/main/java/com/smit/flightops/repository/OutboxEventRepository.java#deletePublishedBefore`).
 
-The outbox costs a table, a poller, up to one poll interval of latency and a
-retention job. In return I get one recorded event per booking, at-least-once
-delivery and a backlog I can query:
+The outbox costs a table, a poller, a retention job and some latency: the rest
+of any drain under way, up to one poll interval, and the sends ahead of the
+event in its own drain, which can be seconds with a full batch and more under a
+backlog ([DEPLOYMENT.md](DEPLOYMENT.md#7-what-breaks-first) works it through).
+In return I get one recorded event per booking, at-least-once delivery and a
+backlog I can query:
 `SELECT count(*) FROM outbox_events WHERE published_at IS NULL` is both a lag
 metric and an alert.
 
@@ -417,6 +424,11 @@ Which statuses are bookable is a separate question.
 `src/main/java/com/smit/flightops/entity/FlightStatus.java#isBookable` answers
 it with an exhaustive switch and no `default`. Adding a constant is then a
 compile error until someone decides whether the new status accepts bookings.
+Whether a booking can still be cancelled is a third question, and
+`src/main/java/com/smit/flightops/entity/FlightStatus.java#acceptsCancellations`
+answers it the same way. A booking on a `CANCELLED` flight can be, because
+refunds happen on cancelled flights. One still active on a `DEPARTED` or
+`ARRIVED` flight cannot, because the flight has already flown.
 
 ---
 
@@ -430,6 +442,11 @@ first query.
 runs on PostgreSQL 17 in a container. It asserts that `flyway_schema_history`
 holds versions 1 to 8, and as many as there are migration files on the
 classpath, so a misnamed file that Flyway skips fails the test.
+
+Flyway runs inside the service at startup and logs in as the connection pool
+does. In the cluster that login is the RDS master user, which therefore owns
+every table. [Still open](#still-open) says what that allows and what would
+replace it.
 
 ```mermaid
 erDiagram
@@ -510,13 +527,15 @@ and restore the seats the booking had just debited.
 │   │                   (the wire contract)
 │   ├── exception/      the domain exceptions, GlobalExceptionHandler (the
 │   │                   @RestControllerAdvice) and ApiErrorController
-│   ├── security/       the JSON 401 and 403 writers
+│   ├── security/       the JSON 401 and 403 writers, and the request body
+│   │                   limit
 │   ├── observability/  RequestIdFilter, BookingMetrics, OutboxMetrics
 │   ├── validation/     @DistinctEndpoints, a class-level Bean Validation
 │   │                   constraint, and IsoInstantDeserializer, which takes only
 │   │                   an ISO-8601 instant
-│   └── config/         SecurityConfig, OpenApiConfig, AwsConfig, the
-│                       @ConfigurationProperties records, TimeConfig, DataSeeder
+│   └── config/         SecurityConfig, OpenApiConfig, AwsConfig, HttpConfig,
+│                       the @ConfigurationProperties records, TimeConfig,
+│                       DataSeeder
 ├── src/main/resources/
 │   ├── application.yml         profiles: default (H2), postgres, prod
 │   └── db/migration/           the Flyway migrations, which own the PostgreSQL
@@ -541,8 +560,11 @@ and restore the seats the booking had just debited.
 │   │                           ecr-image-exists.sh and up.sh's checks in
 │   │                           lib.sh against stubbed tools; the CloudFormation
 │   │                           templates foundation.yaml and data.yaml; the
-│   │                           eksctl cluster.yaml, version pinned; and
-│   │                           README.md, the runbook that orders them
+│   │                           eksctl cluster.yaml, version pinned; the load
+│   │                           balancer controller's IAM policy,
+│   │                           lbc-iam-policy-v3.5.0.json, copied unchanged
+│   │                           from upstream; and README.md, the runbook that
+│   │                           orders them
 │   └── k8s/                    kustomize, and beside it namespace.yaml, which
 │       │                       up.sh applies once, and secret.example.yaml, a
 │       │                       template for the Secret up.sh creates
@@ -554,6 +576,9 @@ and restore the seats the booking had just debited.
 │                               (defined, not run end to end)
 ├── Dockerfile                  multi-stage: a JDK and Maven build stage, then
 │                               a JRE runtime
+├── certs/                      the RDS CA bundle the runtime image copies;
+│                               doc/DEPLOYMENT.md has its source and refresh
+│                               steps
 ├── pom.xml, mvnw               the service's build; the wrapper pins Maven
 ├── README.md, CHANGELOG.md, CONTRIBUTING.md, SECURITY.md, LICENSE
 └── .github/                    workflows/build-and-deploy.yml (build,
@@ -608,6 +633,7 @@ flowchart TD
     observability --> repository
     observability --> security
     security --> dto
+    security --> exception
     validation --> dto
 ```
 
@@ -773,7 +799,7 @@ The README keeps a short version of this table under
 | Two users in an `InMemoryUserDetailsManager` | Cognito, Okta or Entra behind `issuer-uri` and `audiences` | The rules are real and tested, and the user store is a stub. The resource-server half is wired and activates when an issuer is configured, so the swap is configuration: set both properties, as [SECURITY.md](../SECURITY.md#authentication-and-authorisation) shows. |
 | Idempotent replay returns 201 | 200, arguably | It answers with the original status, Stripe-style, and the booking the key created, so the body matches the first response until the booking is cancelled, when `cancelledAt` is set. "201 Created" for something not created this time is a fair challenge. I documented it and left it. |
 | Idempotency keys never expire. The key is a `NOT NULL` column of the booking row under `uk_bookings_idempotency_key`, so the unique index grows by one entry per booking | Keys valid for a stated window (Stripe's documentation says a key may be removed once it is at least 24 hours old), after which a replay is a new request | Cancellation sets a timestamp and never deletes the row (`src/main/resources/db/migration/V4__booking_cancellation.sql`), so a cancelled booking keeps its key and a late replay returns it instead of booking again (`src/test/java/com/smit/flightops/ErrorContractTest.java#replayAfterCancellationDoesNotRebook`). A window would bound the index, but a replay after it would book again, a contract change clients have to be told about. It would also need a new migration, because applied ones are never edited. |
-| A poller drains the outbox | Debezium reading the WAL | A poll every second (`app.outbox.poll-interval` defaults to 1000 ms) costs one indexed query per replica per second and adds up to a second of latency. CDC removes both and adds Kafka Connect, a connector to operate and a replication slot that fills the disk if the consumer stops. |
+| A poller drains the outbox | Debezium reading the WAL | A poll every second (`app.outbox.poll-interval` defaults to 1000 ms) costs at most one indexed query per replica per second, and adds up to a poll interval plus the sends ahead of an event, and another interval for each full batch ahead of it ([The outbox](#the-outbox)). CDC removes both and adds Kafka Connect, a connector to operate and a replication slot that fills the disk if the consumer stops. |
 | Retention is a batched `DELETE` on a schedule | A partitioned table, dropping old partitions | Detaching and dropping an old partition is O(1) and a delete is not, which matters from roughly the first hundred million rows. Below that, partitions add a maintenance job and an outage when that job fails. The pruner is one short class, and each run is bounded: batches of 1,000 rows by default, and at most 50 batches (`src/main/java/com/smit/flightops/service/OutboxPruner.java#MAX_BATCHES_PER_RUN`). |
 | No circuit breaker | Resilience4j | Besides the database, SQS is the one outbound dependency (and the token issuer, once one is configured). The outbox already absorbs an SQS failure: a down queue leaves rows unpublished, and a later drain retries them after a backoff, up to the attempt ceiling in [The outbox](#the-outbox). Each send is bounded at 5 s (`src/main/java/com/smit/flightops/config/AwsConfig.java#sqsClient`) and runs on the poller, never on a request thread. |
 | Contract tests share a JSON file | Pact, with a broker and a `can-i-deploy` gate in CI | The file catches the change that breaks the consumer, which is the whole job while both modules live in one repository. A broker pays off when the consumers are other teams' services. |
@@ -786,3 +812,4 @@ The README keeps a short version of this table under
 | What happens | What should happen | The fix |
 |---|---|---|
 | There is no rate limiting. A single caller with valid credentials can take every connection in the pool. | A token bucket per principal at the gateway, or Bucket4j in front of the write endpoints. | Out of scope for the service. It belongs at the ingress, and I would sooner say so than add a half-measure here. |
+| The service and Flyway both log in as the RDS master user, a member of `rds_superuser`, and that login owns every table. Code running in a pod, or anyone who can read `flight-ops-secret`, can drop the seat checks V2 added or a whole table, and the data stack keeps no backups to restore from. [OPERATIONS.md](OPERATIONS.md#the-database-user) traces where the login comes from. | Two logins. A migration user owns the schema, and only the step that runs Flyway holds its password. A runtime user gets `SELECT`, `INSERT`, `UPDATE` and `DELETE` on the tables and `USAGE` on their sequences. It could still delete rows, but not change the schema. | Not built. Flyway would move to an initContainer or a Job with its own Secret key, and the application container would get `SPRING_FLYWAY_ENABLED=false` and the runtime login. A new migration would grant the runtime user its rights, written so that it still runs where no such role exists, as on the test and compose databases. The instance is not publicly accessible, so `deploy/aws/up.sh` would set the runtime password from a pod inside the cluster. |

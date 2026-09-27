@@ -142,7 +142,9 @@ spec:
               # make the HPA measure the throttle instead of the load.
 
           # Readiness decides whether traffic comes here. Spring flips it to
-          # OUT_OF_SERVICE when SIGTERM arrives.
+          # OUT_OF_SERVICE when SIGTERM arrives. It leaves out the database,
+          # which every replica shares: a slow or dead one would take every pod
+          # out at once. application.yml gives the whole reason.
           readinessProbe:
             httpGet:
               path: /actuator/health/readiness
@@ -153,8 +155,8 @@ spec:
             failureThreshold: 3
 
           # Liveness restarts a wedged process, so it is slower than readiness,
-          # and Spring's liveness group leaves out the database: an RDS failover
-          # must not restart every pod.
+          # and it leaves out the database too: an RDS failover must not restart
+          # every pod.
           livenessProbe:
             httpGet:
               path: /actuator/health/liveness

@@ -504,6 +504,14 @@ Liveness stays on `livenessState` alone, because a database outage must not
 restart every pod. No test pins this. The setting is in
 `src/main/resources/application.yml`.
 
+**Superseded (2026-09-26).** Readiness no longer includes the database. Every
+pod shares it, so an outage would withdraw every pod at once and leave the load
+balancer no target, and a busy flight that filled each pod's pool would do the
+same. I found this by reading the configuration; no cluster has run it. Each
+pod now answers `503 DATABASE_UNAVAILABLE` with `Retry-After` itself, and the
+`db` component of `/actuator/health` carries the alert.
+`HealthGroupsTest#readinessLeavesTheDatabaseOut` pins it.
+
 ### No lock timeout
 
 `SELECT … FOR UPDATE` had no lock timeout. A stuck holder blocked every other
