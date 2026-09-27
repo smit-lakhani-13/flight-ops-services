@@ -88,8 +88,8 @@ public class FlightController {
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "A page of flights, by departure time unless `sort` says otherwise."),
             @ApiResponse(responseCode = "400", description = """
-                    `UNKNOWN_SORT_PROPERTY` — `sort` names a property this endpoint does not offer. \
-                    `MALFORMED_REQUEST` — `page` times `size` is larger than 2147483647, or \
+                    `UNKNOWN_SORT_PROPERTY`: `sort` names a property this endpoint does not offer. \
+                    `MALFORMED_REQUEST`: `page` times `size` is larger than 2147483647, or \
                     `origin` or `destination` has a control character once trimmed.""",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "401", description = "`UNAUTHENTICATED`",

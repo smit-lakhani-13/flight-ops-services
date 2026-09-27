@@ -246,9 +246,9 @@ work is written down. What is missing is a domain.
   `must not contain unpaired surrogates`: `getBytes(UTF_8)` turns it into
   `?`, so two different names would share a fingerprint. `BookingControllerTest`
   covers all three. The query filters `origin`, `destination` and
-  `flightNumber` refuse control characters too, with `400 MALFORMED_REQUEST`
-  before any query runs
-  (`src/main/java/com/smit/flightops/controller/QueryParams.java#withoutControlCharacters`).
+  `flightNumber` refuse a control character that is still there once the value
+  is trimmed, with `400 MALFORMED_REQUEST` before any query runs
+  (`controller/QueryParams.java#withoutControlCharacters`).
   PostgreSQL refused a NUL there with SQLState 22021, which reached the caller
   as a misleading `409 DUPLICATE_REQUEST`.
 

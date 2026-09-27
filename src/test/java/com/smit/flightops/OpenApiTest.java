@@ -38,10 +38,10 @@ class OpenApiTest {
 
     /**
      * Each operation's documented status codes. Every endpoint needs credentials
-     * and a scope. Every endpoint opens a transaction, so each of them can answer
-     * 503 when the database is out of reach, and every write to an existing
-     * flight row can also wait behind a booking's row lock. Every write with a
-     * body reads JSON only, so each of them can answer 415.
+     * and a scope. Every endpoint reaches the database, reads included, so each
+     * of them can answer 503 when the database is out of reach, and every write
+     * to an existing flight row can also wait behind a booking's row lock. Every
+     * write with a body reads JSON only, so each of them can answer 415.
      */
     private static final Map<String, List<String>> RESPONSES = Map.of(
             "get /api/v1/flights", List.of("200", "400", "401", "403", "503"),
@@ -150,7 +150,7 @@ class OpenApiTest {
      * fills it with {@code sort=string}, which the endpoint refuses.
      */
     @Test
-    @DisplayName("both list endpoints publish page, size and sort as query parameters, with their defaults")
+    @DisplayName("both list endpoints publish page, size and sort as optional query parameters, with their defaults")
     void theListEndpointsPublishPageSizeAndSort() throws Exception {
         JsonNode paths = document().get("paths");
 
@@ -163,6 +163,10 @@ class OpenApiTest {
 
             assertThat(parameters).as(path).containsKeys("page", "size", "sort").doesNotContainKey("pageable");
             assertThat(parameters.values()).as(path).allMatch(p -> p.get("in").asString().equals("query"));
+            for (String name : List.of("page", "size", "sort")) {
+                assertThat(parameters.get(name).path("required").asBoolean(false)).as(path + " " + name).isFalse();
+            }
+            assertThat(parameters.get("page").get("schema").get("default").asInt()).as(path).isEqualTo(0);
             assertThat(parameters.get("size").get("schema").get("default").asInt()).as(path).isEqualTo(20);
             assertThat(parameters.get("sort").get("schema").get("default").get(0).asString()).as(path).isEqualTo(sort);
         });

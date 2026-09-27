@@ -151,8 +151,8 @@ public class BookingController {
                     A page of bookings, oldest first unless `sort` says otherwise. An unknown \
                     flight number is an empty page."""),
             @ApiResponse(responseCode = "400", description = """
-                    `UNKNOWN_SORT_PROPERTY` — `sort` names a property this endpoint does not offer. \
-                    `MALFORMED_REQUEST` — `flightNumber` is missing or has a control character \
+                    `UNKNOWN_SORT_PROPERTY`: `sort` names a property this endpoint does not offer. \
+                    `MALFORMED_REQUEST`: `flightNumber` is missing or has a control character \
                     once trimmed, or `page` times `size` is larger than 2147483647.""",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "401", description = "`UNAUTHENTICATED`",

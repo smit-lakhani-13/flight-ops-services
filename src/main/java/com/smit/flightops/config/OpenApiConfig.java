@@ -101,11 +101,12 @@ public class OpenApiConfig {
      * gets it without anyone remembering to.
      *
      * <ul>
-     *   <li><b>503 {@code DATABASE_UNAVAILABLE}.</b> Every operation opens a
-     *       transaction, reads included, and
+     *   <li><b>503 {@code DATABASE_UNAVAILABLE}.</b> Every operation reaches the
+     *       database, reads included, and
      *       {@code GlobalExceptionHandler#handleDatabaseUnavailable} answers one
-     *       that cannot get a connection. The four writes that take or queue
-     *       behind the flight row lock already declare a 503 for
+     *       that cannot get a connection, whether a transaction cannot begin or
+     *       a query outside one cannot get a connection. The four writes that
+     *       take or queue behind the flight row lock already declare a 503 for
      *       {@code LOCK_TIMEOUT}, and the code is added to its description. The
      *       reads and the flight creation take no row lock, so their 503 never
      *       names {@code LOCK_TIMEOUT}.</li>
