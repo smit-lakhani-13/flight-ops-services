@@ -378,8 +378,10 @@ that name them in one commit:
    sections as they are, and add an Unreleased entry instead. The fixture
    ARNs in `deploy/aws/selftest.sh` need no change.
 4. Run `deploy/aws/selftest.sh`, which fails while the file and the sum
-   disagree, and `python3 scripts/refcheck.py`, which fails while a document
-   still cites the old file. Both must pass.
+   disagree, and `python3 scripts/refcheck.py`, which fails while a path in a
+   code span still names the old file. It does not read the file tree in
+   `doc/ARCHITECTURE.md` or the README's checksum row, so the `git grep`
+   in step 3 is what finds those. Both must pass.
 
 Make the move while no cluster exists. On a running cluster, a re-run of
 `up.sh` creates the new policy but leaves the controller's role on the old
