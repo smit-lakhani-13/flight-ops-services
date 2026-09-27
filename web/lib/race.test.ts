@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { MAX_BODY_BYTES } from "./proxy";
 import { runRace } from "./race";
 import { summariseRace } from "./race-summary";
 import { RACE_SIZE } from "./race";
@@ -87,6 +88,17 @@ describe("runRace", () => {
       expect(response.status, body).toBe(400);
       expect(await response.json()).toMatchObject({ code: "CONSOLE_BAD_REQUEST" });
     }
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("refuses a body one byte over the proxy's limit with the proxy's words", async () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    const response = await runRace(raceRequest("x".repeat(MAX_BODY_BYTES + 1)), { fetch: fetchImpl, baseUrl: BASE });
+    expect(response.status).toBe(413);
+    expect(await response.json()).toMatchObject({
+      code: "CONSOLE_BODY_TOO_LARGE",
+      message: `The console forwards bodies of at most ${MAX_BODY_BYTES} bytes.`,
+    });
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 

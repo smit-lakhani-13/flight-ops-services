@@ -20,6 +20,12 @@ const SORTS = [
   { value: "status,asc", label: "Status" },
 ];
 
+function foundText({ totalElements, number, totalPages }: Page<Flight>["page"]): string {
+  if (totalElements === 0) return "0 flights found";
+  const count = totalElements === 1 ? "1 flight" : `${totalElements} flights`;
+  return `${count} found, page ${number + 1} of ${Math.max(totalPages, 1)}`;
+}
+
 interface Filters {
   origin: string;
   destination: string;
@@ -71,7 +77,10 @@ function Flights() {
       }),
     [api, filters],
   );
-  const { value: result } = useResource(load);
+  const { value: result, pending } = useResource(load);
+  // Said once each answer arrives, and emptied while a search is out, so the
+  // same count twice is still a change a screen reader announces.
+  const found = pending || !result?.ok || !result.data ? "" : foundText(result.data.page);
 
   function search(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -94,7 +103,11 @@ function Flights() {
           </Button>
         }
       >
-        <form onSubmit={search} aria-label="Search flights" className="grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <form
+          onSubmit={search}
+          aria-label="Search flights"
+          className="grid items-end gap-3 sm:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(15rem,1.5fr)_auto]"
+        >
           <Field label="Origin">
             <TextInput name="origin" placeholder="EWR" autoCapitalize="characters" value={draft.origin} onChange={(e) => setDraft({ ...draft, origin: e.target.value })} />
           </Field>
@@ -122,6 +135,7 @@ function Flights() {
             </Button>
             <Button
               tone="ghost"
+              aria-label="Clear filters"
               onClick={() => {
                 setDraft({ origin: "", destination: "" });
                 setFilters({ ...filters, origin: "", destination: "", page: 0 });
@@ -142,37 +156,45 @@ function Flights() {
       )}
 
       <Card>
-        {result === null ? (
-          <Skeleton rows={5} label="Loading flights" />
-        ) : result.ok && result.data ? (
-          result.data.content.length === 0 ? (
-            <EmptyState
-              icon={<InboxIcon className="size-5" />}
-              action={
-                !creating && (
-                  <Button
-                    icon={<PlusIcon />}
-                    onClick={() => {
-                      revealForm.current = true;
-                      setCreating(true);
-                    }}
-                  >
-                    New flight
-                  </Button>
-                )
-              }
-            >
-              No flights match this search.
-            </EmptyState>
+        <h2 className="sr-only">Results</h2>
+        <p role="status" className="sr-only">
+          {found}
+        </p>
+        {/* While a new page, sort or search is out, the last answer stays on
+            screen, dimmed and marked busy, so it does not pass for the new one. */}
+        <div aria-busy={pending && result !== null} className={pending && result !== null ? "opacity-60" : undefined}>
+          {result === null ? (
+            <Skeleton rows={5} label="Loading flights" />
+          ) : result.ok && result.data ? (
+            result.data.content.length === 0 ? (
+              <EmptyState
+                icon={<InboxIcon className="size-5" />}
+                action={
+                  !creating && (
+                    <Button
+                      icon={<PlusIcon />}
+                      onClick={() => {
+                        revealForm.current = true;
+                        setCreating(true);
+                      }}
+                    >
+                      New flight
+                    </Button>
+                  )
+                }
+              >
+                No flights match this search.
+              </EmptyState>
+            ) : (
+              <>
+                <FlightTable flights={result.data.content} />
+                <Pager page={result.data.page} onPage={(page) => setFilters({ ...filters, page })} />
+              </>
+            )
           ) : (
-            <>
-              <FlightTable flights={result.data.content} />
-              <Pager page={result.data.page} onPage={(page) => setFilters({ ...filters, page })} />
-            </>
-          )
-        ) : (
-          <ErrorBanner error={result.error} />
-        )}
+            <ErrorBanner error={result.error} />
+          )}
+        </div>
       </Card>
     </div>
   );

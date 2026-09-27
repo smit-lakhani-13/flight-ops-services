@@ -72,14 +72,19 @@ test("cancelling a flight asks first, then marks it CANCELLED and stops sales", 
   page.on("request", (sent) => {
     if (sent.method() === "DELETE") deletes.push(sent.url());
   });
-  await page.getByRole("button", { name: "Cancel flight" }).click();
+  const cancelFlight = page.getByRole("button", { name: "Cancel flight" });
+  await cancelFlight.click();
+  // The opener stays put, disabled, so a second click cannot land on an answer.
+  await expect(cancelFlight).toBeDisabled();
   await page.getByRole("button", { name: "Keep it" }).click();
-  await expect(page.getByRole("button", { name: "Cancel flight" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Keep it" })).toHaveCount(0);
+  await expect(cancelFlight).toBeEnabled();
+  await expect(cancelFlight).toBeFocused();
   const kept = await request.get(`/api/v1/flights/${flightNumber}`, { headers: { Authorization: basic(API_ACCOUNT) } });
   expect(await kept.json()).toMatchObject({ status: "SCHEDULED" });
   expect(deletes).toEqual([]);
 
-  await page.getByRole("button", { name: "Cancel flight" }).click();
+  await cancelFlight.click();
   await page.getByRole("button", { name: "Yes, cancel it" }).click();
   await expect(page.getByTestId("flight-status")).toHaveText("CANCELLED");
   await expect(page.getByText("CANCELLED is terminal")).toBeVisible();

@@ -38,9 +38,34 @@ test("a reload forgets the credential, because nothing stores it", async ({ page
   expect(stored).toEqual({ cookies: "", local: 0, session: 0 });
 });
 
-test("the ops account signs in, and the flight pages show the API's 403", async ({ page }) => {
+test("every page names its tab in the HTML it is served with", async ({ request }) => {
+  const titles = {
+    "/": "Overview",
+    "/flights": "Flights",
+    "/flights/UA123": "UA123",
+    "/flights/ABCDEFGHIJKLMNOPQRSTUVWXYZ": "ABCDEFGHIJKLMNOP…",
+    "/book": "Book",
+    "/bookings/1": "Booking #1",
+    "/ops": "Ops",
+    "/no-such-page": "Not found",
+  };
+  for (const [path, title] of Object.entries(titles)) {
+    const html = await (await request.get(path)).text();
+    expect(html, path).toContain(`<title>${title} · flight-ops console</title>`);
+  }
+});
+
+test("the ops account signs in without a refused request, and the flight pages show the API's 403", async ({ page }) => {
+  // A refused request is one the browser logs as an error, so the sign-in
+  // must not make one: it checks the password on health, which ops may read.
+  const refused: string[] = [];
+  page.on("response", (response) => {
+    const path = new URL(response.url()).pathname;
+    if (path.startsWith("/api/") && response.status() >= 400) refused.push(`${response.status()} ${path}`);
+  });
   await signIn(page, OPS_ACCOUNT);
   await expect(page.getByText("the flight pages will answer 403")).toBeVisible();
+  expect(refused).toEqual([]);
   await go(page, "Flights");
   await expect(page.getByTestId("error-banner")).toHaveAttribute("data-code", "FORBIDDEN");
 });

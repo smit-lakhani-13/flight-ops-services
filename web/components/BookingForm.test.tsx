@@ -123,4 +123,107 @@ describe("BookingForm", () => {
     expect(screen.queryByRole("alert")).toBeNull();
     expect(document.querySelector("[data-code=IDEMPOTENCY_KEY_REUSED]")).not.toBeNull();
   });
+
+  it("reads the seats again only after a booking that got an answer", async () => {
+    let seats = 100;
+    let timeOut = true;
+    const reads = vi.fn();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.method !== "POST") {
+          reads();
+          return Response.json({ flightNumber: "UA1", availableSeats: seats });
+        }
+        if (timeOut) {
+          return Response.json({ code: "CONSOLE_UPSTREAM_TIMEOUT", message: "No answer in 15 s" }, { status: 504 });
+        }
+        seats -= 1;
+        return Response.json(
+          { bookingId: 1, flightNumber: "UA1", passengerName: "Test Passenger", seats: 1, createdAt: "2026-09-26T10:00:00Z", cancelledAt: null },
+          { status: 201, headers: { Location: "/api/v1/bookings/1" } },
+        );
+      }),
+    );
+    renderForm();
+
+    // The API may still apply a booking the console gave up on, so a read
+    // straight after it could miss a change that is still to come.
+    await press("Book");
+    expect(reads).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("seats-change").textContent).toBe("\u2014");
+
+    timeOut = false;
+    await press("Book");
+    expect(reads).toHaveBeenCalledTimes(3);
+    expect(screen.getAllByTestId("seats-change")[0]!.textContent).toBe("100 \u2192 99");
+  });
+
+  it("marks the fields from the last answer, a booking's or the race's", async () => {
+    let refuse = true;
+    const row = (index: number, status: number, body: unknown) => ({
+      index,
+      status,
+      requestId: `web-${index}`,
+      echoedRequestId: `web-${index}`,
+      location: null,
+      ms: 5,
+      body,
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = new URL(String(input), "http://console.test").pathname;
+        if (init?.method !== "POST") return Response.json({ flightNumber: "UA1", availableSeats: 100 });
+        const refusal = { code: "VALIDATION_FAILED", message: "Invalid request", fieldErrors: { passengerName: "must not be blank" } };
+        if (path === "/api/v1/bookings") return Response.json(refusal, { status: 400 });
+        const body = refuse ? refusal : { bookingId: 1, flightNumber: "UA1", passengerName: "Test Passenger", seats: 1 };
+        const rows = Array.from({ length: 10 }, (_, index) => row(index, refuse ? 400 : 201, body));
+        return Response.json({ rows, totalMs: 12 });
+      }),
+    );
+    renderForm();
+    const name = () => screen.getByLabelText("Passenger name").getAttribute("aria-invalid");
+
+    await press("Book");
+    expect(name()).toBe("true");
+
+    refuse = false;
+    await press("Race 10 callers on this key");
+    expect(name()).not.toBe("true");
+
+    refuse = true;
+    await press("Race 10 callers on this key");
+    expect(name()).toBe("true");
+  });
+
+  it("says a race none of whose callers got an answer may still finish, and reads the seats once", async () => {
+    const reads = vi.fn();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.method !== "POST") {
+          reads();
+          return Response.json({ flightNumber: "UA1", availableSeats: 100 });
+        }
+        const body = { code: "CONSOLE_UPSTREAM_UNREACHABLE", message: "The console could not reach the API." };
+        const rows = Array.from({ length: 10 }, (_, index) => ({
+          index,
+          status: 0,
+          requestId: `web-${index}`,
+          echoedRequestId: null,
+          location: null,
+          ms: 5,
+          body,
+        }));
+        return Response.json({ rows, totalMs: 12 });
+      }),
+    );
+    renderForm();
+
+    await press("Race 10 callers on this key");
+
+    expect(screen.getByTestId("race-unsettled").textContent).toContain("a request that reached the API may still finish");
+    expect(reads).toHaveBeenCalledTimes(1);
+  });
 });

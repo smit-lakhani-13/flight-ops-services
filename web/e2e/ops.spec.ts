@@ -93,6 +93,7 @@ test.describe("the proxy's allow-list", () => {
       data: JSON.stringify({ passengerName: "x".repeat(70 * 1024) }),
     });
     expect(tooLarge.status()).toBe(413);
+    expect(await tooLarge.json()).toMatchObject({ code: "CONSOLE_BODY_TOO_LARGE" });
 
     const badRace = await request.post("/api/race", { headers: { "Content-Type": "application/json" }, data: "[1, 2]" });
     expect(badRace.status()).toBe(400);

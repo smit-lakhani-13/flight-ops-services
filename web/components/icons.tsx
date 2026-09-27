@@ -2,7 +2,9 @@ import type { ReactNode } from "react";
 
 // The console's icons, drawn here as inline SVG so it needs no icon package.
 // Each is decorative: hidden from assistive technology, sized by className,
-// and drawn in currentColor, so the text beside it names the action.
+// and drawn in currentColor, so the text beside it names the action. Under
+// forced colours an icon takes its parent's system colour, whatever colour a
+// caller gave it.
 
 function Icon({ className = "size-4", children }: { className?: string; children: ReactNode }) {
   return (
@@ -15,7 +17,7 @@ function Icon({ className = "size-4", children }: { className?: string; children
       strokeLinejoin="round"
       aria-hidden="true"
       focusable="false"
-      className={`shrink-0 ${className}`}
+      className={`shrink-0 forced-colors:text-current! ${className}`}
     >
       {children}
     </svg>

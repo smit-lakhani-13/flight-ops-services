@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import type { ClassifiedError } from "@/lib/errors";
 import { useSession } from "@/lib/session";
 import { ErrorBanner } from "./ErrorBanner";
-import { Button, Card, Field, MUTED, TextInput } from "./ui";
+import { Button, Card, Field, focusIsInOrLost, focusPageTitle, MUTED, TextInput } from "./ui";
 
 export function SignInPanel() {
   const { signIn } = useSession();
@@ -12,7 +12,12 @@ export function SignInPanel() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<ClassifiedError | null>(null);
   const [busy, setBusy] = useState(false);
+  const form = useRef<HTMLFormElement>(null);
 
+  // A wrong password empties the field. Any other failure, such as an API that
+  // did not answer, keeps it, so the same sign-in can simply be sent again.
+  // Signing in replaces this form with the page, so the focus goes to the
+  // page's heading unless the reader has moved it elsewhere meanwhile.
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
@@ -21,7 +26,9 @@ export function SignInPanel() {
       const failure = await signIn(user, password);
       if (failure) {
         setError(failure);
-        setPassword("");
+        if (failure.kind === "unauthenticated") setPassword("");
+      } else if (focusIsInOrLost(form.current)) {
+        focusPageTitle();
       }
     } finally {
       setBusy(false);
@@ -30,7 +37,7 @@ export function SignInPanel() {
 
   return (
     <Card title="Sign in" className="mx-auto w-full max-w-md">
-      <form onSubmit={submit} className="flex flex-col gap-4" aria-label="Sign in">
+      <form ref={form} onSubmit={submit} className="flex flex-col gap-4" aria-label="Sign in">
         <p className={`text-sm text-pretty ${MUTED}`}>
           Use the API&apos;s own accounts. The default profile has two:{" "}
           <code>api</code> / <code>dev-secret</code> for the flight and booking operations, and <code>ops</code> /{" "}

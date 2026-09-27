@@ -30,6 +30,44 @@ describe("useResource", () => {
     expect(result.current.value).toBe("page two");
   });
 
+  it("is pending until a reload answers, and keeps the last answer meanwhile", async () => {
+    const first = deferred<string>();
+    const second = deferred<string>();
+    const answers = [first, second];
+    let calls = 0;
+    const load = () => answers[calls++]!.promise;
+    const { result } = renderHook(() => useResource(load));
+
+    expect(result.current.pending).toBe(true);
+    await act(async () => first.resolve("page one"));
+    expect(result.current.pending).toBe(false);
+
+    act(() => result.current.reload());
+    expect(result.current.pending).toBe(true);
+    expect(result.current.value).toBe("page one");
+    await act(async () => second.resolve("page one again"));
+    expect(result.current.pending).toBe(false);
+    expect(result.current.value).toBe("page one again");
+  });
+
+  it("is pending again when the load changes, as a new search does", async () => {
+    const pageOne = deferred<string>();
+    const pageTwo = deferred<string>();
+    const loadOne = () => pageOne.promise;
+    const loadTwo = () => pageTwo.promise;
+    const { result, rerender } = renderHook(({ load }) => useResource(load), { initialProps: { load: loadOne } });
+
+    await act(async () => pageOne.resolve("page one"));
+    expect(result.current.pending).toBe(false);
+
+    rerender({ load: loadTwo });
+    expect(result.current.pending).toBe(true);
+    expect(result.current.value).toBe("page one");
+    await act(async () => pageTwo.resolve("page two"));
+    expect(result.current.pending).toBe(false);
+    expect(result.current.value).toBe("page two");
+  });
+
   it("reports a load that rejects instead of leaving it unhandled", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const failure = new Error("bug");
@@ -38,5 +76,6 @@ describe("useResource", () => {
 
     await waitFor(() => expect(error).toHaveBeenCalledWith("A console load failed", failure));
     expect(result.current.value).toBeNull();
+    expect(result.current.pending).toBe(false);
   });
 });

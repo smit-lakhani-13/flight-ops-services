@@ -4,7 +4,7 @@ import { useState, type FormEvent, type ReactNode } from "react";
 import { newId, type ApiResponse } from "@/lib/api";
 import { summariseRace } from "@/lib/race-summary";
 import { useApi } from "@/lib/session";
-import type { Booking, BookingRequest, Flight, RaceReport } from "@/lib/types";
+import { isErrorBody, type Booking, type BookingRequest, type Flight, type RaceReport } from "@/lib/types";
 import { ErrorBanner } from "./ErrorBanner";
 import { RaceResult } from "./RaceResult";
 import {
@@ -13,6 +13,7 @@ import {
   countFrom,
   Field,
   HttpStatus,
+  Identifier,
   MUTED,
   NONE,
   STATUS_EDGE,
@@ -49,6 +50,23 @@ interface Announcement {
 const FIELDS = ["flightNumber", "passengerName", "seats", "idempotencyKey"] as const;
 const FLIGHT_NUMBER = /^\s*[A-Za-z0-9]{1,10}\s*$/;
 
+/**
+ * Whether a call's answer settles what it did. The console gives up on the
+ * API after 15 s, and a connection can drop before the answer is complete; in
+ * both cases the API may still apply the call afterwards, so a seats read
+ * straight after it could miss a change that is still to come.
+ */
+function answered(status: number, code: string | undefined): boolean {
+  return status !== 0 && code !== "CONSOLE_UPSTREAM_TIMEOUT" && code !== "CONSOLE_UPSTREAM_UNREACHABLE";
+}
+
+/** A race is settled once one caller got its booking, or every caller got an answer. */
+function raceAnswered(result: ApiResponse<RaceReport>): boolean {
+  if (!answered(result.status, result.error?.code)) return false;
+  const rows = result.data?.rows ?? [];
+  return rows.some((row) => row.status === 201) || rows.every((row) => row.status !== 0);
+}
+
 export function BookingForm({ initialFlight }: { initialFlight: string }) {
   const api = useApi();
   const [form, setForm] = useState(() => ({
@@ -58,7 +76,12 @@ export function BookingForm({ initialFlight }: { initialFlight: string }) {
     idempotencyKey: `web-${newId()}`,
   }));
   const [outcomes, setOutcomes] = useState<Outcome[]>([]);
-  const [race, setRace] = useState<{ result: ApiResponse<RaceReport>; before: number | null; after: number | null } | null>(null);
+  const [race, setRace] = useState<{
+    result: ApiResponse<RaceReport>;
+    before: number | null;
+    after: number | null;
+    settled: boolean;
+  } | null>(null);
   const [pending, setPending] = useState<Action | "race" | null>(null);
   const [announcement, setAnnouncement] = useState<Announcement | null>(null);
   // Whether the last answer was a single booking's or the race's, so a single
@@ -71,7 +94,12 @@ export function BookingForm({ initialFlight }: { initialFlight: string }) {
   const [firstByKey, setFirstByKey] = useState<ReadonlyMap<string, number>>(() => new Map());
 
   const latest = outcomes[0];
-  const fieldError = (name: string) => latest?.result.error?.fieldErrors[name];
+  // The fields show the last answer's messages: a single booking's, or the
+  // first refusal among the race's ten, so a race that followed a refused
+  // booking clears the marks, and a race refused for a field marks it.
+  const raceRefusal = race?.result.data?.rows.map((row) => row.body).find(isErrorBody);
+  const fieldError = (name: string) =>
+    last === "booking" ? latest?.result.error?.fieldErrors[name] : raceRefusal?.fieldErrors?.[name];
   const set = (key: keyof typeof form) => (value: string) => setForm((current) => ({ ...current, [key]: value }));
 
   function request(): BookingRequest {
@@ -101,7 +129,8 @@ export function BookingForm({ initialFlight }: { initialFlight: string }) {
       }
       const before = await seatsLeft(sent.flightNumber);
       const result = await api.post<Booking>("v1/bookings", sent);
-      const after = await seatsLeft(sent.flightNumber);
+      // The change needs both counts, and a call with no answer may still land.
+      const after = before !== null && answered(result.status, result.error?.code) ? await seatsLeft(sent.flightNumber) : null;
       const created = result.data;
       if (action === "book" && result.ok && created) {
         setFirstByKey((current) =>
@@ -126,8 +155,9 @@ export function BookingForm({ initialFlight }: { initialFlight: string }) {
       const sent = request();
       const before = await seatsLeft(sent.flightNumber);
       const result = await api.post<RaceReport>("race", sent);
-      const after = await seatsLeft(sent.flightNumber);
-      setRace({ result, before, after });
+      const settled = raceAnswered(result);
+      const after = before !== null && settled ? await seatsLeft(sent.flightNumber) : null;
+      setRace({ result, before, after, settled });
       setLast("race");
       if (result.ok && result.data) {
         const { statuses, bookingIds } = summariseRace(result.data.rows);
@@ -177,7 +207,7 @@ export function BookingForm({ initialFlight }: { initialFlight: string }) {
             <Field label="Seats" error={fieldError("seats")} hint="1 to 9">
               <TextInput name="seats" inputMode="numeric" value={form.seats} onChange={(e) => set("seats")(e.target.value)} invalid={!!fieldError("seats")} />
             </Field>
-            <Field label="Idempotency key" error={fieldError("idempotencyKey")} className="lg:col-span-3">
+            <Field label="Idempotency key" error={fieldError("idempotencyKey")} className="sm:col-span-2 lg:col-span-3">
               <div className="flex gap-2">
                 <TextInput
                   name="idempotencyKey"
@@ -230,7 +260,14 @@ export function BookingForm({ initialFlight }: { initialFlight: string }) {
           {race.result.ok && race.result.data ? (
             <RaceResult report={race.result.data} before={race.before} after={race.after} />
           ) : (
-            <ErrorBanner error={race.result.error} />
+            // The status line above already announced it.
+            <ErrorBanner error={race.result.error} announce={false} />
+          )}
+          {race.result.ok && !race.settled && (
+            <p className={`mt-3 text-xs text-pretty ${MUTED}`} data-testid="race-unsettled">
+              At least one caller got no answer, and none got a booking, so the seats are not read again: a request
+              that reached the API may still finish. Replay the key to see whether it made one.
+            </p>
           )}
         </Card>
       )}
@@ -268,7 +305,9 @@ function OutcomeCard({ outcome, firstBooking }: { outcome: Outcome; firstBooking
             <span data-testid="booking-id">booking #{booking.bookingId}</span>
           </TextLink>
         ) : (
-          <span className="font-mono font-semibold wrap-anywhere">{result.error?.code}</span>
+          <span className="font-mono font-semibold wrap-anywhere">
+            <Identifier value={result.error?.code ?? ""} />
+          </span>
         )}
         {outcome.action === "replay" && booking && firstBooking !== undefined && (
           <span

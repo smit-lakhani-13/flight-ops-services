@@ -2,6 +2,7 @@ import {
   consoleError,
   isTimeout,
   localLocation,
+  MAX_BODY_BYTES,
   readBoundedBody,
   refuseCrossSite,
   UPSTREAM_TIMEOUT_MS,
@@ -31,7 +32,7 @@ export async function runRace(request: Request, options: ForwardOptions = {}): P
 
   const raw = await readBoundedBody(request);
   if (raw === null) {
-    return consoleError(413, "CONSOLE_BODY_TOO_LARGE", "The race body is too large.");
+    return consoleError(413, "CONSOLE_BODY_TOO_LARGE", `The console forwards bodies of at most ${MAX_BODY_BYTES} bytes.`);
   }
   let parsed: unknown;
   try {

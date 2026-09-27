@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { createFlight, go, signIn, uniqueFlightNumber } from "./support";
+import { API_ACCOUNT, basic, createFlight, go, signIn, uniqueFlightNumber } from "./support";
 
 async function bookingForm(page: Page, flightNumber: string) {
   await go(page, "Book");
@@ -87,4 +87,28 @@ test("cancelling a booking returns its seats, and cancelling again changes nothi
 
   await page.getByRole("link", { name: flightNumber, exact: true }).click();
   await expect(page.getByTestId("seats-left")).toContainText("20/20");
+});
+
+test("an active booking on a flight that has departed cannot be cancelled, and keeps its seat", async ({ page, request }) => {
+  const flightNumber = uniqueFlightNumber();
+  await createFlight(request, flightNumber, 20);
+  await signIn(page);
+  const form = await bookingForm(page, flightNumber);
+  await form.getByRole("button", { name: "Book", exact: true }).click();
+  await expect(page.getByTestId("booking-outcome").first().getByTestId("seats-change")).toHaveText("20 → 19");
+  await page.getByTestId("booking-id").first().click();
+  await expect(page).toHaveURL(/\/bookings\/\d+$/);
+
+  const departed = await request.patch(`/api/v1/flights/${flightNumber}/status`, {
+    headers: { Authorization: basic(API_ACCOUNT) },
+    data: { status: "DEPARTED" },
+  });
+  expect(departed.status(), await departed.text()).toBe(200);
+
+  await page.getByRole("button", { name: "Cancel booking" }).click();
+  await expect(page.getByTestId("error-banner")).toHaveAttribute("data-code", "BOOKING_NOT_CANCELLABLE");
+  await expect(page.getByTestId("cancelled-at")).toHaveText("—");
+
+  await page.getByRole("link", { name: flightNumber, exact: true }).click();
+  await expect(page.getByTestId("seats-left")).toContainText("19/20");
 });

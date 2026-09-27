@@ -85,9 +85,12 @@ export function CreateFlightForm() {
         />
       </Field>
       <Field label="Departs (your time zone)" error={fieldError("departureTime")} hint="Sent as a UTC instant">
+        {/* The calendar button inside the field takes the focus without the
+            field matching :focus-visible, so the ring follows focus-within. */}
         <TextInput
           name="departure"
           type="datetime-local"
+          className="focus-within:border-accent focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-accent"
           value={form.departure}
           onChange={(e) => set("departure")(e.target.value)}
           invalid={!!fieldError("departureTime")}
