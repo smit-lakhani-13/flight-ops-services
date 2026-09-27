@@ -78,9 +78,9 @@ image's default with `ENV SPRING_PROFILES_ACTIVE=prod`, and
 RDS, IRSA and the SQS publisher and has no default passwords. Run bare, with no
 `DB_URL`, the image stops at startup with `'url' must start with "jdbc"`.
 Without that default it would start on in-memory H2 and serve the `{noop}` dev
-passwords. The deploy job checks for that failure before it pushes an image, in
-the step "The image will not start without a database". The `image` job runs
-the same check on every push or pull request to `main`.
+passwords. The `image` job checks for that failure on every push or pull
+request to `main`, in the step "The image will not start without a database",
+and the deploy job would push only an image that passed it.
 
 ### PostgreSQL without compose
 
@@ -218,20 +218,30 @@ URL. It skips the demo when the Secret came from an earlier run, because it
 no longer knows the passwords.
 
 CI deploys the application, and the script does not. The image tag is the
-commit SHA, and only the job that built the image knows it. A laptop build
-would tag whatever happened to be checked out, including uncommitted work. The
+commit SHA of the CI run that built the image. A laptop build would tag
+whatever happened to be checked out, including uncommitted work. The
 split also keeps every password away from GitHub. `up.sh` writes the database
 password and the bcrypt hashes of the API and ops passwords into a Kubernetes
 Secret, and prints the API and ops passwords to the terminal. CI applies a
 Deployment that refers to the Secret by name.
 
-Before it builds, the deploy job asks ECR whether the commit's image is already
-there, in the step "Is this commit already in ECR?". It runs
+The deploy job builds and scans nothing. The `image` job builds the image,
+starts it with no database and scans it, holding no AWS credentials. On a run
+that can deploy, it saves the image and records the archive's sha256 before its
+scan runs, and uploads it as a run artefact kept for one day once the scan
+passes. The deploy job downloads the archive, checks that sha256, loads the
+image, tags it with the commit SHA and pushes it. So the image is scanned once,
+and the registry gets the bytes that were scanned. A "Re-run failed jobs" more
+than a day later finds no artefact unless the image is already in ECR; re-run
+all jobs instead.
+
+Before it downloads the image, the deploy job asks ECR whether the commit's
+image is already there, in the step "Is this commit already in ECR?". It runs
 [`deploy/aws/ecr-image-exists.sh`](../deploy/aws/ecr-image-exists.sh), which
 calls `ecr:DescribeImages` and reports the image missing only on
 `ImageNotFoundException`. Any other error fails the job. Guessing "missing"
-would rebuild the image and then fail at the push, because the repository's tags
-are immutable.
+would push the image again and fail, because the repository's tags are
+immutable.
 
 Every step checks whether its resource exists before creating it. To resume an
 interrupted run, run the same command again. If eksctl stopped part way through
@@ -261,9 +271,62 @@ ships as a jar and not an image, so this applies to the service image only.
 The `image` job records the size on every run. In CI run 36032424801 on
 2026-09-24 the image measured 299.5 MB (299477691 bytes), as
 `docker image inspect` reports it on the runner. The image has never been
-pushed, so no registry has reported a size for it. The runtime base,
-`eclipse-temurin:21-jre-alpine`, is a tag and not a digest, so the figure
-moves when that tag is rebuilt or a dependency changes.
+pushed, so no registry has reported a size for it. The measurement predates
+the database CA bundle below, which adds 165,408 bytes. Both base images are
+pinned by digest as well as tag, so the figure moves when a Dependabot pull
+request moves the runtime base's digest or a dependency changes.
+
+### The database connection
+
+The data stack's `JdbcUrl` output in `deploy/aws/data.yaml` is the one place
+the deployed JDBC URL is built. It ends in
+`?sslmode=verify-full&sslrootcert=/app/certs/rds-global-bundle.pem`, so the
+driver accepts only a server whose certificate chains to a CA in that file and
+names the endpoint it dialled. Without `sslmode` the driver would use
+`prefer`, which checks neither and falls back to plaintext when the server
+declines TLS. `up.sh`, the aws overlay and the `prod` profile pass the URL on
+unchanged. Localhost, the `postgres` profile, `compose.yaml` and CI have their
+own URLs with no TLS, and none of them changes. Neither does the `image` job's
+check that the image will not start without a database, because the image
+still has no URL until `DB_URL` gives it one.
+
+The file is the RDS global CA bundle, committed as
+`certs/rds-global-bundle.pem`. The `Dockerfile` copies it into the runtime
+stage, root-owned and read-only, at the path the URL names. It holds public
+certificates and no key.
+
+| | |
+|---|---|
+| Source | `https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem` |
+| SHA-256 | `e5bb2084ccf45087bda1c9bffdea0eb15ee67f0b91646106e466714f9de3c7e3` |
+| Certificates | 108 |
+| Fetched | 2026-09-26 |
+
+Refresh it when AWS publishes a new bundle, and before the instance moves to a
+CA the committed file does not hold:
+
+```bash
+curl -sSf -o certs/rds-global-bundle.pem \
+  https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
+shasum -a 256 certs/rds-global-bundle.pem
+grep -c 'BEGIN CERTIFICATE' certs/rds-global-bundle.pem
+```
+
+Put the new checksum, count and date in the table and commit them with the
+file. The `Dockerfile` copies the bundle at build time, so pods get the new
+one only with the next image that is built and deployed.
+
+The deploy job renders whatever the `DB_URL` repository variable holds. A
+variable set from a data stack whose output had no `sslmode` keeps that old
+URL until someone replaces it, in single quotes because of the `?` and `&`:
+
+```bash
+gh variable set DB_URL --body '<the JdbcUrl output>'
+```
+
+`up.sh` leaves an existing data stack alone, so a stack created from the older
+template still outputs the old URL. Append the query string above to that
+value by hand.
 
 ### The deploy job, gated off
 
@@ -399,7 +462,7 @@ created.
 | `deploy/k8s/secret.example.yaml` | a template. `up.sh` generates the real Secret and never writes it to disk |
 
 CI renders the overlay with
-`AWS_ACCOUNT_ID=… IMAGE_TAG=… SQS_QUEUE_URL=… DB_URL=… ./deploy/aws/render-aws.sh`,
+`AWS_ACCOUNT_ID=… IMAGE_TAG=… SQS_QUEUE_URL=… DB_URL='…' ./deploy/aws/render-aws.sh`,
 and a person can run the same command. It exits 2 if any of the four is unset
 or empty, and 3 if a `${…}` placeholder survives substitution. So a missing
 value is a failed command, and never a manifest holding the literal

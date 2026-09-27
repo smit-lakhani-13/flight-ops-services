@@ -38,18 +38,19 @@ class OpenApiTest {
      * Each operation's documented status codes. Every endpoint needs credentials
      * and a scope. Every write to an existing flight row can wait behind a
      * booking's row lock, so each of them can answer 503. Every write with a body
-     * reads JSON only, so each of them can answer 415.
+     * reads JSON only, so each of them can answer 415, and refuses a body over the
+     * limit, so each of them can answer 413.
      */
     private static final Map<String, List<String>> RESPONSES = Map.of(
             "get /api/v1/flights", List.of("200", "400", "401", "403"),
-            "post /api/v1/flights", List.of("201", "400", "401", "403", "409", "415"),
+            "post /api/v1/flights", List.of("201", "400", "401", "403", "409", "413", "415"),
             "get /api/v1/flights/{flightNumber}", List.of("200", "401", "403", "404"),
             "delete /api/v1/flights/{flightNumber}", List.of("204", "401", "403", "404", "409", "503"),
-            "patch /api/v1/flights/{flightNumber}/status", List.of("200", "400", "401", "403", "404", "409", "415", "503"),
+            "patch /api/v1/flights/{flightNumber}/status", List.of("200", "400", "401", "403", "404", "409", "413", "415", "503"),
             "get /api/v1/bookings", List.of("200", "400", "401", "403"),
-            "post /api/v1/bookings", List.of("201", "400", "401", "403", "404", "409", "415", "503"),
+            "post /api/v1/bookings", List.of("201", "400", "401", "403", "404", "409", "413", "415", "503"),
             "get /api/v1/bookings/{bookingId}", List.of("200", "400", "401", "403", "404"),
-            "delete /api/v1/bookings/{bookingId}", List.of("200", "400", "401", "403", "404", "503"));
+            "delete /api/v1/bookings/{bookingId}", List.of("200", "400", "401", "403", "404", "409", "503"));
 
     @Autowired private MockMvc mockMvc;
 
@@ -112,7 +113,16 @@ class OpenApiTest {
                 .contains("INSUFFICIENT_SEATS")
                 .contains("FLIGHT_NOT_BOOKABLE")
                 .contains("IDEMPOTENCY_KEY_REUSED");
+        assertThat(book.get("413").get("description").asString()).contains("PAYLOAD_TOO_LARGE");
         assertThat(book.get("503").get("description").asString()).contains("Retry-After");
+    }
+
+    @Test
+    @DisplayName("the cancel operation names the code a booking on a flown flight gets")
+    void theCancelConflictIsDescribedByCode() throws Exception {
+        JsonNode cancel = document().get("paths").get("/api/v1/bookings/{bookingId}").get("delete").get("responses");
+
+        assertThat(cancel.get("409").get("description").asString()).contains("BOOKING_NOT_CANCELLABLE");
     }
 
     @Test

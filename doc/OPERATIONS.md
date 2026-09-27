@@ -29,6 +29,7 @@ JVM.
 | Variable | Default | What it does |
 |---|---|---|
 | `SERVER_PORT` | `8080` | HTTP port |
+| `HTTP_MAX_BODY_BYTES` | `16384` | the largest request body, in bytes. A larger one gets `413 PAYLOAD_TOO_LARGE` before anything parses more than the limit. Zero or less stops startup with `app.http.max-body-bytes must be positive` |
 | `DB_URL` | `jdbc:postgresql://localhost:5432/flightops` in `postgres`. **None in `prod`** | JDBC URL. Unset in `prod`, startup fails with `'url' must start with "jdbc"`. The default profile uses H2 and does not read it |
 | `DB_USER` | `postgres` in `postgres`. None in `prod` | database user |
 | `DB_PASSWORD` | *(none)* | **Required** in `postgres` and `prod`. Unset, startup fails at Flyway's first connection with `password authentication failed`, which does not name the variable. See the `postgres` profile in `application.yml` |
@@ -72,9 +73,9 @@ Dockerfile sets `SPRING_PROFILES_ACTIVE=prod`, so a container started with no
 profile fails closed. With no `DB_URL`, a bare `docker run` stops with
 `'url' must start with "jdbc"`. CI checks that on every push or pull request to
 `main`, in the `image` job's step "The image will not start without
-a database". The deploy job runs the same step before it pushes an image. That
-job is gated off, so its copy has never run. `compose.yaml` selects `postgres`,
-and `deploy/k8s/base/configmap.yaml` sets `prod` for the cluster. The Deployment
+a database". The deploy job, which is gated off, would push the image that
+step checked and runs no copy of it. `compose.yaml` selects `postgres`, and
+`deploy/k8s/base/configmap.yaml` sets `prod` for the cluster. The Deployment
 pulls the whole ConfigMap in with `envFrom`.
 
 ## Health
@@ -249,8 +250,8 @@ That 500 body tells the caller to quote the id:
 `The request failed. The X-Request-Id header identifies it in the logs.` A 4xx
 forwarded to `/error` is a client mistake and is not logged.
 
-At the default level a 401 logs nothing. A 403 logs a WARN that names the
-method and the path, never the principal or a header:
+At the default level a 401 or a 413 logs nothing. A 403 logs a WARN that
+names the method and the path, never the principal or a header:
 
 ```
 WARN … [flight-ops-service,affe185c…,a72584ea…,put-1] c.s.f.security.JsonAccessDeniedHandler : Denied PUT /api/v1/flights/UA123 for an authenticated caller: no rule grants this method and path to its authorities
