@@ -25,3 +25,25 @@ metadata:
   labels:
     name: flight-ops
     project: flight-ops
+    # The AWS Load Balancer Controller's webhook adds a readiness gate to each
+    # pod created here while the Ingress exists. The pod is then Ready only
+    # once the ALB reports its target healthy, so a rolling update or a drain
+    # cannot take the last target the ALB routes to; with kubelet readiness
+    # alone, a new target could still be in its first health checks.
+    #
+    # The gate is added when a pod is created. Pods already running when the
+    # label or the Ingress arrives have none until the next rollout replaces
+    # them, and that rollout already waits on the ALB, because its new pods
+    # carry the gate. Before the Ingress exists nothing is gated, so the first
+    # rollout, which CI makes while up.sh waits at step 10, cannot wait on an
+    # ALB that does not exist yet.
+    #
+    # While the label is on, a pod here is created only if the controller's
+    # webhook answers. With the controller down, a rollout or a scale-up
+    # waits, with FailedCreate events that name the webhook, and the old pods
+    # keep serving.
+    #
+    # CI's namespace-scoped role cannot apply this file. On a cluster whose
+    # namespace predates the label, apply it as shown above, or re-run up.sh,
+    # whose step 9 applies it.
+    elbv2.k8s.aws/pod-readiness-gate-inject: enabled

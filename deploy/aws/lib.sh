@@ -12,6 +12,8 @@ export AWS_DEFAULT_REGION=$AWS_REGION
 # it holds account ids and endpoints.
 STATE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.state"
 STATE_FILE="$STATE_DIR/flight-ops.env"
+# The cluster's kubeconfig, which use_private_kubeconfig points KUBECONFIG at.
+KUBECONFIG_FILE="$STATE_DIR/kubeconfig"
 
 # Names, in one place. up.sh creates them and down.sh deletes them, and a name
 # that differs between the two is a resource no one finds again.
@@ -100,6 +102,23 @@ state_get() {
     line=$(grep "^${key}=" "$STATE_FILE" | tail -1)
     [ -n "$line" ] || return 1
     printf '%s' "${line#*=}"
+}
+
+# Exports KUBECONFIG as a file of the scripts' own, so eksctl, `aws eks
+# update-kubeconfig`, kubectl and helm write and read that file and never the
+# operator's ~/.kube/config. The operator's current context is never changed,
+# and a context switched in ~/.kube/config, or in any kubeconfig but this one,
+# cannot send a run to another cluster. A shell that exports KUBECONFIG as
+# this file, as up.sh's summary says to, shares it: `aws eks
+# update-kubeconfig --name <other>` there switches its current context under
+# a running script. Mode 0600, because it names the cluster and its CA, and
+# helm warns about a kubeconfig others can read. An existing file keeps its
+# contents.
+use_private_kubeconfig() {
+    mkdir -p "$STATE_DIR"
+    (umask 077 && : >> "$KUBECONFIG_FILE")
+    chmod 600 "$KUBECONFIG_FILE"
+    export KUBECONFIG="$KUBECONFIG_FILE"
 }
 
 # A typed word, not a keystroke. These prompts guard things that cost money or
@@ -362,6 +381,139 @@ grant_namespace_access() {
     aws eks list-associated-access-policies --cluster-name $CLUSTER_NAME --principal-arn $principal"
 }
 
+# encode_base64 VALUE: VALUE in base64, on one line, as a Secret's data holds
+# it. VALUE reaches openssl on stdin, never as an argument: printf is a shell
+# builtin. base64 takes any character through JSON unchanged, the $ of a
+# bcrypt hash and whatever an exported DB_PASSWORD holds.
+encode_base64() {
+    printf '%s' "$1" | openssl base64 -A
+}
+
+# create_secret DB_PASSWORD API_HASH OPS_HASH: up.sh step 9, for a
+# flight-ops-secret that does not exist yet. It builds the object `kubectl
+# create secret generic --dry-run=client` printed for up.sh before, with the
+# same name and keys and no labels, and hands it to kubectl on stdin, as
+# reconcile_secret_db_password does its patch. So no argument carries a
+# value, where the process list would show it, and no file holds one. It is
+# `kubectl create`, not `apply`: step 9 calls this only when the Secret does
+# not exist, and apply would also copy every value into the Secret's
+# last-applied-configuration annotation, a second copy that a later
+# DB_PASSWORD patch would leave holding the old password.
+create_secret() {
+    local db api ops
+    db=$(encode_base64 "$1")
+    api=$(encode_base64 "$2")
+    ops=$(encode_base64 "$3")
+    {
+        printf '{"apiVersion":"v1","kind":"Secret",'
+        printf '"metadata":{"name":"flight-ops-secret","namespace":"%s"},' "$NAMESPACE"
+        printf '"data":{"DB_PASSWORD":"%s","API_PASSWORD":"%s","OPS_PASSWORD":"%s"}}\n' \
+            "$db" "$api" "$ops"
+    } | kubectl create -f -
+}
+
+# warn_db_password_from_shell: up.sh step 9, before it writes a DB_PASSWORD
+# that step 6 of this run did not generate, into a new Secret or an existing
+# one. Such a value came from the shell: the commands an earlier stop printed
+# ask for it, but a shell can also still export one from an earlier fix for
+# another database, and nothing here can tell the two apart. So it goes in,
+# with what a wrong one does and how to put it right. In a sourced file $0 is
+# still up.sh, so the message ends with its re-run.
+warn_db_password_from_shell() {
+    local rerun="ALERT_EMAIL=${ALERT_EMAIL:-you@example.com} $0"
+    warn "DB_PASSWORD comes from your shell, as it should after the commands an"
+    warn "earlier stop here printed: this run did not create the database. It goes"
+    warn "into the Secret unchecked, and the record of a pending password is cleared."
+    warn "If it is not the database's password, every pod fails at Flyway's first"
+    warn "connection with 'password authentication failed', and a re-run leaves the"
+    warn "Secret alone. Then give the database the password the Secret holds: with"
+    warn "that same DB_PASSWORD exported, not a new one, run these two commands:"
+    warn "  aws rds modify-db-instance --region $AWS_REGION \\"
+    warn "      --db-instance-identifier flight-ops-db \\"
+    warn "      --master-user-password \"\$DB_PASSWORD\" --apply-immediately"
+    warn "  $rerun"
+}
+
+# reconcile_secret_db_password PASSWORD ORIGIN: up.sh step 9, for a
+# flight-ops-secret that already exists. It can outlive its database: delete
+# the data stack, keep the cluster, and step 6 creates a new database with a
+# new password. Step 6 records DB_PASSWORD_PENDING=secret in the state file
+# before it starts on the database, so a run that stops before this step
+# leaves the record for the next one. With nothing pending the Secret is left
+# alone. Otherwise only DB_PASSWORD changes: the API and ops hashes stay,
+# because their passwords are known only to the run that made them.
+#
+# ORIGIN is `generated` when step 6 of this run made PASSWORD, and anything
+# else, or none, means PASSWORD, if set, came from the environment. After a
+# stop before this step, the password step 6 made lived only in the shell of
+# that run. A re-run has one only if the operator set a new password on the
+# database and exported it, as the message below says, or if the shell still
+# exports one from an earlier fix, so an inherited value is written in after
+# warn_db_password_from_shell. With no PASSWORD at all, this stops with the
+# commands that set a new one, as step 9 does for a missing Secret. In a
+# sourced file $0 is still up.sh, so the message ends with its re-run.
+#
+# The value reaches kubectl on stdin, through encode_base64, so no argument
+# carries it and no file holds it. Running pods keep the old value in their
+# environment, and liveness leaves out the database, so nothing would restart
+# them: the deployment is restarted here, and DB_PASSWORD_PENDING=restart
+# covers a stop between the patch and the restart. As in complete_cluster,
+# only "not found" counts as no deployment. A lookup that fails for another
+# reason stops the run, instead of skipping a restart the pods need.
+reconcile_secret_db_password() {
+    local password=$1 origin=${2:-environment} pending encoded deployment
+    local rerun="ALERT_EMAIL=${ALERT_EMAIL:-you@example.com} $0"
+    pending=$(state_get DB_PASSWORD_PENDING || true)
+    case "$pending" in
+        secret)
+            [ -n "$password" ] || die "secret flight-ops-secret still holds the old database's password.
+    $STATE_FILE records a new database whose password has not reached the
+    Secret: the run that created it stopped before step 9, and the password
+    lived only in that shell. Set a new password on the database, then re-run
+    up.sh from the same shell, and step 9 writes it into the Secret:
+    export DB_PASSWORD=\$(openssl rand -base64 24 | tr -d '/@\" =' | cut -c1-24)
+    aws rds modify-db-instance --region $AWS_REGION \\
+        --db-instance-identifier flight-ops-db \\
+        --master-user-password \"\$DB_PASSWORD\" --apply-immediately
+    $rerun"
+            [ "$origin" = generated ] || warn_db_password_from_shell
+            encoded=$(encode_base64 "$password")
+            printf '{"data":{"DB_PASSWORD":"%s"}}\n' "$encoded" \
+                | kubectl patch secret flight-ops-secret -n "$NAMESPACE" \
+                    --type merge --patch-file /dev/stdin >/dev/null \
+                || die "could not update DB_PASSWORD in secret flight-ops-secret, which still
+    holds the old database's password. Re-run up.sh once the cluster answers.
+    A password this run generated is gone with it, so step 9 then says how to
+    set another and writes it into the Secret."
+            state_set DB_PASSWORD_PENDING restart
+            ok "DB_PASSWORD updated for the new database; the API and ops hashes are unchanged"
+            ;;
+        restart)
+            log "secret already holds the new DB_PASSWORD; an earlier run stopped before restarting the pods"
+            ;;
+        *)
+            ok "secret already exists, and no new database is waiting for it: leaving it alone"
+            return 0
+            ;;
+    esac
+
+    # --ignore-not-found prints nothing, and exits 0, for a deployment CI has
+    # not created yet.
+    deployment=$(kubectl get deployment/flight-ops -n "$NAMESPACE" \
+        --ignore-not-found -o name) \
+        || die "could not tell whether deployment/flight-ops exists. Its pods, if any,
+    still have the old DB_PASSWORD. Re-run up.sh once the cluster answers, and
+    step 9 restarts it then."
+    if [ -n "$deployment" ]; then
+        kubectl rollout restart deployment/flight-ops -n "$NAMESPACE" >/dev/null \
+            || die "could not restart deployment/flight-ops, whose pods still have the old
+    DB_PASSWORD. Re-run up.sh once the cluster answers, and step 9 restarts it
+    then."
+        ok "deployment/flight-ops restarted, so its pods read the new password"
+    fi
+    state_set DB_PASSWORD_PENDING none
+}
+
 # kubectl wait exits at once with NotFound for an object that does not exist
 # yet, and CI creates the Deployment some minutes after the operator types
 # "done". So this waits up to 30 minutes for it to appear, then up to 20 for
@@ -384,6 +536,7 @@ wait_for_deployment() {
     kubectl wait --for=condition=available deployment/flight-ops \
         -n "$NAMESPACE" --timeout=20m \
         || die "the deployment did not become available. Diagnose with:
+    export KUBECONFIG=$KUBECONFIG_FILE
     kubectl get pods -n $NAMESPACE -o wide
     kubectl logs -n $NAMESPACE -l app=flight-ops --tail=100 --all-containers
     kubectl get events -n $NAMESPACE --sort-by=.lastTimestamp | tail -30"

@@ -70,18 +70,24 @@ cat <<'PLAN'
       in this region shares. Pennies per month. Pass --delete-sam-bucket if
       nothing else in this account deploys with SAM.
 
+  Nothing in GitHub is changed. Set the repository variable DEPLOY_ENABLED to
+  false first: while it is true, every push to main runs the deploy job, and
+  the job fails once the cluster is gone. The end of a clean run lists what
+  else is left to you.
+
 PLAN
 confirm "This deletes data permanently." "delete"
 
 # ---------------------------------------------------------------------------
 step "1/9  Ingress first, so the controller can delete its own load balancer"
 # ---------------------------------------------------------------------------
-# kubectl and helm use a kubeconfig written for this cluster alone, never the
-# caller's current context. That context may point at another cluster, and
+# kubectl and helm use the scripts' own kubeconfig, the one up.sh wrote, never
+# the caller's current context. That context may point at another cluster, and
 # steps 1-3 would then delete an Ingress, a controller and a namespace there.
-KUBECONFIG=$(mktemp)
-export KUBECONFIG
-trap 'rm -f "$KUBECONFIG"' EXIT
+# The update-kubeconfig call below rewrites this cluster's entry and selects
+# it, so an entry left from an earlier cluster of the same name does no harm.
+# A clean run deletes the file at the end.
+use_private_kubeconfig
 
 # `kubectl get ingress` exits non-zero both when the Ingress is absent and when
 # the cluster is unreachable (an expired token, a VPN that is down). Treating
@@ -100,7 +106,9 @@ if [ "$cluster_reachable" = 0 ]; then
     warn "If the cluster exists and has an ALB, the cluster delete below will ORPHAN it"
     warn "and it will keep billing at about \$0.62/day with nothing pointing at it."
     warn "Check that this works from this shell, then re-run:"
-    warn "  aws eks update-kubeconfig --name $CLUSTER_NAME --region $AWS_REGION"
+    warn "  aws eks update-kubeconfig --name $CLUSTER_NAME --region $AWS_REGION \\"
+    warn "    --kubeconfig $KUBECONFIG_FILE"
+    warn "  KUBECONFIG=$KUBECONFIG_FILE kubectl cluster-info"
     warn "If the cluster is already gone, continuing is safe."
 
     # up.sh recorded the hostname when it created the Ingress, which gives one
@@ -469,6 +477,9 @@ if [ "$FAILURES" -eq 0 ]; then
         mv "$STATE_FILE" "$archive" 2>/dev/null || true
         log "state archived to $archive"
     fi
+    # The cluster it names is gone. A failed run keeps it, for the re-run.
+    rm -f "$KUBECONFIG_FILE"
+    log "deleted $KUBECONFIG_FILE, the kubeconfig for the deleted cluster"
     if [ "$KEEP_FOUNDATION" = 1 ]; then
         ok "everything but $FOUNDATION_STACK is gone. Billing for the rest stops accruing now."
     else
@@ -482,6 +493,20 @@ if [ "$FAILURES" -eq 0 ]; then
       daily line should fall to zero, not to "small".
     - Data already transferred, and storage already consumed this month, is
       still billed at the end of the month. "Deleted" is not "refunded".
+
+  What is left to you:
+
+    - In the GitHub repository settings, set the variable DEPLOY_ENABLED to
+      false, if it is not already. While it is true, every push to main runs
+      the deploy job against a cluster that no longer exists, and the run
+      fails. SQS_QUEUE_URL and DB_URL name a queue and a database that are
+      gone too.
+    - Then merge a change that renames the deploy job in
+      .github/workflows/build-and-deploy.yml back to 'deploy (gated off)', so
+      the checks list says it is gated off. CONTRIBUTING.md quotes the name;
+      change it in the same commit.
+    - Run `unset KUBECONFIG` in any shell that exported it from up.sh's
+      summary. The file it named has been deleted.
 
 DONE
     exit 0

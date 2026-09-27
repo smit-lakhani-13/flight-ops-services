@@ -214,10 +214,16 @@ reverse, and the ADR is where to start.
 - **Generated passwords.** `deploy/aws/up.sh` generates three passwords with
   `openssl rand`. The database password goes, unhashed, into the RDS stack (a
   `NoEcho` parameter) and the Kubernetes Secret, and is never printed. The API
-  and ops passwords are hashed with `htpasswd -bnBC 10`, and only the
-  `{bcrypt}` hashes go into the Secret. Their plaintext is printed twice: at
-  step 9, as soon as the Secret exists, and in the closing summary. None of the
-  three touches disk or reaches GitHub.
+  and ops passwords are hashed with `htpasswd -niBC 10`, which reads each one on
+  stdin, and only the `{bcrypt}` hashes go into the Secret. Their plaintext is
+  printed twice: at step 9, as soon as the Secret exists, and in the closing
+  summary. None of the three touches disk or reaches GitHub.
+  `deploy/aws/lib.sh#create_secret` hands `kubectl` the Secret on stdin too, so
+  at step 9 no value is an argument, which the process list would show. Two
+  exceptions remain. The database password is an argument of `aws cloudformation
+  deploy` at step 6, for as long as that deploy runs. Step 12 runs
+  `scripts/demo.sh` with the API and ops passwords in curl's `-u` argument, so
+  each is in the process list while a request runs.
 
 - **Secrets are only base64-encoded.** They are not encrypted: anyone with
   `get secret` on the namespace can read them, and
@@ -362,10 +368,18 @@ bundle comes from and how to refresh it.
   IPs, so inbound traffic would arrive only through the load balancer. No
   cluster has been created.
 
-- `deploy/aws/cluster.yaml` gives the node instance role no load balancer or
-  autoscaler policy (`withAddonPolicies` sets only `cloudWatch`). A policy on
-  the instance role is available to every pod on the node through the metadata
-  service. The load balancer controller would get its own IRSA role.
+- `deploy/aws/cluster.yaml` sets `disablePodIMDS`, so pods cannot reach the
+  instance metadata service or the node instance role's credentials: the hop
+  limit is 1, which only host-network pods such as `aws-node` reach. It sets
+  no `withAddonPolicies` either, so the node role carries no add-on policy.
+  The application and the load balancer controller would each use their own
+  IRSA role. The setting applies when a node group is created.
+
+- The pod mounts no Kubernetes API token. `automountServiceAccountToken` is
+  false on the ServiceAccount and on the pod, in
+  `deploy/k8s/base/serviceaccount.yaml` and `deploy/k8s/base/deployment.yaml`;
+  the application never calls the API server. IRSA does not need that token:
+  the EKS pod identity webhook mounts a projected token of its own.
 
 - `up.sh` gives CI's role `AmazonEKSEditPolicy` **scoped to the `flight-ops`
   namespace**, so it could roll out the application and could not touch
