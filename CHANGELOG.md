@@ -93,6 +93,22 @@ says not yet.
   gains a fifth entry, for `web/`, with one grouped pull request for the
   runtime dependencies and one for the tooling.
 
+- **Tests for behaviour that nothing pinned.** 193 new tests pin what the
+  service already did and no test checked, so a change to any of it now fails
+  the build. They cover the seat limits on a booking and on a flight, the
+  idempotency fingerprint and what a replay returns, the flight status machine
+  over HTTP, a stale flight write that loses to a booking, both outbox jobs on
+  their schedule, the gauge refresher starting and stopping with the context,
+  how malformed bodies and path ids are refused, the length limit on every
+  text field, the one message a field gets when it breaks several rules, the
+  departure time formats accepted, the default paging and sort order, the 503
+  for a lost database on every booking endpoint, the booking counters on every
+  outcome, the lock timeout on flight writes, and the JSON envelope on the
+  container's own 405 for `TRACE` and the firewall's 400.
+  `FlightStatusContractTest`, `MalformedRequestTest` and
+  `ContainerErrorDispatchTest` are among the new classes. No production code
+  changes.
+
 ### Changed
 
 - **The doc checkers know the console.** `scripts/refcheck.py` also checks

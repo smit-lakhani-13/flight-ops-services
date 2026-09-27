@@ -6,12 +6,17 @@ import com.smit.flightops.entity.Booking;
 import com.smit.flightops.entity.Flight;
 import com.smit.flightops.exception.BookingNotFoundException;
 import com.smit.flightops.exception.FlightNotFoundException;
+import com.smit.flightops.exception.IdempotencyKeyConflictException;
 import com.smit.flightops.exception.LostIdempotencyRaceException;
 import com.smit.flightops.observability.BookingMetrics;
 import com.smit.flightops.repository.BookingRepository;
 import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Named;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -20,11 +25,13 @@ import org.springframework.dao.DataIntegrityViolationException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Optional;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -66,6 +73,11 @@ class BookingServiceTest {
 
         assertThat(dto).isEqualTo(written);
         verify(bookingWriter, never()).recoverReplay(any(), any());
+        // Counted only once the writer has returned, because it can still throw.
+        InOrder order = inOrder(bookingWriter, metrics);
+        order.verify(bookingWriter).insertNewBooking(any());
+        order.verify(metrics).bookingCreated();
+        verify(metrics, never()).bookingReplayed();
     }
 
     @Test
@@ -82,6 +94,24 @@ class BookingServiceTest {
         assertThat(dto.seats()).isEqualTo(3);
         assertThat(dto.createdAt()).isEqualTo(CREATED_AT);
         verifyNoInteractions(bookingWriter);
+        verify(metrics).bookingReplayed();
+        verify(metrics, never()).bookingCreated();
+    }
+
+    @Test
+    @DisplayName("a reused key on a different request is a 409 that counts nothing and never reaches the writer")
+    void aConflictingPreCheckCountsNothing() {
+        Flight flight = flight();
+        flight.reserveSeats(2);
+        Booking original = new Booking(flight, "Jane Doe", 2, "conflict-key",
+                                       request(2, "conflict-key").fingerprint(), CREATED_AT);
+        when(bookingRepository.findByIdempotencyKey("conflict-key")).thenReturn(Optional.of(original));
+
+        assertThatThrownBy(() -> bookingService.book(request(3, "conflict-key")))
+                .isInstanceOf(IdempotencyKeyConflictException.class)
+                .hasFieldOrPropertyWithValue("idempotencyKey", "conflict-key");
+
+        verifyNoInteractions(metrics, bookingWriter);
     }
 
     @Test
@@ -96,6 +126,8 @@ class BookingServiceTest {
 
         assertThat(dto).isEqualTo(winner);
         verify(bookingWriter).recoverReplay(eq("raced-key"), any());
+        verify(metrics).bookingReplayed();
+        verify(metrics, never()).bookingCreated();
     }
 
     @Test
@@ -118,6 +150,33 @@ class BookingServiceTest {
     }
 
     /**
+     * The same key on a different request, past the pre-check before the winner
+     * committed. Rethrowing the trigger in place of recoverReplay's conflict would
+     * answer 500 for the writer's signal, or DUPLICATE_REQUEST for the constraint,
+     * where the client needs IDEMPOTENCY_KEY_REUSED.
+     */
+    @ParameterizedTest
+    @MethodSource("lostRaceTriggers")
+    @DisplayName("a raced reuse of a key surfaces the conflict recoverReplay threw, and counts nothing")
+    void aRacedConflictSurfacesAsTheConflict(RuntimeException trigger) {
+        when(bookingRepository.findByIdempotencyKey("reused-key")).thenReturn(Optional.empty());
+        when(bookingWriter.insertNewBooking(any())).thenThrow(trigger);
+        IdempotencyKeyConflictException conflict = new IdempotencyKeyConflictException("reused-key");
+        when(bookingWriter.recoverReplay(eq("reused-key"), any())).thenThrow(conflict);
+
+        assertThatThrownBy(() -> bookingService.book(request(1, "reused-key")))
+                .isSameAs(conflict);
+
+        verifyNoInteractions(metrics);
+    }
+
+    private static Stream<Named<RuntimeException>> lostRaceTriggers() {
+        return Stream.of(
+                Named.of("the writer's lost-race signal", new LostIdempotencyRaceException("reused-key")),
+                Named.of("the unique constraint", new DataIntegrityViolationException("dup")));
+    }
+
+    /**
      * A data error such as a NUL byte PostgreSQL refuses also arrives as
      * {@code DataIntegrityViolationException}. With no row holding the key there is
      * no winner, so the original failure is rethrown with the recovery failure attached.
@@ -135,12 +194,11 @@ class BookingServiceTest {
                 .isSameAs(violation)
                 .satisfies(thrown -> assertThat(thrown.getSuppressed()).containsExactly(noWinner));
 
-        verify(metrics, never()).bookingReplayed();
-        verify(metrics, never()).bookingCreated();
+        verifyNoInteractions(metrics);
     }
 
     @Test
-    @DisplayName("a non-constraint failure from the writer propagates, not recovered")
+    @DisplayName("a non-constraint failure from the writer propagates, not recovered, and counts nothing")
     void unknownFlightPropagatesWithoutRecovery() {
         when(bookingRepository.findByIdempotencyKey("demo-4")).thenReturn(Optional.empty());
         when(bookingWriter.insertNewBooking(any())).thenThrow(new FlightNotFoundException("XX999"));
@@ -150,6 +208,7 @@ class BookingServiceTest {
                 .isInstanceOf(FlightNotFoundException.class);
 
         verify(bookingWriter, never()).recoverReplay(any(), any());
+        verifyNoInteractions(metrics);
     }
 
     @Test

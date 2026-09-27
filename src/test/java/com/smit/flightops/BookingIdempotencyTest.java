@@ -6,12 +6,15 @@ import com.smit.flightops.dto.CreateFlightRequest;
 import com.smit.flightops.entity.Flight;
 import com.smit.flightops.exception.IdempotencyKeyConflictException;
 import com.smit.flightops.exception.InsufficientSeatsException;
+import com.smit.flightops.observability.BookingMetrics;
 import com.smit.flightops.repository.BookingRepository;
 import com.smit.flightops.repository.FlightRepository;
 import com.smit.flightops.service.BookingService;
+import com.smit.flightops.service.BookingWriter;
 import com.smit.flightops.service.EventPublisher;
 import com.smit.flightops.service.FlightService;
 import com.smit.flightops.service.LoggingEventPublisher;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.MethodOrderer;
 import org.junit.jupiter.api.Order;
@@ -20,11 +23,15 @@ import org.junit.jupiter.api.TestMethodOrder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
@@ -56,11 +63,40 @@ class BookingIdempotencyTest {
     @Autowired private FlightRepository flightRepository;
     @Autowired private BookingRepository bookingRepository;
     @Autowired private EventPublisher eventPublisher;
+    @Autowired private BookingWriter bookingWriter;
+    @Autowired private PlatformTransactionManager transactionManager;
+    @Autowired private JdbcTemplate jdbcTemplate;
+    @Autowired private MeterRegistry meterRegistry;
 
     private int availableSeats(String flightNumber) {
         return flightRepository.findByFlightNumber(flightNumber)
                 .map(Flight::getAvailableSeats)
                 .orElseThrow();
+    }
+
+    private double cancellations(String outcome) {
+        return meterRegistry.get(BookingMetrics.CANCELLATIONS).tag("outcome", outcome).counter().count();
+    }
+
+    /**
+     * Whether, within 2s, some session is part way through an {@code INSERT} into
+     * bookings. On H2 that is a caller waiting on another transaction's uncommitted
+     * row in {@code uk_bookings_idempotency_key}; H2 shows that wait as RUNNING with
+     * no {@code BLOCKER_ID}, so the statement is the signal. The 2s stays inside the
+     * 3s lock timeout.
+     */
+    private boolean aBookingInsertIsWaiting() {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+        while (System.nanoTime() - deadline < 0) {
+            if (jdbcTemplate.queryForObject("""
+                    SELECT COUNT(*) FROM INFORMATION_SCHEMA.SESSIONS
+                    WHERE LOWER(EXECUTING_STATEMENT) LIKE 'insert into bookings%'
+                    """, Integer.class) > 0) {
+                return true;
+            }
+            Thread.onSpinWait();
+        }
+        return false;
     }
 
     /**
@@ -173,7 +209,8 @@ class BookingIdempotencyTest {
      */
     @Test
     @Order(7)
-    @DisplayName("REGRESSION: 10 concurrent callers, same key, same request -> one booking, ALL ten get it back, zero errors")
+    @DisplayName("REGRESSION: 10 concurrent callers, same key, same request -> "
+                 + "one booking, ALL ten get it back, zero errors")
     void racingTenCallersOnTheSameKeyAllGetTheSameBooking() throws Exception {
         flightService.create(new CreateFlightRequest("ua003", "ewr", "ord", 50,
                 Instant.now().plus(Duration.ofHours(6))));
@@ -267,7 +304,8 @@ class BookingIdempotencyTest {
      */
     @Test
     @Order(9)
-    @DisplayName("REGRESSION: 10 concurrent callers racing for the LAST seat on one key -> one booking, all ten get it, no 409")
+    @DisplayName("REGRESSION: 10 concurrent callers racing for the LAST seat on one key -> "
+                 + "one booking, all ten get it, no 409")
     void racingCallersOnTheLastSeatAllGetTheSameBooking() throws Exception {
         flightService.create(new CreateFlightRequest("ua005", "ewr", "sfo", 1,
                 Instant.now().plus(Duration.ofHours(6))));
@@ -355,6 +393,134 @@ class BookingIdempotencyTest {
         } finally {
             pool.shutdown();
             pool.awaitTermination(10, TimeUnit.SECONDS);
+        }
+    }
+
+    /**
+     * Ten retries of one {@code DELETE} at once. The flight row lock serialises them and
+     * each reads the booking under its own row lock, so only the first sees it active.
+     * The 1-seat booking stays sold: on a flight that is otherwise empty, the clamp in
+     * {@code Flight.releaseSeats} would turn a double credit back into a full flight.
+     */
+    @Test
+    @Order(11)
+    @DisplayName("10 concurrent cancels of one booking -> "
+                 + "seats credited once, one cancelled and nine already_cancelled")
+    void tenConcurrentCancelsReleaseTheSeatsOnce() throws Exception {
+        flightService.create(new CreateFlightRequest("ua012", "ewr", "atl", 10,
+                Instant.now().plus(Duration.ofHours(6))));
+        bookingService.book(new BookingRequest("ua012", "Jane Doe", 1, "cancel-race-keep"));
+        BookingDto target = bookingService.book(new BookingRequest("ua012", "Test Passenger", 3, "cancel-race-1"));
+        assertThat(availableSeats("UA012")).isEqualTo(6);
+
+        double cancelledBefore = cancellations(BookingMetrics.CANCELLED);
+        double noOpsBefore = cancellations(BookingMetrics.ALREADY_CANCELLED);
+
+        int callers = 10;
+        try (ExecutorService pool = Executors.newFixedThreadPool(callers)) {
+            List<Callable<BookingDto>> cancels = IntStream.range(0, callers)
+                    .<Callable<BookingDto>>mapToObj(i -> () -> bookingService.cancel(target.bookingId()))
+                    .toList();
+
+            Set<Instant> cancelledAt = startTogether(pool, cancels).stream().map(f -> {
+                try {
+                    return f.get().cancelledAt();
+                } catch (Exception e) {
+                    throw new AssertionError("a retried cancellation should not fail", e);
+                }
+            }).collect(Collectors.toSet());
+
+            assertThat(cancelledAt)
+                    .as("every caller sees the one cancellation that happened")
+                    .hasSize(1)
+                    .doesNotContainNull();
+            assertThat(bookingRepository.findById(target.bookingId()).orElseThrow().getCancelledAt())
+                    .isEqualTo(cancelledAt.iterator().next());
+            assertThat(availableSeats("UA012"))
+                    .as("3 seats credited once; the kept booking still holds its seat")
+                    .isEqualTo(9);
+            assertThat(cancellations(BookingMetrics.CANCELLED))
+                    .as("one call released the seats")
+                    .isEqualTo(cancelledBefore + 1);
+            assertThat(cancellations(BookingMetrics.ALREADY_CANCELLED))
+                    .as("the other nine were no-ops")
+                    .isEqualTo(noOpsBefore + 9);
+        }
+    }
+
+    /**
+     * The constraint path of {@code oneKeyRacedAcrossTwoFlightsBooksOnce}, on every run.
+     * The holder inserts the key on UA013 and keeps its transaction open, so the loser
+     * on UA014 passes the pre-check and the in-lock re-read and waits in its insert on
+     * {@code uk_bookings_idempotency_key}. When the holder commits, that insert fails
+     * and {@code recoverReplay} must answer with the key-reuse conflict.
+     */
+    @Test
+    @Order(12)
+    @DisplayName("one key on two flights, the loser waiting in its insert on the held key -> "
+                 + "conflict once the holder commits")
+    void aCrossFlightLoserBlockedOnTheKeyGetsTheConflict() throws Exception {
+        flightService.create(new CreateFlightRequest("ua013", "ewr", "den", 10,
+                Instant.now().plus(Duration.ofHours(6))));
+        flightService.create(new CreateFlightRequest("ua014", "ewr", "phx", 10,
+                Instant.now().plus(Duration.ofHours(6))));
+
+        CountDownLatch inserted = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+
+        // As in LockTimeoutTest, close() waits for the holder, which waits for
+        // release, so the countDown in finally must stay inside the resources.
+        try (ExecutorService holderThread = Executors.newSingleThreadExecutor();
+             ExecutorService loserThread = Executors.newSingleThreadExecutor()) {
+            try {
+                Future<BookingDto> holder = holderThread.submit(() ->
+                        new TransactionTemplate(transactionManager).execute(status -> {
+                            BookingDto held = bookingWriter.insertNewBooking(
+                                    new BookingRequest("ua013", "Test Passenger", 1, "cross-constraint-1"));
+                            inserted.countDown();
+                            try {
+                                release.await(30, TimeUnit.SECONDS);
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                            }
+                            return held;
+                        }));
+                assertThat(inserted.await(10, TimeUnit.SECONDS))
+                        .as("the holder should have inserted the key without committing")
+                        .isTrue();
+
+                Future<BookingDto> loser = loserThread.submit(() -> bookingService.book(
+                        new BookingRequest("ua014", "Jane Doe", 1, "cross-constraint-1")));
+
+                // Reaching the insert means the pre-check and the in-lock re-read
+                // both missed the holder's uncommitted row.
+                assertThat(aBookingInsertIsWaiting())
+                        .as("the loser should be waiting in its insert on the held key")
+                        .isTrue();
+                assertThat(loser).isNotDone();
+
+                release.countDown();
+                BookingDto winner = holder.get(10, TimeUnit.SECONDS);
+
+                assertThatThrownBy(() -> loser.get(10, TimeUnit.SECONDS))
+                        .isInstanceOf(ExecutionException.class)
+                        .cause()
+                        .isInstanceOf(IdempotencyKeyConflictException.class);
+                assertThat(bookingRepository.findByIdempotencyKey("cross-constraint-1"))
+                        .get()
+                        .satisfies(b -> {
+                            assertThat(b.getId()).isEqualTo(winner.bookingId());
+                            assertThat(b.getFlight().getFlightNumber()).isEqualTo("UA013");
+                        });
+                assertThat(bookingRepository.findByFlightNumber("UA013", Pageable.unpaged())).hasSize(1);
+                assertThat(availableSeats("UA013")).isEqualTo(9);
+                assertThat(availableSeats("UA014"))
+                        .as("the loser's debit rolled back with its insert")
+                        .isEqualTo(10);
+                assertThat(bookingRepository.findByFlightNumber("UA014", Pageable.unpaged())).isEmpty();
+            } finally {
+                release.countDown();
+            }
         }
     }
 }

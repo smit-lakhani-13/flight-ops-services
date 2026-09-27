@@ -2,9 +2,11 @@ package com.smit.flightops;
 
 import com.jayway.jsonpath.JsonPath;
 import com.smit.flightops.config.SecurityConfig;
+import com.smit.flightops.entity.FlightStatus;
 import com.smit.flightops.observability.BookingMetrics;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
+import com.smit.flightops.repository.BookingRepository;
 import com.smit.flightops.repository.FlightRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -23,17 +25,21 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.hasItem;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * The lock timeout end to end: a booking or a booking cancellation behind a contended
- * flight row gives 503 with {@code Retry-After}, not a hang and not a 500. The setting only
- * works if the database error, Hibernate's {@code LockTimeoutException}, Spring's
- * translation, the advice and the header all agree.
+ * The lock timeout end to end: a booking, a booking cancellation or a flight write behind
+ * a contended flight row gives 503 with {@code Retry-After}, not a hang and not a 500, and
+ * a read behind it does not wait at all. The setting only works if the database error,
+ * Hibernate's {@code LockTimeoutException}, Spring's translation, the advice and the
+ * header all agree.
  *
  * <p>It runs on H2, which raises error 50200 from {@code SET LOCK_TIMEOUT} where PostgreSQL
  * raises 55P03 from {@code lock_timeout}. Both reach the same Hibernate exception, so this
@@ -54,11 +60,63 @@ class LockTimeoutTest {
     @Autowired private MockMvc mockMvc;
     @Autowired private PlatformTransactionManager transactionManager;
     @Autowired private FlightRepository flightRepository;
+    @Autowired private BookingRepository bookingRepository;
     @Autowired private MeterRegistry meterRegistry;
 
     private double lockTimeoutCount() {
         Counter counter = meterRegistry.find(BookingMetrics.LOCK_TIMEOUT).counter();
         return counter == null ? 0d : counter.count();
+    }
+
+    /** The requests sent while the holder has its locks. */
+    @FunctionalInterface
+    private interface Requests {
+        void send() throws Exception;
+    }
+
+    private void whileHolding(String flightNumber, Requests requests) throws Exception {
+        whileHolding(flightNumber, null, requests);
+    }
+
+    /**
+     * Sends {@code requests} while another transaction holds the flight row FOR UPDATE,
+     * and then the booking row when {@code bookingId} is given: the two locks
+     * {@code BookingWriter#cancelBooking} takes, in its order.
+     */
+    private void whileHolding(String flightNumber, Number bookingId, Requests requests) throws Exception {
+        CountDownLatch lockHeld = new CountDownLatch(1);
+        CountDownLatch releaseLock = new CountDownLatch(1);
+
+        // As in contendedFlightRowGives503, the countDown must run before close() does.
+        try (ExecutorService holder = Executors.newSingleThreadExecutor()) {
+            try {
+                holder.submit(() -> new TransactionTemplate(transactionManager).execute(status -> {
+                    flightRepository.findByFlightNumberForUpdate(flightNumber).orElseThrow();
+                    if (bookingId != null) {
+                        bookingRepository.findByIdForUpdate(bookingId.longValue()).orElseThrow();
+                    }
+                    lockHeld.countDown();
+                    try {
+                        releaseLock.await(30, TimeUnit.SECONDS);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                    }
+                    return null;
+                }));
+
+                assertThat(lockHeld.await(30, TimeUnit.SECONDS))
+                        .as("the holder thread should have taken the row locks")
+                        .isTrue();
+
+                requests.send();
+            } finally {
+                releaseLock.countDown();
+            }
+        }
+    }
+
+    private FlightStatus statusOf(String flightNumber) {
+        return flightRepository.findByFlightNumber(flightNumber).orElseThrow().getStatus();
     }
 
     @Test
@@ -177,6 +235,91 @@ class LockTimeoutTest {
         // The meter counts contention, so the happy path must not move it.
         assertThat(lockTimeoutCount())
                 .as("a successful booking must not move bookings.lock_timeout")
+                .isEqualTo(timeoutsBefore);
+    }
+
+    @Test
+    @DisplayName("a status change behind a held flight row is 503 with Retry-After, counted, and not applied")
+    void aStatusChangeBehindAHeldFlightTimesOut() throws Exception {
+        double timeoutsBefore = lockTimeoutCount();
+
+        // FlightService reads the flight without a lock, so this waits in the
+        // service's own flush(), when the UPDATE meets the holder's row lock,
+        // before any commit.
+        whileHolding("UA456", () -> {
+            mockMvc.perform(patch("/api/v1/flights/{flightNumber}/status", "UA456")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {"status":"BOARDING"}
+                                    """))
+                    .andExpect(status().isServiceUnavailable())
+                    .andExpect(header().string("Retry-After", "1"))
+                    .andExpect(jsonPath("$.code").value("LOCK_TIMEOUT"));
+
+            assertThat(lockTimeoutCount())
+                    .as("a flight write's 503 must move bookings.lock_timeout too")
+                    .isEqualTo(timeoutsBefore + 1);
+        });
+
+        assertThat(statusOf("UA456"))
+                .as("the timed-out status change must have rolled back")
+                .isEqualTo(FlightStatus.SCHEDULED);
+    }
+
+    @Test
+    @DisplayName("a flight cancellation behind a held flight row is 503 with Retry-After, counted, and not applied")
+    void aFlightCancellationBehindAHeldFlightTimesOut() throws Exception {
+        double timeoutsBefore = lockTimeoutCount();
+
+        whileHolding("UA789", () -> {
+            mockMvc.perform(delete("/api/v1/flights/{flightNumber}", "UA789"))
+                    .andExpect(status().isServiceUnavailable())
+                    .andExpect(header().string("Retry-After", "1"))
+                    .andExpect(jsonPath("$.code").value("LOCK_TIMEOUT"));
+
+            assertThat(lockTimeoutCount())
+                    .as("a flight cancellation's 503 must move bookings.lock_timeout too")
+                    .isEqualTo(timeoutsBefore + 1);
+        });
+
+        assertThat(statusOf("UA789"))
+                .as("the timed-out cancellation must have rolled back")
+                .isEqualTo(FlightStatus.SCHEDULED);
+    }
+
+    @Test
+    @DisplayName("reads answer while a cancellation's flight and booking row locks are held")
+    void readsDoNotWaitBehindAHeldLock() throws Exception {
+        String created = mockMvc.perform(post("/api/v1/bookings")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"flightNumber":"UA123","passengerName":"Test Passenger","seats":1,
+                                 "idempotencyKey":"lock-timeout-read-1"}
+                                """))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        Number bookingId = JsonPath.read(created, "$.bookingId");
+        double timeoutsBefore = lockTimeoutCount();
+
+        // The holder keeps both locks until the last request has answered, so a read
+        // that waited on either one would end in 503 LOCK_TIMEOUT, never in 200.
+        whileHolding("UA123", bookingId, () -> {
+            mockMvc.perform(get("/api/v1/bookings/{bookingId}", bookingId.longValue()))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.bookingId").value(bookingId))
+                    .andExpect(jsonPath("$.cancelledAt").doesNotExist());
+
+            mockMvc.perform(get("/api/v1/flights/{flightNumber}", "UA123"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.flightNumber").value("UA123"));
+
+            mockMvc.perform(get("/api/v1/bookings").param("flightNumber", "UA123"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.content[*].bookingId", hasItem(bookingId)));
+        });
+
+        assertThat(lockTimeoutCount())
+                .as("a read must not move bookings.lock_timeout")
                 .isEqualTo(timeoutsBefore);
     }
 }

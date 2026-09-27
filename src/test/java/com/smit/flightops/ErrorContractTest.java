@@ -13,6 +13,7 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.web.multipart.MultipartResolver;
 
 import java.time.Instant;
@@ -365,6 +366,26 @@ class ErrorContractTest {
     }
 
     @Test
+    @DisplayName("the same key with only the seat count changed is 409, and no seat moves")
+    void sameKeyWithMoreSeatsIsAConflict() throws Exception {
+        createFlight("ZZ603", "EWR", "LHR", "2099-01-01T10:00:00Z");
+        book("ZZ603", "Test Passenger", 3, "contract-seats-1");
+
+        // A replay here would tell the client it holds four seats when three were sold.
+        mockMvc.perform(post("/api/v1/bookings")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"flightNumber":"ZZ603","passengerName":"Test Passenger","seats":4,
+                                 "idempotencyKey":"contract-seats-1"}
+                                """))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("IDEMPOTENCY_KEY_REUSED"));
+
+        assertThat(availableSeats("ZZ603")).isEqualTo(47);
+        assertThat(JsonPath.<Integer>read(bookingsPage("ZZ603", 0), "$.page.totalElements")).isEqualTo(1);
+    }
+
+    @Test
     @DisplayName("a real retry - same key, same payload - is still 201 with the same booking")
     void identicalRetryIsStillAReplay() throws Exception {
         String body = """
@@ -408,6 +429,43 @@ class ErrorContractTest {
                 .andExpect(jsonPath("$.passengerName").value("Edsger Dijkstra"));
     }
 
+    /** The other way round from the test above: the padding is on the first request. */
+    @Test
+    @DisplayName("a padded name is stored and returned as first sent; only the fingerprint trims it")
+    void aPaddedNameIsKeptAsSent() throws Exception {
+        createFlight("ZZ700", "BOM", "GOI", "2099-01-01T10:00:00Z");
+
+        MvcResult created = mockMvc.perform(post("/api/v1/bookings")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"flightNumber":"ZZ700","passengerName":" Jane Doe ","seats":1,
+                                 "idempotencyKey":"contract-padded-1"}
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.passengerName").value(" Jane Doe "))
+                .andReturn();
+        int bookingId = JsonPath.read(created.getResponse().getContentAsString(), "$.bookingId");
+
+        mockMvc.perform(get(created.getResponse().getHeader("Location")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.passengerName").value(" Jane Doe "));
+
+        String list = bookingsPage("ZZ700", 0);
+        assertThat(JsonPath.<Integer>read(list, "$.page.totalElements")).isEqualTo(1);
+        assertThat(JsonPath.<Integer>read(list, "$.content[0].bookingId")).isEqualTo(bookingId);
+        assertThat(JsonPath.<String>read(list, "$.content[0].passengerName")).isEqualTo(" Jane Doe ");
+
+        mockMvc.perform(post("/api/v1/bookings")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"flightNumber":"ZZ700","passengerName":"Jane Doe","seats":1,
+                                 "idempotencyKey":"contract-padded-1"}
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.bookingId").value(bookingId))
+                .andExpect(jsonPath("$.passengerName").value(" Jane Doe "));
+    }
+
     @Test
     @DisplayName("a cancelled flight cannot be un-cancelled back into selling seats")
     void cancelledFlightCannotBeRevived() throws Exception {
@@ -445,6 +503,63 @@ class ErrorContractTest {
 
         mockMvc.perform(delete("/api/v1/flights/ZZ101")).andExpect(status().isNoContent());
         mockMvc.perform(delete("/api/v1/flights/ZZ101")).andExpect(status().isNoContent());
+    }
+
+    /**
+     * The booking succeeded before the flight closed, so its retry must still say
+     * so. FLIGHT_NOT_BOOKABLE would tell a client that holds a seat that it has
+     * none. Cancelling a flight leaves its bookings active.
+     */
+    @Test
+    @DisplayName("a retry after the flight is cancelled returns the booking, not FLIGHT_NOT_BOOKABLE")
+    void replayAfterTheFlightIsCancelledReturnsTheBooking() throws Exception {
+        createFlight("ZZ601", "BOM", "BLR", "2099-01-01T10:00:00Z");
+        String body = """
+                {"flightNumber":"ZZ601","passengerName":"Test Passenger","seats":2,
+                 "idempotencyKey":"contract-replay-cancelled-1"}
+                """;
+        String created = mockMvc.perform(post("/api/v1/bookings")
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        int bookingId = JsonPath.read(created, "$.bookingId");
+
+        mockMvc.perform(delete("/api/v1/flights/ZZ601")).andExpect(status().isNoContent());
+
+        int beforeReplay = availableSeats("ZZ601");
+        mockMvc.perform(post("/api/v1/bookings")
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.bookingId").value(bookingId))
+                .andExpect(jsonPath("$.cancelledAt").doesNotExist());
+        assertThat(availableSeats("ZZ601")).isEqualTo(beforeReplay);
+    }
+
+    @Test
+    @DisplayName("a retry after the flight departs returns the booking, not FLIGHT_NOT_BOOKABLE")
+    void replayAfterDepartureReturnsTheBooking() throws Exception {
+        createFlight("ZZ602", "BOM", "CCU", "2099-01-01T10:00:00Z");
+        String body = """
+                {"flightNumber":"ZZ602","passengerName":"Test Passenger","seats":2,
+                 "idempotencyKey":"contract-replay-departed-1"}
+                """;
+        String created = mockMvc.perform(post("/api/v1/bookings")
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        int bookingId = JsonPath.read(created, "$.bookingId");
+
+        mockMvc.perform(patch("/api/v1/flights/ZZ602/status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"status":"DEPARTED"}"""))
+                .andExpect(status().isOk());
+
+        int beforeReplay = availableSeats("ZZ602");
+        mockMvc.perform(post("/api/v1/bookings")
+                        .contentType(MediaType.APPLICATION_JSON).content(body))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.bookingId").value(bookingId))
+                .andExpect(jsonPath("$.cancelledAt").doesNotExist());
+        assertThat(availableSeats("ZZ602")).isEqualTo(beforeReplay);
     }
 
     // ------------------------------------------------------------------
