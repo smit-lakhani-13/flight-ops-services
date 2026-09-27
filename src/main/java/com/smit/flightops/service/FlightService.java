@@ -119,11 +119,17 @@ public class FlightService {
                 .orElseThrow(() -> new FlightNotFoundException(flightNumber));
     }
 
-    /** Upper-cased because the unique constraint is case-sensitive: ua123 is UA123. */
+    /**
+     * Upper-cased because the unique constraint is case-sensitive: ua123 is UA123.
+     * Trimmed before the blank test, because {@code trim} also strips the C0 controls
+     * that {@code isBlank} keeps, so a filter of controls alone, such as
+     * {@code ?origin=%00}, is absent like {@code ?origin=} and not a query for "".
+     */
     private static String normalise(String value) {
-        if (value == null || value.isBlank()) {
+        if (value == null) {
             return null;
         }
-        return value.trim().toUpperCase(Locale.ROOT);
+        String trimmed = value.trim();
+        return trimmed.isBlank() ? null : trimmed.toUpperCase(Locale.ROOT);
     }
 }

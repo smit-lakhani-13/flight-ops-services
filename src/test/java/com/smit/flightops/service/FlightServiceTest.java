@@ -155,6 +155,25 @@ class FlightServiceTest {
         verify(flightRepository).findAll(page);
     }
 
+    /**
+     * {@code trim} strips C0 controls that {@code isBlank} does not count as whitespace,
+     * so a filter of controls alone was not blank, trimmed to "" and ran a query for it:
+     * an empty page, where a blank filter lists every flight.
+     */
+    @Test
+    @DisplayName("a filter of control characters alone is absent, like a blank one")
+    void aFilterOfControlCharactersAloneIsAbsent() {
+        Pageable page = PageRequest.of(0, 20);
+        when(flightRepository.findAll(page)).thenReturn(new PageImpl<>(List.of(flight())));
+
+        assertThat(flightService.search("\u0000", " \u0001 ", page)).hasSize(1);
+
+        verify(flightRepository).findAll(page);
+        verify(flightRepository, never()).findByOriginAndDestination(any(), any(), any());
+        verify(flightRepository, never()).findByOrigin(any(), any());
+        verify(flightRepository, never()).findByDestination(any(), any());
+    }
+
     @Test
     @DisplayName("updateStatus mutates the managed entity, so no explicit save is needed")
     void updateStatusReliesOnDirtyChecking() {

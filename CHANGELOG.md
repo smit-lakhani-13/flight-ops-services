@@ -284,6 +284,17 @@ says not yet.
   `GlobalExceptionHandler#handleDataIntegrity` answers any SQLState class 22
   data error with `400 MALFORMED_REQUEST` rather than `DUPLICATE_REQUEST`.
 
+- **A filter of control characters alone ran a query for an empty code.**
+  `FlightService#normalise` asked `isBlank` before it trimmed, and `trim` also
+  strips the C0 controls that `isBlank` keeps. So `?origin=%00` was not blank,
+  trimmed to an empty string and answered an empty page, where `?origin=` and
+  `?origin=%20` list every flight. It now trims first and treats a blank result
+  as absent, so all three list every flight. A path flight number of controls
+  alone that reaches the service, such as `/api/v1/flights/%01`, is still
+  `404 FLIGHT_NOT_FOUND`. `doc/api.md` says that a filter which is empty once
+  trimmed counts as absent, and `FlightServiceTest` checks that a filter of
+  controls alone runs no filtered query.
+
 - **The SBOMs described two applications as libraries.** The CycloneDX plugin
   types a module `library` unless told otherwise, and neither pom told it, so
   both `target/bom.json` files did. Both are typed `application` now. The

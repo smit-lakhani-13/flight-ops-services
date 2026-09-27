@@ -456,9 +456,12 @@ The response is `{content, page}`, with `page` holding `size`, `number`,
 `application.yml`).
 
 The filters: `origin` and `destination` are both optional on the flight
-search, and each is trimmed and upper-cased before the query. `flightNumber`
-is required on the bookings list, is trimmed and upper-cased too, and an
-unknown flight number is an empty page. A filter that still holds a control
+search, and each is trimmed and upper-cased before the query. Trimming removes
+every character up to U+0020, the control characters among them, so a filter
+that is empty once trimmed, such as `?origin=` or `?origin=%00`, counts as
+absent (`service/FlightService.java#normalise`). `flightNumber` is required on
+the bookings list, is trimmed and upper-cased too, and an unknown flight number
+is an empty page. A filter that still holds a control
 character (`\p{Cc}`) once trimmed, such as `?origin=J%00K`, is
 `400 MALFORMED_REQUEST` with the message
 `origin must not contain control characters.`, and no query runs
