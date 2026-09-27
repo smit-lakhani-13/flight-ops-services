@@ -304,7 +304,7 @@ Documentation is part of the change and ships with it:
 | Jackson 2 | 2.22.2 | `<jackson-2-bom.version>` in `pom.xml`, over Boot's 2.21.5; `<jackson.version>` in `lambda/pom.xml` |
 | Flyway | 12.4.0 | Spring Boot |
 | springdoc-openapi | 3.1.1 | `<springdoc.version>` in `pom.xml` |
-| AWS SDK for Java | 2.55.2 | `<aws.sdk.version>` in both POMs |
+| AWS SDK for Java | 2.55.3 | `<aws.sdk.version>` in both POMs |
 | JUnit | 6.0.3 | Spring Boot in the service; `<junit.version>` in `lambda/pom.xml` |
 | Maven | 3.9.16 | `.mvn/wrapper/maven-wrapper.properties` |
 
