@@ -1,7 +1,7 @@
 name: codeql
 
-# Static analysis for the Java in both modules, reported into the repository's
-# Security tab.
+# Static analysis for the Java in both modules and the console's TypeScript,
+# reported into the repository's Security tab.
 #
 # Advanced setup, which cannot coexist with GitHub's default setup. With both
 # on, every upload here fails with "CodeQL analyses from advanced
@@ -30,9 +30,17 @@ permissions:
 
 jobs:
   analyze:
-    name: analyze (java-kotlin)
+    # One job per language, each a check of its own. The name keeps the exact
+    # string `analyze (java-kotlin)` that branch protection requires.
+    name: analyze (${{ matrix.language }})
     runs-on: ubuntu-24.04
     timeout-minutes: 30
+
+    strategy:
+      # A failure in one language still reports the other.
+      fail-fast: false
+      matrix:
+        language: [java-kotlin, javascript-typescript]
 
     permissions:
       contents: read
@@ -47,16 +55,17 @@ jobs:
       - name: Initialise CodeQL
         uses: github/codeql-action/init@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
         with:
-          # One extractor covers Java and Kotlin. It reads both Maven modules,
-          # including lambda/, a parentless build the root reactor never
-          # reaches.
-          languages: java-kotlin
+          # The Java extractor covers Java and Kotlin, and reads both Maven
+          # modules, including lambda/, a parentless build the root reactor
+          # never reaches. The JavaScript extractor reads web/.
+          languages: ${{ matrix.language }}
 
-          # Buildless. `autobuild` would run a second full `mvn package`, and
-          # CodeQL could then fail because a build step broke. The cost: fewer
-          # third-party types resolve, so a data-flow path through a library
-          # method may go untraced. The risky paths here are the project's own
-          # controllers, repositories and outbox, so I accept that.
+          # Buildless for both. For Java, `autobuild` would run a second full
+          # `mvn package`, and CodeQL could then fail because a build step
+          # broke. The cost: fewer third-party types resolve, so a data-flow
+          # path through a library method may go untraced. The risky paths
+          # here are the project's own controllers, repositories and outbox,
+          # so I accept that. TypeScript is always analysed from source.
           build-mode: none
 
           # More security queries than the default suite, without the style
@@ -66,7 +75,7 @@ jobs:
       - name: Analyse
         uses: github/codeql-action/analyze@1c5b675653bb5c22dbe9b12b556ec555138e09fd # v4.38.1
         with:
-          # A fixed name for this analysis, so the next CodeQL upload for Java on
+          # A fixed name per language, so the next upload for that language on
           # the same ref replaces it even if this workflow or job is renamed.
           # Trivy's SARIF (`trivy-fs`) is kept apart by tool in any case.
-          category: /language:java-kotlin
+          category: /language:${{ matrix.language }}

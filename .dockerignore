@@ -30,6 +30,8 @@ scripts/
 contracts/
 .github/
 lambda/
+# The console builds and runs on its own; the service image never contains it.
+web/
 # The build recipe itself is not an input to the build.
 Dockerfile
 .dockerignore
