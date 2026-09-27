@@ -92,6 +92,20 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # .editorconfig sets max_line_length = 120, which only an editor reads.
+      # This holds both modules to it before any time goes on Maven. Python,
+      # not awk: the runner's mawk counts bytes, and a dash is three of them.
+      - name: Java lines fit in 120 columns
+        run: |
+          git ls-files -z '*.java' | python3 -c '
+          import sys
+          long = [f"{path}:{number}: {len(line)} columns"
+                  for path in sys.stdin.read().split("\0") if path
+                  for number, line in enumerate(open(path, encoding="utf-8").read().split("\n"), 1)
+                  if len(line) > 120]
+          if long:
+              sys.exit("\n".join(long))'
+
       - name: Set up JDK 21
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
