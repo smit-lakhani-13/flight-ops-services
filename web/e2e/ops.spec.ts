@@ -98,6 +98,23 @@ test.describe("the proxy's allow-list", () => {
     const badRace = await request.post("/api/race", { headers: { "Content-Type": "application/json" }, data: "[1, 2]" });
     expect(badRace.status()).toBe(400);
     expect(await badRace.json()).toMatchObject({ code: "CONSOLE_BAD_REQUEST" });
+
+    const plainRace = await request.post("/api/race", {
+      headers: { "Content-Type": "text/plain", Authorization: basic(API_ACCOUNT) },
+      data: JSON.stringify({ flightNumber: "UA123", passengerName: "Jane Doe", seats: 1, idempotencyKey: "plain" }),
+    });
+    expect(plainRace.status()).toBe(415);
+    expect(await plainRace.json()).toMatchObject({ code: "CONSOLE_UNSUPPORTED_MEDIA_TYPE" });
+  });
+
+  test("sends the console's security headers on pages and on proxied answers", async ({ request }) => {
+    for (const path of ["/", "/api/v1/flights", "/api/actuator/env"]) {
+      const headers = (await request.get(path)).headers();
+      expect(headers["x-content-type-options"], path).toBe("nosniff");
+      expect(headers["referrer-policy"], path).toBe("no-referrer");
+      expect(headers["x-frame-options"], path).toBe("DENY");
+      expect(headers["x-powered-by"], path).toBeUndefined();
+    }
   });
 
   test("returns the API's Location as the console's own path", async ({ request }) => {
