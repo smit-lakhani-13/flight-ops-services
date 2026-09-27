@@ -76,8 +76,20 @@ test("the request log shows each X-Request-Id the API echoed back", async ({ pag
   await expect(page.getByRole("button", { name: "Close", exact: true })).toBeFocused();
 
   const log = page.getByTestId("request-log");
-  await expect(log.getByTestId("sent-id").first()).toHaveText(/^web-[0-9a-f-]{36}$/);
-  await expect(log.getByTestId("echoed-id").first()).toHaveText("same");
+  const sent = log.getByTestId("sent-id");
+  const echoed = log.getByTestId("echoed-id");
+  await expect(sent.first()).toHaveText(/^web-[0-9a-f-]{36}$/);
+  // Sign-in, the overview and the flight list make several calls, and each
+  // carries its own id back. Each row is checked on its own, so an overview
+  // answer that lands after the count adds a row and fails nothing.
+  const rows = await sent.count();
+  expect(rows).toBeGreaterThan(1);
+  for (let i = 0; i < rows; i++) {
+    await expect(sent.nth(i)).toHaveText(/^web-[0-9a-f-]{36}$/);
+    await expect(echoed.nth(i)).toHaveText("same");
+  }
+  const ids = await sent.allTextContents();
+  expect(new Set(ids).size).toBe(ids.length);
   await expect(log).not.toContainText("Basic ");
 
   await page.keyboard.press("Escape");

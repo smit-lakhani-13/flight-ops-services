@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { forward, localLocation, MAX_BODY_BYTES, resolveTarget, upstreamOrigin } from "./proxy";
 
 const BASE = "http://api.test:8080";
@@ -79,10 +79,20 @@ describe("resolveTarget", () => {
 });
 
 describe("upstreamOrigin", () => {
-  it("defaults to localhost:8080 and accepts an origin", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("defaults to localhost:8080, reads API_BASE_URL and accepts an origin", async () => {
+    vi.stubEnv("API_BASE_URL", "");
     expect(upstreamOrigin(undefined)).toBe("http://localhost:8080");
     expect(upstreamOrigin("")).toBe("http://localhost:8080");
     expect(upstreamOrigin("https://api.example.test/")).toBe("https://api.example.test");
+
+    // The route passes no baseUrl, so forward reads the variable on each call.
+    vi.stubEnv("API_BASE_URL", "https://api.example.test");
+    expect(upstreamOrigin()).toBe("https://api.example.test");
+    const { fetchImpl, calls } = stub(() => Response.json({}));
+    await forward(browserRequest("/api/v1/flights"), ["v1", "flights"], { fetch: fetchImpl });
+    expect(calls[0]!.url).toBe("https://api.example.test/api/v1/flights");
   });
 
   it("refuses a path, a query or another scheme", () => {
@@ -111,6 +121,8 @@ describe("forward", () => {
         Cookie: "session=abc",
         Origin: "http://console.test",
         "X-Forwarded-For": "10.0.0.1",
+        Referer: "http://console.test/flights",
+        "X-Custom": "1",
       },
     });
 
@@ -126,6 +138,7 @@ describe("forward", () => {
     expect(sent.request.headers.get("cookie")).toBeNull();
     expect(sent.request.headers.get("origin")).toBeNull();
     expect(sent.request.headers.get("x-forwarded-for")).toBeNull();
+    expect([...sent.request.headers.keys()].sort()).toEqual(["accept", "authorization", "x-request-id"]);
     expect(sent.request.body).toBeNull();
   });
 

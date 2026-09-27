@@ -48,6 +48,14 @@ function targets(expression: string): string[] {
   });
 }
 
+/** Whether canTransitionTo answers true for `next == this` before its switch. */
+function allowsItself(): boolean {
+  const start = source.indexOf("public boolean canTransitionTo(");
+  const open = source.indexOf("switch (this) {", start);
+  if (start < 0 || open < 0) throw new Error("FlightStatus.java: no switch in canTransitionTo");
+  return /if\s*\(\s*next\s*==\s*this\s*\)\s*\{?\s*return\s+true\s*;/.test(source.slice(start, open));
+}
+
 const sorted = (values: readonly string[]) => [...values].sort();
 
 describe("transitions, checked against FlightStatus.java", () => {
@@ -73,11 +81,13 @@ describe("transitions, checked against FlightStatus.java", () => {
   });
 
   it("offers Cancel where a move to CANCELLED is allowed, as Flight#cancel needs", () => {
-    // Flight#cancel is updateStatus(CANCELLED); a status may always become
-    // itself, so cancelling a cancelled flight answers 204 and changes nothing.
+    // Flight#cancel is updateStatus(CANCELLED), and canTransitionTo lets a
+    // status become itself (its `next == this` guard, read below), so
+    // cancelling a cancelled flight answers 204 and changes nothing.
     const service = arms("canTransitionTo");
+    const self = allowsItself();
     for (const status of FLIGHT_STATUSES) {
-      const allowed = status === "CANCELLED" || targets(service.get(status) ?? "false").includes("CANCELLED");
+      const allowed = (self && status === "CANCELLED") || targets(service.get(status) ?? "false").includes("CANCELLED");
       expect(isCancellable(status), status).toBe(allowed);
     }
   });
