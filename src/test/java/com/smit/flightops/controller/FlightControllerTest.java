@@ -554,9 +554,11 @@ class FlightControllerTest {
 
     /**
      * POST, because security lets it through to MVC. PUT and OPTIONS never get
-     * this far in the real app: {@code denyAll()} answers them with 403, which
-     * {@code SecurityRulesTest#unhandledVerbsStayDenied} pins. RFC 9110 requires
-     * {@code Allow} on a 405, so the advice copies Spring's headers.
+     * this far in the real app: {@code denyAll()} answers them first, as
+     * {@code SecurityRulesTest#unhandledVerbsStayDenied} pins for PUT and
+     * {@code SecurityRulesTest#aCrossSitePreflightIsNotApproved} for an OPTIONS
+     * preflight. RFC 9110 requires {@code Allow} on a 405, so the advice copies
+     * Spring's headers.
      */
     @Test
     @DisplayName("a verb the path does not map is 405 METHOD_NOT_ALLOWED with an Allow header")

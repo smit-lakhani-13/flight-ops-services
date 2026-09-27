@@ -12,6 +12,7 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.stream.Stream;
 
 import static com.smit.flightops.entity.FlightStatus.ARRIVED;
@@ -228,8 +229,34 @@ class FlightTest {
         return flight;
     }
 
-    private static Stream<Arguments> refused(FlightStatus from, FlightStatus... to) {
+    private static Stream<Arguments> moves(FlightStatus from, FlightStatus... to) {
         return Stream.of(to).map(next -> Arguments.of(from, next));
+    }
+
+    /**
+     * The eleven moves between distinct statuses that the diagram draws, written
+     * out for the same reason as refusedMoves below.
+     */
+    static Stream<Arguments> allowedMoves() {
+        return Stream.of(
+                moves(SCHEDULED, BOARDING, DEPARTED, DELAYED, CANCELLED),
+                moves(DELAYED, BOARDING, DEPARTED, CANCELLED),
+                moves(BOARDING, DEPARTED, DELAYED, CANCELLED),
+                moves(DEPARTED, ARRIVED))
+                .flatMap(pairs -> pairs);
+    }
+
+    @ParameterizedTest
+    @MethodSource("allowedMoves")
+    @DisplayName("a move the graph allows takes the flight to the new status")
+    void allowedMovesAreAccepted(FlightStatus from, FlightStatus to) {
+        // A closed arm strands a flight: one that has boarded could never
+        // depart, or a delayed one never board.
+        Flight flight = at(from);
+
+        flight.updateStatus(to);
+
+        assertThat(flight.getStatus()).as("%s to %s", from, to).isEqualTo(to);
     }
 
     /**
@@ -239,12 +266,12 @@ class FlightTest {
      */
     static Stream<Arguments> refusedMoves() {
         return Stream.of(
-                refused(SCHEDULED, ARRIVED),
-                refused(BOARDING, SCHEDULED, ARRIVED),
-                refused(DELAYED, SCHEDULED, ARRIVED),
-                refused(DEPARTED, SCHEDULED, BOARDING, DELAYED, CANCELLED),
-                refused(ARRIVED, SCHEDULED, BOARDING, DELAYED, DEPARTED, CANCELLED),
-                refused(CANCELLED, SCHEDULED, BOARDING, DELAYED, DEPARTED, ARRIVED))
+                moves(SCHEDULED, ARRIVED),
+                moves(BOARDING, SCHEDULED, ARRIVED),
+                moves(DELAYED, SCHEDULED, ARRIVED),
+                moves(DEPARTED, SCHEDULED, BOARDING, DELAYED, CANCELLED),
+                moves(ARRIVED, SCHEDULED, BOARDING, DELAYED, DEPARTED, CANCELLED),
+                moves(CANCELLED, SCHEDULED, BOARDING, DELAYED, DEPARTED, ARRIVED))
                 .flatMap(pairs -> pairs);
     }
 
@@ -261,6 +288,19 @@ class FlightTest {
                 .isThrownBy(() -> flight.updateStatus(to));
 
         assertThat(flight.getStatus()).as("after refusing %s to %s", from, to).isEqualTo(from);
+    }
+
+    @Test
+    @DisplayName("the allowed and refused lists name every move between distinct statuses once")
+    void theTwoListsCoverEveryMove() {
+        // A status added to the enum, or a pair left off both lists, fails here.
+        List<List<Object>> listed = Stream.concat(allowedMoves(), refusedMoves())
+                .map(pair -> List.of(pair.get()))
+                .toList();
+        int statuses = FlightStatus.values().length;
+
+        assertThat(listed).doesNotHaveDuplicates().hasSize(statuses * (statuses - 1))
+                .allSatisfy(pair -> assertThat(pair.get(1)).isNotEqualTo(pair.get(0)));
     }
 
     @Test

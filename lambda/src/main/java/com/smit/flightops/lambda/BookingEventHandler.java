@@ -55,28 +55,33 @@ public class BookingEventHandler implements RequestHandler<SQSEvent, SQSBatchRes
             .build();
 
     /**
+     * The timeouts fit {@code template.yaml}'s 30-second {@code Timeout} over
+     * {@code BatchSize: 10}. The 2.5-second call cap lets the handler return its
+     * failure list before Lambda kills it and the whole batch comes back;
+     * {@code TimeoutBudgetTest} holds it against the template. Package-private
+     * for that test, which cannot reach {@link Holder}.
+     */
+    static final ClientOverrideConfiguration OVERRIDES = ClientOverrideConfiguration.builder()
+            .apiCallTimeout(Duration.ofMillis(2500))
+            .apiCallAttemptTimeout(Duration.ofSeconds(1))
+            .retryStrategy(RetryMode.STANDARD)
+            .build();
+
+    /**
      * Builds the client once per execution environment, on first use, so a unit
      * test that loads the handler resolves no region or credentials.
      *
      * <p>The HTTP client is named because discovery ranks Apache 5 above
      * URLConnection, and a dependency that brought Apache 5 back would take over.
-     *
-     * <p>The timeouts fit {@code template.yaml}'s 30-second {@code Timeout} over
-     * {@code BatchSize: 10}. The 2.5-second call cap lets the handler return its
-     * failure list before Lambda kills it and the whole batch comes back. The
-     * connection timeout must stay under the 1-second attempt cap, or a slow
-     * cold-start handshake fails every attempt.
+     * The connection timeout must stay under the 1-second attempt cap in
+     * {@link #OVERRIDES}, or a slow cold-start handshake fails every attempt.
      */
     private static final class Holder {
         static final DynamoDbClient CLIENT = DynamoDbClient.builder()
                 .httpClientBuilder(UrlConnectionHttpClient.builder()
                         .connectionTimeout(Duration.ofMillis(500))
                         .socketTimeout(Duration.ofSeconds(1)))
-                .overrideConfiguration(ClientOverrideConfiguration.builder()
-                        .apiCallTimeout(Duration.ofMillis(2500))
-                        .apiCallAttemptTimeout(Duration.ofSeconds(1))
-                        .retryStrategy(RetryMode.STANDARD)
-                        .build())
+                .overrideConfiguration(OVERRIDES)
                 .build();
     }
 

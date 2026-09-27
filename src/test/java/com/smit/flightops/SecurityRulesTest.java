@@ -26,6 +26,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.head;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -396,5 +397,26 @@ class SecurityRulesTest {
                         .contains("[flight-ops-service,")
                         .contains(",put-denied-1] ")
                         .doesNotContain("[flight-ops-service] "));
+    }
+
+    /**
+     * ADR 0006 turns CSRF off because a cross-site script's write needs a CORS
+     * preflight that this service never approves. Spring Security switches CORS
+     * on by itself once a {@code CorsConfigurationSource} bean exists, so a bean
+     * added anywhere would approve this preflight with no change to
+     * {@code SecurityConfig}; this test would then fail. A browser sends a
+     * preflight without credentials, so it meets {@code denyAll()} anonymously.
+     */
+    @Test
+    @DisplayName("a cross-site preflight is refused with no CORS headers, which ADR 0006's CSRF decision rests on")
+    void aCrossSitePreflightIsNotApproved() throws Exception {
+        mockMvc.perform(options("/api/v1/bookings")
+                        .header("Origin", "https://elsewhere.example")
+                        .header("Access-Control-Request-Method", "POST")
+                        .header("Access-Control-Request-Headers", "authorization, content-type"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(header().doesNotExist("Access-Control-Allow-Origin"))
+                .andExpect(header().doesNotExist("Access-Control-Allow-Credentials"))
+                .andExpect(header().doesNotExist("Access-Control-Allow-Methods"));
     }
 }

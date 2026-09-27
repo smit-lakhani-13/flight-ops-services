@@ -92,7 +92,9 @@ class FixedErrorMessagesTest {
 
         assertThat(output.getAll().lines())
                 .anyMatch(line -> line.contains("ERROR") && line.contains("Unhandled exception"));
-        assertThat(output.getAll()).contains("java.lang.IllegalStateException: secret detail");
+        // The trace, not only the exception's text: a frame follows it on a line of its own.
+        assertThat(output.getAll()).containsPattern(
+                "java\\.lang\\.IllegalStateException: secret detail com\\.smit\\.flightops\\.x\\R\\s+at com\\.smit\\.");
     }
 
     /** PostgreSQL names the constraint and quotes the key, and Spring adds the statement. */
