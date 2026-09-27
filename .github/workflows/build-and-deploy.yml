@@ -872,10 +872,10 @@ jobs:
 
     steps:
       # First, because it downloads a binary and needs no AWS access. The step
-      # "Configure AWS credentials" exports session keys to every step after
-      # it, and the ECR login writes a registry credential, so neither is in
-      # this step's environment. id-token is granted to the whole job, so the
-      # OIDC request variables are.
+      # "Configure AWS credentials (OIDC)" exports session keys to every step
+      # after it, and the ECR login writes a registry credential, so neither
+      # is in this step's environment. id-token is granted to the whole job,
+      # so the OIDC request variables are.
       - name: Set up kubectl
         uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5.1.0
         with:
@@ -896,7 +896,10 @@ jobs:
       # its own, and that run, or a manual run on main, is what deploys it. So
       # the job ends green, with a notice and a line in the job summary. A
       # deliberate redeploy is a manual run (workflow_dispatch) on main, which
-      # deploys the head.
+      # deploys the head. The head's own run can be lost, though: a re-run
+      # queued behind a run in progress takes the place of a run of the head
+      # still waiting, and GitHub cancels that one. So doc/OPERATIONS.md says
+      # to check, after the notice, that the head was deployed.
       #
       # Checked before the AWS steps, not just before the apply, because main
       # moving during this run is harmless: the concurrency group at the top
@@ -904,6 +907,10 @@ jobs:
       # commit deploys after this one. `git ls-remote` asks the remote, so the
       # shallow checkout is enough. It authenticates with the credentials
       # checkout keeps for later git commands, which `contents: read` covers.
+      #
+      # ls-remote matches its pattern against the end of every ref, so a
+      # branch named a/refs/heads/main is listed too, ahead of main. The
+      # step takes the line whose ref is exactly refs/heads/main.
       - name: Is this commit still the head of main?
         id: head
         run: |
@@ -911,7 +918,11 @@ jobs:
             echo "::error::could not read the head of main from origin"
             exit 1
           fi
-          main_head=${remote%%[[:space:]]*}
+          main_head=$(awk '$2 == "refs/heads/main" { print $1 }' <<<"$remote")
+          if [ -z "$main_head" ]; then
+            echo "::error::origin listed no ref named exactly refs/heads/main"
+            exit 1
+          fi
 
           if [ "$main_head" = "$GITHUB_SHA" ]; then
             echo "$GITHUB_SHA is the head of main"
@@ -1217,11 +1228,15 @@ jobs:
           kubectl auth can-i --list -n "$K8S_NAMESPACE" || true
 
       # No automatic rollback: that gives a flapping deploy that hides a real
-      # bug. With maxUnavailable: 0 a failed rollout has taken no traffic; the
-      # old pods are still serving. Roll back by hand after reading the logs:
+      # bug. With maxUnavailable: 0 a rollout that stops at its first new pod
+      # has taken no traffic; the old pods are still serving. Roll back by hand
+      # after reading the logs:
       #   kubectl rollout undo deployment/flight-ops -n flight-ops
       # After more than one failed deploy the previous revision failed too:
-      # find the one that served in `kubectl rollout history` and pass it with
-      # --to-revision. `rollout undo` does not undo migrations, so every
+      # pass --to-revision the newest revision whose image has a deployed-<sha>
+      # tag (`kubectl rollout history --revision=<n>` prints a revision's
+      # image). A smoke test that fails after a completed rollout leaves the
+      # new pods serving an image with no such tag; roll that back too, see
+      # doc/OPERATIONS.md. `rollout undo` does not undo migrations, so every
       # migration must keep the previous release working (expand now, contract
       # in a later release).

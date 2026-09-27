@@ -107,8 +107,8 @@ if [ "$cluster_reachable" = 0 ]; then
     warn "and it will keep billing at about \$0.62/day with nothing pointing at it."
     warn "Check that this works from this shell, then re-run:"
     warn "  aws eks update-kubeconfig --name $CLUSTER_NAME --region $AWS_REGION \\"
-    warn "    --kubeconfig $KUBECONFIG_FILE"
-    warn "  KUBECONFIG=$KUBECONFIG_FILE kubectl cluster-info"
+    warn "    --kubeconfig $KUBECONFIG_FILE_Q"
+    warn "  KUBECONFIG=$KUBECONFIG_FILE_Q kubectl cluster-info"
     warn "If the cluster is already gone, continuing is safe."
 
     # up.sh recorded the hostname when it created the Ingress, which gives one

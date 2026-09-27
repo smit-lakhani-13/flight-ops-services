@@ -232,7 +232,7 @@ for a commit on `main` that got no push run.
 | `web` | Vitest | a unit test fails, including `web/lib/transitions.test.ts`, which reads `FlightStatus.java` and fails if the console's copy of the transition table differs |
 | `web` | "Start the service" | the service jar does not report `UP` within 120 s |
 | `web` | Playwright | an end-to-end test fails. The report, the traces and the service log are uploaded as `web-e2e` |
-| `deploy` | "Is this commit still the head of main?" | `git ls-remote` cannot read the head of `main`. A commit that is no longer the head is not a failure: the job pushes and applies nothing, passes, and says so in a notice and the job summary |
+| `deploy` | "Is this commit still the head of main?" | `git ls-remote` cannot read the head of `main`, or lists no ref named exactly `refs/heads/main`. A commit that is no longer the head is not a failure: the job pushes and applies nothing, passes, and says so in a notice and the job summary |
 | `deploy` | "Is this commit already in ECR?" | `describe-images` fails with anything other than `ImageNotFoundException` |
 | `deploy` | "Load the image and tag it for ECR" | the downloaded archive's sha256 is not the one the `image` job recorded when it saved the image |
 | `deploy` | rollout and smoke test | the rollout does not finish in 12 minutes, or no Running, Ready pod of the new ReplicaSet runs this commit's image, or readiness or `/actuator/health` is not `UP`, or `/v3/api-docs` is not served through a port-forward to that pod |

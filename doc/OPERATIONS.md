@@ -721,9 +721,12 @@ seconds, and runs in CI's `infra-lint` job.
 
 ### Rolling back a deploy
 
-The deploy job never rolls back by itself. A failed rollout leaves the old pods
-serving, because the rollout uses `maxUnavailable: 0`. Read the job's "Diagnose
-a failed deploy" step, then roll back by hand:
+The deploy job never rolls back by itself. A rollout that stops at its first
+new pod leaves the old pods serving, because the rollout uses
+`maxUnavailable: 0`; one that stops later leaves some new pods serving, and a
+smoke test that fails after a completed rollout leaves every pod on the new
+release. Read the job's "Diagnose a failed deploy" step, then roll back by
+hand:
 
 ```bash
 kubectl rollout history deployment/flight-ops -n flight-ops
@@ -731,16 +734,41 @@ kubectl rollout undo deployment/flight-ops -n flight-ops
 ```
 
 `rollout undo` goes to the previous revision. After more than one failed
-deploy, that revision failed too: pick the one that served from the history
-and pass it as `--to-revision=<n>`. Its image is still in ECR if it passed the
-job's smoke test, because the job then tags it `deployed-<sha>` and the
-lifecycle policy keeps the last ten of those. `kubectl rollout undo` does not
-undo migrations, so every migration must keep the previous release working
-(expand now, contract in a later release).
+deploy, that revision failed too. The history lists only revision numbers,
+because nothing sets a change cause, so read each revision's image, whose tag
+is its commit's SHA, and ask ECR whether that SHA also has a `deployed-<sha>`
+tag:
 
-Re-running an old workflow run is not a rollback. Its deploy job applies
-nothing unless its commit is still the head of `main`, and says so in the job
-summary.
+```bash
+kubectl rollout history deployment/flight-ops -n flight-ops --revision=<n>
+aws ecr describe-images --repository-name flight-ops-service \
+  --image-ids imageTag=deployed-<sha>
+```
+
+`describe-images` fails with `ImageNotFoundException` when the tag is not
+there. Pass the newest revision whose image has it as `--to-revision=<n>`. The
+job adds that tag in its step "Tag the image as deployed", which runs only
+after the smoke test passes, and the lifecycle policy keeps the last ten
+images tagged that way. A deploy whose rollout completed and whose smoke test
+then failed is serving on every pod, and its image has no such tag: roll it
+back before five more images are pushed, or the lifecycle policy can expire
+the image the pods run. `kubectl rollout undo` does not undo migrations, so
+every migration must keep the previous release working (expand now, contract
+in a later release).
+
+Re-running an old workflow run is not a rollback when its commit has the
+deploy job's step "Is this commit still the head of main?": its deploy job
+applies nothing unless its commit is still the head of `main`, and says so in
+the job summary. Runs of commits from before that step have no such check, and
+GitHub lets a run be re-run for 30 days after it started. So until 28 October
+2026, once `DEPLOY_ENABLED` is set, a re-run of one of those runs could apply
+its commit over the release. Do not re-run them.
+
+A re-run queued while another run on `main` is in progress takes the place of
+any run already waiting in the same concurrency group, and GitHub cancels the
+waiting one. After a "Nothing deployed" notice, check that the head of `main`
+has a run that deployed it, and start a manual run on `main` if that run was
+cancelled.
 
 ### Rotating the API or ops password
 

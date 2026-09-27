@@ -45,7 +45,7 @@ step "1/12  Preflight, and what this is about to cost"
 # ---------------------------------------------------------------------------
 require_tool aws eksctl kubectl helm sam openssl htpasswd
 [ -n "${ALERT_EMAIL:-}" ] || die "ALERT_EMAIL is required (budget alerts go there). Example:
-    ALERT_EMAIL=you@example.com $0"
+    ALERT_EMAIL=you@example.com $SELF_Q"
 
 # Step 3 builds the Lambda jar with the Maven wrapper.
 require_jdk21 "$repo/mvnw"
@@ -88,7 +88,7 @@ cat <<COST
   on every full day it runs.
   Confirm the subscription email when it arrives, or the alerts never fire.
 
-  Tear it all down with:  $here/down.sh
+  Tear it all down with:  $SCRIPTS_DIR_Q/down.sh
 
 COST
 confirm "This will start billing. The only other prompts are the two hand-offs at steps 9 and 10."
@@ -376,7 +376,7 @@ else
     aws rds modify-db-instance --region $AWS_REGION \\
         --db-instance-identifier flight-ops-db \\
         --master-user-password \"\$DB_PASSWORD\" --apply-immediately
-    ALERT_EMAIL=$ALERT_EMAIL $0"
+    ALERT_EMAIL=$ALERT_EMAIL $SELF_Q"
     # One this run did not generate goes in with the same warning as above.
     [ "$db_password_origin" = generated ] || warn_db_password_from_shell
 
@@ -473,15 +473,17 @@ for _ in $(seq 1 60); do
     sleep 10
 done
 [ -n "$ALB_HOST" ] || die "no ALB hostname after 10 minutes. Check the controller:
-    export KUBECONFIG=$KUBECONFIG_FILE
+    export KUBECONFIG=$KUBECONFIG_FILE_Q
     kubectl logs -n kube-system deploy/aws-load-balancer-controller --tail=50"
 state_set ALB_HOST "$ALB_HOST"
 ok "http://$ALB_HOST"
 
 # Bounded. A security group that does not admit the ALB, or a health check on
-# the wrong port, looks like "not ready yet" and never resolves. An unbounded
-# loop would sit there overnight with the whole stack billing.
-log "waiting for the ALB target group to report healthy (up to 5 minutes)..."
+# the wrong port, looks like "not ready yet" and never resolves. So does a
+# database that is down, which /actuator/health reports and readiness does
+# not. An unbounded loop would sit there overnight with the whole stack
+# billing.
+log "waiting for /actuator/health to answer through the ALB (up to 5 minutes)..."
 alb_healthy=0
 for _ in $(seq 1 60); do
     if curl -fsS -o /dev/null --max-time 5 "http://$ALB_HOST/actuator/health"; then
@@ -490,14 +492,20 @@ for _ in $(seq 1 60); do
     fi
     sleep 5
 done
-[ "$alb_healthy" = 1 ] || die "the ALB never reported healthy. The pods passed
-step 10, so this is between the load balancer and them -- usually a security
-group or a target group health check on the wrong port:
-    export KUBECONFIG=$KUBECONFIG_FILE
+[ "$alb_healthy" = 1 ] || die "/actuator/health never answered 200 through the
+load balancer. It includes the database, which the readiness probe and the
+target group check leave out, so pods that passed step 10 do not rule the
+database out. As the ops user, this shows which component is not UP:
+    curl -s -u ops:<password> http://$ALB_HOST/actuator/health
+If one is not, start there. If every one is UP, if nothing answers, or if the
+load balancer answers with its own 502, 503 or 504, this is between the load
+balancer and the pods: usually a security group or a target group health
+check on the wrong port:
+    export KUBECONFIG=$KUBECONFIG_FILE_Q
     kubectl describe ingress flight-ops-ingress -n $NAMESPACE
     kubectl logs -n kube-system deploy/aws-load-balancer-controller --tail=50
     aws elbv2 describe-target-groups --output table
-Nothing is torn down. Fix it and re-run, or run $here/down.sh."
+Nothing is torn down. Fix it and re-run, or run $SCRIPTS_DIR_Q/down.sh."
 ok "health check passes through the load balancer"
 
 # ---------------------------------------------------------------------------
@@ -531,16 +539,16 @@ cat <<SUMMARY
 
   The cluster's kubeconfig is $KUBECONFIG_FILE,
   not ~/.kube/config. Point a shell at it before any kubectl or helm command:
-    export KUBECONFIG=$KUBECONFIG_FILE
+    export KUBECONFIG=$KUBECONFIG_FILE_Q
 
   The cluster stores bcrypt hashes; this reads back \$2y\$10\$... and
   nothing reversible:
     kubectl get secret flight-ops-secret -n $NAMESPACE -o jsonpath='{.data.API_PASSWORD}' | base64 -d
 
   Running cost: about \$7.72/day. Check it tomorrow with:
-    $here/cost-check.sh
+    $SCRIPTS_DIR_Q/cost-check.sh
 
   ${C_BOLD}Tear it down with:${C_RESET}
-    $here/down.sh
+    $SCRIPTS_DIR_Q/down.sh
 
 SUMMARY
