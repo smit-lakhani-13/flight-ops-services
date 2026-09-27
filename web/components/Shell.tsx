@@ -123,7 +123,7 @@ function Frame({ children }: { children: ReactNode }) {
           <div className="order-4 flex w-full min-w-0 items-center justify-between gap-3 text-sm lg:w-auto lg:justify-end">
             {session ? (
               <>
-                <span className={`min-w-0 truncate ${MUTED}`} data-testid="signed-in-as" title={session.user}>
+                <span className={`min-w-0 wrap-anywhere ${MUTED}`} data-testid="signed-in-as">
                   Signed in as <strong className="font-mono text-slate-900 dark:text-slate-100">{session.user}</strong>
                 </span>
                 <Button
