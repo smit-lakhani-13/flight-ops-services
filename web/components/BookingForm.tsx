@@ -67,6 +67,14 @@ function raceAnswered(result: ApiResponse<RaceReport>): boolean {
   return rows.some((row) => row.status === 201) || rows.every((row) => row.status !== 0);
 }
 
+/** Worst first: a race's status line takes the colour of its worst answer. */
+const WORST_FIRST: readonly StatusClass[] = ["5xx", "none", "409", "4xx", "3xx", "2xx"];
+
+function worstClass(statuses: readonly string[]): StatusClass {
+  const classes = new Set(statuses.map((status) => statusClass(Number(status))));
+  return WORST_FIRST.find((kind) => classes.has(kind)) ?? "none";
+}
+
 export function BookingForm({ initialFlight }: { initialFlight: string }) {
   const api = useApi();
   const [form, setForm] = useState(() => ({
@@ -87,11 +95,14 @@ export function BookingForm({ initialFlight }: { initialFlight: string }) {
   // Whether the last answer was a single booking's or the race's, so a single
   // booking's error does not linger under a race that followed it.
   const [last, setLast] = useState<"booking" | "race">("booking");
-  // The booking each key's first successful Book made, so a replay is
-  // compared with the booking made on its own key. A Map, because a key may be
+  // The booking each key's first successful Book made and the body it sent, so
+  // a replay resends that body and is compared with the booking made on its own
+  // key, and a different body is built from it. A Map, because a key may be
   // any name the API accepts, "constructor" included, and a plain object
   // would find that one on its prototype.
-  const [firstByKey, setFirstByKey] = useState<ReadonlyMap<string, number>>(() => new Map());
+  const [firstByKey, setFirstByKey] = useState<ReadonlyMap<string, { bookingId: number; sent: BookingRequest }>>(
+    () => new Map(),
+  );
 
   const latest = outcomes[0];
   // The fields show the last answer's messages: a single booking's, or the
@@ -123,7 +134,11 @@ export function BookingForm({ initialFlight }: { initialFlight: string }) {
     // reader announces.
     setAnnouncement(null);
     try {
-      const sent = request();
+      // A replay resends, and a different body starts from, what the key's
+      // first successful Book sent, whatever the form holds now. A key with no
+      // successful Book yet uses the form.
+      const first = action === "book" ? undefined : firstByKey.get(form.idempotencyKey);
+      const sent = first ? { ...first.sent } : request();
       if (action === "different") {
         sent.seats = Number.isInteger(sent.seats) && sent.seats < 9 ? sent.seats + 1 : 1;
       }
@@ -134,7 +149,7 @@ export function BookingForm({ initialFlight }: { initialFlight: string }) {
       const created = result.data;
       if (action === "book" && result.ok && created) {
         setFirstByKey((current) =>
-          current.has(sent.idempotencyKey) ? current : new Map(current).set(sent.idempotencyKey, created.bookingId),
+          current.has(sent.idempotencyKey) ? current : new Map(current).set(sent.idempotencyKey, { bookingId: created.bookingId, sent }),
         );
       }
       setLast("booking");
@@ -162,10 +177,9 @@ export function BookingForm({ initialFlight }: { initialFlight: string }) {
       if (result.ok && result.data) {
         const { statuses, bookingIds } = summariseRace(result.data.rows);
         const answers = Object.entries(statuses).map(([status, count]) => `${count} × ${status === "0" ? "no answer" : status}`);
-        const allCreated = Object.keys(statuses).every((status) => status === "201");
         setAnnouncement({
           text: `Race: ${answers.join(", ")}, ${bookingIds.length} distinct booking${bookingIds.length === 1 ? "" : "s"}`,
-          kind: allCreated ? "2xx" : "4xx",
+          kind: worstClass(Object.keys(statuses)),
         });
       } else {
         setAnnouncement({ text: `Race: ${result.status || "no answer"}, ${result.error?.code ?? "no body"}`, kind: statusClass(result.status) });
@@ -276,7 +290,7 @@ export function BookingForm({ initialFlight }: { initialFlight: string }) {
         <section aria-label="Results" className="flex flex-col gap-3">
           <h2 className="text-base font-semibold">Results, newest first</h2>
           {outcomes.map((outcome) => (
-            <OutcomeCard key={outcome.n} outcome={outcome} firstBooking={firstByKey.get(outcome.sent.idempotencyKey)} />
+            <OutcomeCard key={outcome.n} outcome={outcome} firstBooking={firstByKey.get(outcome.sent.idempotencyKey)?.bookingId} />
           ))}
         </section>
       )}

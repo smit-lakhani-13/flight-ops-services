@@ -92,9 +92,9 @@ export function Meter({
               {split.counts.map(([value, count]) => (
                 <span
                   key={value}
-                  className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2 py-0.5 dark:bg-slate-800"
+                  className="inline-flex max-w-full items-center gap-1.5 rounded-full bg-slate-100 px-2 py-0.5 dark:bg-slate-800"
                 >
-                  <code>
+                  <code className="min-w-0 wrap-anywhere">
                     {split.tag}={value}
                   </code>
                   <strong className="text-slate-900 tabular-nums dark:text-slate-100" data-testid={`meter-${name}-${value}`}>

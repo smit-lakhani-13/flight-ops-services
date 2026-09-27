@@ -1,9 +1,12 @@
 import type { NextConfig } from "next";
 
-// The console renders nothing on the server that needs a credential, so these
-// headers are the whole of its server-side hardening. They go on every answer,
-// proxied ones included: the proxy passes none of the API's own security headers
-// through (lib/proxy.ts), and e2e/ops.spec.ts checks them.
+// The console renders nothing on the server that needs a credential. These
+// three headers go on every answer, pages and proxied ones alike, and
+// e2e/ops.spec.ts checks them. The proxy passes none of the API's own security
+// headers through and sets Cache-Control: no-store (lib/proxy.ts#relay). The
+// rest of the console's server-side hardening is the checks in
+// lib/proxy.ts#forward and lib/race.ts#runRace, which SECURITY.md lists under
+// "The console".
 const securityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "Referrer-Policy", value: "no-referrer" },

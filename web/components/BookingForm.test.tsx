@@ -77,6 +77,11 @@ function newest() {
   return within(screen.getAllByTestId("booking-outcome")[0]!).getByRole("banner").textContent;
 }
 
+/** One caller's row in a race report, as the console's race route answers it. */
+function row(index: number, status: number, body: unknown) {
+  return { index, status, requestId: `web-${index}`, echoedRequestId: `web-${index}`, location: null, ms: 5, body };
+}
+
 describe("BookingForm", () => {
   it("compares a replay with the booking its own key made, for any key", async () => {
     fakeApi();
@@ -119,6 +124,22 @@ describe("BookingForm", () => {
 
     await act(async () => release());
     expect(status.textContent).toBe("Replay on the same key: 201, booking #1");
+  });
+
+  it("replays the body the key was first booked with, whatever the form holds now", async () => {
+    fakeApi();
+    renderForm();
+    fireEvent.change(screen.getByLabelText("Seats"), { target: { value: "2" } });
+    await press("Book");
+
+    // The form now asks for 1 seat. A different body built from the form would
+    // ask for 2, the key's first body, and a replay of the form would get 409.
+    fireEvent.change(screen.getByLabelText("Seats"), { target: { value: "1" } });
+    await press("Same key, different body");
+    expect(screen.getByRole("status").textContent).toBe("Same key, different body: 409, IDEMPOTENCY_KEY_REUSED");
+
+    await press("Replay the same key");
+    expect(newest()).toBe("Replay on the same key201booking #1same booking as the first Book");
   });
 
   it("shows a refusal once, in the status line and a silent banner", async () => {
@@ -168,15 +189,6 @@ describe("BookingForm", () => {
 
   it("marks the fields from the last answer, a booking's or the race's", async () => {
     let refuse = true;
-    const row = (index: number, status: number, body: unknown) => ({
-      index,
-      status,
-      requestId: `web-${index}`,
-      echoedRequestId: `web-${index}`,
-      location: null,
-      ms: 5,
-      body,
-    });
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -232,5 +244,37 @@ describe("BookingForm", () => {
 
     expect(screen.getByTestId("race-unsettled").textContent).toContain("a request that reached the API may still finish");
     expect(reads).toHaveBeenCalledTimes(1);
+  });
+
+  it("colours a race's status line by its worst answer", async () => {
+    let statuses: number[] = [];
+    const bodies: Record<number, unknown> = {
+      201: { bookingId: 1, flightNumber: "UA1", passengerName: "Test Passenger", seats: 1 },
+      409: { code: "IDEMPOTENCY_KEY_REUSED", message: "Different body" },
+      503: { code: "LOCK_TIMEOUT", message: "The flight is busy" },
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.method !== "POST") return Response.json({ flightNumber: "UA1", availableSeats: 100 });
+        expect(new URL(String(input), "http://console.test").pathname).toBe("/api/race");
+        const rows = statuses.map((status, index) => row(index, status, bodies[status]));
+        return Response.json({ rows, totalMs: 12 });
+      }),
+    );
+    renderForm();
+    const colour = () => screen.getByRole("status").className;
+
+    statuses = Array.from({ length: 10 }, () => 409);
+    await press("Race 10 callers on this key");
+    expect(colour()).toContain("text-orange-700");
+
+    statuses = [...Array.from({ length: 9 }, () => 201), 503];
+    await press("Race 10 callers on this key");
+    expect(colour()).toContain("text-rose-700");
+
+    statuses = Array.from({ length: 10 }, () => 201);
+    await press("Race 10 callers on this key");
+    expect(colour()).toContain("text-emerald-700");
   });
 });

@@ -35,7 +35,7 @@ subset on to the API at `API_BASE_URL`:
 * the actuator's health, liveness, readiness and metrics, read-only.
 
 A path outside that list answers `404 CONSOLE_PATH_REFUSED`, and a method the
-path does not allow, such as a write under the actuator, answers
+path does not allow, such as a write to one of those actuator paths, answers
 `405 CONSOLE_METHOD_REFUSED` with an `Allow` header. Neither reaches the API,
 and nor does `OPTIONS`, which Next answers itself on every `/api/` path with
 `204` and no CORS headers. Four request headers go upstream: `Authorization`,
