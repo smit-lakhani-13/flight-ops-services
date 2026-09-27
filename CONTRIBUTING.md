@@ -170,7 +170,7 @@ for a commit on `main` that got no push run.
 | `build` | `maven-enforcer` | wrong JDK, wrong Maven, duplicate dependency versions, or a transitive downgrade (`requireUpperBoundDeps`) |
 | `build` | JaCoCo | bundle coverage below 80% line or 50% branch |
 | `build` | ArchUnit | a layering rule is broken (9 rules in `ArchitectureTest`) |
-| `build` | "The PostgreSQL tests ran" | `BookingIntegrationTest`, `service/OutboxPrunePostgresTest` or `LockTimeoutPostgresTest` has no readable report, no tests, or a skipped test |
+| `build` | "The PostgreSQL tests ran" | `BookingIntegrationTest`, `SchemaConstraintsPostgresTest`, `service/OutboxPrunePostgresTest` or `LockTimeoutPostgresTest` has no readable report, no tests, or a skipped test |
 | `build` | "The emulator tests ran" | `service/SqsEventPublisherElasticMqTest` or the Lambda's `BookingEventHandlerDynamoDbLocalTest` has no readable report, no tests, or a skipped test |
 | `build` | "The SAM template points at the Lambda jar" | `lambda/template.yaml`'s `CodeUri`, which resolves against `lambda/`, is not a built file, or the jar lacks the `Handler` class |
 | `build` | "Both SBOMs exist" | `target/bom.json` or `lambda/target/bom.json` is missing or empty |

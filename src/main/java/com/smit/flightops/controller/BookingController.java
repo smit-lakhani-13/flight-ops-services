@@ -49,6 +49,12 @@ public class BookingController {
     /** The sortable properties that are strings: the only ones {@code ignorecase} applies to. */
     private static final Set<String> TEXTUAL = Set.of("passengerName");
 
+    /**
+     * The sortable properties that can be null, where {@link SortPolicy} puts nulls
+     * last: {@code cancelledAt}, null while the booking is active.
+     */
+    private static final Set<String> NULLABLE = Set.of("cancelledAt");
+
     private final BookingService bookingService;
 
     public BookingController(BookingService bookingService) {
@@ -169,7 +175,7 @@ public class BookingController {
             @ParameterObject @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.ASC)
             Pageable pageable) {
         return bookingService.findByFlightNumber(QueryParams.withoutControlCharacters("flightNumber", flightNumber),
-                                                 SortPolicy.stable(pageable, SORTABLE, TEXTUAL));
+                                                 SortPolicy.stable(pageable, SORTABLE, TEXTUAL, NULLABLE));
     }
 
     /**

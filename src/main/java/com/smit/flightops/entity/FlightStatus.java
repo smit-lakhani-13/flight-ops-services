@@ -9,6 +9,12 @@ import java.util.Objects;
  * {@code BookingService} it would be one caller's rule, and a second caller (a bulk
  * import, an admin endpoint, a message consumer) would forget it. The switches have
  * no {@code default}, so a new constant does not compile until someone classifies it.
+ *
+ * <p>The schema knows the constants too. On PostgreSQL {@code ck_flights_status}, from
+ * V10__flight_status_check.sql, lists them exactly, so a new constant also needs a
+ * migration that drops and re-adds it. Flyway runs at startup, so that migration ships
+ * with the code that first writes the new value. H2 needs nothing: Hibernate declares
+ * the column there as an ENUM of these constants.
  */
 public enum FlightStatus {
 

@@ -65,8 +65,11 @@ changes.
   the claim query has to use the same expression to reach it. V4's partial
   index, which V8 drops again, can be left out of an Oracle set together with
   that drop; V8's `DROP INDEX IF EXISTS` exists only from Oracle Database
-  23ai. `ddl-auto: validate` would then show which entity mappings need a
-  column type per vendor.
+  23ai. V9's `ALTER COLUMN`, V10's `NOT VALID` and the `VALIDATE CONSTRAINT`
+  after it, and V11's `CREATE INDEX CONCURRENTLY IF NOT EXISTS` are PostgreSQL
+  forms too, and their Oracle spellings are still to be checked against
+  Oracle's documentation. `ddl-auto: validate` would then show which entity
+  mappings need a column type per vendor.
 
 ## Consequences
 
@@ -82,7 +85,7 @@ changes.
 
 * **`db/migration/{vendor}` folders**, with `flyway-database-oracle` and the
   Oracle JDBC driver `com.oracle.database.jdbc:ojdbc17`, whose version Spring
-  Boot's dependency management supplies. `V1`–`V8` would move into the
+  Boot's dependency management supplies. `V1` to `V11` would move into the
   `postgresql` folder unchanged, and the Oracle folder would get its own
   spellings. This is the shape I would choose.
 * **One SQL dialect for both databases.** It would give up `SKIP LOCKED` and
