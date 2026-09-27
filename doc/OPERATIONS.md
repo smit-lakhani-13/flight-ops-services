@@ -775,15 +775,18 @@ cancelled.
 ```bash
 NEW=$(openssl rand -base64 18 | tr -d '/+= ')
 HASH="{bcrypt}$(printf '%s' "$NEW" | htpasswd -niBC 10 "" | tr -d ':\n')"
-kubectl patch secret flight-ops-secret -n flight-ops \
-  -p "{\"stringData\":{\"API_PASSWORD\":\"$HASH\"}}"
+printf '{"stringData":{"API_PASSWORD":"%s"}}' "$HASH" \
+  | kubectl patch secret flight-ops-secret -n flight-ops \
+      --type merge --patch-file /dev/stdin
 kubectl rollout restart deployment/flight-ops -n flight-ops
 printf 'new password: %s\n' "$NEW"
 ```
 
 For the ops password, patch `OPS_PASSWORD` instead. The last line prints the
 new password. Hand it to the callers before closing the shell: the Secret holds
-only its bcrypt hash, so `$NEW` is the only copy.
+only its bcrypt hash, so `$NEW` is the only copy. The password reaches htpasswd
+and the hash reaches kubectl on stdin, as `up.sh` hands them over, so neither
+is in the process list.
 
 The restart is required. The password is injected as an environment variable,
 and environment variables are read once at container start. A mounted volume
