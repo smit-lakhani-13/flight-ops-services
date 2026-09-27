@@ -273,7 +273,8 @@ pause
 
 # ── Act 6 ────────────────────────────────────────────────────────────────────
 act "ACT 6: flight status transitions"
-say "SCHEDULED -> BOARDING is legal. Watch it take."
+say "SCHEDULED -> BOARDING is legal. Watch it take. On a second run UA456 is"
+say "already BOARDING, and a move to the status it has answers 200."
 run "curl -s $AUTH -o /dev/null -w 'PATCH BOARDING -> %{http_code}\n' -X PATCH '$API/flights/UA456/status' \\
   -H 'Content-Type: application/json' -d '{\"status\":\"BOARDING\"}'"
 run "curl -s $AUTH '$API/flights/UA456' | jq_or_cat"

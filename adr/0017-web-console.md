@@ -34,16 +34,20 @@ API at `API_BASE_URL`:
 * `/api/v1/...` with `GET`, `HEAD`, `POST`, `PATCH` and `DELETE`;
 * the actuator's health, liveness, readiness and metrics, read-only.
 
-Anything else answers `404 CONSOLE_PATH_REFUSED` without reaching the API.
-Four request headers go upstream: `Authorization`, `Content-Type`, `Accept` and
-`X-Request-Id`. Six response headers come back, with `Location` cut to its
-path. `WWW-Authenticate` and `Set-Cookie` never reach the browser. Bodies are
-capped at 64 KiB, the upstream call at 15 s, and a request the browser marks
-`Sec-Fetch-Site: cross-site` is refused with 403.
+A path outside that list answers `404 CONSOLE_PATH_REFUSED`, and a method the
+path does not allow, such as a write under the actuator, answers
+`405 CONSOLE_METHOD_REFUSED` with an `Allow` header. Neither reaches the API,
+and nor does `OPTIONS`, which Next answers itself on every `/api/` path with
+`204` and no CORS headers. Four request headers go upstream: `Authorization`,
+`Content-Type`, `Accept` and `X-Request-Id`. Six response headers come back,
+with `Location` cut to its path. `WWW-Authenticate` and `Set-Cookie` never reach
+the browser. Bodies are capped at 64 KiB, the upstream call at 15 s, and a
+request the browser marks `Sec-Fetch-Site: cross-site` is refused with 403.
 
 The credential stays in React state. It is never written to `localStorage`,
-`sessionStorage` or a cookie, and the console's server copies it onto the one
-upstream request without logging or keeping it. A reload signs out.
+`sessionStorage` or a cookie, and the console's server copies it onto each
+upstream request, ten for the race below, without logging or keeping it. A
+reload signs out.
 
 The ten-caller race is a second route, `web/lib/race.ts#runRace`, because a
 browser queues requests beyond six per origin on HTTP/1.1 and ten `fetch()`
