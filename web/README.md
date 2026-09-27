@@ -53,7 +53,7 @@ request, so the same build can point anywhere.
 
 | Page | What it shows | Calls it makes |
 |---|---|---|
-| `/` | Sign-in, anonymous health, four guided demos | `GET /actuator/health`; `GET /api/v1/flights?size=1` to check the credential |
+| `/` | Sign-in, anonymous health, four guided demos | `GET /actuator/health`, without credentials and then with them to check the password; `GET /api/v1/flights?size=1` for an account that sees no health components, to learn whether it holds the API scopes |
 | `/flights` | Search by route, sort, page; create a flight with per-field errors | `GET /api/v1/flights`, `POST /api/v1/flights` |
 | `/flights/{flightNumber}` | The flight, the moves its status allows, any status on request, cancel, its bookings | `GET`, `PATCH .../status` and `DELETE /api/v1/flights/{flightNumber}`; `GET /api/v1/bookings?flightNumber=` |
 | `/book` | Book, replay the same key, change the body on the same key, the race | `GET /api/v1/flights/{flightNumber}`, `POST /api/v1/bookings`, and the console's own `POST /api/race` |
@@ -158,9 +158,11 @@ is at least 44 px tall, and every field has 16 px text, so iOS does not zoom in
 when one takes focus. A desk with a mouse keeps a denser layout from 1280 px
 up. The navigation wraps onto its own row rather than folding into a menu, and
 wide tables scroll inside their own box instead of widening the page. On a
-phone the tables also drop their secondary columns: a flight's departure moves
-under its route, a booking's times give way to a "cancelled" tag, and the
-request log keeps the call, the answer and the id sent.
+phone the tables also drop their secondary columns: a flight's status moves
+under its number and its departure under its route, a long passenger name is
+cut short with the whole name in its title, and the request log keeps the
+call, the answer and the id sent, and wraps a long call. Below 1024 px a
+booking's times give way to a "cancelled" tag.
 
 The request log opens as a drawer over the foot of the page and takes the
 keyboard's focus, since it comes last in the page. Escape inside it closes it
@@ -169,7 +171,9 @@ scroll its end clear of the drawer. A button that is busy keeps the focus and
 ignores presses, rather than going disabled and dropping it. A press that takes
 its own button away passes the focus on: an accepted status move to the group
 of moves that follow, and the pager, on reaching its first or last page, to its
-other button.
+other button. Signing in, signing out and a Try again that brings back a
+flight's or a booking's page all move the focus to the page's title, and a
+change of account is announced.
 
 ![A flight's page at 390 px wide: the header wraps onto three rows and every button, nav link and field is at least 44 px tall](../doc/assets/console-phone.png)
 
@@ -179,7 +183,7 @@ other button.
 |---|---|
 | `npm run lint` | ESLint with Next.js's core web vitals and TypeScript rules, no warnings allowed |
 | `npx tsc --noEmit` | The type-checker, strict, with unchecked index access |
-| `npm test` | Vitest: the proxy, the race and the `/api` route against a stubbed `fetch`, the browser's API client and the sign-in probe, the error classifier, the request log, the resource hook, and in jsdom the shared parts in `components/ui.tsx` (button tones and the busy state, field wiring, the seat bar, page titles, links and the Location mapping), the error banner, the booking form's replay comparison and status line, the transition control and the pager, including where each leaves the focus, and the request log drawer's focus, Escape and copy buttons; and a test that reads `FlightStatus.java` and fails if the console's copy of the transition table drifts from it |
+| `npm test` | Vitest: the proxy, the race and the `/api` route against a stubbed `fetch`, the browser's API client and the sign-in probe, the error classifier and its timeout hint, the request log, the resource hook and its pending state, the helpers that name a page from its address, and in jsdom the shared parts in `components/ui.tsx` (button tones and the busy state, field wiring, the seat bar, page titles, links and the Location mapping), the error banner, the booking form's replay comparison, status line and seat counts, the transition control and the pager, including where each leaves the focus, and the request log drawer's focus, Escape and copy buttons; and a test that reads `FlightStatus.java` and fails if the console's copy of the transition table drifts from it |
 | `npm run e2e` | Playwright on Chromium against the built console and a running service: sign-in and sign-out, flights, bookings, replays and the race, validation, the proxy's refusals, the ops pages, and the layout of every page at eleven viewports |
 
 `npm run e2e` starts the console itself on port 3100 and expects the service
@@ -209,6 +213,7 @@ Safari: nothing here has run in WebKit.
   console, and nothing deploys it.
 * **No login of its own.** It uses the service's accounts, and a reload signs
   out.
-* **No server-side rendering of data.** Every page is a client component; the
-  console's server only forwards.
+* **No server-side rendering of data.** No page fetches on the server: each
+  page's content is a client component, the server renders it without data and
+  names the tab from the address, and every API call goes through the proxy.
 * **No offline use or caching.** Each view asks the service again.

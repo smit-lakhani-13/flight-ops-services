@@ -103,6 +103,39 @@ describe("TransitionControl", () => {
     expect(onSend).toHaveBeenLastCalledWith("BOARDING");
   });
 
+  it("ignores the second click of a double click, which may land on the next move", async () => {
+    const onSend = vi.fn(async () => null);
+    render(<TransitionControl status="SCHEDULED" onSend={onSend} />);
+    const move = screen.getByRole("button", { name: "Move to DELAYED" });
+
+    fireEvent.click(move, { detail: 2 });
+    expect(onSend).not.toHaveBeenCalled();
+
+    fireEvent.click(move, { detail: 1 });
+    await waitFor(() => expect(onSend).toHaveBeenCalledTimes(1));
+  });
+
+  it("clears a refusal while the same status is sent again, so the answer is a new alert", async () => {
+    const refusal = () => classify(409, { code: "ILLEGAL_STATUS_TRANSITION", message: "no" });
+    let answer = () => {};
+    const onSend = vi
+      .fn<(next: string) => Promise<ReturnType<typeof classify> | null>>()
+      .mockResolvedValueOnce(refusal())
+      .mockImplementationOnce(() => new Promise((resolve) => (answer = () => resolve(refusal()))));
+    render(<TransitionControl status="SCHEDULED" onSend={onSend} />);
+    const send = screen.getByRole("button", { name: "Send" });
+
+    fireEvent.click(send);
+    const first = await screen.findByRole("alert");
+    fireEvent.click(send);
+    expect(screen.queryByRole("alert")).toBeNull();
+
+    await act(async () => answer());
+    const second = screen.getByRole("alert");
+    expect(second.dataset.code).toBe("ILLEGAL_STATUS_TRANSITION");
+    expect(second).not.toBe(first);
+  });
+
   it("gives the buttons back and logs it when a send throws", async () => {
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
     const failure = new Error("boom");

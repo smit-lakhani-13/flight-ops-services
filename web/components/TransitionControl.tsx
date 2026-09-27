@@ -39,6 +39,9 @@ export function TransitionControl({
 
   async function send(next: FlightStatus, button: string) {
     setPressed(button);
+    // Emptied first, so the same refusal twice is still a change a screen
+    // reader announces.
+    setError(null);
     try {
       const refused = await onSend(next);
       setError(refused);
@@ -73,7 +76,13 @@ export function TransitionControl({
               tone="secondary"
               busy={pressed === next}
               disabled={pressed !== null}
-              onClick={() => send(next, next)}
+              // The second click of a double click or a double tap. The first
+              // one's move may already have put another move under the
+              // pointer, which this click would otherwise send as well.
+              onClick={(event) => {
+                if (event.detail > 1) return;
+                void send(next, next);
+              }}
             >
               Move to {next}
             </Button>

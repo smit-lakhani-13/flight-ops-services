@@ -5,6 +5,7 @@ import { apiRequest, type ApiResponse, type Query } from "./api";
 import { basicAuthorization } from "./base64";
 import type { ClassifiedError } from "./errors";
 import { useRequestLog } from "./request-log";
+import type { Health } from "./types";
 
 // Credentials live in this React state and nowhere else: not in a cookie, not
 // in localStorage, and not in sessionStorage, which browsers write to disk to
@@ -31,6 +32,12 @@ interface SessionValue {
 
 const SessionContext = createContext<SessionValue | null>(null);
 
+function hasComponents(body: unknown): boolean {
+  if (typeof body !== "object" || body === null) return false;
+  const components = (body as Health).components;
+  return typeof components === "object" && components !== null;
+}
+
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const { record } = useRequestLog();
@@ -50,8 +57,21 @@ export function SessionProvider({ children }: { children: ReactNode }) {
           retryAfter: null,
         };
       }
-      // One cheap read proves the password. A 403 proves it too: the ops
-      // account is valid and simply holds no API scope.
+      // Health answers every valid account and 401 to a wrong password, so it
+      // proves the password without a refusal the browser would log. Only the
+      // actuator's role sees its components, and neither of the service's
+      // two accounts holds that role and the API scopes, so an account that
+      // sees them is ops and needs no API read. A 503 proves the password
+      // too: health sends it when a component is down, and only once the
+      // credential has been accepted.
+      const health = await apiRequest<Health>("GET", "actuator/health", { authorization }, { onLog: record });
+      if (!health.ok && health.status !== 503) return health.error;
+      if (hasComponents(health.body)) {
+        setSession({ user: user.trim(), authorization, apiScopes: false });
+        return null;
+      }
+      // Any other account reads one page of flights. A 403 still signs it in:
+      // the password is good, and the account holds no API scope.
       const probe = await apiRequest("GET", "v1/flights", { authorization, query: { size: 1 } }, { onLog: record });
       if (probe.ok || probe.status === 403) {
         setSession({ user: user.trim(), authorization, apiScopes: probe.ok });

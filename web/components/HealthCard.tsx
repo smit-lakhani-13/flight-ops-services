@@ -69,7 +69,9 @@ export function HealthCard({
               {Object.entries(health.components).map(([name, component]) => (
                 <li
                   key={name}
-                  className="flex min-w-0 items-center justify-between gap-2 rounded-md bg-slate-50 px-2 py-1.5 dark:bg-slate-950"
+                  // The edge shows only under forced colours, where the fill
+                  // that pairs a name with its status is dropped.
+                  className="flex min-w-0 items-center justify-between gap-2 rounded-md bg-slate-50 px-2 py-1.5 forced-colors:border dark:bg-slate-950"
                 >
                   <span className="min-w-0 font-mono wrap-anywhere">{name}</span>
                   <span

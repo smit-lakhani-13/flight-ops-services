@@ -7,7 +7,7 @@ import { RequestLogProvider, useRequestLog } from "@/lib/request-log";
 import { SessionProvider, useSession } from "@/lib/session";
 import { ListIcon, PlaneIcon } from "./icons";
 import { RequestLog } from "./RequestLog";
-import { Button, FOCUS, MUTED, TOUCH } from "./ui";
+import { Button, FOCUS, focusPageTitle, MUTED, TOUCH } from "./ui";
 
 const NAV = [
   { href: "/", label: "Overview" },
@@ -47,6 +47,16 @@ function Frame({ children }: { children: ReactNode }) {
   const { entries } = useRequestLog();
   const [logOpen, setLogOpen] = useState(false);
   const requests = useRef<HTMLButtonElement>(null);
+  // Said once when the account changes, in a region that is always there, so
+  // a screen reader hears the sign-in and the sign-out. Worked out while
+  // rendering, from the user last seen, so no effect sets state.
+  const user = session?.user ?? null;
+  const [seenUser, setSeenUser] = useState(user);
+  const [notice, setNotice] = useState("");
+  if (user !== seenUser) {
+    setSeenUser(user);
+    setNotice(user === null ? "Signed out" : `Signed in as ${user}`);
+  }
 
   const closeLog = useCallback((returnFocus: boolean) => {
     setLogOpen(false);
@@ -82,8 +92,10 @@ function Frame({ children }: { children: ReactNode }) {
                       href={item.href}
                       aria-current={current ? "page" : undefined}
                       className={`inline-flex items-center rounded-control px-3 py-1.5 font-medium motion-safe:transition-colors ${FOCUS} ${TOUCH} ${
+                        // Underlined as well as tinted, so the current page is
+                        // marked by more than colour, and under forced colours.
                         current
-                          ? "bg-sky-50 text-sky-800 dark:bg-sky-400/10 dark:text-sky-300"
+                          ? "bg-sky-50 text-sky-800 underline decoration-2 underline-offset-4 dark:bg-sky-400/10 dark:text-sky-300"
                           : "text-slate-700 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800"
                       }`}
                     >
@@ -114,13 +126,23 @@ function Frame({ children }: { children: ReactNode }) {
                 <span className={`min-w-0 truncate ${MUTED}`} data-testid="signed-in-as" title={session.user}>
                   Signed in as <strong className="font-mono text-slate-900 dark:text-slate-100">{session.user}</strong>
                 </span>
-                <Button tone="secondary" onClick={signOut}>
+                <Button
+                  tone="secondary"
+                  onClick={() => {
+                    signOut();
+                    // The button goes away with the session; the heading stays.
+                    focusPageTitle();
+                  }}
+                >
                   Sign out
                 </Button>
               </>
             ) : (
               <span className={MUTED}>Not signed in</span>
             )}
+            <p role="status" className="sr-only">
+              {notice}
+            </p>
           </div>
         </div>
       </header>

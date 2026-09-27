@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { createContext, useContext, useEffect, useId, type ComponentProps, type ReactNode } from "react";
 import type { FlightStatus } from "@/lib/types";
-import { SpinnerIcon } from "./icons";
+import { AlertIcon, SpinnerIcon } from "./icons";
 
 // The primitives every page shares, in Tailwind classes alone, so the console
 // carries no component library to keep patched. Three rules hold for all of
@@ -119,9 +119,20 @@ export function Card({
   );
 }
 
+const PAGE_TITLE = "page-title";
+
+/**
+ * Moves the focus to the page's h1, for a press that replaces what the focus
+ * was on with a page of its own, such as signing in or out.
+ */
+export function focusPageTitle() {
+  document.getElementById(PAGE_TITLE)?.focus();
+}
+
 /**
  * The page's one h1. It also names the browser tab, from `documentTitle` or
- * from a plain-text title, so each page has a title of its own.
+ * from a plain-text title, so each page has a title of its own. It takes the
+ * focus from focusPageTitle but is not a Tab stop.
  */
 export function PageTitle({
   title,
@@ -142,7 +153,13 @@ export function PageTitle({
   return (
     <div className="mb-6 flex flex-wrap items-end justify-between gap-x-4 gap-y-3 sm:mb-8">
       <div className="min-w-0">
-        <h1 className="text-2xl font-semibold tracking-tight text-balance wrap-anywhere sm:text-3xl">{title}</h1>
+        <h1
+          id={PAGE_TITLE}
+          tabIndex={-1}
+          className={`rounded-sm text-2xl font-semibold tracking-tight text-balance wrap-anywhere sm:text-3xl ${FOCUS}`}
+        >
+          {title}
+        </h1>
         {subtitle && <p className={`mt-2 max-w-3xl text-sm text-pretty sm:text-base ${MUTED}`}>{subtitle}</p>}
       </div>
       {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
@@ -187,7 +204,10 @@ export function Field({
       {error ? (
         // Not an alert: the form's banner announces the failure once, and each
         // field says what is wrong through aria-invalid and this description.
-        <span id={errorId} className="text-xs text-rose-700 dark:text-rose-400">
+        // The icon marks it as an error where colour cannot, as under forced
+        // colours; it is hidden, so the description is the message alone.
+        <span id={errorId} className="flex items-start gap-1 text-xs text-rose-700 dark:text-rose-400">
+          <AlertIcon className="mt-px size-3.5" />
           {error}
         </span>
       ) : (
@@ -202,8 +222,11 @@ export function Field({
 }
 
 // The border is slate-500 in both schemes: 4.8:1 on white and 3.7:1 on a dark
-// card, over the 3:1 a field's edge needs to be seen.
-const CONTROL = `block w-full min-w-0 rounded-control border border-slate-500 bg-white px-2.5 py-1.5 text-sm text-slate-900 shadow-xs placeholder:text-slate-500 motion-safe:transition-colors focus:border-accent ${FOCUS} aria-[invalid=true]:border-rose-600 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-400 dark:aria-[invalid=true]:border-rose-400 max-xl:min-h-11 max-xl:text-base pointer-coarse:min-h-11 pointer-coarse:text-base`;
+// card, over the 3:1 a field's edge needs to be seen. An invalid field's
+// border is thicker under forced colours, where its red is replaced. Inputs
+// and selects share the buttons' 34 px on a desk, whatever the platform's
+// line height.
+const CONTROL = `block w-full min-w-0 min-h-8.5 rounded-control border border-slate-500 bg-white px-2.5 py-1.5 text-sm text-slate-900 shadow-xs placeholder:text-slate-500 motion-safe:transition-colors focus:border-accent ${FOCUS} aria-[invalid=true]:border-rose-600 forced-colors:aria-[invalid=true]:border-2 dark:bg-slate-950 dark:text-slate-100 dark:placeholder:text-slate-400 dark:aria-[invalid=true]:border-rose-400 max-xl:min-h-11 max-xl:text-base pointer-coarse:min-h-11 pointer-coarse:text-base`;
 
 function useFieldWiring(id: string | undefined, describedBy: string | undefined, invalid: boolean | undefined) {
   const field = useContext(FieldContext);
@@ -257,11 +280,12 @@ const STATUS_TONES: Record<FlightStatus, { badge: string; dot: string }> = {
   },
 };
 
-export function StatusBadge({ status }: { status: FlightStatus }) {
+/** `testId` is false for a second copy of a badge, so the page's test id stays unique. */
+export function StatusBadge({ status, testId = true }: { status: FlightStatus; testId?: boolean }) {
   const tone = STATUS_TONES[status];
   return (
     <span
-      data-testid="flight-status"
+      data-testid={testId ? "flight-status" : undefined}
       className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-semibold ring-1 ring-inset ${tone?.badge ?? ""}`}
     >
       <span aria-hidden="true" className={`size-1.5 rounded-full ${tone?.dot ?? "bg-slate-400"}`} />
@@ -325,6 +349,8 @@ export function HttpStatus({ status }: { status: number }) {
  * Seats left as a bar and as text: "12/20", read out as "12/20 seats left".
  * The bar is as full as the flight has seats left, amber at a tenth or less.
  * `compact` leaves the bar out below 640 px, where a table needs the room.
+ * Under forced colours the track keeps an outline and the fill is drawn in
+ * the text colour, since both fills would otherwise be dropped.
  */
 export function SeatBar({ available, total, compact = false }: { available: number; total: number; compact?: boolean }) {
   const left = total > 0 ? Math.round((Math.min(Math.max(available, 0), total) / total) * 100) : 0;
@@ -334,9 +360,12 @@ export function SeatBar({ available, total, compact = false }: { available: numb
       <div
         aria-hidden="true"
         data-testid="seat-bar"
-        className={`h-1.5 w-20 shrink-0 overflow-hidden rounded-full bg-slate-200 dark:bg-slate-700 ${compact ? "hidden sm:block" : ""}`}
+        className={`h-1.5 w-20 shrink-0 overflow-hidden rounded-full bg-slate-200 forced-colors:border dark:bg-slate-700 ${compact ? "hidden sm:block" : ""}`}
       >
-        <div className={`h-full rounded-full ${fill}`} style={{ width: `${left}%` }} />
+        <div
+          className={`h-full rounded-full ${fill} forced-colors:bg-[color:CanvasText] forced-colors:forced-color-adjust-none`}
+          style={{ width: `${left}%` }}
+        />
       </div>
       <span className="text-sm whitespace-nowrap tabular-nums">
         {available}
@@ -371,16 +400,20 @@ export function KeyValue({ items }: { items: readonly KeyValueItem[] }) {
   );
 }
 
-/** Grey bars where rows will be; the text for a screen reader says what is loading. */
+/**
+ * Grey bars where rows will be; the text for a screen reader says what is
+ * loading. The bars' transparent borders show under forced colours, as the
+ * buttons' do.
+ */
 export function Skeleton({ rows = 3, label = "Loading" }: { rows?: number; label?: string }) {
   return (
     <div role="status" className="flex flex-col gap-3 py-2">
       <span className="sr-only">{label}…</span>
       {Array.from({ length: rows }, (_, row) => (
         <div key={row} aria-hidden="true" className="flex items-center gap-4">
-          <div className="h-4 w-20 rounded bg-slate-200 dark:bg-slate-800" />
-          <div className="h-4 flex-1 rounded bg-slate-100 dark:bg-slate-800/60" />
-          <div className="hidden h-4 w-24 rounded bg-slate-200 sm:block dark:bg-slate-800" />
+          <div className="h-4 w-20 rounded border border-transparent bg-slate-200 dark:bg-slate-800" />
+          <div className="h-4 flex-1 rounded border border-transparent bg-slate-100 dark:bg-slate-800/60" />
+          <div className="hidden h-4 w-24 rounded border border-transparent bg-slate-200 sm:block dark:bg-slate-800" />
         </div>
       ))}
     </div>
@@ -398,6 +431,14 @@ export function EmptyState({ icon, children, action }: { icon: ReactNode; childr
       {action}
     </div>
   );
+}
+
+/**
+ * A code such as ILLEGAL_STATUS_TRANSITION, which may break after each
+ * underscore rather than mid-word. The text is unchanged: <wbr> adds none.
+ */
+export function Identifier({ value }: { value: string }) {
+  return <>{value.split("_").flatMap((part, i, all) => (i < all.length - 1 ? [part, "_", <wbr key={i} />] : [part]))}</>;
 }
 
 /** One figure with its label, for a grid of them inside a dl. */

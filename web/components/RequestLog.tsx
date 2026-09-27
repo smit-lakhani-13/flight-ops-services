@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { useRequestLog } from "@/lib/request-log";
 import { CheckIcon, CloseIcon, CopyIcon, ListIcon } from "./icons";
 import { Button, EmptyState, HttpStatus, MUTED, NONE, STATUS_EDGE, statusClass } from "./ui";
@@ -9,14 +9,23 @@ import { Button, EmptyState, HttpStatus, MUTED, NONE, STATUS_EDGE, statusClass }
 // writes for a request carries the X-Request-Id it echoed. The drawer sits over
 // the bottom of the page and its header stays put while the rows scroll. It
 // takes the keyboard's focus when it opens, since it comes last on the page;
-// Escape inside it closes it and hands focus back to the Requests button.
-// Below 640 px a row shows the call, the answer and the id sent; the time,
-// the echo, the Location and the duration join from there up.
+// Escape inside it closes it and hands focus back to the Requests button. A
+// click inside it keeps the focus there, so Escape still works after a click on
+// a button that disables itself, and Clear keeps the drawer at its height until
+// the next call, so a second click on it lands in the drawer too. Below 640 px
+// a row shows the call, the answer and the id sent; the time, the echo, the
+// Location and the duration join from there up, and a long call wraps rather
+// than widening every row. On a short screen, or at a high zoom, the whole
+// drawer scrolls as one, and the scroll padding keeps a focused row clear of
+// the sticky headings.
 const WIDE = "hidden sm:table-cell";
 
 export function RequestLog({ onClose }: { onClose: (returnFocus: boolean) => void }) {
   const { entries, clear } = useRequestLog();
   const close = useRef<HTMLButtonElement>(null);
+  const drawer = useRef<HTMLElement>(null);
+  const [cleared, setCleared] = useState<number>();
+  const title = useId();
 
   useEffect(() => close.current?.focus(), []);
 
@@ -29,13 +38,18 @@ export function RequestLog({ onClose }: { onClose: (returnFocus: boolean) => voi
   return (
     <aside
       id="request-log-drawer"
+      ref={drawer}
       aria-label="Request log"
+      tabIndex={-1}
       onKeyDown={onKeyDown}
-      className="fixed inset-x-0 bottom-0 z-20 flex max-h-[50vh] flex-col border-t border-slate-300 bg-white shadow-drawer dark:border-slate-700 dark:bg-slate-900"
+      style={entries.length === 0 && cleared ? { minHeight: `min(${cleared}px, 50vh)` } : undefined}
+      className="fixed inset-x-0 bottom-0 z-20 flex max-h-[50vh] flex-col overflow-y-auto border-t border-slate-300 bg-white shadow-drawer dark:border-slate-700 dark:bg-slate-900"
     >
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2 border-b border-slate-200 px-4 py-2 sm:px-6 dark:border-slate-800">
         <div className="min-w-0">
-          <h2 className="text-sm font-semibold">Request log</h2>
+          <h2 id={title} className="text-sm font-semibold">
+            Request log
+          </h2>
           <p className={`text-xs ${MUTED}`}>
             Last {entries.length} of up to 20 calls from this tab, newest first
           </p>
@@ -45,6 +59,7 @@ export function RequestLog({ onClose }: { onClose: (returnFocus: boolean) => voi
             tone="ghost"
             disabled={entries.length === 0}
             onClick={() => {
+              setCleared(drawer.current?.offsetHeight);
               clear();
               // Clear disables itself, which would drop the focus.
               close.current?.focus();
@@ -62,8 +77,8 @@ export function RequestLog({ onClose }: { onClose: (returnFocus: boolean) => voi
           No requests yet. Every call a page makes is listed here with the id the API logged it under.
         </EmptyState>
       ) : (
-        <div className="relative min-h-0 flex-1 overflow-auto">
-          <table className="w-full text-left text-xs" data-testid="request-log">
+        <div className="relative min-h-0 flex-1 scroll-pt-8 overflow-auto [@media(max-height:30rem)]:flex-none">
+          <table className="w-full text-left text-xs" data-testid="request-log" aria-labelledby={title}>
             <thead className={MUTED}>
               <tr>
                 {HEADINGS.map(({ label, className }) => (
@@ -86,13 +101,13 @@ export function RequestLog({ onClose }: { onClose: (returnFocus: boolean) => voi
                       {new Date(entry.at).toLocaleTimeString()}
                     </td>
                     {/* The status edge moves to this cell while the time is hidden. */}
-                    <td className={`border-l-4 py-1.5 pr-2 pl-4 whitespace-nowrap sm:border-l-0 sm:pl-2 ${STATUS_EDGE[kind]}`}>
+                    <td className={`min-w-24 border-l-4 py-1.5 pr-2 pl-4 wrap-anywhere sm:min-w-48 sm:border-l-0 sm:pl-2 ${STATUS_EDGE[kind]}`}>
                       {entry.method} {entry.path}
                     </td>
-                    <td className="px-2 py-1.5 whitespace-nowrap">
+                    <td className="px-2 py-1.5 wrap-anywhere sm:whitespace-nowrap">
                       <HttpStatus status={entry.status} /> {entry.code}
                     </td>
-                    <td className="px-2 py-1 whitespace-nowrap">
+                    <td className="px-2 py-1 wrap-anywhere sm:whitespace-nowrap">
                       <span className="inline-flex items-center gap-1">
                         <CopyButton value={entry.requestId} />
                         <span data-testid="sent-id">{entry.requestId}</span>

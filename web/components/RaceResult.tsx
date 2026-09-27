@@ -29,7 +29,7 @@ export function RaceResult({ report, before, after }: { report: RaceReport; befo
         />
       </dl>
       <div className="relative overflow-x-auto">
-        <table className="w-full text-left text-xs">
+        <table className="w-full text-left text-xs" aria-label="Race answers">
           <thead className={MUTED}>
             <tr>
               <th scope="col" className="py-1.5 pr-3 pl-3 font-medium">#</th>

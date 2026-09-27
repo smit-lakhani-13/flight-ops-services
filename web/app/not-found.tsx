@@ -1,5 +1,8 @@
+import type { Metadata } from "next";
 import { CompassIcon } from "@/components/icons";
 import { Card, EmptyState, PageTitle, TextLink } from "@/components/ui";
+
+export const metadata: Metadata = { title: "Not found" };
 
 export default function NotFound() {
   return (

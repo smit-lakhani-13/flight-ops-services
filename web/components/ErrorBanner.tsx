@@ -1,5 +1,6 @@
 import { hint, type ClassifiedError } from "@/lib/errors";
 import { AlertIcon } from "./icons";
+import { Identifier } from "./ui";
 
 // Renders whatever the API answered: its code, its message, and any per-field
 // messages no input on the page claimed. The console adds only a hint about
@@ -60,7 +61,9 @@ export function ErrorBanner({
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-baseline gap-x-2">
           {error.status > 0 && <span className="font-mono text-xs text-slate-600 dark:text-slate-400">{error.status}</span>}
-          <span className="font-mono font-semibold wrap-anywhere">{error.code}</span>
+          <span className="font-mono font-semibold wrap-anywhere">
+            <Identifier value={error.code} />
+          </span>
         </div>
         <p className="mt-1 wrap-anywhere">{error.message}</p>
         {unclaimed.length > 0 && (

@@ -96,7 +96,11 @@ export function hint(error: ClassifiedError): string | null {
         ? `The request was valid and the service was busy. Retry after ${error.retryAfter} s.`
         : "The service is unavailable. Retry shortly.";
     case "console":
-      return "The console's own server answered this, not the API.";
+      // The proxy stopped waiting, not the API: a change may still be applied
+      // after this answer, and repeating it blind could apply it twice.
+      return error.code === "CONSOLE_UPSTREAM_TIMEOUT"
+        ? "The console stopped waiting, but the API may still finish the request. Read the result again before repeating a change; a booking can be replayed safely on the same key."
+        : "The console's own server answered this, not the API.";
     case "network":
       return "Check that the console's server is still running.";
     default:

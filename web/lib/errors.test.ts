@@ -40,4 +40,12 @@ describe("classify", () => {
     expect(classify(404, null).kind).toBe("notFound");
     expect(classify(0, null).kind).toBe("network");
   });
+
+  it("warns that a timed-out change may still be applied", () => {
+    const timeout = classify(504, { code: "CONSOLE_UPSTREAM_TIMEOUT", message: "The API did not answer within 15 s." });
+    expect(timeout.kind).toBe("console");
+    expect(hint(timeout)).toContain("may still finish the request");
+    const unreachable = classify(502, { code: "CONSOLE_UPSTREAM_UNREACHABLE", message: "down" });
+    expect(hint(unreachable)).not.toContain("may still finish");
+  });
 });
