@@ -177,7 +177,10 @@ says not yet.
   a chunked body as it is read. `GlobalExceptionHandler#handleMalformed`
   answers a chunked JSON body over the limit with the same 413, not
   `400 MALFORMED_REQUEST`. The OpenAPI document declares the 413 on the three
-  writes, and `doc/api.md` lists the code.
+  writes, and `doc/api.md` lists the code. The filter's own 413 carries
+  Spring Security's default headers, as a 401, a 403 and the chunked 413 do:
+  `X-Content-Type-Options: nosniff`, `Cache-Control` with `no-store` and
+  `X-Frame-Options: DENY` among them.
 
 - **A booking on a flight that had flown could still be cancelled.**
   `DELETE /api/v1/bookings/{bookingId}` never read the flight's status, so on
@@ -265,7 +268,10 @@ says not yet.
   four named only `LOCK_TIMEOUT`. `OpenApiConfig#sharedResponses` now adds the
   code to every operation under `/api/`, `Retry-After` as a header on every
   503, and `X-Request-Id` as a header on every documented response, since
-  `RequestIdFilter` sets it on every response the application handles.
+  `RequestIdFilter` sets it on every response the application handles. The
+  four `LOCK_TIMEOUT` descriptions now put a colon after the code, as the
+  appended `DATABASE_UNAVAILABLE` sentence does, so none of them mixes a dash
+  and a colon.
 
 - **Two response schemas disagreed with the JSON.** An active booking is sent
   with `"cancelledAt": null`, and the schema's plain `string` type refused the
@@ -596,7 +602,9 @@ says not yet.
   queue. `config/EmbeddedDatabaseGuard.java#refuseInMemoryH2WithDbUrl` now
   stops startup when `DB_URL` is set and the datasource is still in-memory H2,
   naming the active profiles and saying `SPRING_PROFILES_ACTIVE` must include
-  `prod` or `postgres`. It keys on `DB_URL`, which the ConfigMap and
+  `prod` for the cluster or `postgres` for compose or a local PostgreSQL, and
+  never `postgres` in the cluster, which seeds the demo flights and accepts an
+  unhashed password. It keys on `DB_URL`, which the ConfigMap and
   `compose.yaml` set, so a developer with `DB_URL` exported has default-profile
   runs and the H2 tests refused too, and the message says to unset it.
   `doc/OPERATIONS.md` describes the guard under Profiles.

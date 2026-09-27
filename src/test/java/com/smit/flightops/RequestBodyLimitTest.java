@@ -84,6 +84,10 @@ class RequestBodyLimitTest {
         assertThat(response.headers().firstValue("Content-Type")).hasValueSatisfying(
                 type -> assertThat(type).startsWith("application/json"));
         assertThat(response.headers().firstValue("X-Request-Id")).isPresent();
+        assertThat(response.headers().firstValue("X-Content-Type-Options")).hasValue("nosniff");
+        assertThat(response.headers().firstValue("Cache-Control")).hasValueSatisfying(
+                value -> assertThat(value).contains("no-store"));
+        assertThat(response.headers().firstValue("X-Frame-Options")).hasValue("DENY");
 
         JsonNode error = MAPPER.readTree(response.body());
         assertThat(error.get("code").asString()).isEqualTo("PAYLOAD_TOO_LARGE");

@@ -203,7 +203,7 @@ public class FlightController {
                     landed first and `@Version` rejected this one.""",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "503", description = """
-                    `LOCK_TIMEOUT` — a booking or a booking cancellation held the flight row \
+                    `LOCK_TIMEOUT`: a booking or a booking cancellation held the flight row \
                     past `lock_timeout`. Carries `Retry-After`.""",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     })
@@ -229,7 +229,7 @@ public class FlightController {
                     `CONCURRENT_MODIFICATION` — another write landed first.""",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "503", description = """
-                    `LOCK_TIMEOUT` — a booking or a booking cancellation held the flight row \
+                    `LOCK_TIMEOUT`: a booking or a booking cancellation held the flight row \
                     past `lock_timeout`. Carries `Retry-After`.""",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     })

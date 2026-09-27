@@ -11,9 +11,16 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.boot.servlet.filter.OrderedFormContentFilter;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.web.header.HeaderWriter;
+import org.springframework.security.web.header.writers.CacheControlHeadersWriter;
+import org.springframework.security.web.header.writers.HstsHeaderWriter;
+import org.springframework.security.web.header.writers.XContentTypeOptionsHeaderWriter;
+import org.springframework.security.web.header.writers.XXssProtectionHeaderWriter;
+import org.springframework.security.web.header.writers.frameoptions.XFrameOptionsHeaderWriter;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.util.List;
 
 /**
  * Refuses a request body over {@code app.http.max-body-bytes} with 413
@@ -36,11 +43,18 @@ import java.io.IOException;
  * form-encoded {@code PUT}, {@code PATCH} or {@code DELETE} body in full before Spring
  * Security runs, so that read is counted as well. An oversized declared length or form
  * body without credentials therefore gets 413, not 401. {@code HttpConfig} builds it.
+ * Because its 413 is written before Spring Security's {@code HeaderWriterFilter},
+ * {@link #reject} applies the same default header writers itself.
  *
  * @see "doc/api.md, section Request rules"
  */
 @Order(OrderedFormContentFilter.DEFAULT_ORDER - 1)
 public class RequestBodyLimitFilter extends OncePerRequestFilter {
+
+    /** The header writers Spring Security adds by default; the 413 here is written before they run. */
+    private static final List<HeaderWriter> SECURITY_HEADERS = List.of(
+            new XContentTypeOptionsHeaderWriter(), new XXssProtectionHeaderWriter(), new CacheControlHeadersWriter(),
+            new HstsHeaderWriter(), new XFrameOptionsHeaderWriter());
 
     private final long maxBodyBytes;
     private final ErrorResponseWriter writer;
@@ -55,7 +69,7 @@ public class RequestBodyLimitFilter extends OncePerRequestFilter {
                                     FilterChain chain) throws ServletException, IOException {
         long declared = request.getContentLengthLong();
         if (declared > maxBodyBytes) {
-            reject(response);
+            reject(request, response);
             return;
         }
         if (declared >= 0) {
@@ -67,11 +81,12 @@ public class RequestBodyLimitFilter extends OncePerRequestFilter {
         } catch (PayloadTooLargeException e) {
             // A body read outside Spring MVC, such as FormContentFilter's. Without
             // this the container would forward the IOException to /error as a 500.
-            reject(response);
+            reject(request, response);
         }
     }
 
-    private void reject(HttpServletResponse response) throws IOException {
+    private void reject(HttpServletRequest request, HttpServletResponse response) throws IOException {
+        SECURITY_HEADERS.forEach(headers -> headers.writeHeaders(request, response));
         writer.write(response, HttpStatus.CONTENT_TOO_LARGE, "PAYLOAD_TOO_LARGE",
                 PayloadTooLargeException.messageFor(maxBodyBytes));
     }
