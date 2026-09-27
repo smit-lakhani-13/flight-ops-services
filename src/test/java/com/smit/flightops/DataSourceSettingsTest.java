@@ -36,8 +36,8 @@ class DataSourceSettingsTest {
      */
     @ParameterizedTest
     @ValueSource(strings = {"postgres", "prod"})
-    @DisplayName("each PostgreSQL profile pins a 5 s connection wait and READ COMMITTED on the pool")
-    void postgresProfilesPinTheWaitAndTheIsolation(String profile) {
+    @DisplayName("each PostgreSQL profile sets a 5 s connection wait and READ COMMITTED on the pool")
+    void postgresProfilesSetTheWaitAndTheIsolation(String profile) {
         runner.withPropertyValues("spring.profiles.active=" + profile).run(context -> {
             HikariDataSource pool = context.getBean(HikariDataSource.class);
 
@@ -55,7 +55,7 @@ class DataSourceSettingsTest {
      * H2's lock timeout prove no profile document was read.
      */
     @Test
-    @DisplayName("the default H2 profile keeps the 30 s connection wait and pins READ COMMITTED")
+    @DisplayName("the default H2 profile keeps the 30 s connection wait and sets READ COMMITTED")
     void defaultProfileKeepsTheLongerWait() {
         runner.run(context -> {
             HikariDataSource pool = context.getBean(HikariDataSource.class);
