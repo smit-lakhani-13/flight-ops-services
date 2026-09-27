@@ -180,7 +180,9 @@ still blank.
   holds its row locks longer, and at the cap it adds replicas, up to the HPA's
   four. The command in "Events stop arriving" read only the last 10 lines of
   each pod, kubectl's default with a label selector, and now passes
-  `--tail=-1` and `--prefix`.
+  `--tail=-1` and `--prefix`. Where the poll interval is set and described,
+  an event's latency now counts the sends ahead of it, and says that a
+  backlog, a failed send or a prune run adds more.
 
 ## 1.2.0 — 2026-09-26
 
