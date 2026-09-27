@@ -31,10 +31,12 @@ export default defineConfig({
     trace: "retain-on-failure",
     screenshot: "only-on-failure",
   },
-  // desktop-1280 runs every spec. The other ten run only the layout spec:
-  // four phones, four tablets either way up, and two wider desktops. Every
-  // project is Chromium; the phones and tablets emulate a touch screen and a
-  // mobile viewport, which is not the same as testing Safari.
+  // desktop-1280 runs every spec. The other eleven run only the layout spec:
+  // four phones, five tablets either way up, and two wider desktops. The
+  // widest tablet is 1366 px, past the 1280 px where a mouse gets the compact
+  // controls, so it checks that a touch screen keeps the tall ones there.
+  // Every project is Chromium; the phones and tablets emulate a touch screen
+  // and a mobile viewport, which is not the same as testing Safari.
   projects: [
     { name: "desktop-1280", use: { ...devices["Desktop Chrome"] } },
     touch("phone-320", 320, 568),
@@ -45,6 +47,7 @@ export default defineConfig({
     touch("tablet-820", 820, 1180),
     touch("tablet-1024", 1024, 1366),
     touch("tablet-1180", 1180, 820),
+    touch("tablet-1366", 1366, 1024),
     desktop("desktop-1440", 1440, 900),
     desktop("desktop-1920", 1920, 1080),
   ],

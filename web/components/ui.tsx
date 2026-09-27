@@ -25,6 +25,9 @@ export const FOCUS = "focus-visible:outline-2 focus-visible:outline-offset-2 foc
 /** The touch height below 1280 px and on a coarse pointer, such as a large tablet. */
 export const TOUCH = "max-xl:min-h-11 pointer-coarse:min-h-11";
 
+/** A table cell whose `TextLink` has `fillCell`: the box the link's hit area fills. */
+export const LINK_CELL = "relative";
+
 /**
  * True when the focus is on `element` or inside it, or on nothing, which is
  * where a browser leaves it when the focused button goes disabled or away. A
@@ -454,22 +457,29 @@ export function Stat({ label, value, note, testId }: { label: string; value: Rea
   );
 }
 
-/** A link in the text. `standalone` is for one on a line of its own, which gets the touch height. */
+/**
+ * A link in the text. `standalone` is for one on a line of its own, which gets
+ * the touch height. `fillCell` is for one in a table cell marked `LINK_CELL`:
+ * the link's hit area then covers the whole cell, so a finger can land
+ * anywhere in it, and the row keeps its height.
+ */
 export function TextLink({
   href,
   children,
   className = "",
   standalone = false,
+  fillCell = false,
 }: {
   href: string;
   children: ReactNode;
   className?: string;
   standalone?: boolean;
+  fillCell?: boolean;
 }) {
   return (
     <Link
       href={href}
-      className={`rounded-sm font-medium text-sky-700 underline-offset-2 hover:underline dark:text-sky-400 ${standalone ? `inline-flex items-center ${TOUCH}` : ""} ${FOCUS} ${className}`}
+      className={`rounded-sm font-medium text-sky-700 underline-offset-2 hover:underline dark:text-sky-400 ${standalone ? `inline-flex items-center ${TOUCH}` : ""} ${fillCell ? "after:absolute after:inset-0" : ""} ${FOCUS} ${className}`}
     >
       {children}
     </Link>

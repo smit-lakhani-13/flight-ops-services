@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { createBooking, createFlight, go, openFlight, OPS_ACCOUNT, signIn, signInHere, uniqueFlightNumber } from "./support";
 
-// The one spec every project in playwright.config.ts runs: four phones, four
+// The one spec every project in playwright.config.ts runs: four phones, five
 // tablets, three desktops. It walks the pages by their links, because a
 // page.goto() signs out, and on each one checks what a narrow or touch screen
 // breaks first. All of it is Chromium's emulation of those screens.
@@ -26,6 +26,26 @@ async function checkLayout(page: Page, where: string, touch: boolean, signedIn =
       const parent = table.parentElement;
       if (!parent || getComputedStyle(parent).overflowX !== "auto") {
         found.push(`table ${table.dataset.testid ?? ""} does not scroll inside its own box`);
+      }
+    }
+    // A link in a table row keeps the row short, so its hit area is the whole
+    // cell instead: a tap anywhere in the cell must land on the link.
+    for (const link of document.querySelectorAll<HTMLAnchorElement>("table a")) {
+      const cell = link.closest("td");
+      if (!cell) continue;
+      cell.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" });
+      const box = cell.getBoundingClientRect();
+      const inset = 2;
+      const points: [number, number][] = [
+        [box.left + inset, box.top + inset],
+        [box.right - inset, box.top + inset],
+        [box.left + box.width / 2, box.top + box.height / 2],
+        [box.left + inset, box.bottom - inset],
+        [box.right - inset, box.bottom - inset],
+      ];
+      const missed = points.filter(([x, y]) => !link.contains(document.elementFromPoint(x, y)));
+      if (missed.length > 0) {
+        found.push(`${name(link)} does not fill its ${box.width.toFixed(0)} by ${box.height.toFixed(0)} px cell`);
       }
     }
     if (touch) {

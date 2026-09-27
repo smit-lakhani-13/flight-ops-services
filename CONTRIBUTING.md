@@ -171,8 +171,8 @@ scripts/numbers.sh
 So 656 tests exist across the two modules. 637 run without Docker and 19
 skip, and CI runs all 656.
 
-The console has two suites of its own, outside those counts: 132 Vitest unit
-tests and 29 Playwright end-to-end tests, three of them at eleven viewports.
+The console has two suites of its own, outside those counts: 136 Vitest unit
+tests and 29 Playwright end-to-end tests, three of them at twelve viewports.
 `scripts/numbers.sh` lists both counts after an `npm ci` in `web/`, and
 [web/README.md](web/README.md#tests) says what each suite covers.
 

@@ -1,5 +1,5 @@
 import type { Booking } from "@/lib/types";
-import { formatInstant, MUTED, NONE, TextLink } from "./ui";
+import { formatInstant, LINK_CELL, MUTED, NONE, TextLink } from "./ui";
 
 // Below 1024 px the dates give way, so the id, the passenger and the seats stay
 // on screen, and a cancelled booking says so beside its id. Below 640 px the
@@ -31,8 +31,10 @@ export function BookingTable({ bookings }: { bookings: Booking[] }) {
         <tbody>
           {bookings.map((booking) => (
             <tr key={booking.bookingId} className="border-b border-slate-100 last:border-0 dark:border-slate-800">
-              <td className="py-2.5 pr-4 font-mono whitespace-nowrap">
-                <TextLink href={`/bookings/${booking.bookingId}`}>#{booking.bookingId}</TextLink>
+              <td className={`${LINK_CELL} py-2.5 pr-4 font-mono whitespace-nowrap`}>
+                <TextLink href={`/bookings/${booking.bookingId}`} fillCell>
+                  #{booking.bookingId}
+                </TextLink>
                 {booking.cancelledAt && (
                   <span className="ml-2 rounded-full bg-rose-50 px-1.5 py-0.5 font-sans text-xs font-medium text-rose-800 lg:hidden dark:bg-rose-400/10 dark:text-rose-300">
                     cancelled

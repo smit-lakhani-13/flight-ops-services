@@ -34,6 +34,33 @@ function Seed({ entries }: { entries: LogEntry[] }) {
   return null;
 }
 
+// A screen of a given width for matchMedia, which jsdom lacks; resize()
+// crosses the breakpoint the way turning a phone does.
+function screenOf(width: number) {
+  const listeners = new Set<() => void>();
+  const query = (media: string) => ({
+    get matches() {
+      return media === "(min-width: 40rem)" ? width >= 640 : false;
+    },
+    media,
+    addEventListener: (_: string, listener: () => void) => listeners.add(listener),
+    removeEventListener: (_: string, listener: () => void) => listeners.delete(listener),
+  });
+  vi.stubGlobal("matchMedia", query);
+  return {
+    resize(next: number) {
+      width = next;
+      listeners.forEach((listener) => listener());
+    },
+  };
+}
+
+function headings() {
+  return within(screen.getByTestId("request-log"))
+    .getAllByRole("columnheader")
+    .map((cell) => cell.textContent);
+}
+
 function renderLog(entries: LogEntry[], onClose = vi.fn()) {
   render(
     <RequestLogProvider>
@@ -59,6 +86,60 @@ describe("RequestLog", () => {
     expect(sent.textContent).toBe("web-00000000-0000-4000-8000-000000000001");
     expect(screen.getByRole("button", { name: `Copy ${sent.textContent}` })).toBeTruthy();
     expect(screen.getByTestId("echoed-id").textContent).toBe("same");
+  });
+
+  it("below 640 px puts the id sent under the call, with the answer beside it", () => {
+    screenOf(375);
+    renderLog([entry(201, 1), entry(409, 2)]);
+    expect(headings()).toEqual(["Call and X-Request-Id sent", "Status"]);
+    const rows = within(screen.getByTestId("request-log")).getAllByRole("row").slice(1);
+    const cells = rows.map((row) => within(row).getAllByRole("cell"));
+    expect(cells.map((row) => row.length)).toEqual([2, 2]);
+    const [call, answer] = cells[0] as [HTMLElement, HTMLElement];
+    expect(call.className).toMatch(/border-l-orange-\d+/);
+    expect(within(call).getByText("GET /api/v1/flights/UA2")).toBeTruthy();
+    expect(within(call).getByTestId("sent-id").textContent).toBe("web-00000000-0000-4000-8000-000000000002");
+    expect(within(call).getByRole("button", { name: "Copy web-00000000-0000-4000-8000-000000000002" })).toBeTruthy();
+    // The code may break after an underscore, and nowhere else.
+    expect(answer.textContent).toBe("409SOME_CODE");
+    expect(answer.querySelectorAll("wbr")).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: /^Copy / })).toHaveLength(2);
+    expect(screen.queryByTestId("echoed-id")).toBeNull();
+  });
+
+  it("changes shape when the screen crosses 640 px, as a phone turned on its side does", () => {
+    const phone = screenOf(390);
+    renderLog([entry(201, 1)]);
+    expect(headings()).toEqual(["Call and X-Request-Id sent", "Status"]);
+    act(() => phone.resize(844));
+    expect(headings()).toEqual(["Time", "Call", "Status", "X-Request-Id sent", "Echoed", "Location", "ms"]);
+    expect(screen.getByTestId("echoed-id").textContent).toBe("same");
+    act(() => phone.resize(390));
+    expect(headings()).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: /^Copy / })).toHaveLength(1);
+  });
+
+  it("keeps the focus on a copy button when the screen crosses 640 px, so Escape still closes", () => {
+    const phone = screenOf(390);
+    const onClose = vi.fn();
+    renderLog([entry(201, 1), entry(409, 2)], onClose);
+    const name = "Copy web-00000000-0000-4000-8000-000000000001";
+    screen.getByRole("button", { name }).focus();
+    act(() => phone.resize(844));
+    expect(document.activeElement).toBe(screen.getByRole("button", { name }));
+    act(() => phone.resize(390));
+    expect(document.activeElement).toBe(screen.getByRole("button", { name }));
+    fireEvent.keyDown(document.activeElement as HTMLElement, { key: "Escape" });
+    expect(onClose).toHaveBeenCalledWith(true);
+  });
+
+  it("leaves the focus alone when the screen crosses 640 px with it outside the copy buttons", () => {
+    const phone = screenOf(844);
+    renderLog([entry(201, 1)]);
+    const close = screen.getByRole("button", { name: "Close" });
+    expect(document.activeElement).toBe(close);
+    act(() => phone.resize(390));
+    expect(document.activeElement).toBe(close);
   });
 
   it("says so when nothing has been sent yet, with nothing to clear", () => {
