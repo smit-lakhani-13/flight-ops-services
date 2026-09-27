@@ -120,7 +120,7 @@ public class BookingController {
                     different request.""",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "503", description =
-                    "`LOCK_TIMEOUT` — the flight row was held past `lock_timeout`. Carries `Retry-After`.",
+                    "`LOCK_TIMEOUT`: the flight row was held past `lock_timeout`. Carries `Retry-After`.",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     })
     @PostMapping(consumes = MediaType.APPLICATION_JSON_VALUE)
@@ -216,7 +216,8 @@ public class BookingController {
                     `BOOKING_NOT_CANCELLABLE`: the booking is active and its flight has \
                     departed or arrived, and no retry will ever succeed.""",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
-            @ApiResponse(responseCode = "503", description = "`LOCK_TIMEOUT`, with `Retry-After`.",
+            @ApiResponse(responseCode = "503", description =
+                    "`LOCK_TIMEOUT`: the flight row was held past `lock_timeout`. Carries `Retry-After`.",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     })
     @DeleteMapping("/{bookingId}")

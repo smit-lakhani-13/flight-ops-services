@@ -47,7 +47,8 @@ public class EmbeddedDatabaseGuard {
         String[] active = environment.getActiveProfiles();
         throw new IllegalStateException("DB_URL is set, but the datasource is still the laptop default, "
                 + "in-memory H2 (active profiles: " + (active.length == 0 ? "none" : String.join(", ", active))
-                + "). SPRING_PROFILES_ACTIVE must include prod or postgres, in lower case, for DB_URL "
-                + "to be used. To run on H2, unset DB_URL");
+                + "). SPRING_PROFILES_ACTIVE must include prod (the cluster) or postgres (compose or a local "
+                + "PostgreSQL), in lower case, for DB_URL to be used. Never postgres in the cluster: it seeds the "
+                + "demo flights and accepts an unhashed password. To run on H2, unset DB_URL");
     }
 }

@@ -34,7 +34,8 @@ class EmbeddedDatabaseGuardTest {
                             .isInstanceOf(IllegalStateException.class)
                             .hasMessageContaining("DB_URL is set")
                             .hasMessageContaining("(active profiles: Prod)")
-                            .hasMessageContaining("SPRING_PROFILES_ACTIVE must include prod or postgres");
+                            .hasMessageContaining("SPRING_PROFILES_ACTIVE must include prod (the cluster) or postgres")
+                            .hasMessageContaining("Never postgres in the cluster");
                 });
     }
 
@@ -103,6 +104,6 @@ class EmbeddedDatabaseGuardTest {
                 .rootCause()
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("DB_URL is set")
-                .hasMessageContaining("SPRING_PROFILES_ACTIVE must include prod or postgres");
+                .hasMessageContaining("SPRING_PROFILES_ACTIVE must include prod (the cluster) or postgres");
     }
 }

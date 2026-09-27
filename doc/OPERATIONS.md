@@ -112,7 +112,10 @@ then run on its own database and pass readiness.
 startup. When `DB_URL` is set and the datasource is still `jdbc:h2:mem:`, the
 log reads `DB_URL is set, but the datasource is still the laptop default`,
 names the active profiles, and says `SPRING_PROFILES_ACTIVE` must include
-`prod` or `postgres`. The guard keys on `DB_URL` because the ConfigMap and
+`prod` for the cluster or `postgres` for compose or a local PostgreSQL. It
+also says never to use `postgres` in the cluster, where it would seed the demo
+flights, log SQL at `DEBUG` by default and skip the check that refuses an
+unhashed password. The guard keys on `DB_URL` because the ConfigMap and
 `compose.yaml` set it and a laptop run on H2 does not. It does not key on the
 publisher, because H2 with `sqs` is a supported laptop setup. The catch: a
 developer with `DB_URL` exported in the shell has a default-profile
