@@ -452,6 +452,41 @@ still blank.
   record's `enabled`, which no code reads, now defaults to true as well;
   before, a missing property bound false while the beans ran.
 
+- **The deploy smoke test could check the old release.** It port-forwarded to
+  `deployment/flight-ops`, and kubectl picks the pod that has been Ready
+  longest, which right after a rollout is the last old pod in its `preStop`
+  sleep. The test could pass on the old image, or fail when that pod exited.
+  The step in `.github/workflows/build-and-deploy.yml` now finds the
+  ReplicaSet at the Deployment's current revision and forwards to a Running,
+  Ready pod with its `pod-template-hash` whose container runs this commit's
+  image. It prints the pod and the image, fails if there is no such pod, and
+  also checks that the root `/actuator/health` is `UP`.
+
+- **Re-running an old run on `main` would roll the cluster back.** A re-run
+  keeps its commit, and nothing compared that commit with `main`, so "Re-run
+  failed jobs" on an older run would apply it over a newer release and go green.
+  A new deploy job step after the checkout, "Is this commit still the head of
+  main?", compares `git ls-remote origin refs/heads/main` with the run's commit.
+  A superseded commit pushes and applies nothing and passes, with a notice and a
+  job summary line that point at a manual run on `main` for a deliberate
+  redeploy.
+
+- **The ECR lifecycle policy could expire the image the cluster runs.** Every
+  deploy pushes its image before the rollout, and the policy kept the last
+  five tagged images, so five failed deploys in a row would expire the image
+  the old pods still ran, and a pod on a new node or a `kubectl rollout undo`
+  could not pull it. The deploy job now tags an image `deployed-<sha>` once
+  its smoke test passes, and a new first rule in
+  `deploy/aws/foundation.yaml#EcrRepository` keeps the last ten images tagged
+  that way. The CI role already had the permissions the tag needs.
+
+- **The rollback note left out the schema.** The workflow's rollback comment
+  and a new rollback playbook in `doc/OPERATIONS.md` now say that
+  `kubectl rollout undo` does not undo migrations, so every migration must
+  keep the previous release working (expand now, contract in a later release).
+  They also say how to find the revision that served after more than one
+  failed deploy.
+
 ### Security
 
 - **The deploy job pushes the image CI scanned, and runs no scanner.** It

@@ -693,6 +693,29 @@ and `up.sh`'s checks in `lib.sh` against stubbed `aws`, `kubectl`, `helm`,
 `eksctl`, `sleep` and `mvnw` commands. It uses no credentials, takes a few
 seconds, and runs in CI's `infra-lint` job.
 
+### Rolling back a deploy
+
+The deploy job never rolls back by itself. A failed rollout leaves the old pods
+serving, because the rollout uses `maxUnavailable: 0`. Read the job's "Diagnose
+a failed deploy" step, then roll back by hand:
+
+```bash
+kubectl rollout history deployment/flight-ops -n flight-ops
+kubectl rollout undo deployment/flight-ops -n flight-ops
+```
+
+`rollout undo` goes to the previous revision. After more than one failed
+deploy, that revision failed too: pick the one that served from the history
+and pass it as `--to-revision=<n>`. Its image is still in ECR if it passed the
+job's smoke test, because the job then tags it `deployed-<sha>` and the
+lifecycle policy keeps the last ten of those. `kubectl rollout undo` does not
+undo migrations, so every migration must keep the previous release working
+(expand now, contract in a later release).
+
+Re-running an old workflow run is not a rollback. Its deploy job applies
+nothing unless its commit is still the head of `main`, and says so in the job
+summary.
+
 ### Rotating the API or ops password
 
 ```bash

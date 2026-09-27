@@ -205,8 +205,9 @@ commit already in ECR?" step then finds an image already pushed for the commit
 it deploys, and skips the download and push. The sweep leaves out the
 foundation stack and the resources it owns, and still checks everything else.
 The kept images stay in ECR, which bills storage at $0.10 per GB-month after
-any free tier, so five images cost cents a month. The shared SAM bucket also
-stays, as it does after a full teardown, unless you pass `--delete-sam-bucket`.
+any free tier, so the fifteen or fewer images the lifecycle policy keeps cost
+cents a month. The shared SAM bucket also stays, as it does after a full
+teardown, unless you pass `--delete-sam-bucket`.
 
 Two things the sweep cannot prove. Cost Explorer lags, so check again the next
 day and expect zero, not "small". And data already transferred this month is
