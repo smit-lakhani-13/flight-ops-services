@@ -17,9 +17,11 @@ import java.time.Instant;
  * <p>The patterns use {@code *}, not {@code +}, so they accept an empty string
  * and leave that failure to {@code @NotBlank}. {@code totalSeats} is marked
  * required for the OpenAPI document, which treats a primitive as optional;
- * Jackson refuses a missing one.
+ * Jackson refuses a missing one. A field not listed here, such as
+ * {@code status}, is refused with 400 {@code MALFORMED_REQUEST}.
  */
 @DistinctEndpoints
+@Schema(additionalProperties = Schema.AdditionalPropertiesValue.FALSE)
 public record CreateFlightRequest(
     @NotBlank @Size(max = 10)
     @Pattern(regexp = CreateFlightRequest.FLIGHT_NUMBER, message = "must contain only letters and digits")

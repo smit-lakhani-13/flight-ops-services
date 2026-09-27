@@ -152,6 +152,27 @@ says not yet.
   rewrote the record of a flight that had already flown, and relying on
   that 200 meant relying on the defect.
 
+- **A field the API does not have was dropped without a word.** Jackson ignored
+  an unknown field, so a create that sent `"status": "DELAYED"` got 201 and a
+  `SCHEDULED` flight, and a booking that asked for a cabin class got a 201 that
+  read as if it had been honoured.
+  `spring.jackson.deserialization.fail-on-unknown-properties` now answers such a
+  field with `400 MALFORMED_REQUEST` on the three writes that take a body, and
+  the OpenAPI document closes `BookingRequest`, `CreateFlightRequest` and
+  `StatusUpdate` with `additionalProperties: false`. A key sent twice in one
+  object, such as `"seats": 3, "seats": 1`, gets the same 400
+  (`spring.jackson.read.strict-duplicate-detection`), and each write's 400
+  description in the OpenAPI document names both. Before, the last value won,
+  while a proxy or a log that kept the first would have shown a different
+  request from the one that ran. The open schemas let a request carry an extra
+  field, so refusing one changes the answer to a request the contract accepted,
+  which the versioning rule above calls a major. This release treats it as a
+  fix, as it does the cancel 409 above: the field was never read, so the 201
+  told the client that a request had succeeded when part of it had been thrown
+  away. The console sends only the fields each schema lists, and
+  `BookingControllerTest` and `FlightControllerTest` cover both rules on each of
+  the three.
+
 - **Tests that proved less than their names said.**
   `BearerTokenChallengeTest#aSignedTokensScopeMapsOntoTheRules` signs an RS256
   token with the `flights:read` scope and checks that it can read a flight but
@@ -675,6 +696,21 @@ says not yet.
   `deploy/aws/selftest.sh` checks, with a stubbed `kubectl`, that no value,
   plain or encoded, is among its arguments. The database password is still an
   argument of `aws cloudformation deploy` at step 6.
+
+- **A passenger name could turn the text around it.** The right-to-left
+  override, U+202E, reorders the characters after it wherever the name is shown:
+  in the console's booking table and detail page, or in any client that reads it
+  from `GET /api/v1/bookings`. So a stored name could read as something else.
+  The name rule refused controls and unpaired surrogates, and these are neither.
+  The message `must not contain text-direction controls or line separators` now
+  answers a `passengerName` holding a text-direction control, U+202A to U+202E,
+  U+2066 to U+2069, U+200E, U+200F or U+061C, or U+2028 or U+2029, which some
+  viewers break a line on. The zero-width non-joiner and joiner, U+200C and
+  U+200D, still pass, because some scripts and emoji need them. The published
+  pattern allowed these characters, so this refuses a request the contract
+  accepted. It is treated as a fix, like the unpaired-surrogate rule under
+  Fixed, because the refused characters change only how a name is displayed, not
+  what it is, and a name that carries them can mislead whoever reads the record.
 
 ## 1.2.0 — 2026-09-26
 

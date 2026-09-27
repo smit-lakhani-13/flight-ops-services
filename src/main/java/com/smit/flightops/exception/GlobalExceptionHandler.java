@@ -255,6 +255,8 @@ public class GlobalExceptionHandler {
      * covers malformed JSON, and an unknown enum constant or one sent as a number.
      * It also covers a missing, null or quoted {@code int}, one written with a
      * decimal point or an exponent, and a time that is not an ISO-8601 instant.
+     * A field the request type does not have, and a key sent twice in one object,
+     * are refused here too ({@code application.yml}, {@code spring.jackson}).
      * None of these reach Bean Validation. The message is generic because
      * Jackson's names internal classes and echoes the payload.
      *

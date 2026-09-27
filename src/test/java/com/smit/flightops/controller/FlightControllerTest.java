@@ -314,6 +314,45 @@ class FlightControllerTest {
     }
 
     /**
+     * A new flight is always SCHEDULED. Dropped, the status would get a 201
+     * that looks as if the delay had been recorded. {@code createBody} writes
+     * 100 seats, so the second body sends the count twice: read leniently, the
+     * flight would get 100 seats while a log that kept the first value showed 1.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"{\"status\":\"DELAYED\",", "{\"totalSeats\":1,"})
+    @DisplayName("a create with a field the API does not have, or the seat count sent twice, is 400 MALFORMED_REQUEST")
+    void aCreateWithAnUnknownOrRepeatedFieldIsRefused(String prefix) throws Exception {
+        String body = prefix + createBody("UA999", "EWR", "SFO").substring(1);
+
+        mockMvc.perform(post("/api/v1/flights")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("MALFORMED_REQUEST"));
+
+        verify(flightService, never()).create(any());
+    }
+
+    /**
+     * Read leniently, the second body would cancel the flight while a log that
+     * kept the first value showed a delay, and the first would drop the reason.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"{\"status\":\"DELAYED\",\"reason\":\"weather\"}",
+                            "{\"status\":\"DELAYED\",\"status\":\"CANCELLED\"}"})
+    @DisplayName("a status body with a field the API does not have, or the status sent twice, is 400 MALFORMED_REQUEST")
+    void aStatusChangeWithAnUnknownOrRepeatedFieldIsRefused(String body) throws Exception {
+        mockMvc.perform(patch("/api/v1/flights/UA123/status")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("MALFORMED_REQUEST"));
+
+        verify(flightService, never()).updateStatus(any(), any());
+    }
+
+    /**
      * Jackson reads a number as epoch seconds, so epoch milliseconds would be a
      * departure in the year 58971 that {@code @Future} accepts.
      */

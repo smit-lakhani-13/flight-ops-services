@@ -262,7 +262,32 @@ class OpenApiTest {
         JsonNode passengerName = document().get("components").get("schemas")
                 .get("BookingRequest").get("properties").get("passengerName");
 
-        assertThat(passengerName.get("pattern").asString()).isEqualTo("^[^\\p{Cc}\\p{Cs}]*$");
+        assertThat(passengerName.get("pattern").asString())
+                .isEqualTo("^[^\\p{Cc}\\p{Cs}\\u061C\\u200E\\u200F\\u2028-\\u202E\\u2066-\\u2069]*$");
+    }
+
+    /**
+     * The server refuses a field it does not know and a key sent twice, so each
+     * schema is closed and each write's 400 description names both.
+     */
+    @Test
+    @DisplayName("every request body schema is closed, and each write's 400 names an unknown field and a repeated key")
+    void requestBodiesAreClosed() throws Exception {
+        JsonNode document = document();
+        JsonNode schemas = document.get("components").get("schemas");
+
+        for (String name : List.of("BookingRequest", "CreateFlightRequest", "StatusUpdate")) {
+            assertThat(schemas.path(name).path("additionalProperties").toString())
+                    .as(name).isEqualTo("false");
+        }
+        for (List<String> write : List.of(List.of("/api/v1/bookings", "post"), List.of("/api/v1/flights", "post"),
+                List.of("/api/v1/flights/{flightNumber}/status", "patch"))) {
+            assertThat(document.get("paths").get(write.get(0)).get(write.get(1))
+                    .get("responses").get("400").get("description").asString())
+                    .as(write.get(1) + " " + write.get(0))
+                    .contains("has a field")
+                    .contains("twice");
+        }
     }
 
     /**

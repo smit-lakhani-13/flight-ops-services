@@ -313,13 +313,28 @@ bundle comes from and how to refresh it.
   separator inside the name could make two different requests hash the same.
   An unpaired UTF-16 surrogate is refused for the same reason, with
   `must not contain unpaired surrogates`: `getBytes(UTF_8)` turns it into
-  `?`, so two different names would share a fingerprint. `BookingControllerTest`
-  covers all three. The query filters `origin`, `destination` and
-  `flightNumber` refuse a control character that is still there once the value
-  is trimmed, with `400 MALFORMED_REQUEST` before any query runs
+  `?`, so two different names would share a fingerprint. A text-direction
+  control, U+202A to U+202E, U+2066 to U+2069, U+200E, U+200F or U+061C, gets
+  `must not contain text-direction controls or line separators`: shown in the
+  console's booking table or by any client of `GET /api/v1/bookings`, it can
+  reorder the text around it, so a stored name can read as something else.
+  U+2028 and U+2029 get the same message, because some viewers break a line on
+  them. The zero-width non-joiner and joiner, U+200C and U+200D, pass, because
+  some scripts and emoji need them. `BookingControllerTest` covers each rule.
+  The query filters `origin`, `destination` and `flightNumber` refuse a control
+  character that is still there once the value is trimmed, with
+  `400 MALFORMED_REQUEST` before any query runs
   (`controller/QueryParams.java#withoutControlCharacters`).
   PostgreSQL refused a NUL there with SQLState 22021, which reached the caller
   as a misleading `409 DUPLICATE_REQUEST`.
+
+- A request body with a field its schema does not list, or with one key twice
+  in the same object, gets `400 MALFORMED_REQUEST`
+  (`spring.jackson.deserialization.fail-on-unknown-properties`,
+  `spring.jackson.read.strict-duplicate-detection`). Parsers disagree on which
+  of two values for one key wins, so a proxy or a filter in front of the
+  service could check one value while Jackson used the other. And a dropped
+  field would be answered with a success that ignored part of the request.
 
 - The writes read JSON only. swagger-core puts a YAML reader on the classpath,
   and none of the `spring.jackson` settings reach it, so each `POST` and `PATCH`
