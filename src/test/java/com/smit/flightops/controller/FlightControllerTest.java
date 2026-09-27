@@ -10,6 +10,7 @@ import com.smit.flightops.entity.FlightStatus;
 import com.smit.flightops.exception.DuplicateFlightException;
 import com.smit.flightops.exception.FlightNotFoundException;
 import com.smit.flightops.service.FlightService;
+import org.hibernate.exception.DataException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -31,6 +32,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.CannotCreateTransactionException;
 
+import java.sql.SQLException;
 import java.sql.SQLTransientConnectionException;
 import java.time.Duration;
 import java.time.Instant;
@@ -190,6 +192,33 @@ class FlightControllerTest {
         when(flightService.create(any()))
                 .thenThrow(new DataIntegrityViolationException("uk_flights_flight_number"));
 
+        mockMvc.perform(post("/api/v1/flights")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(createBody("UA999", "EWR", "SFO")))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("DUPLICATE_REQUEST"));
+    }
+
+    /**
+     * PostgreSQL raises a data error, SQLState class 22, for a value it will
+     * never store, and Spring wraps it in the exception a unique violation
+     * arrives in. A retry fails the same way, so it must not be a 409 that says
+     * to retry. 22021 is PostgreSQL's state for a NUL in a text value; the chain
+     * is the one Hibernate builds. A unique violation, 23505, stays a 409.
+     */
+    @Test
+    @DisplayName("a data error from the database (SQLState class 22) is 400 MALFORMED_REQUEST, not 409 DUPLICATE_REQUEST")
+    void aDatabaseDataErrorIsABadRequest() throws Exception {
+        when(flightService.search(any(), any(), any())).thenThrow(new DataIntegrityViolationException(
+                "could not execute query", new DataException("could not execute query",
+                        new SQLException("invalid byte sequence for encoding \"UTF8\": 0x00", "22021"))));
+        when(flightService.create(any())).thenThrow(new DataIntegrityViolationException(
+                "could not execute statement", new SQLException("duplicate key value", "23505")));
+
+        mockMvc.perform(get("/api/v1/flights"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("MALFORMED_REQUEST"))
+                .andExpect(jsonPath("$.message").value("The request contained an invalid value."));
         mockMvc.perform(post("/api/v1/flights")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(createBody("UA999", "EWR", "SFO")))
@@ -510,6 +539,38 @@ class FlightControllerTest {
                 .andExpect(jsonPath("$.page.totalElements").value(1))
                 .andExpect(jsonPath("$.page.number").value(0))
                 .andExpect(jsonPath("$.pageable").doesNotExist());
+    }
+
+    /**
+     * PostgreSQL refuses a NUL inside a text parameter and H2 accepts it, so
+     * {@code ?origin=J%00K} was an error on one and an empty page on the other.
+     * MockMvc takes the decoded value, which is what Tomcat makes of
+     * {@code J%00K}. {@code QueryParamsTest} covers the other characters.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"origin", "destination"})
+    @DisplayName("a filter with a control character inside it (J%00K) is 400 MALFORMED_REQUEST, before any query")
+    void aFilterWithAControlCharacterInsideIsRefused(String filter) throws Exception {
+        mockMvc.perform(get("/api/v1/flights").param(filter, "J\u0000K"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("MALFORMED_REQUEST"))
+                .andExpect(jsonPath("$.message").value(filter + " must not contain control characters."));
+
+        verify(flightService, never()).search(any(), any(), any());
+    }
+
+    /** The check is not an alphabet: a code no flight has is still an empty page. */
+    @Test
+    @DisplayName("a hyphenated filter is still 200 with an empty page")
+    void aHyphenatedFilterIsStillAnEmptyPage() throws Exception {
+        when(flightService.search(any(), any(), any()))
+                .thenReturn(org.springframework.data.domain.Page.empty());
+
+        mockMvc.perform(get("/api/v1/flights").param("origin", "J-K").param("destination", "K-J"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(0));
+
+        verify(flightService).search(eq("J-K"), eq("K-J"), any());
     }
 
     @Test
