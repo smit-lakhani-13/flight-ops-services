@@ -735,6 +735,18 @@ says not yet.
   Fixed, because the refused characters change only how a name is displayed, not
   what it is, and a name that carries them can mislead whoever reads the record.
 
+- **The console's race route takes only a JSON body.** `web/lib/race.ts#runRace`
+  parsed any body and sent it on as ten `application/json` bookings, so a
+  `text/plain` or form body, which a page on another site can send without a
+  preflight, became ten JSON writes. Every other write through the console
+  reaches the API, which answers such a body with 415. The race now answers it
+  with `415 CONSOLE_UNSUPPORTED_MEDIA_TYPE` before reading it, and a unit test
+  and an end-to-end test check that. A new end-to-end test also checks that
+  pages and proxied answers carry the console's three security headers and no
+  `X-Powered-By`; nothing checked them before, and the comment in
+  `web/next.config.ts` said the API's own security headers pass through, which
+  the proxy never allowed.
+
 ## 1.2.0 — 2026-09-26
 
 The [fourth review pass](doc/DEFECT-LOG.md#fourth-review-pass), a full audit

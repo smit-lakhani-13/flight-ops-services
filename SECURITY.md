@@ -185,12 +185,15 @@ the API still has no CORS policy ([adr/0017](adr/0017-web-console.md)).
   upstream. Cookies, `Origin`, `Host` and forwarding headers stay behind.
 * A path outside the allow-list answers 404 without reaching the API; `env`,
   `prometheus`, the OpenAPI document and Swagger UI are among them. A request
-  the browser marks `Sec-Fetch-Site: cross-site` gets 403, and a body over
-  64 KiB gets 413.
-* Every page is sent with `X-Content-Type-Options: nosniff`,
-  `Referrer-Policy: no-referrer` and `X-Frame-Options: DENY`
-  (`web/next.config.ts`). There is no Content-Security-Policy yet:
-  [Known limitations](#known-limitations) says why.
+  the browser marks `Sec-Fetch-Site: cross-site` gets 403, and a body over 64
+  KiB gets 413. The race route re-sends its body as JSON, so it refuses one not
+  sent as `application/json` with 415, as the API refuses it on every other
+  write.
+* Every page and every answer from the console's server, proxied ones included,
+  is sent with `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`
+  and `X-Frame-Options: DENY` (`web/next.config.ts`), and `web/e2e/ops.spec.ts`
+  checks them. There is no Content-Security-Policy yet: [Known
+  limitations](#known-limitations) says why.
 
 ## Secrets
 

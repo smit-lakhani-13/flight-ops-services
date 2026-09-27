@@ -111,6 +111,7 @@ shape, with codes that start with `CONSOLE_`:
 | 404 | `CONSOLE_PATH_REFUSED` | The path is outside the allow-list |
 | 405 | `CONSOLE_METHOD_REFUSED` | A method the path does not take, such as a write to a forwarded actuator path or a `PUT` under `/api/v1` |
 | 413 | `CONSOLE_BODY_TOO_LARGE` | A body over 64 KiB, counted as it arrives, so an endless one is cut off |
+| 415 | `CONSOLE_UNSUPPORTED_MEDIA_TYPE` | The race body was not sent as `application/json`, which the API needs on every other write |
 | 500 | `CONSOLE_MISCONFIGURED` | `API_BASE_URL` is not an origin |
 | 502 | `CONSOLE_UPSTREAM_UNREACHABLE` | The API did not accept the connection, or dropped it before its answer was complete |
 | 504 | `CONSOLE_UPSTREAM_TIMEOUT` | The API did not finish its answer within 15 s |
@@ -193,7 +194,7 @@ change of account is announced.
 | `npm run lint` | ESLint with Next.js's core web vitals and TypeScript rules, no warnings allowed |
 | `npx tsc --noEmit` | The type-checker, strict, with unchecked index access |
 | `npm test` | Vitest: the proxy, the race and the `/api` route against a stubbed `fetch`, the browser's API client and the sign-in probe, the error classifier and its timeout hint, the request log, the resource hook and its pending state, the helpers that name a page from its address, and in jsdom the shared parts in `components/ui.tsx` (button tones and the busy state, field wiring, the seat bar, page titles, links and the Location mapping), the error banner, the booking form's replay comparison, status line and seat counts, the transition control and the pager, including where each leaves the focus, and the request log drawer's focus, Escape, copy buttons and the one line that says what was copied; and a test that reads `FlightStatus.java` and fails if the console's copy of the transition table drifts from it |
-| `npm run e2e` | Playwright on Chromium against the built console and a running service: sign-in and sign-out, flights, bookings, replays and the race, validation, the proxy's refusals, the ops pages, and the layout of every page at eleven viewports |
+| `npm run e2e` | Playwright on Chromium against the built console and a running service: sign-in and sign-out, flights, bookings, replays and the race, validation, the proxy's refusals and the security headers, the ops pages, and the layout of every page at eleven viewports |
 
 Run `npm run build` first. `npm run e2e` then serves that build with
 `next start` on port 3100 (`CONSOLE_PORT` picks another) and expects the service

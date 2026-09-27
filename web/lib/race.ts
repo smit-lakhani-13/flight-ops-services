@@ -19,6 +19,10 @@ import type { RaceReport, RaceRow } from "./types";
 
 export const RACE_SIZE = 10;
 
+// The media type every write to the API needs; a parameter such as charset may
+// follow. application/json-patch+json and the like are not it.
+const JSON_MEDIA_TYPE = /^application\/json\s*(;|$)/i;
+
 export async function runRace(request: Request, options: ForwardOptions = {}): Promise<Response> {
   const refused = refuseCrossSite(request);
   if (refused) return refused;
@@ -28,6 +32,14 @@ export async function runRace(request: Request, options: ForwardOptions = {}): P
     origin = upstreamOrigin(options.baseUrl);
   } catch {
     return consoleError(500, "CONSOLE_MISCONFIGURED", "The console's API_BASE_URL is not a valid origin.");
+  }
+
+  // The body goes upstream as JSON whatever it came as, so the route checks the
+  // type the API would have checked. A form or text/plain body is what a page on
+  // another site can send without a preflight (adr/0006), and the API answers it
+  // with 415 on every other write.
+  if (!JSON_MEDIA_TYPE.test(request.headers.get("content-type") ?? "")) {
+    return consoleError(415, "CONSOLE_UNSUPPORTED_MEDIA_TYPE", "The race takes a body sent as application/json.");
   }
 
   const raw = await readBoundedBody(request);

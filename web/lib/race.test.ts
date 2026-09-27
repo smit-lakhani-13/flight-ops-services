@@ -91,6 +91,32 @@ describe("runRace", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it("refuses a body not sent as application/json, as the API would", async () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    for (const type of [
+      "text/plain",
+      "application/x-www-form-urlencoded",
+      "multipart/form-data; boundary=x",
+      "application/json-patch+json",
+    ]) {
+      const response = await runRace(raceRequest(JSON.stringify(BOOKING), { "Content-Type": type }), {
+        fetch: fetchImpl,
+        baseUrl: BASE,
+      });
+      expect(response.status, type).toBe(415);
+      expect(await response.json()).toMatchObject({ code: "CONSOLE_UNSUPPORTED_MEDIA_TYPE" });
+    }
+    expect(fetchImpl).not.toHaveBeenCalled();
+
+    const accepted = vi.fn(async () => new Response(null, { status: 201 })) as unknown as typeof fetch;
+    const response = await runRace(
+      raceRequest(JSON.stringify(BOOKING), { "Content-Type": "application/json; charset=utf-8" }),
+      { fetch: accepted, baseUrl: BASE },
+    );
+    expect(response.status).toBe(200);
+    expect(accepted).toHaveBeenCalledTimes(RACE_SIZE);
+  });
+
   it("refuses a body one byte over the proxy's limit with the proxy's words", async () => {
     const fetchImpl = vi.fn() as unknown as typeof fetch;
     const response = await runRace(raceRequest("x".repeat(MAX_BODY_BYTES + 1)), { fetch: fetchImpl, baseUrl: BASE });
