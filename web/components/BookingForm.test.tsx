@@ -11,9 +11,10 @@ afterEach(() => {
 });
 
 /**
- * A booking API in miniature: a new key makes a booking (201), the same key
- * and body gets that booking back (200), and a flight read answers with the
- * seats left. `hold` makes the next booking wait until it is released.
+ * A booking API in miniature: a new key makes a booking, the same key and
+ * body gets that booking back, both with 201 as the real API answers, and a
+ * flight read answers with the seats left. `hold` makes the next booking wait
+ * until it is released.
  */
 function fakeApi() {
   const byKey = new Map<string, { body: string; bookingId: number }>();
@@ -40,7 +41,7 @@ function fakeApi() {
       byKey.set(idempotencyKey, { body, bookingId });
       return Response.json(
         { bookingId, flightNumber: "UA1", passengerName: "Test Passenger", seats: 1, createdAt: "2026-09-26T10:00:00Z", cancelledAt: null },
-        { status: known ? 200 : 201, headers: { ...echo, Location: `/api/v1/bookings/${bookingId}` } },
+        { status: 201, headers: { ...echo, Location: `/api/v1/bookings/${bookingId}` } },
       );
     }),
   );
@@ -88,12 +89,18 @@ describe("BookingForm", () => {
 
     await press("Book");
     await press("Replay the same key");
-    expect(newest()).toBe("Replay on the same key200booking #1same booking as the first Book");
+    expect(newest()).toBe("Replay on the same key201booking #1same booking as the first Book");
 
     await press("New idempotency key");
     await press("Book");
     await press("Replay the same key");
-    expect(newest()).toBe("Replay on the same key200booking #2same booking as the first Book");
+    expect(newest()).toBe("Replay on the same key201booking #2same booking as the first Book");
+
+    // Back to the first key: its replay is compared with booking #1, the
+    // first Book on this key, not with the newest Book on any key.
+    fireEvent.change(screen.getByLabelText("Idempotency key"), { target: { value: "constructor" } });
+    await press("Replay the same key");
+    expect(newest()).toBe("Replay on the same key201booking #1same booking as the first Book");
   });
 
   it("empties the status line while a request is out, so the same answer is announced again", async () => {
@@ -111,7 +118,7 @@ describe("BookingForm", () => {
     expect(screen.getByRole("button", { name: "Book" })).toHaveProperty("disabled", true);
 
     await act(async () => release());
-    expect(status.textContent).toBe("Replay on the same key: 200, booking #1");
+    expect(status.textContent).toBe("Replay on the same key: 201, booking #1");
   });
 
   it("shows a refusal once, in the status line and a silent banner", async () => {

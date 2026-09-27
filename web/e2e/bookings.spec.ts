@@ -56,8 +56,12 @@ test("the API's field messages appear beside the inputs they belong to", async (
   await form.getByLabel("Seats").fill("10");
   await form.getByRole("button", { name: "Book", exact: true }).click();
 
+  // The banner leaves these fields' messages to the fields, so each is checked
+  // word for word: a loose match would pass on the Seats hint alone.
   await expect(form.getByLabel("Passenger name")).toHaveAttribute("aria-invalid", "true");
+  await expect(form.getByLabel("Passenger name")).toHaveAccessibleDescription("must not be blank");
   await expect(form.getByLabel("Seats")).toHaveAttribute("aria-invalid", "true");
+  await expect(form.getByLabel("Seats")).toHaveAccessibleDescription("must be less than or equal to 9");
   await expect(form.getByTestId("error-banner")).toHaveAttribute("data-code", "VALIDATION_FAILED");
 });
 

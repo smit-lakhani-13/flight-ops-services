@@ -73,6 +73,12 @@ test("creating a flight shows the API's message per field, then opens the new fl
   await expect(form.getByLabel("Origin")).toHaveAttribute("aria-invalid", "true");
   await expect(form.getByLabel("Seats")).toHaveAttribute("aria-invalid", "true");
   await expect(form.getByLabel("Departs")).toHaveAttribute("aria-invalid", "true");
+  // The banner leaves these messages to the fields, and every field has a
+  // hint, so the description must be the API's message word for word.
+  await expect(form.getByLabel("Flight number")).toHaveAccessibleDescription("must not be blank");
+  await expect(form.getByLabel("Origin")).toHaveAccessibleDescription("must contain only letters");
+  await expect(form.getByLabel("Seats")).toHaveAccessibleDescription("must be greater than or equal to 1");
+  await expect(form.getByLabel("Departs")).toHaveAccessibleDescription("must not be null");
   await expect(form.getByTestId("error-banner")).toHaveAttribute("data-code", "VALIDATION_FAILED");
 
   const flightNumber = uniqueFlightNumber();
