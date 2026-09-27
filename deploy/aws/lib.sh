@@ -14,6 +14,14 @@ STATE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.state"
 STATE_FILE="$STATE_DIR/flight-ops.env"
 # The cluster's kubeconfig, which use_private_kubeconfig points KUBECONFIG at.
 KUBECONFIG_FILE="$STATE_DIR/kubeconfig"
+# That path, the scripts' own directory and the command that ran, each quoted
+# for a shell, for the commands the scripts print to be pasted: a checkout
+# whose path holds a space would otherwise break them. In a sourced file $0 is
+# still the script that sourced it.
+KUBECONFIG_FILE_Q=$(printf '%q' "$KUBECONFIG_FILE")
+# shellcheck disable=SC2034  # read by the scripts that source this file
+SCRIPTS_DIR_Q=$(printf '%q' "${STATE_DIR%/.state}")
+SELF_Q=$(printf '%q' "$0")
 
 # Names, in one place. up.sh creates them and down.sh deletes them, and a name
 # that differs between the two is a resource no one finds again.
@@ -420,7 +428,7 @@ create_secret() {
 # with what a wrong one does and how to put it right. In a sourced file $0 is
 # still up.sh, so the message ends with its re-run.
 warn_db_password_from_shell() {
-    local rerun="ALERT_EMAIL=${ALERT_EMAIL:-you@example.com} $0"
+    local rerun="ALERT_EMAIL=${ALERT_EMAIL:-you@example.com} $SELF_Q"
     warn "DB_PASSWORD comes from your shell, as it should after the commands an"
     warn "earlier stop here printed: this run did not create the database. It goes"
     warn "into the Secret unchecked, and the record of a pending password is cleared."
@@ -462,7 +470,7 @@ warn_db_password_from_shell() {
 # reason stops the run, instead of skipping a restart the pods need.
 reconcile_secret_db_password() {
     local password=$1 origin=${2:-environment} pending encoded deployment
-    local rerun="ALERT_EMAIL=${ALERT_EMAIL:-you@example.com} $0"
+    local rerun="ALERT_EMAIL=${ALERT_EMAIL:-you@example.com} $SELF_Q"
     pending=$(state_get DB_PASSWORD_PENDING || true)
     case "$pending" in
         secret)
@@ -536,7 +544,7 @@ wait_for_deployment() {
     kubectl wait --for=condition=available deployment/flight-ops \
         -n "$NAMESPACE" --timeout=20m \
         || die "the deployment did not become available. Diagnose with:
-    export KUBECONFIG=$KUBECONFIG_FILE
+    export KUBECONFIG=$KUBECONFIG_FILE_Q
     kubectl get pods -n $NAMESPACE -o wide
     kubectl logs -n $NAMESPACE -l app=flight-ops --tail=100 --all-containers
     kubectl get events -n $NAMESPACE --sort-by=.lastTimestamp | tail -30"

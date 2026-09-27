@@ -277,7 +277,11 @@ and still passes, with a notice and a line in the job summary. The head of
 `main` normally has a run of its own. When it has none, as after a commit that
 skipped CI or a pending run that was cancelled, a manual run
 (`workflow_dispatch`) on `main` deploys it, as it does for a deliberate
-redeploy.
+redeploy. The step compares the line whose ref is exactly `refs/heads/main`,
+because `ls-remote` also lists any other ref whose name ends in that path.
+Runs of commits from before the step have no such check: see
+[Rolling back a deploy](OPERATIONS.md#rolling-back-a-deploy) for what that
+means for a re-run.
 
 Before it downloads the image, the deploy job asks ECR whether the commit's
 image is already there, in the step "Is this commit already in ECR?". It runs
@@ -303,7 +307,10 @@ the last ten images tagged that way, and the rule that keeps the last five
 tagged images cannot expire them. Every deploy pushes its image before the
 rollout, so without that tag five failed deploys in a row would expire the
 image the old pods still run, and a pod on a new node or a
-`kubectl rollout undo` could no longer pull it.
+`kubectl rollout undo` could no longer pull it. A rollout that completes and
+then fails the smoke test leaves the new pods serving an image with no such
+tag; [Rolling back a deploy](OPERATIONS.md#rolling-back-a-deploy) covers that
+case.
 
 Every step of `up.sh` either checks whether its resource exists or uses a
 command that is safe to repeat. To resume an interrupted run, run the same

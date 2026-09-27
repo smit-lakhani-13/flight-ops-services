@@ -656,10 +656,12 @@ says not yet.
   keeps its commit, and nothing compared that commit with `main`, so "Re-run
   failed jobs" on an older run would apply it over a newer release and go green.
   A new deploy job step after the checkout, "Is this commit still the head of
-  main?", compares `git ls-remote origin refs/heads/main` with the run's commit.
-  A superseded commit pushes and applies nothing and passes, with a notice and a
-  job summary line that point at a manual run on `main` for a deliberate
-  redeploy.
+  main?", compares `git ls-remote origin refs/heads/main` with the run's commit,
+  taking the line whose ref is exactly `refs/heads/main`. A superseded commit
+  pushes and applies nothing and passes, with a notice and a job summary line
+  that point at a manual run on `main` for a deliberate redeploy. Runs of
+  earlier commits have no such step, and `doc/OPERATIONS.md` says not to
+  re-run them while GitHub still allows it.
 
 - **The ECR lifecycle policy could expire the image the cluster runs.** Every
   deploy pushes its image before the rollout, and the policy kept the last
@@ -668,14 +670,16 @@ says not yet.
   could not pull it. The deploy job now tags an image `deployed-<sha>` once
   its smoke test passes, and a new first rule in
   `deploy/aws/foundation.yaml#EcrRepository` keeps the last ten images tagged
-  that way. The CI role already had the permissions the tag needs.
+  that way. The CI role already had the permissions the tag needs. A release
+  whose rollout completes and whose smoke test then fails is serving and gets
+  no such tag, so the rollback playbook says to roll it back.
 
 - **The rollback note left out the schema.** The workflow's rollback comment
   and a new rollback playbook in `doc/OPERATIONS.md` now say that
   `kubectl rollout undo` does not undo migrations, so every migration must
   keep the previous release working (expand now, contract in a later release).
-  They also say how to find the revision that served after more than one
-  failed deploy.
+  They also say how to find the revision to go back to after more than one
+  failed deploy: the newest whose image has a `deployed-<sha>` tag.
 
 - **Rollouts wait for the load balancer.** A pod counted as available once its
   own readiness probe passed, so `maxUnavailable: 0` and the PodDisruptionBudget
@@ -731,6 +735,21 @@ says not yet.
   back to `deploy (gated off)`, with `CONTRIBUTING.md` in the same commit. A
   clean run also deletes the kubeconfig the scripts keep; a failed one keeps it
   for the re-run.
+
+- **Script hints and a header that misled.** When `/actuator/health` never
+  answered through the load balancer, step 11 of `deploy/aws/up.sh` said that
+  the pods passing step 10 left only the load balancer to blame, and pointed at
+  security groups. Readiness leaves the database out and `/actuator/health`
+  does not, so a database that is down stops the run there too; the message
+  now says so and gives the call, as the ops user, that shows which component
+  is not `UP`. The commands the AWS scripts print to be pasted, such as the
+  kubeconfig `export` line, the calls to `down.sh` and `cost-check.sh` and the
+  re-run of `up.sh`, now quote their paths for a shell, so they still work from
+  a checkout whose path holds a space; a new `deploy/aws/selftest.sh` check
+  reads the paths back from such a checkout.
+  The header of `scripts/sweeps.sh` said that a missing `SWEEP_PATTERNS` is a
+  skip only where no secret can exist; it now says it is a skip on every pull
+  request, this repository's own included, as the code does.
 
 ### Security
 

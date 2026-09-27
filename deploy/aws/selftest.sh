@@ -83,7 +83,10 @@ case "$service $op" in
         [ "${STUB_OIDC_LIST_FAILS:-0}" = 0 ] || { echo 'An error occurred (Throttling): Rate exceeded' >&2; exit 254; }
         printf '%b' "${STUB_OIDC_PROVIDERS:-}" ;;
     'iam list-policies')
-        [ "${STUB_POLICY_LIST_FAILS:-0}" = 0 ] || { echo 'An error occurred (Throttling): Rate exceeded' >&2; exit 254; }
+        [ "${STUB_POLICY_LIST_FAILS:-0}" = 0 ] || {
+            echo 'An error occurred (Throttling): Rate exceeded' >&2
+            exit 254
+        }
         [ "${STUB_POLICY_LIST_WARNS:-0}" = 0 ] || echo 'PythonDeprecationWarning: Python 3.8 support ends soon' >&2
         printf '%b' "${STUB_POLICIES:-}" ;;
     'iam list-policy-versions') printf '%s' "${STUB_POLICY_VERSIONS:-}" ;;
@@ -767,6 +770,22 @@ if expect_status "$name" 0; then
     fi
 fi
 
+# The printed commands are pasted into a shell, so each path must read back as
+# one word from a checkout whose path holds a space.
+name="the paths lib.sh quotes for pasting read back whole from a path with a space"
+spaced="$tmp/a b/deploy/aws"
+mkdir -p "$spaced" && cp "$here/lib.sh" "$spaced/"
+# shellcheck disable=SC2016  # expanded by the inner shell
+PATH="$tmp/bin:$PATH" NO_COLOUR=1 bash -c 'set -euo pipefail; . "$1"
+    eval "set -- $KUBECONFIG_FILE_Q $SCRIPTS_DIR_Q/down.sh $SELF_Q"
+    printf "%s\n" "$@"' "$spaced/up.sh" "$spaced/lib.sh" > "$OUT" 2>&1 < /dev/null
+STATUS=$?
+if expect_status "$name" 0; then
+    expected=$(printf '%s\n' "$spaced/.state/kubeconfig" "$spaced/down.sh" "$spaced/up.sh")
+    if [ "$(cat "$OUT")" = "$expected" ]; then pass "$name"
+    else fail "$name" "expected the kubeconfig, down.sh and up.sh paths, one per line"; fi
+fi
+
 STATE_ENV="$tmp/deploy/aws/.state/flight-ops.env"
 # pending <value>: the state file records DB_PASSWORD_PENDING=<value>, or,
 # with no value, has no state file at all.
@@ -1057,10 +1076,10 @@ name="up.sh's closing summary prints the line that exports its kubeconfig"
 : > "$OUT"
 # shellcheck disable=SC2016  # matched as written, unexpanded
 if awk '/^cat <<SUMMARY$/ { f = 1; next } /^SUMMARY$/ { f = 0 } f' "$here/up.sh" \
-        | grep -qF -- 'export KUBECONFIG=$KUBECONFIG_FILE'; then
+        | grep -qxF -- '    export KUBECONFIG=$KUBECONFIG_FILE_Q'; then
     pass "$name"
 else
-    fail "$name" "no 'export KUBECONFIG=\$KUBECONFIG_FILE' in the SUMMARY heredoc"
+    fail "$name" "no 'export KUBECONFIG=\$KUBECONFIG_FILE_Q' in the SUMMARY heredoc"
 fi
 
 # cluster.yaml's disablePodIMDS stops the controller reading them from IMDS.

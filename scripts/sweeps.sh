@@ -18,9 +18,11 @@
 #
 #    A missing secret is a failure on a push or a manual run, where CI always
 #    has the repository's secrets: a deleted or renamed secret must not turn
-#    the check into a silent pass. It is a skip only where no secret can exist:
-#    a local run without the variable, and pull requests from forks or
-#    Dependabot, which GitHub runs without repository secrets.
+#    the check into a silent pass. It is a skip on every other run: a local
+#    run without the variable, and every pull request, this repository's
+#    own included. GitHub runs one from a fork or Dependabot without
+#    repository secrets, and the script does not tell them apart, so a
+#    removed secret first fails on the next push or manual run.
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 

@@ -149,6 +149,6 @@ cat <<NOTE
     - a load balancer left behind by a deleted Ingress — down.sh checks for this
     - an idle Elastic IP or unattached EBS volume from a failed teardown
 
-  Stop all of it:  $here/down.sh
+  Stop all of it:  $SCRIPTS_DIR_Q/down.sh
 
 NOTE
