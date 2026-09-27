@@ -1,9 +1,9 @@
 # Deploying to AWS
 
-Six scripts, a shared library, two CloudFormation templates and the eksctl
-cluster definition. Together they create the whole demo (cluster, database,
-queue, Lambda, load balancer) in an empty account, and delete it again with
-proof that it is gone.
+Six scripts, a shared library, two CloudFormation templates, the eksctl
+cluster definition and the load balancer controller's IAM policy. Together
+they create the whole demo (cluster, database, queue, Lambda, load balancer)
+in an empty account, and delete it again with proof that it is gone.
 
 Nothing here has been run against a real account. The templates lint, the
 scripts parse and are shellcheck-clean, and `selftest.sh` runs the teardown,
@@ -106,7 +106,7 @@ passwords and waits for `saved`. Step 10 prints four values and waits for
 Secret    AWS_ACCOUNT_ID   123456789012
 Variable  DEPLOY_ENABLED   true
 Variable  SQS_QUEUE_URL    https://sqs.ap-south-1.amazonaws.com/…/booking-events
-Variable  DB_URL           jdbc:postgresql://…:5432/flightops
+Variable  DB_URL           jdbc:postgresql://…:5432/flightops?sslmode=verify-full&sslrootcert=/app/certs/rds-global-bundle.pem
 ```
 
 Before you set `DEPLOY_ENABLED`, rename the deploy job in
@@ -127,10 +127,10 @@ aws dynamodb scan --table-name flight-status-events --select COUNT
 
 ### Why CI deploys the application and this script does not
 
-The image tag is the commit SHA, and only the job that built the image knows
-it. A script that built and pushed from a laptop would tag whatever was checked
-out, including uncommitted changes, and the cluster would run something that
-does not exist in git.
+The image tag is the commit SHA of the CI run that built the image. A script
+that built and pushed from a laptop would tag whatever was checked out,
+including uncommitted changes, and the cluster would run something that does
+not exist in git.
 
 No password reaches GitHub either. `up.sh` generates the database, API and ops
 passwords. It writes the database password and the bcrypt hashes of the other
@@ -146,7 +146,7 @@ its contents.
 | SQS, DLQ, two CloudWatch alarms, DynamoDB, the Lambda | `lambda/template.yaml` via `sam deploy`, from the jar Maven builds | SAM owns its own stack; it is also the only half that is useful on its own |
 | Cluster, VPC, NAT, nodes | `cluster.yaml` via `eksctl` | eksctl's VPC layout is what the RDS template reads its subnets from |
 | RDS, its subnet group and security group | `data.yaml` | needs eksctl's VPC, so it cannot come earlier |
-| IRSA roles, LB controller, metrics-server | `up.sh` | one-off cluster setup, not per-deploy |
+| IRSA roles, LB controller and its IAM policy, metrics-server | `up.sh`, the policy from `lbc-iam-policy-v3.5.0.json` | one-off cluster setup, not per-deploy |
 | Namespace, Secret, EKS access entry | `up.sh` | holds passwords, and grants CI its scoped access |
 | Deployment, Service, HPA, PDB, ConfigMap, ServiceAccount | CI, from `deploy/k8s/overlays/aws` | changes every release |
 | Ingress, and therefore the ALB | `up.sh` | optional: without it the app is reachable by port-forward, and the ALB's share of the bill goes |
@@ -202,11 +202,11 @@ Two orderings in that script matter:
 
 `--keep-foundation` keeps ECR, the CI role and the budgets. CI's "Is this
 commit already in ECR?" step then finds an image already pushed for the commit
-it deploys, and skips the build. The sweep leaves out the foundation stack and
-the resources it owns, and still checks everything else. The kept images stay
-in ECR, which bills storage at $0.10 per GB-month after any free tier, so five
-images cost cents a month. The shared SAM bucket also stays, as it does after a
-full teardown, unless you pass `--delete-sam-bucket`.
+it deploys, and skips the download and push. The sweep leaves out the
+foundation stack and the resources it owns, and still checks everything else.
+The kept images stay in ECR, which bills storage at $0.10 per GB-month after
+any free tier, so five images cost cents a month. The shared SAM bucket also
+stays, as it does after a full teardown, unless you pass `--delete-sam-bucket`.
 
 Two things the sweep cannot prove. Cost Explorer lags, so check again the next
 day and expect zero, not "small". And data already transferred this month is
@@ -224,6 +224,7 @@ still billed at month end.
 | `kubectl get hpa` shows `<unknown>/70%` | metrics-server is not installed. `aws eks describe-addon --cluster-name flight-ops-cluster --addon-name metrics-server` |
 | `up.sh` stops at step 1 on the JDK | the Maven wrapper does not see JDK 21. Point `JAVA_HOME` at `openjdk@21` |
 | `up.sh` stops at step 1: `up.sh needs eksctl 0.184.0 or later` | an older eksctl installs the cluster's networking addons self-managed, and step 4's re-run looks them up as EKS addons. `brew upgrade eksctl` |
+| `up.sh` stops at step 1, or at step 8 if the file changed during the run: `…/lbc-iam-policy-v3.5.0.json has sha256 '…', not the … recorded for it` | the committed controller policy is not the file its sum was recorded for. Restore it with `git checkout -- deploy/aws/lbc-iam-policy-v3.5.0.json`, or, for a new release, change the file, the tag and the sum together as `doc/DEPLOYMENT.md` describes |
 | `up.sh` stops at step 4: `cluster flight-ops-cluster is not ACTIVE` | the cluster is `FAILED` or `DELETING`, or still not `ACTIVE` after 20 minutes. The message prints the `describe-cluster` command to check it |
 | `up.sh` stops at step 4: `addon vpc-cni did not become ACTIVE` or `node group ng-1 did not become ACTIVE` | the addon is `CREATE_FAILED` or `DEGRADED`, or the node group is `CREATE_FAILED`, or the wait ran out (10 minutes for vpc-cni, 40 for the node group). The message prints the command that shows its health. A re-run does not replace a `CREATE_FAILED` node group: delete it with `eksctl delete nodegroup --cluster flight-ops-cluster --name ng-1 --region ap-south-1 --wait`, then re-run |
 | `up.sh` stops at step 4: `could not create addon <name>`, `could not associate an IAM OIDC provider` or `could not create node group ng-1` | EKS or eksctl refused the create. Its own error is printed just above |
@@ -235,6 +236,7 @@ still billed at month end.
 | `up.sh` waits 30 minutes at step 10, then stops | CI never created the deployment. Check the workflow run: the deploy job is skipped unless `DEPLOY_ENABLED` is `true` and the run is on `main` |
 | Pods run but nothing reaches SQS | IRSA is not attached. `kubectl describe pod` should show `AWS_WEB_IDENTITY_TOKEN_FILE` |
 | Connection timeouts to RDS | the security group admits the cluster SG and the shared node SG. Confirm with `aws ec2 describe-security-groups` that the ids in `data.yaml`'s parameters match the live cluster |
+| Pods `CrashLoopBackOff`, Flyway reports `SSL error:`, `could not be verified by hostnameverifier` or `Could not open SSL root certificate file` | the driver refused the database's certificate, because `DB_URL` sets `sslmode=verify-full`. `SSL error:` with `PKIX path building failed`: the certificate does not chain to a CA in `certs/rds-global-bundle.pem`, usually because the instance moved to a CA the committed bundle does not hold. Refresh the bundle as [doc/DEPLOYMENT.md](../../doc/DEPLOYMENT.md#the-database-connection) says, and deploy the new image. The host name message: `DB_URL` names a host the certificate does not, such as a custom DNS name, so use the `JdbcUrl` output as it is. The root certificate message: `DB_URL` has `sslmode=verify-full` but no `sslrootcert`, so the driver looked for `~/.postgresql/root.crt`. Set `DB_URL` to the whole `JdbcUrl` output. If the message names `/app/certs/rds-global-bundle.pem`, the running image lacks the bundle or `DB_URL` has a wrong path: check the image tag and the path in `DB_URL` |
 | `eksctl delete cluster` fails after 20 min | the data stack is still up. Delete it, then re-run `down.sh` |
 | CI stops at "Is this commit already in ECR?" | `describe-images` failed with something other than `ImageNotFoundException`, usually a missing `ecr:DescribeImages` on the CI role. The step log shows the CLI's message |
 | CI stops at "Configure AWS credentials (OIDC)" with `Not authorized to perform sts:AssumeRoleWithWebIdentity` | the role did not accept the token. Its trust policy pins `sub` to `repo:<GitHubOwner>/<GitHubRepo>:ref:refs/heads/main`, with the owner and repo `foundation.yaml` was deployed with (default `smit-lakhani-13/flight-ops-services`). A wrong `AWS_ACCOUNT_ID` secret gives the same message |
@@ -254,6 +256,7 @@ still billed at month end.
 | `foundation.yaml` | ECR, GitHub OIDC provider and role, the SQS publish policy, two budgets |
 | `data.yaml` | RDS PostgreSQL, its subnet group and security group |
 | `cluster.yaml` | the eksctl cluster: Kubernetes version pin, one NAT gateway, OIDC for IRSA, and the managed node group `lib.sh` names; `up.sh` passes it to `eksctl` with `-f` |
+| `lbc-iam-policy-v3.5.0.json` | the AWS Load Balancer Controller's IAM policy for v3.5.0, copied unchanged from upstream; `up.sh` checks its sha256 and creates the policy `flight-ops-lbc-v3.5.0` from it. `doc/DEPLOYMENT.md` gives its source and how to move to a new release |
 
 `cluster.yaml` sits beside the scripts that use it, because `eksctl` takes its
 config from `-f` and has no default location. The SAM template is

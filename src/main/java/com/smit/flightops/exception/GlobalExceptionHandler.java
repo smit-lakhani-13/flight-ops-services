@@ -7,6 +7,7 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.core.NestedExceptionUtils;
 import org.springframework.core.NestedRuntimeException;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -88,6 +89,13 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleNotBookable(FlightNotBookableException e) {
         return json(HttpStatus.CONFLICT)
                 .body(ErrorResponse.of("FLIGHT_NOT_BOOKABLE", e.getMessage(), clock.instant()));
+    }
+
+    /** Its own code because the flight has flown, so no retry of the cancellation can succeed. */
+    @ExceptionHandler(BookingNotCancellableException.class)
+    public ResponseEntity<ErrorResponse> handleNotCancellable(BookingNotCancellableException e) {
+        return json(HttpStatus.CONFLICT)
+                .body(ErrorResponse.of("BOOKING_NOT_CANCELLABLE", e.getMessage(), clock.instant()));
     }
 
     @ExceptionHandler(DuplicateFlightException.class)
@@ -249,9 +257,18 @@ public class GlobalExceptionHandler {
      * decimal point or an exponent, and a time that is not an ISO-8601 instant.
      * None of these reach Bean Validation. The message is generic because
      * Jackson's names internal classes and echoes the payload.
+     *
+     * <p>One cause is not malformed: a body with no {@code Content-Length} that
+     * {@code RequestBodyLimitFilter} stopped at the limit. Jackson wraps the
+     * stream's exception, so it arrives here, and it gets the 413 the filter gives
+     * a declared length over the limit, not a 400.
      */
     @ExceptionHandler({HttpMessageNotReadableException.class, MethodArgumentTypeMismatchException.class})
     public ResponseEntity<ErrorResponse> handleMalformed(Exception e) {
+        if (NestedExceptionUtils.getMostSpecificCause(e) instanceof PayloadTooLargeException tooLarge) {
+            return json(HttpStatus.CONTENT_TOO_LARGE)
+                    .body(ErrorResponse.of("PAYLOAD_TOO_LARGE", tooLarge.getMessage(), clock.instant()));
+        }
         log.warn("Malformed request: {}", printable(e.getMessage()));
         return json(HttpStatus.BAD_REQUEST)
                 .body(ErrorResponse.of("MALFORMED_REQUEST",

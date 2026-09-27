@@ -51,7 +51,7 @@
     <properties>
         <java.version>21</java.version>
         <!-- Boot's BOM does not manage the AWS SDK, so this pin is the only thing controlling it. -->
-        <aws.sdk.version>2.55.2</aws.sdk.version>
+        <aws.sdk.version>2.55.3</aws.sdk.version>
 
         <!--
           Not in Boot's BOM either. springdoc 3.x targets Boot 4.x; 3.1.1 is the
