@@ -174,10 +174,12 @@ still blank.
   build and scan. On a run that can deploy it saves the image, records the
   archive's sha256 before the scan, and uploads it for one day once the scan
   passes. The deploy job checks the sha256, loads the image, tags it and
-  pushes those bytes, and it installs kubectl before the AWS keys exist.
-  `id-token: write` is job-level, so the OIDC request variables are still in
-  every step (`.github/workflows/build-and-deploy.yml`). The job is gated off
-  and has never run.
+  pushes those bytes. The one tool it still downloads is kubectl, by version
+  and with no checksum held in this repository. It is installed before the
+  AWS keys are exported, but it then runs with them in the apply, rollout and
+  smoke-test steps. `id-token: write` is job-level, so the OIDC request
+  variables are still in every step (`.github/workflows/build-and-deploy.yml`).
+  The job is gated off and has never run.
 
 ## 1.2.0 — 2026-09-26
 

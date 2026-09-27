@@ -68,7 +68,9 @@ permissions:
 # So the deploy job builds and scans nothing. The image job, which holds no
 # AWS credentials, builds, starts and scans the image, and the deploy job
 # pushes those bytes. The one tool the deploy job still downloads is kubectl,
-# installed before the AWS keys are exported.
+# by version and with no checksum held here. It is installed before the AWS
+# keys are exported, but it then runs with them in the apply, rollout and
+# smoke-test steps.
 #
 # Every job names its OS release, ubuntu-24.04, not ubuntu-latest. That label
 # moves to Ubuntu 26.04 between 19 October and 19 November 2026
