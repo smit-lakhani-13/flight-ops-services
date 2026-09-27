@@ -1,7 +1,7 @@
 # 11. Correlation ids, domain counters, and no exporter
 
-Status: accepted (recorded 2026-09-22, decision taken in commit `d18f58b`; the
-outbox counters and gauges in `OutboxMetrics` followed in `a6efc1c`)
+Status: accepted (recorded 2026-09-22, decision taken in commit [`d18f58b`]; the
+outbox counters and gauges in `OutboxMetrics` followed in [`a6efc1c`])
 
 ## Context
 
@@ -82,3 +82,6 @@ I configured no OTLP exporter endpoint.
 
 * **Tagging counters by flight.** Tagging the booking counters by flight number
   gives unbounded cardinality, and a Prometheus outage waiting for a busy day.
+
+[`d18f58b`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/d18f58b
+[`a6efc1c`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/a6efc1c

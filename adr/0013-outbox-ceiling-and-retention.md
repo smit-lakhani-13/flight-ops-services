@@ -1,7 +1,7 @@
 # 13. The outbox is bounded: an attempt ceiling and a retention window
 
-Status: accepted (recorded 2026-09-22, decision taken in commit `a6efc1c`; the
-retry backoff was added in `50e8871` and recorded in place on 2026-09-23)
+Status: accepted (recorded 2026-09-22, decision taken in commit [`a6efc1c`]; the
+retry backoff was added in [`50e8871`] and recorded in place on 2026-09-23)
 
 ## Context
 
@@ -91,3 +91,6 @@ at most `MAX_BATCHES_PER_RUN` batches.
   forever. The decision above takes the backoff and keeps the ceiling. The
   backoff makes the ceiling reachable on a human timescale, and the ceiling is
   what stops the poisoned row. Either alone is the wrong half.
+
+[`a6efc1c`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/a6efc1c
+[`50e8871`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/50e8871

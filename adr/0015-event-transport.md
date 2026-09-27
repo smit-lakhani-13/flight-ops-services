@@ -1,7 +1,7 @@
 # 15. Events go to an SQS standard queue, not a JMS broker
 
-Status: accepted (recorded 2026-09-25, decision taken in commit `4a9a5b9`,
-before the outbox of ADR 0001 arrived in `e83d846`)
+Status: accepted (recorded 2026-09-25, decision taken in commit [`4a9a5b9`],
+before the outbox of ADR 0001 arrived in [`e83d846`])
 
 ## Context
 
@@ -9,10 +9,10 @@ Solace PubSub+ and TIBCO EMS are described here from their vendors'
 documentation, and Lambda's event sources other than SQS from AWS's. None of
 them has been used, built against or run in this project.
 
-I chose SQS in the first commit, `4a9a5b9`, when the service still sent the
+I chose SQS in the first commit, [`4a9a5b9`], when the service still sent the
 event from inside the booking transaction, and I recorded the choice after the
 fact. It is judged here against the code as it is now. The consumer is a
-Lambda ([ADR 0008](0008-standalone-lambda-consumer.md)). Since `e83d846`, the
+Lambda ([ADR 0008](0008-standalone-lambda-consumer.md)). Since [`e83d846`], the
 outbox ([ADR 0001](0001-transactional-outbox.md)) gives at-least-once delivery
 whatever the transport. And SQS leaves no broker to run or pay for.
 
@@ -140,3 +140,6 @@ with a dead-letter queue after three receives.
   idle, bought for per-partition ordering and replay that one idempotent
   consumer does not use. Lambda can read Kafka, but the handler would receive
   a `KafkaEvent`, not an `SQSEvent`, so the consumer would change too.
+
+[`4a9a5b9`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/4a9a5b9
+[`e83d846`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/e83d846

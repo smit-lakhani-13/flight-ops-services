@@ -95,8 +95,8 @@ It uses the same exhaustive `switch` with no `default`, for the same reason.
 `FlightTest.cancelledFlightIsNotBookable`, `releaseSeatsIsNotStatusGuarded`,
 `everyStatusIsClassified` and `cancelIsIdempotent` pin the entity rules.
 `ErrorContractTest.cancelledFlightCannotBeRevived` pins the graph through the
-real stack. The status guard is in the first commit, `4a9a5b9`. The transition
-graph came in `eac8cc4`.
+real stack. The status guard is in the first commit, [`4a9a5b9`]. The transition
+graph came in [`eac8cc4`].
 
 ## A Location header that led to a 404
 
@@ -130,7 +130,7 @@ from each.
 
 `BookingControllerTest.locationHeaderResolves` and
 `FlightControllerTest.createReturns201WithAResolvableLocation` pin it. Both
-fixes are in the first commit, `4a9a5b9`.
+fixes are in the first commit, [`4a9a5b9`].
 
 ## One idempotency key, two answers
 
@@ -179,7 +179,7 @@ it. Ten threads send one key, every caller gets the same booking id back, one
 row exists and one seat is debited.
 `BookingServiceTest.racingTheWriterRecoversTheWinner` and
 `theWritersLostRaceSignalAlsoRecovers` cover both signals with the writer
-mocked. The fix is `d4e0113`.
+mocked. The fix is [`d4e0113`].
 
 Some contracts are only false under concurrency. The test that catches them has
 to create the race, and restating the single-request case twice does not.
@@ -204,7 +204,7 @@ so it had the bug written down as the contract. It is now two tests.
 `BookingIdempotencyTest.racingCallersWithDifferentPayloadsOnOneKeyGetConflicts`,
 `BookingWriterTest.recoverReplayRejectsAReusedKey` and
 `ErrorContractTest.reusingAKeyForADifferentBookingIsAConflict` pin it. The fix
-is in `eac8cc4`.
+is in [`eac8cc4`].
 
 ### The last seat
 
@@ -221,7 +221,7 @@ different row locks.
 
 `BookingIdempotencyTest.racingCallersOnTheLastSeatAllGetTheSameBooking`,
 `BookingWriterTest.racingReplayOnTheLastSeatIsNotAnOversell` and
-`theReCheckIsInsideTheLock` pin it. The fix is in `50e8871`.
+`theReCheckIsInsideTheLock` pin it. The fix is in [`50e8871`].
 
 ## A booking lookup that failed on every call
 
@@ -253,7 +253,7 @@ public BookingDto findById(Long bookingId) {
 `BookingFindByIdLazyLoadingTest.sequentialCreateThenFetchByIdDoesNotThrow` pins
 it. Nothing in its chain is mocked, and the test class has no `@Transactional`
 of its own. A test-managed transaction would keep the session open for the
-whole test and let this bug pass with the fix reverted. The fix is `b24caea`.
+whole test and let this bug pass with the fix reverted. The fix is [`b24caea`].
 
 ## Paging that could skip a row
 
@@ -262,7 +262,7 @@ resolves the sort property inside the repository proxy, past anything a
 controller validates, so `PropertyReferenceException` reached the catch-all. A
 typo read as "we are broken". It is now `400 UNKNOWN_SORT_PROPERTY`, naming the
 property and nothing else. `ErrorContractTest.unknownSortPropertyIsABadRequest`
-pins it, from `eac8cc4`.
+pins it, from [`eac8cc4`].
 
 Both list endpoints also paged on a non-unique sort key. Two flights sharing a
 departure time could appear twice, or not at all, across pages. The Javadoc of
@@ -274,7 +274,7 @@ against a list each endpoint publishes, and it appends `id` as a tie-breaker
 when the caller did not sort on it. The list leaves out `idempotencyKey`,
 because sorting on it would hand back other people's keys one bit at a time.
 `ErrorContractTest.idempotencyKeyIsNotSortable` pins the list. `SortPolicy`
-landed in `50e8871`. `controller/SortPolicyTest` now pins the tie-breaker:
+landed in [`50e8871`]. `controller/SortPolicyTest` now pins the tie-breaker:
 `defaultFlightOrderMatchesTheIndex` and `callersIdOrderIsTheTiebreaker`.
 
 ## The outbox and a slow queue
@@ -284,7 +284,7 @@ timeout. It published inside the booking transaction, holding the flight row
 lock and one of ten pool connections. An SQS endpoint that accepted the
 connection and stopped answering would have blocked every booking for that
 flight until the socket gave up. I bounded it at 5s overall and 2s per attempt
-in `eac8cc4`. The attempt timeout alone would have been a subtle mistake,
+in [`eac8cc4`]. The attempt timeout alone would have been a subtle mistake,
 because three retries of 2s is a 6s call.
 
 Then I took the publish out of the transaction. No ordering of a database write
@@ -301,7 +301,7 @@ and a queue send is atomic:
 Neither shows up in a test that does not kill the process at the wrong moment.
 `OutboxWriter.recordBookingCreated` now inserts the event into `outbox_events`
 in the booking's transaction, on the same connection. A `@Scheduled` poller
-publishes it afterwards. That landed in `e83d846`, and
+publishes it afterwards. That landed in [`e83d846`], and
 [adr/0001](../adr/0001-transactional-outbox.md) records the decision.
 
 The writer is `@Transactional(propagation = MANDATORY)`. Called outside a
@@ -332,7 +332,7 @@ UPDATE outbox_events SET attempts = 0, next_attempt_at = NULL WHERE id = ?
 
 `OutboxPoisonRowTest.resettingAttemptsRedrivesTheRow` runs that statement, so
 the one an operator pastes is a tested one. `anExhaustedRowDropsOutOfTheClaim`
-pins the ceiling. The ceiling landed in `a6efc1c`.
+pins the ceiling. The ceiling landed in [`a6efc1c`].
 
 ### Backoff
 
@@ -352,7 +352,7 @@ waits). The doubling is a bounded loop. A shift, `base << (attempt - 1)`, is
 one character shorter and wrong at attempt 64.
 
 `OutboxRetryBackoffTest.aBurstOfDrainsDoesNotBurnTheCeiling` and
-`theWaitDoublesUpToTheCap` pin it. The backoff landed in `50e8871`.
+`theWaitDoublesUpToTheCap` pin it. The backoff landed in [`50e8871`].
 
 ### Retention
 
@@ -373,8 +373,8 @@ a backlog.
 `OutboxPrunerTest` proves the retention rules on H2, including
 `unpublishedRowsAreNeverPruned`. `OutboxPrunePostgresTest` runs the native
 statement against PostgreSQL 17 in CI, with `pruneStatementRunsOnPostgres` and
-`concurrentPrunersDoNotBlockEachOther`. The pruner landed in `a6efc1c`, and the
-two-pruner test came in `50e8871`.
+`concurrentPrunersDoNotBlockEachOther`. The pruner landed in [`a6efc1c`], and
+the two-pruner test came in [`50e8871`].
 
 ## Metrics under the wrong names
 
@@ -400,9 +400,9 @@ Two counters shared a meter name with different descriptions. The exporter
 prints one `# HELP` line per name, so whichever registered last described both
 series. The metric was right and its documentation was wrong, and that is the
 harder one to notice. There is now one description per meter name, held in a
-constant, and the Prometheus test asserts a single
-`# HELP bookings_booked_total` line. The fixes are in `d18f58b`, the commit that
-added the meters.
+constant, and the Prometheus test asserts a single `# HELP
+bookings_booked_total` line. The fixes are in [`d18f58b`], the commit that added
+the meters.
 
 ## A teardown that could pass on an error
 
@@ -432,8 +432,8 @@ The same read found more:
   AWS, so it now has `DeletionPolicy: Retain`.
 
 When I made these fixes, CI ran only `shellcheck` and `bash -n` over the
-scripts, because a real test needs an AWS account. The fixes are in `b576b6f`.
-Since `86b9e41`, `deploy/aws/selftest.sh` runs `down.sh` against stubbed tools
+scripts, because a real test needs an AWS account. The fixes are in [`b576b6f`].
+Since [`86b9e41`], `deploy/aws/selftest.sh` runs `down.sh` against stubbed tools
 in CI's `infra-lint` job. `down.sh` now finishes with fourteen checks, and
 [DEPLOYMENT.md](DEPLOYMENT.md) lists them.
 
@@ -468,8 +468,8 @@ what it took, in the order the compiler found it:
 - Actuator packages moved. `EndpointRequest` is now in
   `org.springframework.boot.security.autoconfigure.actuate.web.servlet`, and
   `HealthEndpoint` is in a new `spring-boot-health` module. `SecurityConfig`,
-  written on Boot 4 in `e83d846`, uses both to match actuator endpoints by type
-  instead of by literal path.
+  written on Boot 4 in [`e83d846`], uses both to match actuator endpoints by
+  type instead of by literal path.
 
 - Testcontainers 2.x renamed every module. `org.testcontainers:postgresql`
   became `testcontainers-postgresql`, and the old coordinates are no longer
@@ -479,17 +479,17 @@ what it took, in the order the compiler found it:
   `@MockitoBean`, so this one cost nothing.
 
 - JUnit 6.0.3 arrives with the BOM. `lambda/pom.xml` moved to match in
-  `416b4ac`. Two JUnit majors in one repository is a trap when switching
+  [`416b4ac`]. Two JUnit majors in one repository is a trap when switching
   between the modules.
 
 The JDK was never the blocker, because Boot 4 needs Java 17 or later. The
-upgrade is `7b45b5b`, and [adr/0007](../adr/0007-spring-boot-4.md) records the
+upgrade is [`7b45b5b`], and [adr/0007](../adr/0007-spring-boot-4.md) records the
 decision.
 
 ## First review pass
 
 I read through my own code looking for rules that existed in one place and were
-trusted everywhere. Every fix in this pass first landed in `eac8cc4`. The
+trusted everywhere. Every fix in this pass first landed in [`eac8cc4`]. The
 clock entry names the later commits. Four of them are told above:
 [the sort parameter](#paging-that-could-skip-a-row),
 [the reused key](#a-replay-must-be-the-same-request),
@@ -589,17 +589,17 @@ the JVM clock. Hibernate Validator judges `@Future` against
 `Clock.systemDefaultZone()`, so `TimeConfig.validationClock` now hands it the
 bean (`ValidationClockTest`).
 
-The injected `Clock` is from `eac8cc4`. The first clock rule, with the
-`Booking` exemption, came in `f8d2d4b`. The constructor argument and the rule
-with no exemption came in `426098b`. The wider rule and `validationClock` came
-in `5835267`.
+The injected `Clock` is from [`eac8cc4`]. The first clock rule, with the
+`Booking` exemption, came in [`f8d2d4b`]. The constructor argument and the rule
+with no exemption came in [`426098b`]. The wider rule and `validationClock` came
+in [`5835267`].
 
 ## Second review pass
 
 I ran the second pass against the first, looking for failures that stay green
 everywhere a developer looks. Three of these would take the service down in
 production while every probe, every test and every local run passed. All of
-them landed in `c47729d`.
+them landed in [`c47729d`].
 
 ### A missing API_PASSWORD started the service
 
@@ -616,7 +616,7 @@ filter catches it. It is thrown before `DispatcherServlet`, so
 
 `ApiSecurityProperties` now requires an `{id}` algorithm prefix
 (`config/ApiSecurityProperties.java`). I first wrote that as `@Validated` with a
-`@Pattern`. Since `5cb8fa4` the check sits in the record's compact
+`@Pattern`. Since [`5cb8fa4`] the check sits in the record's compact
 constructor, so Boot's bind report no longer prints the rejected value. The
 context fails to start, with a message naming the variable. A pod that looks
 healthy and answers nothing is worse than one that refuses to boot.
@@ -713,17 +713,17 @@ all four are queryable fields. An inbound id must match
 `^[A-Za-z0-9._:-]{1,128}$`, and anything else is replaced.
 `RequestIdFilterTest.refusesToEchoSomethingDangerous` and
 `SecurityRulesTest.everyResponseCarriesARequestId` pin it. It landed in
-`d18f58b`.
+[`d18f58b`].
 
 ### Published outbox rows were kept forever
 
 This is the [retention](#retention) story above. The pruner landed in
-`a6efc1c`.
+[`a6efc1c`].
 
 ### A poisoned event was retried first, forever
 
 This is the [poison row](#a-poison-row) story above. The ceiling landed in
-`a6efc1c`.
+[`a6efc1c`].
 
 ## Fourth review pass
 
@@ -742,7 +742,7 @@ on a new flight as well. A fractional number is now `400 MALFORMED_REQUEST`,
 and the service is never called.
 `controller/BookingControllerTest.java#seatsMustBeAWholeNumber` sends 2.5, 2.0,
 1e0, `"2"`, a null and a missing field and expects that 400 for each. The fix
-is `f67d245`, and the test followed in `ccad5b4`.
+is [`f67d245`], and the test followed in [`ccad5b4`].
 
 ### The whole-number rule had other ways round it
 
@@ -751,7 +751,7 @@ swagger-core, which brings `jackson-dataformat-yaml`, and Spring MVC then
 registers a YAML reader that no `spring.jackson` setting configures. A booking
 sent as `application/yaml` with `seats: 2.5` still booked two seats. The three
 writes now declare `consumes = application/json`, so a body sent as
-`application/yaml` gets `415 UNSUPPORTED_MEDIA_TYPE`. The fix is `dff5ef9`,
+`application/yaml` gets `415 UNSUPPORTED_MEDIA_TYPE`. The fix is [`dff5ef9`],
 pinned by `controller/BookingControllerTest.java#yamlBodyReturns415` and
 `controller/FlightControllerTest.java#yamlBodyReturns415`.
 
@@ -760,18 +760,19 @@ The JSON reader had gaps of its own. `"seats": "2"` was read from text.
 `departureTime` of `1798797600000`, meant as milliseconds, was read as epoch
 seconds: a date in the year 58971, which passed `@Future`.
 `spring.jackson.mapper.allow-coercion-of-scalars: false` closes the first
-(`bdb6781`) and `spring.jackson.datatype.enum.fail-on-numbers-for-enums: true`
-the second (`f1ae45e`). For the third, `validation/IsoInstantDeserializer.java`
-accepts a departure time only as an ISO-8601 instant, such as
-`2026-09-23T10:00:00Z`. An offset such as `+05:30` still works and is stored in
-UTC (`f1ae45e`). Each case is `400 MALFORMED_REQUEST`.
+([`bdb6781`]) and `spring.jackson.datatype.enum.fail-on-numbers-for-enums: true`
+the second ([`f1ae45e`]). For the third,
+`validation/IsoInstantDeserializer.java` accepts a departure time only as an
+ISO-8601 instant, such as `2026-09-23T10:00:00Z`. An offset such as `+05:30`
+still works and is stored in UTC ([`f1ae45e`]). Each case is `400
+MALFORMED_REQUEST`.
 `controller/BookingControllerTest.java#seatsMustBeAWholeNumber`,
 `controller/FlightControllerTest.java#statusAsANumberReturns400` and
 `controller/FlightControllerTest.java#departureTimeMustBeAnIsoString` each
 failed before its fix.
 `controller/FlightControllerTest.java#departureTimeWithAnOffsetIsRead` passes
-without the fix too, because Jackson's own reader takes an offset. It keeps
-the fix from refusing that form.
+without the fix too, because Jackson's own reader takes an offset. It keeps the
+fix from refusing that form.
 
 ### A flight number that broke its own Location header
 
@@ -785,7 +786,7 @@ a 400 for a flight that now existed. Flight numbers are now letters and digits
 controllers build `Location` with `UriComponentsBuilder`.
 `controller/FlightControllerTest.java#flightNumberMustBeLettersAndDigits`
 refuses each of those numbers, and one with a newline in it, before anything
-is created. The fix is `ccad5b4`.
+is created. The fix is [`ccad5b4`].
 
 ### A page past the last row was a 500
 
@@ -796,7 +797,7 @@ computes the row offset as an `int`, and `page * size` overflowed it.
 `page * size must not exceed 2147483647.`
 `ErrorContractTest.java#pagePastTheLastAddressableRowIsABadRequest` checks both
 lists. It also checks that page 107374182 at the default size of 20, the last
-page that fits, is still a 200. The fix is `ccad5b4`.
+page that fits, is still a 200. The fix is [`ccad5b4`].
 
 ### A password the encoder could not verify
 
@@ -810,7 +811,7 @@ startup and turns any failure into an `IllegalStateException` naming the
 property. `PasswordVerifiabilityTest.java#anUnknownAlgorithmIdStopsStartup`,
 `PasswordVerifiabilityTest.java#argon2WithoutBouncyCastleStopsStartup` and
 `PasswordVerifiabilityTest.java#aPbkdf2HashStartsTheContext` cover both
-failures and a hash the old prefix pattern refused. The fix is `5cb8fa4`.
+failures and a hash the old prefix pattern refused. The fix is [`5cb8fa4`].
 
 ### A typo in the publisher setting gave the wrong error
 
@@ -823,7 +824,7 @@ argument, and the failure reads
 `app.events.publisher must be one of [log, sqs], not "noop"`.
 `EventPropertiesTest.java#applicationStartupNamesTheProperty` starts the whole
 application with that value, and it failed before the fix. The fix is
-`db00444`.
+[`db00444`].
 
 ### The Lambda stored seat counts the service never sends
 
@@ -835,7 +836,7 @@ cleans body values before they reach the log, because a `bookingId` carrying
 `\r\n` could write a fake `Processed booking` line.
 `lambda/BookingEventHandlerTest.java#aSeatsValueThatIsNotAPositiveWholeNumberIsNotWritten`
 and `lambda/BookingEventHandlerTest.java#bodyValuesAreLoggedOnOneBoundedLine`
-pin both. The fix is `056eb61`.
+pin both. The fix is [`056eb61`].
 
 ### The deploy path could not build the Lambda
 
@@ -849,4 +850,29 @@ second bug: `kubectl wait` ran before CI had created the deployment and exited
 at once with NotFound, so `deploy/aws/lib.sh#wait_for_deployment` now waits for
 it to appear first. `deploy/aws/selftest.sh` tests the scripts against stubbed
 tools in CI, and a `build` job step checks that `CodeUri` names a built jar
-holding the handler. The fix is `86b9e41`.
+holding the handler. The fix is [`86b9e41`].
+
+[`4a9a5b9`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/4a9a5b9
+[`eac8cc4`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/eac8cc4
+[`d4e0113`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/d4e0113
+[`50e8871`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/50e8871
+[`b24caea`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/b24caea
+[`e83d846`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/e83d846
+[`a6efc1c`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/a6efc1c
+[`d18f58b`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/d18f58b
+[`b576b6f`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/b576b6f
+[`86b9e41`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/86b9e41
+[`416b4ac`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/416b4ac
+[`7b45b5b`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/7b45b5b
+[`f8d2d4b`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/f8d2d4b
+[`426098b`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/426098b
+[`5835267`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/5835267
+[`c47729d`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/c47729d
+[`5cb8fa4`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/5cb8fa4
+[`f67d245`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/f67d245
+[`ccad5b4`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/ccad5b4
+[`dff5ef9`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/dff5ef9
+[`bdb6781`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/bdb6781
+[`f1ae45e`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/f1ae45e
+[`db00444`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/db00444
+[`056eb61`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/056eb61

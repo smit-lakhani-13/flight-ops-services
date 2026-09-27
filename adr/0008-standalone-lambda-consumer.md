@@ -1,6 +1,6 @@
 # 8. A standalone, frameworkless Lambda consumer on arm64
 
-Status: accepted (recorded 2026-09-22, decision taken in commit `4a9a5b9`)
+Status: accepted (recorded 2026-09-22, decision taken in commit [`4a9a5b9`])
 
 ## Context
 
@@ -76,3 +76,5 @@ picks by a fixed priority that ranks Apache 5 above URLConnection.
 
 * **A shared `events` module.** Compile-time safety, bought with deployment
   coupling. I rejected it for the reason above.
+
+[`4a9a5b9`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/4a9a5b9

@@ -1,6 +1,6 @@
 # 5. One authorisation rule set for Basic and JWT
 
-Status: accepted (recorded 2026-09-22, decision taken in commit `e83d846`)
+Status: accepted (recorded 2026-09-22, decision taken in commit [`e83d846`])
 
 ## Context
 
@@ -77,3 +77,5 @@ configuration, so the bullet says what it would accept and names the check.
 
 * **A gateway doing authorisation.** Correct in a mesh. This service must still
   be safe when called directly.
+
+[`e83d846`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/e83d846

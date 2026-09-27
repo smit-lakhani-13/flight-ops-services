@@ -1,7 +1,7 @@
 # 2. Pessimistic row locks for seat inventory, with a bounded wait
 
-Status: accepted (recorded 2026-09-22, decision taken in commit `4a9a5b9`,
-bounded by a session `lock_timeout` in `eac8cc4`)
+Status: accepted (recorded 2026-09-22, decision taken in commit [`4a9a5b9`],
+bounded by a session `lock_timeout` in [`eac8cc4`])
 
 ## Context
 
@@ -120,3 +120,6 @@ ten. Other requests on that pod, for any flight, then wait for a connection,
 * **Queueing the bookings.** A queue in front of the seat counter is correct at
   airline scale. It is overkill here, and it makes booking asynchronous, which
   changes the API.
+
+[`4a9a5b9`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/4a9a5b9
+[`eac8cc4`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/eac8cc4

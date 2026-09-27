@@ -1,7 +1,7 @@
 # 14. The build fails on architecture, coverage and dependency drift
 
-Status: accepted (recorded 2026-09-22, decision taken in commits `631f5f0`
-and `f8d2d4b`)
+Status: accepted (recorded 2026-09-22, decision taken in commits [`631f5f0`]
+and [`f8d2d4b`])
 
 ## Context
 
@@ -63,3 +63,6 @@ build emits:
 
 * **A coverage ratchet (never decrease).** Sounds principled, punishes deleting
   dead code, and rewards writing tests for getters.
+
+[`631f5f0`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/631f5f0
+[`f8d2d4b`]: https://github.com/smit-lakhani-13/flight-ops-services/commit/f8d2d4b

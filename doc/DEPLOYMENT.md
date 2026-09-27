@@ -52,10 +52,18 @@ subnets with no NAT gateway cost $6.42/day. A single EC2 instance running
 
 ## 2. Localhost
 
+If your JDK 21 is not at the path below, point `JAVA_HOME` at it instead
+([CONTRIBUTING.md](../CONTRIBUTING.md#use-jdk-21) says why the build needs 21).
+
 ```bash
-export JAVA_HOME=/opt/homebrew/opt/openjdk@21      # or wherever your JDK 21 is
+export JAVA_HOME=/opt/homebrew/opt/openjdk@21
 ./mvnw spring-boot:run
-scripts/demo.sh                                    # in another terminal
+```
+
+Then, in another terminal, from the same directory:
+
+```bash
+scripts/demo.sh
 ```
 
 This runs on H2 in memory, and the outbox logs its rows instead of sending
@@ -121,7 +129,7 @@ compare check constraints or indexes.
 ## 3. The async half alone
 
 ```bash
-export AWS_REGION=ap-south-1 AWS_DEFAULT_REGION=ap-south-1   # what deploy/aws/lib.sh pins
+export AWS_REGION=ap-south-1 AWS_DEFAULT_REGION=ap-south-1
 rm -rf .aws-sam
 ./mvnw -B -q -f lambda/pom.xml clean package
 sam deploy \
@@ -156,11 +164,15 @@ APP_EVENTS_PUBLISHER=sqs \
 ./mvnw spring-boot:run
 ```
 
-Make a booking and watch it arrive on the other side:
+The service holds this terminal, so make a booking from another one, and
+watch it arrive on the other side there. The count returns at once and the
+tail runs until Ctrl-C, so the tail goes last:
 
 ```bash
-sam logs -n BookingEventFunction --stack-name flight-ops-lambda --tail
-aws dynamodb scan --table-name <TableName from the outputs> --select COUNT
+aws dynamodb scan --region ap-south-1 --table-name flight-status-events \
+  --select COUNT
+sam logs -n BookingEventFunction --stack-name flight-ops-lambda \
+  --region ap-south-1 --tail
 ```
 
 The log line carries the `traceparent` of the HTTP request that made the
@@ -181,11 +193,15 @@ short version:
 
 ```bash
 brew install awscli eksctl kubernetes-cli helm aws-sam-cli openjdk@21
-aws configure                                   # region ap-south-1
-aws sts get-caller-identity                     # must print your account id
+aws configure
+aws sts get-caller-identity
 
-ALERT_EMAIL=you@example.com ./deploy/aws/up.sh  # ~50 minutes
+ALERT_EMAIL=you@example.com ./deploy/aws/up.sh
 ```
+
+Give `aws configure` the region `ap-south-1`, and check that
+`aws sts get-caller-identity` prints your account id. `up.sh` takes about 50
+minutes.
 
 The preflight checks the tools, the credentials and `./mvnw -v`, which must
 report JDK 21 because the enforcer rule in `lambda/pom.xml` accepts nothing
@@ -493,18 +509,21 @@ To move to a new release, change the tag, the file, the sum and the documents
 that name them in one commit:
 
 1. Download the new release's file beside the old one, and read the diff.
-   Every added action is a new permission for the controller.
+   Every added action is a new permission for the controller. Set `new` to the
+   new release's tag:
 
    ```bash
    old=$(sed -n 's/^LBC_POLICY_TAG=\([^ ]*\).*/\1/p' deploy/aws/up.sh)
-   new=v3.6.0   # the new release
+   new=v3.6.0
    repo=kubernetes-sigs/aws-load-balancer-controller
    curl -fsSL -o "deploy/aws/lbc-iam-policy-$new.json" \
      "https://raw.githubusercontent.com/$repo/$new/docs/install/iam_policy.json"
    diff -u "deploy/aws/lbc-iam-policy-$old.json" \
      "deploy/aws/lbc-iam-policy-$new.json"
-   shasum -a 256 "deploy/aws/lbc-iam-policy-$new.json"   # or sha256sum
+   shasum -a 256 "deploy/aws/lbc-iam-policy-$new.json"
    ```
+
+   Without `shasum`, `sha256sum` prints the same sum.
 
 2. Delete the old file with `git rm`. In `deploy/aws/up.sh`, set
    `LBC_POLICY_TAG` to the new tag, `LBC_CHART_VERSION` to the chart that
@@ -724,8 +743,10 @@ load balancer by name, and the Elastic IPs and volumes by the
 ### Watching it
 
 ```bash
-./deploy/aws/cost-check.sh        # daily by service, month to date, forecast
+./deploy/aws/cost-check.sh
 ```
+
+It prints the daily cost by service, the month to date and the forecast.
 
 Cost Explorer lags by 8 to 24 hours, so today's figure is always incomplete.
 Read the forecast instead of today's total.

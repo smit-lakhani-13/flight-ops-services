@@ -78,14 +78,28 @@ and the reason the last rule is `denyAll()`.
 
 A 401 means the caller is unknown. A 403 means it is known and not allowed.
 
-```bash
-curl -s localhost:8080/api/v1/flights/UA123              # no credentials
-# 401, WWW-Authenticate: Basic realm="flight-ops-service"
-# {"code":"UNAUTHENTICATED","message":"Authentication is required to access this resource","timestamp":"2026-09-25T08:46:53.522905Z"}
+With no credentials:
 
-curl -s -u api:dev-secret localhost:8080/actuator/metrics  # api on an ops endpoint
-# 403
-# {"code":"FORBIDDEN","message":"Your credentials do not grant access to this resource","timestamp":"2026-09-25T08:47:03.007894Z"}
+```bash
+curl -s localhost:8080/api/v1/flights/UA123
+```
+
+The answer is 401, with `WWW-Authenticate: Basic realm="flight-ops-service"`:
+
+```text
+{"code":"UNAUTHENTICATED","message":"Authentication is required to access this resource","timestamp":"2026-09-25T08:46:53.522905Z"}
+```
+
+The `api` account on an `ops` endpoint:
+
+```bash
+curl -s -u api:dev-secret localhost:8080/actuator/metrics
+```
+
+The answer is 403:
+
+```text
+{"code":"FORBIDDEN","message":"Your credentials do not grant access to this resource","timestamp":"2026-09-25T08:47:03.007894Z"}
 ```
 
 A wrong password gets the same 401 and the same message, so the body never says
@@ -266,23 +280,29 @@ included.
 
 ### Retries
 
-A retry does not double-book. On a freshly started app:
+A retry does not double-book. On a freshly started app, book three seats and
+read the flight back:
 
 ```bash
 curl -s -u api:dev-secret -X POST localhost:8080/api/v1/bookings \
   -H 'Content-Type: application/json' \
   -d '{"flightNumber":"UA123","passengerName":"Test Passenger","seats":3,"idempotencyKey":"demo-1"}'
-curl -s -u api:dev-secret localhost:8080/api/v1/flights/UA123          # availableSeats: 177
+curl -s -u api:dev-secret localhost:8080/api/v1/flights/UA123
+```
 
-for i in 1 2 3 4 5; do                                    # the client retried after a timeout
+`availableSeats` is 177. Now the client retries after a timeout, five times:
+
+```bash
+for i in 1 2 3 4 5; do
   curl -s -u api:dev-secret -X POST localhost:8080/api/v1/bookings \
     -H 'Content-Type: application/json' \
     -d '{"flightNumber":"UA123","passengerName":"Test Passenger","seats":3,"idempotencyKey":"demo-1"}' >/dev/null
 done
-
-curl -s -u api:dev-secret localhost:8080/api/v1/flights/UA123          # STILL 177, not 162
-curl -s -u api:dev-secret "localhost:8080/api/v1/bookings?flightNumber=UA123"   # ONE booking
+curl -s -u api:dev-secret localhost:8080/api/v1/flights/UA123
+curl -s -u api:dev-secret "localhost:8080/api/v1/bookings?flightNumber=UA123"
 ```
+
+`availableSeats` is still 177, not 162, and the flight has one booking.
 
 Every line spells out `-u`, because the obvious tidy-up,
 `A='-u api:dev-secret'; curl $A ...`, fails in zsh, the default shell on
@@ -291,14 +311,18 @@ macOS. zsh does not word-split an unquoted parameter, so curl receives
 leading space, and every call returns 401. Use an array instead:
 `A=(-u api:dev-secret); curl "${A[@]}" ...`
 
-Change the payload and keep the key, and the answer is
-`409 IDEMPOTENCY_KEY_REUSED`:
+Change the payload and keep the key:
 
 ```bash
 curl -s -u api:dev-secret -X POST localhost:8080/api/v1/bookings \
   -H 'Content-Type: application/json' \
   -d '{"flightNumber":"UA123","passengerName":"Test Passenger","seats":4,"idempotencyKey":"demo-1"}'
-# 409 {"code":"IDEMPOTENCY_KEY_REUSED","message":"Idempotency key demo-1 has already been used for a different booking. Use a new key, or resend the original request unchanged.", ...}
+```
+
+The answer is `409 IDEMPOTENCY_KEY_REUSED`:
+
+```text
+{"code":"IDEMPOTENCY_KEY_REUSED","message":"Idempotency key demo-1 has already been used for a different booking. Use a new key, or resend the original request unchanged.", ...}
 ```
 
 A retry is the same request arriving twice. A different request on the same key
@@ -312,17 +336,26 @@ decision table is in
 
 ### A cancelled flight
 
-A cancelled flight refuses bookings:
+A cancelled flight refuses bookings. Cancel `UA456`, which answers 204 and
+leaves it `CANCELLED`, then try to book it:
 
 ```bash
-curl -s -u api:dev-secret -X DELETE localhost:8080/api/v1/flights/UA456   # 204 -> CANCELLED
-
+curl -s -u api:dev-secret -X DELETE localhost:8080/api/v1/flights/UA456
 curl -s -u api:dev-secret -X POST localhost:8080/api/v1/bookings \
   -H 'Content-Type: application/json' \
   -d '{"flightNumber":"UA456","passengerName":"Test Passenger","seats":1,"idempotencyKey":"demo-2"}'
-# 409 {"code":"FLIGHT_NOT_BOOKABLE","message":"Flight UA456 is CANCELLED and cannot be booked"}
+```
 
-curl -s -u api:dev-secret localhost:8080/api/v1/flights/UA456           # availableSeats unchanged
+The booking gets 409:
+
+```text
+{"code":"FLIGHT_NOT_BOOKABLE","message":"Flight UA456 is CANCELLED and cannot be booked", ...}
+```
+
+and the flight's `availableSeats` has not moved:
+
+```bash
+curl -s -u api:dev-secret localhost:8080/api/v1/flights/UA456
 ```
 
 `CANCELLED` is terminal, and act 6 of [the demo](#the-demo-script) moves
@@ -345,12 +378,14 @@ it missing ([the defect log](DEFECT-LOG.md#seats-sold-on-a-cancelled-flight)).
 
 ### The demo script
 
-With the app running, in a second terminal:
+With the app running, in a second terminal, from the repository root:
 
 ```bash
-scripts/demo.sh          # pauses between acts, so you can talk over it
-scripts/demo.sh --fast   # no pauses
+scripts/demo.sh
 ```
+
+It pauses between acts so you can talk over it; `scripts/demo.sh --fast` runs
+without pauses.
 
 Eight acts run over HTTP:
 
