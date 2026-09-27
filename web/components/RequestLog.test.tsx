@@ -102,18 +102,39 @@ describe("RequestLog", () => {
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "Close" }));
   });
 
-  it("copies the id it sent, says so, and says nothing when the clipboard refuses", async () => {
+  it("copies the id it sent, says so once, and says nothing when the clipboard refuses", async () => {
     const writeText = vi.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error("denied"));
     vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText } });
     renderLog([entry(201, 1), entry(201, 2)]);
     const [second, first] = screen.getAllByRole("button", { name: /^Copy / }) as [HTMLElement, HTMLElement];
+    const status = within(screen.getByRole("complementary", { name: "Request log" })).getByRole("status");
+    expect(status.textContent).toBe("");
 
     await act(async () => fireEvent.click(first));
     expect(writeText).toHaveBeenLastCalledWith("web-00000000-0000-4000-8000-000000000001");
-    expect(first.getAttribute("aria-label")).toBe("Copied web-00000000-0000-4000-8000-000000000001");
+    expect(status.textContent).toBe("Copied web-00000000-0000-4000-8000-000000000001");
+    // The button keeps its name, so the news is not said twice.
+    expect(first.getAttribute("aria-label")).toBe("Copy web-00000000-0000-4000-8000-000000000001");
+    expect(first.getAttribute("title")).toBe("Copied");
 
     await act(async () => fireEvent.click(second));
     expect(writeText).toHaveBeenLastCalledWith("web-00000000-0000-4000-8000-000000000002");
-    expect(second.getAttribute("aria-label")).toBe("Copy web-00000000-0000-4000-8000-000000000002");
+    expect(status.textContent).not.toContain("000000000002");
+    expect(second.getAttribute("title")).toBe("Copy");
+  });
+
+  it("lets the copied line go after a moment, so the same id copied again is news", async () => {
+    vi.useFakeTimers();
+    try {
+      vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } });
+      renderLog([entry(201, 1)]);
+      const status = within(screen.getByRole("complementary", { name: "Request log" })).getByRole("status");
+      await act(async () => fireEvent.click(screen.getByRole("button", { name: /^Copy / })));
+      expect(status.textContent).toBe("Copied web-00000000-0000-4000-8000-000000000001");
+      act(() => vi.advanceTimersByTime(1500));
+      expect(status.textContent).toBe("");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

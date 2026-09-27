@@ -92,6 +92,8 @@ function Flights() {
       <Card
         title="Search"
         actions={
+          // A disclosure: the name stays put and aria-expanded carries the
+          // state, so a screen reader hears one change, not two.
           <Button
             tone={creating ? "secondary" : "primary"}
             icon={creating ? <CloseIcon /> : <PlusIcon />}
@@ -99,7 +101,7 @@ function Flights() {
             aria-expanded={creating}
             aria-controls="create-flight"
           >
-            {creating ? "Close the form" : "New flight"}
+            New flight
           </Button>
         }
       >

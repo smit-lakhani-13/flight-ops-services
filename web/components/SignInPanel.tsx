@@ -40,8 +40,9 @@ export function SignInPanel() {
       <form ref={form} onSubmit={submit} className="flex flex-col gap-4" aria-label="Sign in">
         <p className={`text-sm text-pretty ${MUTED}`}>
           Use the API&apos;s own accounts. The default profile has two:{" "}
-          <code>api</code> / <code>dev-secret</code> for the flight and booking operations, and <code>ops</code> /{" "}
-          <code>dev-ops</code> for the actuator.
+          {/* A password never breaks at its hyphen on a narrow screen. */}
+          <code>api</code> / <code className="whitespace-nowrap">dev-secret</code> for the flight and booking operations,
+          and <code>ops</code> / <code className="whitespace-nowrap">dev-ops</code> for the actuator.
         </p>
         <Field label="User">
           <TextInput name="user" autoComplete="username" autoCapitalize="none" spellCheck={false} value={user} onChange={(e) => setUser(e.target.value)} required />
