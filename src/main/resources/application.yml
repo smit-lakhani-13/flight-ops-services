@@ -90,7 +90,7 @@ spring:
 
   # Boot's default, pinned because deploy/k8s/base/deployment.yaml depends on
   # it:
-  #   5s preStop + 30s drain = 35s < terminationGracePeriodSeconds: 45.
+  #   15s preStop + 30s drain = 45s < terminationGracePeriodSeconds: 55.
   lifecycle:
     timeout-per-shutdown-phase: 30s
 

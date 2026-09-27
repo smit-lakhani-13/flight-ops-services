@@ -6,9 +6,10 @@ metadata:
     app: flight-ops
 spec:
   # No `replicas`: the HPA owns the count (minReplicas: 2, so a rolling update
-  # or a node drain is never an outage). A declared count would be reset by
-  # every `kubectl apply`, and CI's deploy job, when enabled, applies the whole
-  # overlay on every push to main.
+  # or a node drain is never an outage; behind the ALB, that also needs the
+  # readiness gate deploy/k8s/namespace.yaml turns on). A declared count would
+  # be reset by every `kubectl apply`, and CI's deploy job, when enabled,
+  # applies the whole overlay on every push to main.
 
   # Keeps `kubectl get rs` readable.
   revisionHistoryLimit: 3
@@ -20,8 +21,10 @@ spec:
     type: RollingUpdate
     rollingUpdate:
       maxSurge: 1
-      # A new pod must pass readiness before an old one goes, so capacity never
-      # dips during a deploy.
+      # A new pod must be Ready before an old one goes. Behind the ALB, Ready
+      # includes the readiness gate deploy/k8s/namespace.yaml turns on, so the
+      # new target is healthy in the ALB first and capacity never dips during
+      # a deploy.
       maxUnavailable: 0
   template:
     metadata:
@@ -43,6 +46,9 @@ spec:
       # admission refuses each one, and the ReplicaSet's FailedCreate events
       # include `error looking up service account flight-ops/flight-ops-sa`.
       serviceAccountName: flight-ops-sa
+      # No Kubernetes API token, as in serviceaccount.yaml. The IRSA token is
+      # a separate volume the pod identity webhook adds.
+      automountServiceAccountToken: false
 
       securityContext:
         # With runAsUser set, the kubelet checks runAsNonRoot against it and
@@ -67,9 +73,10 @@ spec:
                   matchLabels:
                     app: flight-ops
 
-      # 5s preStop + 30s spring.lifecycle.timeout-per-shutdown-phase = 35s < 45s,
-      # so the kubelet never SIGKILLs mid-request.
-      terminationGracePeriodSeconds: 45
+      # 15s preStop + 30s spring.lifecycle.timeout-per-shutdown-phase = 45s < 55s,
+      # so the kubelet never SIGKILLs mid-request. The ingress's 30s
+      # deregistration delay is under 55s too.
+      terminationGracePeriodSeconds: 55
 
       containers:
         - name: flight-ops
@@ -179,11 +186,15 @@ spec:
 
           lifecycle:
             # SIGTERM and the removal from the ALB target group race. preStop
-            # runs first, so 5s of sleep lets the target deregister before the
-            # JVM starts shutting down, instead of a 502 on every deploy.
+            # runs first, and the pod keeps serving while it sleeps. The
+            # controller has to see the endpoint go and deregister the target,
+            # and the ALB has to stop sending to it, which can take more than
+            # a few seconds. 15s leaves time for that before graceful shutdown
+            # stops Tomcat taking new requests, instead of a 502 on every
+            # deploy.
             preStop:
               exec:
-                command: ["sleep", "5"]
+                command: ["sleep", "15"]
 
       volumes:
         # emptyDir, so nothing written survives the pod or is shared with the

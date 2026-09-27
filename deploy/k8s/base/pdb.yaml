@@ -1,5 +1,7 @@
 # Stops a drain (node upgrade, replacement, spot reclaim) evicting both
-# replicas at once: the second eviction waits until a replacement is Ready. It
+# replicas at once: the second eviction waits until a replacement is Ready.
+# Behind the ALB, Ready includes the readiness gate deploy/k8s/namespace.yaml
+# turns on, so the replacement is also healthy in the ALB's target group. It
 # covers voluntary disruption only. A node that dies asks no one, which is what
 # the Deployment's podAntiAffinity is for.
 apiVersion: policy/v1

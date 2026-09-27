@@ -59,12 +59,21 @@ managedNodeGroups:
     # and `vpc.nat.gateway: Disable`. doc/DEPLOYMENT.md prices that variant.
     privateNetworking: true
 
-    iam:
-      withAddonPolicies:
-        # Node agents only; application logs are not shipped.
-        cloudWatch: true
-        # No albIngress or autoScaler: both put a policy on the node role, which
-        # every pod on the node can use. The LB controller has its own IRSA role.
+    # Pods cannot reach the instance metadata service, and so not the node
+    # role's credentials either: eksctl sets the launch template's hop limit
+    # to 1, which only host-network pods such as aws-node and kube-proxy
+    # reach. The app uses IRSA and sets its region itself, and up.sh passes
+    # the LB controller the region and VPC id it would read from IMDS. It
+    # takes effect when a node group is created. complete_cluster in lib.sh
+    # leaves an existing ng-1 as it is, so a node group created without this
+    # setting keeps pod access to IMDS until it is replaced.
+    disablePodIMDS: true
+
+    # No iam.withAddonPolicies. Each one adds a policy to the node role, which
+    # only the node's own agents could use now. cloudWatch was here for a
+    # CloudWatch agent, and nothing installs one. albIngress and autoScaler
+    # were never set: the LB controller has its own IRSA role, and there is no
+    # cluster autoscaler.
 
     labels:
       role: worker

@@ -487,6 +487,61 @@ still blank.
   They also say how to find the revision that served after more than one
   failed deploy.
 
+- **Rollouts wait for the load balancer.** A pod counted as available once its
+  own readiness probe passed, so `maxUnavailable: 0` and the PodDisruptionBudget
+  could retire an old pod while the ALB was still health-checking the new one,
+  and the 5s preStop sleep could end before the old target was deregistered.
+  `deploy/k8s/namespace.yaml` now labels the namespace
+  `elbv2.k8s.aws/pod-readiness-gate-inject: enabled`, so a pod created while the
+  Ingress exists is Ready only once the ALB reports its target healthy. In
+  `deploy/k8s/base/deployment.yaml` the preStop sleep is 15s and
+  `terminationGracePeriodSeconds` is 55, and the arithmetic in
+  `src/main/resources/application.yml` follows. Pods already running have no
+  gate until the next rollout replaces them, and a pod in the namespace is now
+  created only while the controller's webhook answers. An existing namespace
+  takes the label only when `up.sh` or an operator re-applies
+  `namespace.yaml`, because CI's role cannot.
+
+- **up.sh and down.sh keep their kubeconfig to themselves.** eksctl and
+  `aws eks update-kubeconfig` wrote the operator's `~/.kube/config` and
+  switched its current context, and every later `kubectl` and `helm` call in
+  `up.sh` followed whatever context the shell then had.
+  `deploy/aws/lib.sh#use_private_kubeconfig` now exports `KUBECONFIG` as
+  `deploy/aws/.state/kubeconfig`, mode 0600, at the start of step 4, after its
+  banner and before eksctl runs, and `down.sh` uses the same file in place of
+  a temporary one. The closing summary prints the
+  `export` line, and the hints in error messages include it.
+  `deploy/aws/selftest.sh` checks the mode, the order and that no call uses the
+  caller's file.
+
+- **A new database behind an old Secret.** With the data stack deleted and the
+  cluster kept, a re-run of `up.sh` created a database with a new password and
+  left `flight-ops-secret` holding the old one, so every pod would fail at
+  Flyway's first connection. Step 6 now records the new database in
+  `deploy/aws/.state/flight-ops.env` before it starts, and at step 9
+  `deploy/aws/lib.sh#reconcile_secret_db_password` patches only `DB_PASSWORD`,
+  on stdin and never as an argument or in a file, then restarts the deployment
+  if it exists. A run that stops before step 9 leaves the record, so the next
+  one stops there and says how to set a new password instead of keeping the old
+  Secret, and a stop between the patch and the restart is finished by the
+  re-run's restart. If the next run's shell exports `DB_PASSWORD`, step 9 writes
+  that in, into this Secret or a new one, after
+  `deploy/aws/lib.sh#warn_db_password_from_shell`: only a password step 6
+  generated in the same run is known to be the new database's, and the warning
+  says what a stale one does and how to give the database the password the
+  Secret then holds. A deployment lookup that fails for any reason but "not
+  found" stops the run. The API and ops hashes stay, and a re-run with nothing
+  recorded leaves the Secret alone. `deploy/aws/selftest.sh` covers each path.
+
+- **down.sh says what it leaves to you.** A clean teardown left `DEPLOY_ENABLED`
+  set, so the next push to `main` would run the deploy job against a cluster
+  that no longer exists, with `SQS_QUEUE_URL` and `DB_URL` naming resources
+  that are gone. The plan at step 0 now says to set it to `false` before the
+  teardown, and the closing message repeats that and says to rename the job
+  back to `deploy (gated off)`, with `CONTRIBUTING.md` in the same commit. A
+  clean run also deletes the kubeconfig the scripts keep; a failed one keeps it
+  for the re-run.
+
 ### Security
 
 - **The deploy job pushes the image CI scanned, and runs no scanner.** It
@@ -559,6 +614,34 @@ still blank.
   `doc/DEPLOYMENT.md` and in the `postgres` profile's comment in
   `application.yml`. `doc/DEPLOYMENT.md` says what a public single-instance
   setup needs instead.
+
+- **No Kubernetes API token in the pod.** `automountServiceAccountToken` is
+  false on the ServiceAccount and on the pod, in
+  `deploy/k8s/base/serviceaccount.yaml` and `deploy/k8s/base/deployment.yaml`.
+  The application never calls the API server, and a mounted token handed code in
+  the container a credential for it. IRSA is unaffected: the EKS pod identity
+  webhook mounts a projected token of its own.
+
+- **Pods cannot reach the node role.** `deploy/aws/cluster.yaml` sets
+  `disablePodIMDS` on `ng-1`, so pods can no longer read the node role's
+  credentials from the instance metadata service, and drops the `cloudWatch`
+  add-on policy, which nothing used, from the node role. `up.sh` now passes the
+  load balancer controller the `region` and `vpcId` it read from the metadata
+  service before. The two node group changes apply when a node group is
+  created; an existing one keeps its settings until it is replaced.
+
+- **No password on a command line at step 9.** `up.sh` passed the database
+  password and the two bcrypt hashes to `kubectl create secret` as
+  `--from-literal` arguments, and the API and ops passwords to `htpasswd -b`, so
+  another local user could read them in the process list while each command ran.
+  `htpasswd -i` now reads each password on stdin, and
+  `deploy/aws/lib.sh#create_secret` pipes `kubectl create -f -` the same Secret,
+  with the same name and keys and no labels, each value base64-encoded by
+  `openssl` from its stdin. The `DB_PASSWORD` patch above is encoded the same
+  way, so an exported password holding a quote or a backslash arrives unchanged.
+  `deploy/aws/selftest.sh` checks, with a stubbed `kubectl`, that no value,
+  plain or encoded, is among its arguments. The database password is still an
+  argument of `aws cloudformation deploy` at step 6.
 
 ## 1.2.0 — 2026-09-26
 

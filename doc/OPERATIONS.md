@@ -376,6 +376,10 @@ None of these playbooks has been followed on a cluster, because nothing here
 has run in AWS. The log excerpts come from local runs, and
 `OutboxPoisonRowTest` runs the re-drive `UPDATE` verbatim.
 
+The `kubectl` commands need the cluster's kubeconfig. `up.sh` keeps it in
+`deploy/aws/.state/kubeconfig`, not `~/.kube/config`, so first run the
+`export KUBECONFIG=...` line that its closing summary prints.
+
 ### Pods CrashLoopBackOff, logs mention a password
 
 Find the pod that is crashing, then read the log of its last run:

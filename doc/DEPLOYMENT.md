@@ -296,6 +296,36 @@ settle, then re-run. The database password exists only in the shell from step 6
 until step 9 writes the Secret. A run that stops in between stops again at
 step 9, and the message says how to set a new password.
 
+The Secret can also outlive its database: delete the data stack, keep the
+cluster, and re-run. Step 6 then creates a new database with a new password,
+and step 9 writes it into the existing Secret's `DB_PASSWORD` and restarts the
+deployment, whose pods would otherwise keep the old value. The value reaches
+`kubectl` on stdin, so it is on no command line and in no file. The API and
+ops hashes stay, so the passwords from the first run still work. Step 6
+records the new database in `deploy/aws/.state/flight-ops.env` before it
+starts, and step 9 clears the record once the Secret holds the password and
+the pods have restarted. A run that stops before the Secret is patched leaves
+the record, so the next one stops at step 9 and says how to set a new
+password, even with an old Secret there. If that next one's shell exports
+`DB_PASSWORD`, as it does after those instructions, step 9 writes that value
+in instead. Only a password step 6 generated in the same run is known to be
+the new database's. An exported one may be left over from an earlier fix, so
+step 9 warns that it cannot check it, that a wrong one fails every pod's
+database login, and how to give the database the password the Secret then
+holds. One that stops after the patch leaves the next one only the restart to
+do. A re-run that finds no record leaves the Secret alone. Like the rest of
+that file, the record belongs to the checkout the run started from.
+
+The cluster's kubeconfig is the scripts' own. Step 4 points `KUBECONFIG` at
+`deploy/aws/.state/kubeconfig`, mode 0600, before `eksctl create cluster`, so
+neither eksctl nor `aws eks update-kubeconfig` writes `~/.kube/config` or
+changes its current context. A context selected meanwhile in
+`~/.kube/config`, or in any kubeconfig but the scripts' own, cannot send a
+`kubectl` or `helm` call to another cluster. The closing summary prints the
+`export KUBECONFIG=...` line for a shell of your own. A shell with that export
+shares the file, and `aws eks update-kubeconfig --name <other>` there would
+switch its current context under a running script.
+
 ### The service image
 
 CI builds the image on an amd64 runner, and the t3.medium nodes that
@@ -409,11 +439,21 @@ described above.
 7. **IRSA.** The pods' AWS identity, with no access keys. Cluster setup that
    happens once. No deploy repeats it.
 8. **Load balancer controller and metrics-server.** Also set up once, and no
-   deploy repeats it. The controller's IAM policy comes from a file in this
-   repository, as the next section describes.
+   deploy repeats it. The controller gets the region and VPC id from the Helm
+   install, because the nodes do not let pods reach the instance metadata
+   service. The controller's IAM policy comes from a file in this repository, as
+   the next section describes.
 9. **Namespace and Secret.** Generated passwords, never written to disk. The API
    and ops passwords are bcrypt-hashed. The database password is stored as it
-   is, because the JDBC driver needs it.
+   is, because the JDBC driver needs it. `htpasswd` reads each password on
+   stdin, and `deploy/aws/lib.sh#create_secret` hands `kubectl create` the whole
+   Secret on stdin, so no value is on a command line, where the process list
+   would show it. An existing Secret is left alone, unless step 6 created a
+   database whose password the Secret does not hold yet, in this run or in one
+   that stopped before step 9: then only `DB_PASSWORD` changes, and the
+   deployment is restarted. A `DB_PASSWORD` that step 6 of this run did not
+   generate goes into a new Secret or an existing one after the same warning,
+   `deploy/aws/lib.sh#warn_db_password_from_shell`.
 
 ### The load balancer controller's IAM policy
 
@@ -520,17 +560,35 @@ The rolling update sets `maxUnavailable: 0`, and a `PodDisruptionBudget` covers
 voluntary disruptions such as a node drain. A rollout and a drain are different
 events, so each has its own guard.
 
+Both count a pod as available once it is Ready, and behind the ALB Ready has to
+include the load balancer's view. `deploy/k8s/namespace.yaml` labels the
+namespace `elbv2.k8s.aws/pod-readiness-gate-inject: enabled`, so while the
+Ingress exists the load balancer controller adds a readiness gate to each new
+pod. The pod is then Ready only once the ALB reports its target healthy, and
+neither a rollout nor a drain can remove the last healthy target while a new
+one is still in its first health checks. The gate is added when a pod is
+created. Pods already running when the label or the Ingress arrives have none
+until the next rollout replaces them, and that rollout already waits on the
+ALB, because its new pods carry the gate. CI's role cannot label the
+namespace, so a namespace created before the label gets it only when `up.sh`
+runs again or someone applies `namespace.yaml` by hand. The cost is that a pod
+in this namespace is created only while the controller's webhook answers. With
+the controller down, a rollout waits with `FailedCreate` events and the old
+pods keep serving.
+
 The heap is `-XX:MaxRAMPercentage=50.0`, so it follows the container's 768Mi
 memory limit, and going over that limit gets the container OOMKilled. There is
 no CPU limit. CFS throttling hits a JVM hardest during class loading and GC,
 inside the startup probe's window. It would also make the HPA measure the
 throttle instead of the load.
 
-Shutdown is a 5s `preStop` sleep plus a 30s
-`spring.lifecycle.timeout-per-shutdown-phase`. That is 35s, inside the 45s
-`terminationGracePeriodSeconds`. Get that inequality backwards and the kubelet
-sends SIGKILL mid-request. I pinned the 30s in `application.yml`, because the
-manifest comment does arithmetic on it.
+Shutdown is a 15s `preStop` sleep plus a 30s
+`spring.lifecycle.timeout-per-shutdown-phase`. That is 45s, inside the 55s
+`terminationGracePeriodSeconds`. The sleep keeps the pod serving while the
+load balancer controller deregisters its target and the ALB stops sending to
+it, which can take longer than a few seconds. Get that inequality backwards
+and the kubelet sends SIGKILL mid-request. I pinned the 30s in
+`application.yml`, because the manifest comment does arithmetic on it.
 
 The Dockerfile's `ENTRYPOINT` is `sh -c "exec java …"`. `exec` makes the JVM
 PID 1, so it receives SIGTERM. Without it the shell is PID 1 and forwards
@@ -735,11 +793,17 @@ No AWS account id is hard-coded anywhere. The files under `lambda/events/` use
 the placeholder `123456789012`, and the workflow reads
 `${{ secrets.AWS_ACCOUNT_ID }}`. No access key is stored either.
 `DefaultCredentialsProvider` in `AwsConfig` reads `~/.aws` on a laptop and the
-projected service-account token under IRSA. The deploy job, which is gated
-off and has never run, would use GitHub's OIDC provider and short-lived STS
-credentials. `deploy/aws/foundation.yaml` pins the trust policy's `sub` claim
-to this repository's `main` branch, because a bare wildcard there lets any
-repository on GitHub assume the role.
+projected service-account token under IRSA. That token is the pod's only AWS
+or Kubernetes credential: `automountServiceAccountToken` is false, so no
+Kubernetes API token is mounted, and `disablePodIMDS` in
+`deploy/aws/cluster.yaml` stops pods reaching the instance metadata service
+and the node role behind it. That setting applies when a node group is
+created, so a node group from before it keeps the old behaviour until it is
+replaced. The deploy job, which is gated off and has never run, would use
+GitHub's OIDC provider and short-lived STS credentials.
+`deploy/aws/foundation.yaml` pins the trust policy's `sub` claim to this
+repository's `main` branch, because a bare wildcard there lets any repository
+on GitHub assume the role.
 
 ## 6. Tearing it down
 
@@ -766,10 +830,12 @@ CloudFormation stack can delete successfully and still leave a load balancer
 behind. Each stack and the cluster print ✓ only after their wait confirms the
 delete, and otherwise warn and leave the verdict to the checks.
 
-`down.sh` writes a temporary kubeconfig for this cluster and never uses the
-caller's current context, which may point at another cluster. If the cluster
-cannot be reached, it warns that an ALB may be orphaned and asks you to type
-`continue`. It then skips the load balancer controller and namespace steps.
+`down.sh` uses the scripts' own kubeconfig, `deploy/aws/.state/kubeconfig`,
+rewrites this cluster's entry in it, and never uses the caller's current
+context, which may point at another cluster. If the cluster cannot be reached,
+it warns that an ALB may be orphaned and asks you to type `continue`. It then
+skips the load balancer controller and namespace steps. When the checks pass,
+it deletes the kubeconfig.
 
 The order matters:
 
@@ -788,6 +854,13 @@ second pass succeeds.
 The checks say nothing about the bill. Cost Explorer lags, so look again the
 next day and expect zero, not "small". Data transferred earlier in the month is
 still billed at month end, because deleting a resource refunds nothing.
+
+`down.sh` changes nothing in GitHub, and prints what is left to do there. Set
+`DEPLOY_ENABLED` back to `false` before you start, or every push to `main`
+runs the deploy job against a cluster that no longer exists, and fails. After
+the teardown, rename the job back to `deploy (gated off)`, with
+`CONTRIBUTING.md` in the same commit, so that
+[the gate](#the-deploy-job-gated-off) shows in the checks list again.
 
 ## 7. What breaks first
 

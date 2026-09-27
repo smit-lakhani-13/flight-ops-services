@@ -8,8 +8,14 @@
 # before creating it, so an interrupted run is resumed by running it again.
 # Step 4 also finishes a cluster that an interrupted eksctl left part-built.
 # The database password lives only in this shell from step 6 until step 9
-# writes the Secret. A run that stops in between stops again at step 9, and
-# says how to set a new password.
+# writes it into the Secret: a new Secret, or one left from an earlier
+# database, whose other keys stay as they are. Step 6 records in the state
+# file that a password is on its way, so a run that stops in between stops
+# again at step 9, and says how to set a new password.
+#
+# The cluster's kubeconfig goes to deploy/aws/.state/kubeconfig, not
+# ~/.kube/config, and the closing summary prints the line that points a
+# shell at it.
 #
 # It costs money from step 4 onwards. Step 1 prints the rate and asks.
 #
@@ -157,6 +163,12 @@ ok "queue $SQS_QUEUE_URL"
 # ---------------------------------------------------------------------------
 step "4/12  EKS cluster — this is the ~20 minute step"
 # ---------------------------------------------------------------------------
+# Before eksctl, which writes a kubeconfig and switches its context when it
+# creates the cluster. From here on that file is the scripts' own, so every
+# kubectl and helm call below reaches this cluster, whatever context is
+# selected meanwhile in ~/.kube/config or in any kubeconfig but this one.
+use_private_kubeconfig
+
 if eksctl get cluster --name "$CLUSTER_NAME" >/dev/null 2>&1; then
     ok "cluster already exists — checking its addons, OIDC provider and node group"
     complete_cluster "$here/cluster.yaml"
@@ -196,7 +208,11 @@ case "$support_type" in
         ;;
 esac
 
-aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$AWS_REGION"
+# eksctl filled the file in if it created the cluster in this run. A resumed
+# run did not, so the entry is written here every time.
+aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$AWS_REGION" \
+    --kubeconfig "$KUBECONFIG"
+log "kubectl and helm use $KUBECONFIG; your ~/.kube/config and its context are untouched"
 
 # ---------------------------------------------------------------------------
 step "5/12  Cluster access for the CI role"
@@ -222,6 +238,11 @@ if [ -z "$VPC_ID" ] || [ -z "$PRIVATE_SUBNETS" ]; then
     die "could not read the eksctl stack outputs"
 fi
 
+# Whether DB_PASSWORD is this run's own, which step 9 needs to know before
+# it writes one into a Secret left from an earlier database. Set here, never
+# read from the environment: a DB_PASSWORD the shell exports may belong to
+# another database.
+db_password_origin=environment
 if stack_ready "$DATA_STACK"; then
     ok "data stack already exists — not touching the password"
 else
@@ -229,6 +250,15 @@ else
     # Secret), and never written to disk. A run that loses it before step 9
     # stops there and prints the two commands that set a new one.
     DB_PASSWORD=$(openssl rand -base64 24 | tr -d '/@" =' | cut -c1-24)
+    db_password_origin=generated
+    # Recorded before the deploy, which can stop part way (Ctrl-C, or
+    # credentials that expire during the wait) while CloudFormation carries
+    # on. Step 9 clears it once the Secret holds this password, so until then
+    # a re-run knows that a Secret left from an earlier database is stale.
+    # Step 9 reads this record, not whether DB_PASSWORD is set: a shell can
+    # export DB_PASSWORD, as step 9's own message suggests, for a database
+    # that exists.
+    state_set DB_PASSWORD_PENDING secret
     aws cloudformation deploy \
         --stack-name "$DATA_STACK" \
         --template-file "$here/data.yaml" \
@@ -305,10 +335,15 @@ eksctl create iamserviceaccount \
 
 helm repo add eks https://aws.github.io/eks-charts >/dev/null 2>&1 || true
 helm repo update >/dev/null
+# region and vpcId, because cluster.yaml's disablePodIMDS stops the
+# controller reading them from the instance metadata service. VPC_ID is from
+# step 6, which reads it on every run.
 helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-controller \
     --namespace kube-system \
     --version "$LBC_CHART_VERSION" \
     --set "clusterName=$CLUSTER_NAME" \
+    --set "region=$AWS_REGION" \
+    --set "vpcId=$VPC_ID" \
     --set serviceAccount.create=false \
     --set serviceAccount.name=aws-load-balancer-controller \
     --wait
@@ -324,7 +359,10 @@ step "9/12  Namespace and secrets"
 kubectl apply -f "$repo/deploy/k8s/namespace.yaml"
 
 if kubectl get secret flight-ops-secret -n "$NAMESPACE" >/dev/null 2>&1; then
-    ok "secret already exists — leaving it alone"
+    # Left alone, unless step 6 of this run, or of an earlier one that stopped
+    # before this step, created a new database: then only DB_PASSWORD changes.
+    # One this run did not generate goes in with a warning.
+    reconcile_secret_db_password "${DB_PASSWORD:-}" "$db_password_origin"
     API_PASSWORD_PLAIN='(unchanged — see your earlier run)'
     OPS_PASSWORD_PLAIN='(unchanged)'
 else
@@ -339,15 +377,19 @@ else
         --db-instance-identifier flight-ops-db \\
         --master-user-password \"\$DB_PASSWORD\" --apply-immediately
     ALERT_EMAIL=$ALERT_EMAIL $0"
+    # One this run did not generate goes in with the same warning as above.
+    [ "$db_password_origin" = generated ] || warn_db_password_from_shell
 
     API_PASSWORD_PLAIN=$(openssl rand -base64 18 | tr -d '/+= ')
     OPS_PASSWORD_PLAIN=$(openssl rand -base64 18 | tr -d '/+= ')
 
     # bcrypt, cost 10, with the {bcrypt} prefix. ApiSecurityProperties refuses
     # a value with no {id} prefix at startup, so a hash pasted without one
-    # stops the pod instead of being stored as a plaintext password.
-    api_hash="{bcrypt}$(htpasswd -bnBC 10 "" "$API_PASSWORD_PLAIN" | tr -d ':\n')"
-    ops_hash="{bcrypt}$(htpasswd -bnBC 10 "" "$OPS_PASSWORD_PLAIN" | tr -d ':\n')"
+    # stops the pod instead of being stored as a plaintext password. -i reads
+    # the password on stdin, where -b would take it as an argument, which the
+    # process list shows.
+    api_hash="{bcrypt}$(printf '%s' "$API_PASSWORD_PLAIN" | htpasswd -niBC 10 "" | tr -d ':\n')"
+    ops_hash="{bcrypt}$(printf '%s' "$OPS_PASSWORD_PLAIN" | htpasswd -niBC 10 "" | tr -d ':\n')"
     # shellcheck disable=SC2016  # '$2' is bcrypt's version marker in a glob,
     # not a variable, so it stays in single quotes.
     case "$api_hash" in
@@ -355,12 +397,10 @@ else
         *) die "htpasswd produced something that is not a bcrypt hash: ${api_hash:0:20}..." ;;
     esac
 
-    kubectl create secret generic flight-ops-secret \
-        --namespace "$NAMESPACE" \
-        --from-literal=DB_PASSWORD="$DB_PASSWORD" \
-        --from-literal=API_PASSWORD="$api_hash" \
-        --from-literal=OPS_PASSWORD="$ops_hash" \
-        --dry-run=client -o yaml | kubectl apply -f -
+    # create_secret in lib.sh hands kubectl the Secret on stdin, so none of
+    # the three values is in an argument.
+    create_secret "$DB_PASSWORD" "$api_hash" "$ops_hash"
+    state_set DB_PASSWORD_PENDING none
     ok "secret created"
 
     # Printed here, before anything else can fail. Only the bcrypt hash
@@ -433,6 +473,7 @@ for _ in $(seq 1 60); do
     sleep 10
 done
 [ -n "$ALB_HOST" ] || die "no ALB hostname after 10 minutes. Check the controller:
+    export KUBECONFIG=$KUBECONFIG_FILE
     kubectl logs -n kube-system deploy/aws-load-balancer-controller --tail=50"
 state_set ALB_HOST "$ALB_HOST"
 ok "http://$ALB_HOST"
@@ -452,6 +493,7 @@ done
 [ "$alb_healthy" = 1 ] || die "the ALB never reported healthy. The pods passed
 step 10, so this is between the load balancer and them -- usually a security
 group or a target group health check on the wrong port:
+    export KUBECONFIG=$KUBECONFIG_FILE
     kubectl describe ingress flight-ops-ingress -n $NAMESPACE
     kubectl logs -n kube-system deploy/aws-load-balancer-controller --tail=50
     aws elbv2 describe-target-groups --output table
@@ -485,8 +527,14 @@ cat <<SUMMARY
     api user     api / $API_PASSWORD_PLAIN
     ops user     ops / $OPS_PASSWORD_PLAIN
 
-  Repeated from step 9 for convenience, not as the only copy. The cluster
-  stores bcrypt hashes; this reads back \$2y\$10\$... and nothing reversible:
+  Repeated from step 9 for convenience, not as the only copy.
+
+  The cluster's kubeconfig is $KUBECONFIG_FILE,
+  not ~/.kube/config. Point a shell at it before any kubectl or helm command:
+    export KUBECONFIG=$KUBECONFIG_FILE
+
+  The cluster stores bcrypt hashes; this reads back \$2y\$10\$... and
+  nothing reversible:
     kubectl get secret flight-ops-secret -n $NAMESPACE -o jsonpath='{.data.API_PASSWORD}' | base64 -d
 
   Running cost: about \$7.72/day. Check it tomorrow with:
