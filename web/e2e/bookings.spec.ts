@@ -49,6 +49,29 @@ test("ten concurrent callers on one key make one booking and one debit", async (
   await expect(race.getByTestId("race-seats")).toHaveText("20 → 19");
 });
 
+test("the race sends the caller's body as it came, so the API refuses what it refuses directly", async ({ request }) => {
+  const flightNumber = uniqueFlightNumber();
+  await createFlight(request, flightNumber, 20);
+  const headers = { "Content-Type": "application/json", Authorization: basic(API_ACCOUNT) };
+
+  // Both bodies parse as JSON. The API refuses a seat count written as 2.0 and
+  // a key sent twice, and a re-serialised body would have hidden both.
+  for (const [tag, seats] of [["decimal", '"seats":2.0'], ["duplicate", '"seats":9,"seats":1']]) {
+    const data = `{"flightNumber":"${flightNumber}","passengerName":"Raw Body","idempotencyKey":"raw-${tag}-${flightNumber}",${seats}}`;
+    const direct = await request.post("/api/v1/bookings", { headers, data });
+    expect(direct.status(), tag).toBe(400);
+
+    const race = await request.post("/api/race", { headers, data });
+    expect(race.status(), tag).toBe(200);
+    const { rows } = (await race.json()) as { rows: { status: number; body: { code?: string } }[] };
+    expect(rows.map((row) => row.status), tag).toEqual(Array(10).fill(400));
+    expect(rows.every((row) => row.body.code === "MALFORMED_REQUEST"), tag).toBe(true);
+  }
+
+  const flight = await request.get(`/api/v1/flights/${flightNumber}`, { headers: { Authorization: basic(API_ACCOUNT) } });
+  expect(((await flight.json()) as { availableSeats: number }).availableSeats).toBe(20);
+});
+
 test("the API's field messages appear beside the inputs they belong to", async ({ page }) => {
   await signIn(page);
   const form = await bookingForm(page, "UA123");

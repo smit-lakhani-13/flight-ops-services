@@ -106,19 +106,27 @@ such as `PUT`, is unreachable until I add its rule, which costs one line. With
 `permitAll()` as the last rule it would be public on the day it ships, and
 with `authenticated()` any caller with credentials could reach it.
 
+With bearer tokens on, Spring Security's resource server also serves its
+protected-resource metadata (RFC 9728) at
+`GET /.well-known/oauth-protected-resource`, and at any path under it, to any
+caller, ahead of the rules. The document names the resource and says a token
+goes in the `Authorization` header. Spring's default also says tokens are bound
+to a client certificate. Nothing here checks one, so `SecurityConfig` turns that
+claim off, and `BearerTokenChallengeTest` checks the document. With Basic only,
+the path meets `denyAll()`.
+
 ### 401 and 403
 
-No credentials, or credentials that do not verify, get `401 UNAUTHENTICATED`.
-A body over the size limit gets `413 PAYLOAD_TOO_LARGE` first when its
-declared `Content-Length` shows it, or when it is a form-encoded `PUT`,
-`PATCH` or `DELETE`, because that limit runs ahead of Spring Security (see
+No credentials, or credentials that do not verify, get `401 UNAUTHENTICATED`. A
+body over the size limit gets `413 PAYLOAD_TOO_LARGE` first when its declared
+`Content-Length` shows it, because that limit runs ahead of Spring Security (see
 [Data exposure](#data-exposure)). Valid credentials without the authority get
 `403 FORBIDDEN`. The filter that rejects a password or token answers the 401
-itself. Past that point, Spring's `ExceptionTranslationFilter` picks between
-the two by whether the authentication is anonymous. A 401 tells a client to
-retry with credentials. A 403 tells it that retrying will not help. Collapsing
-the two sends a correct client into a credential refresh loop over a
-permissions problem.
+itself. Past that point, Spring's `ExceptionTranslationFilter` picks between the
+two by whether the authentication is anonymous. A 401 tells a client to retry
+with credentials. A 403 tells it that retrying will not help. Collapsing the two
+sends a correct client into a credential refresh loop over a permissions
+problem.
 
 The 401's `WWW-Authenticate` challenge follows the credential that failed. A
 rejected bearer token gets
@@ -189,13 +197,17 @@ the API still has no CORS policy ([adr/0017](adr/0017-web-console.md)).
 * A path outside the allow-list answers 404 without reaching the API; `env`,
   `prometheus`, the OpenAPI document and Swagger UI are among them. A request
   the browser marks `Sec-Fetch-Site: cross-site` gets 403, and a body over 64
-  KiB gets 413. The race route re-sends its body as JSON, so it refuses one not
-  sent as `application/json` with 415, as the API refuses it on every other
-  write.
+  KiB gets 413. The race route refuses a body not sent as `application/json`
+  with 415, as the API refuses it on every other write. It sends a body that
+  parses as one JSON object on byte for byte, with its media type, so the API's
+  own rules apply, and answers any other body with 400.
 * Every page and every answer from the console's server, proxied ones included,
   is sent with `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`
   and `X-Frame-Options: DENY` (`web/next.config.ts`), and `web/e2e/ops.spec.ts`
-  checks them. There is no Content-Security-Policy yet: [Known
+  checks them. The exceptions are two answers Next writes itself, without the
+  three headers: a path with a malformed percent escape, such as
+  `/api/v1/%zz`, gets a bare 500 in plain text, and a trailing or doubled slash
+  gets a 308 redirect. There is no Content-Security-Policy yet: [Known
   limitations](#known-limitations) says why.
 
 ## Secrets
@@ -349,10 +361,15 @@ bundle comes from and how to refresh it.
   no body, so its `Content-Type` is not checked. Multipart parsing is off,
   because the API takes no uploads and the parser runs before routing. With it
   on, a multipart `Content-Type` with no boundary was a 500 and an ERROR stack
-  trace on every path, the public ones included. In JSON, a whole number sent as
-  text, a status sent as a number and a departure time that is not an ISO-8601
-  instant are each `400 MALFORMED_REQUEST`. None of them is converted into a
-  value the client did not write.
+  trace on every path, the public ones included. Form parsing is off for the
+  same reason (`spring.mvc.formcontent.filter.enabled`): Spring's
+  `FormContentFilter` read a form-encoded `PUT`, `PATCH` or `DELETE` body before
+  the credentials were checked, and a bad percent escape in one was a 500 and
+  an ERROR stack trace for a caller with none. In JSON, a whole number sent as
+  text, a status sent as a number or with padding around its name, and a
+  departure time that is not an ISO-8601 instant are each
+  `400 MALFORMED_REQUEST`. None of them is converted into a value the client
+  did not write.
 
 - A request body over the limit (16 KiB by default) gets `413 PAYLOAD_TOO_LARGE`
   when its declared length or a read shows it, and nothing parses more than the
@@ -362,9 +379,8 @@ bundle comes from and how to refresh it.
   Bean Validation checks its `@Size`, so without the cap one field of millions
   of characters would hold tens of MB of heap, and a few such requests at once
   could exhaust the heap and end the JVM through `-XX:+ExitOnOutOfMemoryError`.
-  The filter runs ahead of Spring Security, because Spring's `FormContentFilter`
-  reads a form-encoded `PUT`, `PATCH` or `DELETE` body in full before the
-  credentials are checked.
+  The filter runs ahead of Spring Security, so a declared length over the limit
+  is refused before the credentials are checked.
 
 - Error responses are `{code, message, timestamp}`, or
   `{code, fieldErrors, timestamp}` for a validation failure. They never carry
@@ -520,7 +536,9 @@ bundle comes from and how to refresh it.
    `{bcrypt}REPLACE_ME`, the value in `deploy/k8s/secret.example.yaml`, passes
    every check. The encoder logs `Encoded password does not look like BCrypt` at
    WARN, once at startup for each such value and again on every login. Every
-   login as that user gets a 401, and the pod stays Ready.
+   login as that user gets a 401, and the pod stays Ready. `{argon2}REPLACE_ME`
+   and `{scrypt}REPLACE_ME` pass the same way: the argon2 encoder logs
+   `Malformed password hash` at WARN, and the scrypt encoder logs nothing.
 
 7. **No penetration test.** The claims here come from reading the code and
    from the test suite. No independent party has tried to break it.

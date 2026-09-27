@@ -17,6 +17,7 @@ import java.net.http.HttpResponse;
 import java.net.http.HttpResponse.BodyHandlers;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -135,20 +136,28 @@ class RequestBodyLimitTest {
     }
 
     /**
-     * {@code FormContentFilter} reads a form-encoded {@code PATCH} body in full before
-     * Spring Security runs. The limit comes first, so the read stops at the limit and
-     * the caller without credentials gets 413 rather than a 401 after the whole read.
+     * Form parsing is off, so nothing reads a form-encoded body before Spring Security
+     * runs. With {@code FormContentFilter} on, a {@code PUT}, {@code PATCH} or
+     * {@code DELETE} body was read in full first, and a bad percent escape in it was a
+     * 500 and an ERROR stack trace for a caller with no credentials.
      */
     @Test
-    @DisplayName("an oversized form body without credentials is 413, stopped before the 401")
-    void anOversizedFormBodyIsRefusedBeforeTheCredentialsAreChecked() throws Exception {
-        HttpResponse<String> response = client.send(
-                HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/v1/flights/UA123/status"))
+    @DisplayName("a form body without credentials is 401, unread, however large or malformed")
+    void aFormBodyIsNotReadBeforeTheCredentials() throws Exception {
+        assertThat(form("PATCH", "/api/v1/flights/UA123/status", chunked("status=" + "x".repeat(LIMIT))).statusCode())
+                .isEqualTo(401);
+        for (String method : List.of("PUT", "PATCH", "DELETE")) {
+            assertThat(form(method, "/api/v1/flights/UA123", declared("a=%zz")).statusCode())
+                    .as(method)
+                    .isEqualTo(401);
+        }
+    }
+
+    private HttpResponse<String> form(String method, String path, BodyPublisher body) throws Exception {
+        return client.send(HttpRequest.newBuilder(URI.create("http://localhost:" + port + path))
                         .header("Content-Type", "application/x-www-form-urlencoded")
-                        .method("PATCH", chunked("status=" + "x".repeat(LIMIT)))
+                        .method(method, body)
                         .build(),
                 BodyHandlers.ofString());
-
-        assertPayloadTooLarge(response);
     }
 }

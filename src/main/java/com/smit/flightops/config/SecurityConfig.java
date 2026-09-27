@@ -39,6 +39,12 @@ import java.util.Set;
  * such as a {@code PUT} under {@code /api/**}. A new controller there is covered by the
  * scope rules as soon as it ships, for GET, HEAD, POST, PATCH and DELETE.
  *
+ * <p>With bearer tokens on, the resource server also serves its RFC 9728 metadata at
+ * {@code GET /.well-known/oauth-protected-resource}, and at any path under it, to any
+ * caller and ahead of these rules. It names the resource and says a token goes in the
+ * {@code Authorization} header. Its claim that tokens are bound to a client certificate
+ * is turned off, because nothing here checks one.
+ *
  * @see "SECURITY.md, and adr/0005 and adr/0006"
  */
 @Configuration
@@ -109,6 +115,9 @@ public class SecurityConfig {
                         .anyRequest().denyAll())
                 // Safe only while nothing issues a session cookie, hence STATELESS.
                 .csrf(csrf -> csrf.disable())
+                // There is no session to end. Left on, the logout filter runs ahead
+                // of the rules above and answers /logout with 204 for anyone.
+                .logout(logout -> logout.disable())
                 .sessionManagement(session -> session
                         .sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .httpBasic(basic -> basic.authenticationEntryPoint(entryPoint))
@@ -129,6 +138,10 @@ public class SecurityConfig {
                 // Without them a bad token gets a 401 with an empty body.
                 http.oauth2ResourceServer(oauth2 -> oauth2
                         .jwt(Customizer.withDefaults())
+                        // The metadata's default says tokens are bound to a client
+                        // certificate, and nothing here checks one.
+                        .protectedResourceMetadata(metadata -> metadata.protectedResourceMetadataCustomizer(
+                                claims -> claims.tlsClientCertificateBoundAccessTokens(false)))
                         .authenticationEntryPoint(entryPoint)
                         .accessDeniedHandler(accessDeniedHandler));
                 log.info("JWT resource server enabled; bearer tokens will be validated ({})", checks);

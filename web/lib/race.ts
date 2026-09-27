@@ -34,11 +34,11 @@ export async function runRace(request: Request, options: ForwardOptions = {}): P
     return consoleError(500, "CONSOLE_MISCONFIGURED", "The console's API_BASE_URL is not a valid origin.");
   }
 
-  // The body goes upstream as JSON whatever it came as, so the route checks the
-  // type the API would have checked. A form or text/plain body is what a page on
-  // another site can send without a preflight (adr/0006), and the API answers it
-  // with 415 on every other write.
-  if (!JSON_MEDIA_TYPE.test(request.headers.get("content-type") ?? "")) {
+  // The route checks the type the API would have checked. A form or text/plain
+  // body is what a page on another site can send without a preflight
+  // (adr/0006), and the API answers it with 415 on every other write.
+  const contentType = request.headers.get("content-type") ?? "";
+  if (!JSON_MEDIA_TYPE.test(contentType)) {
     return consoleError(415, "CONSOLE_UNSUPPORTED_MEDIA_TYPE", "The race takes a body sent as application/json.");
   }
 
@@ -56,9 +56,12 @@ export async function runRace(request: Request, options: ForwardOptions = {}): P
     return consoleError(400, "CONSOLE_BAD_REQUEST", "The race body must be one booking request as a JSON object.");
   }
 
-  // One serialisation, so all ten requests carry byte-identical bodies. The
-  // fields are not checked here: the API validates them, ten times.
-  const payload = JSON.stringify(parsed);
+  // The caller's bytes and media type go upstream unchanged, so all ten
+  // requests carry byte-identical bodies and the API applies its own rules to
+  // what was sent: a re-serialised body would drop a duplicate key, turn 2.0
+  // into 2 and replace bytes that are not UTF-8. The fields are not checked
+  // here: the API validates them, ten times.
+  const payload = raw;
   const authorization = request.headers.get("authorization");
   const url = `${origin}/api/v1/bookings`;
   const timeoutMs = options.timeoutMs ?? UPSTREAM_TIMEOUT_MS;
@@ -67,7 +70,7 @@ export async function runRace(request: Request, options: ForwardOptions = {}): P
   async function one(index: number): Promise<RaceRow> {
     const requestId = `web-race-${crypto.randomUUID()}`;
     const headers = new Headers({
-      "Content-Type": "application/json",
+      "Content-Type": contentType,
       Accept: "application/json",
       "X-Request-Id": requestId,
     });

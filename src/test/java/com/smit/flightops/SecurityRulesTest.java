@@ -305,6 +305,22 @@ class SecurityRulesTest {
     }
 
     /**
+     * Spring Security's logout filter runs ahead of the rules, and with CSRF off it
+     * matched GET, POST, PUT and DELETE, so /logout was a 204 for anyone. The API keeps
+     * no session, so SecurityConfig turns the filter off and the path meets denyAll().
+     */
+    @Test
+    @DisplayName("/logout is denied like any path no rule names, not answered 204")
+    void logoutIsDenied() throws Exception {
+        mockMvc.perform(get("/logout")).andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/logout")).andExpect(status().isUnauthorized());
+        mockMvc.perform(put("/logout")).andExpect(status().isUnauthorized());
+        mockMvc.perform(delete("/logout")).andExpect(status().isUnauthorized());
+        mockMvc.perform(post("/logout").with(httpBasic(API_USER, API_PASSWORD)))
+                .andExpect(status().isForbidden());
+    }
+
+    /**
      * The container forwards a firewall refusal or a TRACE to /error with no
      * credentials. Challenged there, the caller would get a 401 about the error page
      * instead of the 400 or 405 that happened. A direct GET forwards no status, so the

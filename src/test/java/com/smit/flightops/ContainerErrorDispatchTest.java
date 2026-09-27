@@ -4,10 +4,17 @@ import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.boot.test.web.server.LocalServerPort;
 
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.Socket;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -34,6 +41,7 @@ import static org.assertj.core.api.Assertions.assertThat;
         "spring.datasource.url=jdbc:h2:mem:containererrors;DB_CLOSE_DELAY=-1",
         "server.address=127.0.0.1"
 })
+@ExtendWith(OutputCaptureExtension.class)
 class ContainerErrorDispatchTest {
 
     private static final String CLIENT_ERROR = "The request could not be served. Check the method and the path.";
@@ -103,6 +111,64 @@ class ContainerErrorDispatchTest {
         HttpResponse<String> refused = send("GET", "/api/v1/flights;x", "X-Request-Id", "firewall-400");
         assertThat(refused.statusCode()).isEqualTo(400);
         assertThat(refused.headers().firstValue("X-Request-Id")).hasValue("firewall-400");
+    }
+
+    /**
+     * Tomcat decodes the query string when a parameter is first read, and throws on a
+     * value that is not valid percent-encoded UTF-8. That was a 500 and an ERROR stack
+     * trace quoting the decoded value, on the public health endpoint too, so the
+     * {@code %0D%0A} here started a forged line on the plain-text log. A parameter
+     * name with a control character took the same path: Spring Security's firewall
+     * refuses it when the parameters are first read, and quotes the name.
+     */
+    @Test
+    @DisplayName("a query value that is not valid percent-encoding, or a name with a control character, "
+            + "is a 400 on one log line, not a 500")
+    void aBadlyEncodedQueryValueIsA400(CapturedOutput output) throws Exception {
+        HttpResponse<String> health = send("GET", "/actuator/health?x=%0D%0AFORGED%FF", "X-Request-Id", "bad-query-1");
+        assertThat(health.statusCode()).isEqualTo(400);
+        assertThat(JsonPath.<String>read(health.body(), "$.code")).isEqualTo("MALFORMED_REQUEST");
+
+        HttpResponse<String> flights = send("GET", "/api/v1/flights?origin=%FF",
+                "Authorization", basic("api", "dev-secret"), "X-Request-Id", "bad-query-2");
+        assertThat(flights.statusCode()).isEqualTo(400);
+        assertThat(JsonPath.<String>read(flights.body(), "$.code")).isEqualTo("MALFORMED_REQUEST");
+
+        HttpResponse<String> name = send("GET", "/actuator/health?%0D%0AFORGED=1", "X-Request-Id", "bad-query-3");
+        assertThat(name.statusCode()).isEqualTo(400);
+        assertThat(JsonPath.<String>read(name.body(), "$.code")).isEqualTo("MALFORMED_REQUEST");
+        assertThat(name.headers().firstValue("X-Request-Id")).hasValue("bad-query-3");
+
+        assertThat(output.getAll().lines()).noneMatch(line -> line.startsWith("FORGED"));
+        assertThat(output.getAll()).doesNotContain("Unhandled exception");
+    }
+
+    /**
+     * Tomcat refuses a header line with a control character before any filter runs, and
+     * logs the refusal at INFO with the line quoted in full. Its Http11Processor logs at
+     * WARN (application.yml), so a malformed Authorization header keeps the credential
+     * out of the log. The context is this class's own, so the refusal here is the
+     * first its connection processors see, which Tomcat would log at INFO.
+     */
+    @Test
+    @DisplayName("a header line Tomcat refuses is a 400, and the credential in it is not logged")
+    void aRefusedHeaderLineIsNotLogged(CapturedOutput output) throws Exception {
+        String credential = Base64.getEncoder()
+                .encodeToString("header-test:not-a-password".getBytes(StandardCharsets.US_ASCII));
+        String request = "GET /api/v1/flights HTTP/1.1\r\nHost: 127.0.0.1\r\n"
+                + "Authorization: Basic " + credential + (char) 1 + "\r\nConnection: close\r\n\r\n";
+        String statusLine;
+        try (Socket socket = new Socket("127.0.0.1", port)) {
+            socket.setSoTimeout(10_000);
+            OutputStream out = socket.getOutputStream();
+            out.write(request.getBytes(StandardCharsets.ISO_8859_1));
+            out.flush();
+            statusLine = new BufferedReader(new InputStreamReader(socket.getInputStream(),
+                    StandardCharsets.ISO_8859_1)).readLine();
+        }
+
+        assertThat(statusLine).startsWith("HTTP/1.1 400");
+        assertThat(output.getAll()).doesNotContain(credential);
     }
 
     private HttpResponse<String> send(String method, String path, String... headers)

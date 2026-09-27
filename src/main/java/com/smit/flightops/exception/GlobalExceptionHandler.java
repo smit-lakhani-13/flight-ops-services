@@ -5,6 +5,7 @@ import com.smit.flightops.observability.BookingMetrics;
 import com.smit.flightops.dto.ValidationErrorResponse;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
+import org.apache.tomcat.util.http.InvalidParameterException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.NestedExceptionUtils;
@@ -19,6 +20,7 @@ import org.springframework.http.HttpStatusCode;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.security.web.firewall.RequestRejectedException;
 import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.util.StringUtils;
 import org.springframework.validation.FieldError;
@@ -262,12 +264,27 @@ public class GlobalExceptionHandler {
      * None of these reach Bean Validation. The message is generic because
      * Jackson's names internal classes and echoes the payload.
      *
+     * <p>So is a query value that is not valid percent-encoded UTF-8. Tomcat
+     * decodes the query string when a parameter is first read and throws
+     * {@link InvalidParameterException}, which is not an
+     * {@code IllegalArgumentException}. It was a 500, on the public health
+     * endpoint too, and its message quotes the decoded value, so a {@code %0D%0A}
+     * in it started a forged line on the plain-text log.
+     *
+     * <p>So is a query parameter whose name holds a control character, such as
+     * {@code ?%0D%0AFORGED=1}. Spring Security's firewall checks names when the
+     * parameters are first read, here inside {@code DispatcherServlet}, and its
+     * {@link RequestRejectedException} quotes the name. It took the same path to
+     * a 500 and a forged line. A URL the firewall refuses up front, or a read it
+     * refuses inside a filter, never reaches this class.
+     *
      * <p>One cause is not malformed: a body with no {@code Content-Length} that
      * {@code RequestBodyLimitFilter} stopped at the limit. Jackson wraps the
      * stream's exception, so it arrives here, and it gets the 413 the filter gives
      * a declared length over the limit, not a 400.
      */
-    @ExceptionHandler({HttpMessageNotReadableException.class, MethodArgumentTypeMismatchException.class})
+    @ExceptionHandler({HttpMessageNotReadableException.class, MethodArgumentTypeMismatchException.class,
+                       InvalidParameterException.class, RequestRejectedException.class})
     public ResponseEntity<ErrorResponse> handleMalformed(Exception e) {
         if (NestedExceptionUtils.getMostSpecificCause(e) instanceof PayloadTooLargeException tooLarge) {
             return json(HttpStatus.CONTENT_TOO_LARGE)

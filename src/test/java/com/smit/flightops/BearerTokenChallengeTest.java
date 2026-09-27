@@ -116,6 +116,22 @@ class BearerTokenChallengeTest {
                 .andExpect(jsonPath("$.code").value("FORBIDDEN"));
     }
 
+    /**
+     * Spring Security's resource server serves RFC 9728 metadata here to any caller,
+     * ahead of the rules, so this path answers 200 where {@code denyAll()} would answer
+     * 401. Its default claims that tokens are bound to a client certificate; nothing here
+     * checks one, so {@code SecurityConfig} turns the claim off.
+     */
+    @Test
+    @DisplayName("the protected-resource metadata is public and does not claim certificate-bound tokens")
+    void theProtectedResourceMetadataIsPublic() throws Exception {
+        mockMvc.perform(get("/.well-known/oauth-protected-resource"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.resource").value("http://localhost"))
+                .andExpect(jsonPath("$.bearer_methods_supported[0]").value("header"))
+                .andExpect(jsonPath("$.tls_client_certificate_bound_access_tokens").value(false));
+    }
+
     /** RS256, the decoder's default algorithm, with a short expiry because the lifetime is checked. */
     private static String signedToken(String scope) throws JOSEException {
         JWTClaimsSet claims = new JWTClaimsSet.Builder()

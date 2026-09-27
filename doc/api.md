@@ -43,17 +43,19 @@ a bad value and a login:
   message names `app.security.api-password (API_PASSWORD)`.
 - `SecurityConfig` then asks the encoder to verify each value once
   (`config/SecurityConfig.java#assertVerifiable`). An id the encoder does not
-  know, such as `{foo}`, also stops startup, and so do `{argon2}` and
-  `{scrypt}`, because the build has no BouncyCastle.
+  know, such as `{foo}`, also stops startup, and so does a real `{argon2}` or
+  `{scrypt}` hash, because the build has no BouncyCastle.
 - Last, under `prod`, `SecurityConfig` accepts only an adaptive hash
   (`config/SecurityConfig.java#refuseUnhashed`): `bcrypt`, `pbkdf2`, `scrypt`
   and `argon2`, the last three with or without `@SpringSecurity_v5_8`. It
-  refuses every other id, so a deployment's passwords are hashes. That
-  includes `{noop}`, and `{ldap}`, which compares a value with no `{SHA}` or
-  `{SSHA}` prefix as plain text. Without BouncyCastle, `{scrypt}` and
-  `{argon2}` fail the self-check, so under `prod` only a bcrypt or pbkdf2
-  hash passes all three checks. The default profile keeps
-  `{noop}dev-secret`.
+  refuses every other id, so a deployment's passwords are hashes. That includes
+  `{noop}`, and `{ldap}`, which compares a value with no `{SHA}` or `{SSHA}`
+  prefix as plain text. Without BouncyCastle, a real `{scrypt}` or `{argon2}`
+  hash fails the self-check, so under `prod` only a bcrypt or pbkdf2 hash can
+  pass all three checks and verify a password. A placeholder behind `{bcrypt}`,
+  `{scrypt}` or `{argon2}`, such as `{scrypt}REPLACE_ME`, passes all three and
+  verifies nothing ([SECURITY.md](../SECURITY.md#known-limitations), item 6).
+  The default profile keeps `{noop}dev-secret`.
 
 No check prints the value. For an unknown id, the self-check's message names
 the id and not the hash, but only the other two checks have a test that the
@@ -131,8 +133,10 @@ explains why the two statuses stay apart.
 
 Every `/api/**` row also answers 401 without valid credentials, a wrong
 password included, and 403 to an authenticated caller who lacks the authority.
-`HEAD` follows the same rule as `GET`. The health rows need no credentials,
-and only `ops` sees the components behind the status.
+`HEAD` follows the same rule as `GET`, except on `/actuator` itself: Boot's
+matcher for that page covers `GET` only, so a `HEAD` there gets 403, from `ops`
+too. The health rows need no credentials, and only `ops` sees the components
+behind the status.
 
 A few behaviours the table does not show:
 
@@ -278,7 +282,7 @@ included.
 | `UNAUTHENTICATED` | 401 | no credentials, or credentials that do not verify; written by `JsonAuthenticationEntryPoint` |
 | `FORBIDDEN` | 403 | authenticated, without the authority this path needs; written by `JsonAccessDeniedHandler` |
 | `VALIDATION_FAILED` | 400 | Bean Validation, per field, including `@DistinctEndpoints`, which refuses a flight from EWR to EWR. A field that breaks more than one rule gets one message, taken in this order: null, blank, size or range, pattern, any other rule. So an empty airport code gets `must not be blank`, not `size must be between 3 and 3`. A flight number with a space, `/` or `%` inside gets `must contain only letters and digits`. An airport code with a digit, symbol or padding gets `must contain only letters`. A passenger name with a control character gets `must not contain control characters`, one with an unpaired UTF-16 surrogate gets `must not contain unpaired surrogates`, one with a text-direction control (U+202A to U+202E, U+2066 to U+2069, U+200E, U+200F or U+061C) or a line or paragraph separator (U+2028, U+2029) gets `must not contain text-direction controls or line separators`, and one made only of spaces, no-break spaces or format characters such as U+200B, U+FEFF and the direction controls above gets `must not be blank`; for the last two that message comes from a pattern, so such a name past 255 characters gets the size message instead. An idempotency key with a character other than letters, digits and `. _ : -` gets `must contain only letters, digits and . _ : -`. A missing or null `departureTime` gets `must not be null` |
-| `MALFORMED_REQUEST` | 400 | unreadable body, a field the request schema does not list, a key sent twice in one object, an unknown enum constant or one sent as a number, a `seats` or `totalSeats` that is missing, null, quoted, or written with a decimal point or an exponent (`2.0` included), a `departureTime` that is not an ISO-8601 instant with `Z` or an offset, or is one later than `9999-12-31T23:59:59.999999Z` (a missing or null one is `VALIDATION_FAILED`), bad path variable, missing query parameter, a filter with a control character once trimmed (see [Paging and sorting](#paging-and-sorting)), a value the database refuses as invalid data (SQLState class 22), or `page * size` above 2147483647 on either list endpoint |
+| `MALFORMED_REQUEST` | 400 | unreadable body, a field the request schema does not list, a key sent twice in one object, an unknown enum constant, one with padding around its name or one sent as a number, a `seats` or `totalSeats` that is missing, null, quoted, or written with a decimal point or an exponent (`2.0` included), a `departureTime` that is not an ISO-8601 instant with `Z` or an offset, or is one later than `9999-12-31T23:59:59.999999Z` (a missing or null one is `VALIDATION_FAILED`), bad path variable, missing query parameter, a query value that is not valid percent-encoded UTF-8, a filter with a control character once trimmed (see [Paging and sorting](#paging-and-sorting)), a value the database refuses as invalid data (SQLState class 22), or `page * size` above 2147483647 on either list endpoint |
 | `RESOURCE_NOT_FOUND` | 404 | an unmapped path the security rules let through, such as `GET /api/v1/does-not-exist` with `flights:read`; a path no rule names, such as `/some/other/thing`, gets 403 from `anyRequest().denyAll()`, or 401 without credentials |
 | `METHOD_NOT_ALLOWED` | 405 | a verb the security rules allow on a path that does not map it, such as `POST` on `/api/v1/flights/UA123`; the `Allow` header lists the mapped verbs. Tomcat refuses `TRACE` before any filter runs, so its 405 comes from `ApiErrorController`, with the servlet's full `Allow` list and no `X-Request-Id`. `PUT` and `OPTIONS` get 403 from `anyRequest().denyAll()`, or 401 without credentials |
 | `PAYLOAD_TOO_LARGE` | 413 | a request body over `app.http.max-body-bytes`, 16384 bytes by default. `RequestBodyLimitFilter` refuses a declared `Content-Length` over it before the body is read and before the credentials are checked. A chunked body is refused with the same code once the read passes the limit |
