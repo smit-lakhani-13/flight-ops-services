@@ -40,7 +40,7 @@ public interface BookingRepository extends JpaRepository<Booking, Long> {
 
     /**
      * {@code SELECT ... FOR UPDATE} on one booking row, taken after the flight lock. Under
-     * READ COMMITTED, which the pool pins, the flight lock already serialises two cancels;
+     * READ COMMITTED, which the pool sets, the flight lock already serialises two cancels;
      * this makes that explicit instead of leaving it to the isolation level alone.
      */
     @Lock(LockModeType.PESSIMISTIC_WRITE)

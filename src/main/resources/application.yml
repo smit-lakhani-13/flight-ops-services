@@ -16,10 +16,13 @@ spring:
       # That re-read sees a booking the previous holder committed only under
       # READ COMMITTED, where each statement takes a fresh snapshot. Under
       # REPEATABLE READ PostgreSQL aborts the waiter with 40001 instead, and
-      # the caller gets 503 LOCK_TIMEOUT. Pinned on the pool, so a server whose
-      # default_transaction_isolation says otherwise changes nothing; Hikari
-      # sets it once per new connection, not per transaction. Here, so both
-      # PostgreSQL profiles inherit it. H2's default is the same level.
+      # the caller gets 503 LOCK_TIMEOUT. Set on the pool, not per transaction:
+      # Hikari reads the level from the pool's first connection and sets READ
+      # COMMITTED on each new connection only when that level differs. So if
+      # default_transaction_isolation was READ COMMITTED when the pod started,
+      # a later change to it would reach new connections until the pod
+      # restarts. Here, so both PostgreSQL profiles inherit it. H2's default
+      # is the same level.
       transaction-isolation: TRANSACTION_READ_COMMITTED
       # H2's spelling of the postgres profile's 3s lock_timeout, so local runs and
       # tests bound a lock wait the way production does.

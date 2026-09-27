@@ -184,18 +184,18 @@ still blank.
 
 - **A full pool made callers wait 30 s for their 503.** The `postgres` and
   `prod` profiles kept Hikari's default 30 s `connection-timeout`, longer than
-  callers usually wait. A client gave up and retried while its abandoned
-  request still queued and later ran, and never saw the
+  callers usually wait. A client that gave up and retried would leave its
+  abandoned request queued to run later, and would never see the
   `503 DATABASE_UNAVAILABLE` with `Retry-After` that
   `GlobalExceptionHandler#handleDatabaseUnavailable` answers. Both profiles now
   wait 5 s: longer than the 3 s `lock_timeout`, and well inside the timeouts
-  callers usually set. The default H2 profile keeps 30 s for its concurrency tests.
-  `DataSourceSettingsTest` checks the value each profile resolves to.
+  callers usually set. The default H2 profile keeps 30 s for its concurrency
+  tests. `DataSourceSettingsTest` checks the value each profile resolves to.
 
 - **The booking path's isolation level was left to the server.**
   `BookingWriter#insertNewBooking` re-reads the idempotency key once it holds
   the flight row lock, and that read sees a competing booking only under READ
-  COMMITTED. Nothing pinned the level, so a server whose
+  COMMITTED. Nothing set the level, so a server whose
   `default_transaction_isolation` was REPEATABLE READ would abort every queued
   booking, cancellation and replay with SQLSTATE `40001`, reported as
   `503 LOCK_TIMEOUT`. The pool now sets

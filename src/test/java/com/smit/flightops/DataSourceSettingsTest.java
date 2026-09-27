@@ -30,9 +30,9 @@ class DataSourceSettingsTest {
 
     /**
      * A 5 s wait for a connection, so a saturated pool answers 503 DATABASE_UNAVAILABLE
-     * before a caller gives up, and READ COMMITTED whatever the server's default, which
-     * the flight lock's re-read of the idempotency key needs. The URL and the lock
-     * timeout prove the profile's own document was read, not only the base one.
+     * before a caller gives up, and READ COMMITTED, which the flight lock's re-read of
+     * the idempotency key needs. The URL and the lock timeout prove the profile's own
+     * document was read, not only the base one.
      */
     @ParameterizedTest
     @ValueSource(strings = {"postgres", "prod"})
