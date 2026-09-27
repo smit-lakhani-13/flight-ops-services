@@ -201,7 +201,8 @@ class BookingIntegrationTest {
         // Losing the seat race is expected; any other failure is a bug.
         int booked = countSuccesses(attempts, InsufficientSeatsException.class);
 
-        assertThat(booked).as("the row lock lets the seat count through, no more and no fewer").isEqualTo(SEATS_ON_SALE);
+        assertThat(booked).as("the row lock lets the seat count through, no more and no fewer")
+                .isEqualTo(SEATS_ON_SALE);
         assertThat(availableSeats(flightNumber)).isZero();
         assertThat(bookingRepository.findByFlightNumber(flightNumber, Pageable.unpaged()))
                 .hasSize(SEATS_ON_SALE);

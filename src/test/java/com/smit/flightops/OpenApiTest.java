@@ -49,7 +49,8 @@ class OpenApiTest {
             "post /api/v1/flights", List.of("201", "400", "401", "403", "409", "413", "415", "503"),
             "get /api/v1/flights/{flightNumber}", List.of("200", "401", "403", "404", "503"),
             "delete /api/v1/flights/{flightNumber}", List.of("204", "401", "403", "404", "409", "503"),
-            "patch /api/v1/flights/{flightNumber}/status", List.of("200", "400", "401", "403", "404", "409", "413", "415", "503"),
+            "patch /api/v1/flights/{flightNumber}/status",
+                    List.of("200", "400", "401", "403", "404", "409", "413", "415", "503"),
             "get /api/v1/bookings", List.of("200", "400", "401", "403", "503"),
             "post /api/v1/bookings", List.of("201", "400", "401", "403", "404", "409", "413", "415", "503"),
             "get /api/v1/bookings/{bookingId}", List.of("200", "400", "401", "403", "404", "503"),
@@ -113,7 +114,8 @@ class OpenApiTest {
      * out on it, so only they name {@code LOCK_TIMEOUT}.
      */
     @Test
-    @DisplayName("every 503 names the codes its operation can return and declares Retry-After; every response declares X-Request-Id")
+    @DisplayName("every 503 names the codes its operation can return and declares Retry-After; "
+                 + "every response declares X-Request-Id")
     void theSharedResponsesAreDeclaredOnEveryOperation() throws Exception {
         JsonNode document = document();
         JsonNode paths = document.get("paths");

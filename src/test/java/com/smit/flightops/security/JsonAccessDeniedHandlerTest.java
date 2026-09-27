@@ -77,7 +77,8 @@ class JsonAccessDeniedHandlerTest {
         handler.handle(request, new MockHttpServletResponse(), new AccessDeniedException("denied"));
 
         assertThat(appender.list).singleElement().satisfies(event ->
-                assertThat(event.getFormattedMessage()).contains("DELETE /api/v1/flights/UA123 for an authenticated caller"));
+                assertThat(event.getFormattedMessage())
+                        .contains("DELETE /api/v1/flights/UA123 for an authenticated caller"));
     }
 
     /**

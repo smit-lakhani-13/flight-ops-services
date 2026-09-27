@@ -207,7 +207,8 @@ class FlightControllerTest {
      * is the one Hibernate builds. A unique violation, 23505, stays a 409.
      */
     @Test
-    @DisplayName("a data error from the database (SQLState class 22) is 400 MALFORMED_REQUEST, not 409 DUPLICATE_REQUEST")
+    @DisplayName("a data error from the database (SQLState class 22) is 400 MALFORMED_REQUEST, "
+                 + "not 409 DUPLICATE_REQUEST")
     void aDatabaseDataErrorIsABadRequest() throws Exception {
         when(flightService.search(any(), any(), any())).thenThrow(new DataIntegrityViolationException(
                 "could not execute query", new DataException("could not execute query",
@@ -239,7 +240,10 @@ class FlightControllerTest {
                 .andExpect(jsonPath("$.code").value("DUPLICATE_FLIGHT"));
     }
 
-    /** The two writes with a body accept JSON only, for the reason {@code BookingControllerTest#yamlBodyReturns415} gives. */
+    /**
+     * The two writes with a body accept JSON only, for the reason
+     * {@code BookingControllerTest#yamlBodyReturns415} gives.
+     */
     @Test
     @DisplayName("a YAML body is 415 on the create and the status change")
     void yamlBodyReturns415() throws Exception {

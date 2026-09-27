@@ -522,7 +522,8 @@ class BookingControllerTest {
 
     /** {@code FlightControllerTest#aFilterWithAControlCharacterInsideIsRefused} gives the reason. */
     @Test
-    @DisplayName("a flight number with a control character inside it (A%00B) is 400 MALFORMED_REQUEST, before any query")
+    @DisplayName("a flight number with a control character inside it (A%00B) is 400 MALFORMED_REQUEST, "
+                 + "before any query")
     void aFlightNumberWithAControlCharacterInsideIsRefused() throws Exception {
         mockMvc.perform(get("/api/v1/bookings").param("flightNumber", "A\u0000B"))
                 .andExpect(status().isBadRequest())

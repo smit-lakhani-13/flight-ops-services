@@ -138,6 +138,13 @@ says not yet.
   kubelet and the load balancer, not API clients, and no answer under
   `/api/**` changes.
 
+- **Java lines fit in 120 columns, and CI keeps them there.** `.editorconfig`
+  sets `max_line_length = 120`, but only an editor read it, and longer lines
+  had built up in the controllers, the exception handler and the tests. They
+  are wrapped, with every compiled string, the OpenAPI descriptions included,
+  left exactly as it was, and the build job's step "Java lines fit in 120
+  columns" now fails on a longer line in either module.
+
 ### Fixed
 
 - **A request body had no size limit.** Jackson builds a whole string field

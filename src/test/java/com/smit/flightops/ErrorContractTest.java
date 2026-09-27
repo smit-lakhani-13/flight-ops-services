@@ -630,7 +630,8 @@ class ErrorContractTest {
     /** Through DEPARTED either way, because the state machine refuses SCHEDULED to ARRIVED. */
     @ParameterizedTest
     @CsvSource({"DEPARTED, ZZ400", "ARRIVED, ZZ401"})
-    @DisplayName("an active booking on a departed or arrived flight is 409 BOOKING_NOT_CANCELLABLE, and nothing changes")
+    @DisplayName("an active booking on a departed or arrived flight is 409 BOOKING_NOT_CANCELLABLE, "
+                 + "and nothing changes")
     void cancellingOnAFlownFlightIsRefused(String flightStatus, String flightNumber) throws Exception {
         createFlight(flightNumber, "BOM", "GOI", "2099-01-01T10:00:00Z");
         long bookingId = book(flightNumber, "Ada Lovelace", 2, "contract-flown-" + flightStatus);

@@ -135,7 +135,9 @@ public class GlobalExceptionHandler {
         if (state != null && state.startsWith("22")) {
             log.warn("Data error: {}", detail);
             return json(HttpStatus.BAD_REQUEST)
-                    .body(ErrorResponse.of("MALFORMED_REQUEST", "The request contained an invalid value.", clock.instant()));
+                    .body(ErrorResponse.of("MALFORMED_REQUEST",
+                                           "The request contained an invalid value.",
+                                           clock.instant()));
         }
         log.warn("Constraint violation: {}", detail);
         return json(HttpStatus.CONFLICT)
@@ -288,7 +290,9 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ErrorResponse> handleIllegalArgument(IllegalArgumentException e) {
         log.warn("Rejected argument", e);
         return json(HttpStatus.BAD_REQUEST)
-                .body(ErrorResponse.of("MALFORMED_REQUEST", "The request contained an invalid value.", clock.instant()));
+                .body(ErrorResponse.of("MALFORMED_REQUEST",
+                                       "The request contained an invalid value.",
+                                       clock.instant()));
     }
 
     /**

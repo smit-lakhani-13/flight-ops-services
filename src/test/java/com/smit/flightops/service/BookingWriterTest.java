@@ -111,7 +111,8 @@ class BookingWriterTest {
     }
 
     @Test
-    @DisplayName("REGRESSION: a replay that arrives when the winner took the last seats is a lost race, not an oversell")
+    @DisplayName("REGRESSION: a replay that arrives when the winner took the last seats is a lost race, "
+                 + "not an oversell")
     void racingReplayOnTheLastSeatIsNotAnOversell() {
         // The winner committed under this lock and took every remaining seat. If
         // reserveSeats ran before the re-read, a retry of a request that succeeded
