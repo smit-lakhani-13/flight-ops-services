@@ -47,6 +47,13 @@ still blank.
   Dependabot leaves the Lambda's Testcontainers version alone, as it does
   JUnit, because `lambda/pom.xml` copies the one Boot manages for the service.
 
+- **What the database login can do, and what would replace it.** The service
+  and Flyway both log in as the RDS master user, a member of `rds_superuser`
+  that owns every table. `doc/OPERATIONS.md` now traces where that login comes
+  from and what it allows, and `doc/ARCHITECTURE.md` lists the fix, a
+  migration user and a least-privilege runtime user, as still open. No code
+  changes.
+
 ### Changed
 
 - **Version.** Both poms say `1.3.0-SNAPSHOT` until the next tag, so a build
@@ -206,6 +213,20 @@ still blank.
   and refresh steps, and `SECURITY.md` covers the database leg under
   Transport. A `DB_URL` repository variable copied from the old output must be
   replaced by hand. Local runs, compose and CI keep their own URLs.
+
+- **Runbooks that promised more than the code delivers.** `doc/OPERATIONS.md`
+  and `doc/DEPLOYMENT.md` put the outbox drain at about 100 events a second
+  per replica, but `OutboxPublisher#drainOutbox` sends one row at a time and
+  waits the poll interval after each drain, so a replica drains
+  `batch / (poll interval + batch × send latency)` events a second, and never
+  more than `1 / send latency`. Both now show that arithmetic. Below that cap
+  the throughput playbook prefers a shorter interval to a bigger batch, which
+  holds its row locks longer, and at the cap it adds replicas, up to the HPA's
+  four. The command in "Events stop arriving" read only the last 10 lines of
+  each pod, kubectl's default with a label selector, and now passes
+  `--tail=-1` and `--prefix`. Where the poll interval is set and described,
+  an event's latency now counts the sends ahead of it, and says that a
+  backlog, a failed send or a prune run adds more.
 
 ### Security
 
