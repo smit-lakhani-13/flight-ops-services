@@ -73,11 +73,14 @@ describe("RequestLog", () => {
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "Close" }));
   });
 
-  it("closes on Escape inside it and asks for focus to go back", () => {
+  it("closes on Escape inside it or on Close, and asks for focus to go back", () => {
     const onClose = renderLog([entry(201, 1)]);
     fireEvent.keyDown(screen.getByRole("button", { name: /^Copy / }), { key: "Escape" });
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(onClose).toHaveBeenCalledWith(true);
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(onClose).toHaveBeenCalledTimes(2);
+    expect(onClose).toHaveBeenLastCalledWith(true);
   });
 
   it("leaves Escape alone outside it, while an input method composes, and once handled", () => {
@@ -113,26 +116,39 @@ describe("RequestLog", () => {
     await act(async () => fireEvent.click(first));
     expect(writeText).toHaveBeenLastCalledWith("web-00000000-0000-4000-8000-000000000001");
     expect(status.textContent).toBe("Copied web-00000000-0000-4000-8000-000000000001");
-    // The button keeps its name, so the news is not said twice.
+    // The button keeps its name and its title, so the news is said once.
     expect(first.getAttribute("aria-label")).toBe("Copy web-00000000-0000-4000-8000-000000000001");
-    expect(first.getAttribute("title")).toBe("Copied");
+    expect(first.getAttribute("title")).toBe("Copy");
 
+    // A refusal leaves the line as it was: no error, and not emptied.
     await act(async () => fireEvent.click(second));
     expect(writeText).toHaveBeenLastCalledWith("web-00000000-0000-4000-8000-000000000002");
-    expect(status.textContent).not.toContain("000000000002");
+    expect(status.textContent).toBe("Copied web-00000000-0000-4000-8000-000000000001");
     expect(second.getAttribute("title")).toBe("Copy");
   });
 
-  it("lets the copied line go after a moment, so the same id copied again is news", async () => {
+  it("empties the copied line 1.5 s after the last copy, so the same id copied again is news", async () => {
     vi.useFakeTimers();
     try {
       vi.stubGlobal("navigator", { ...navigator, clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } });
-      renderLog([entry(201, 1)]);
+      renderLog([entry(201, 1), entry(201, 2)]);
+      const [second, first] = screen.getAllByRole("button", { name: /^Copy / }) as [HTMLElement, HTMLElement];
       const status = within(screen.getByRole("complementary", { name: "Request log" })).getByRole("status");
-      await act(async () => fireEvent.click(screen.getByRole("button", { name: /^Copy / })));
+      await act(async () => fireEvent.click(first));
       expect(status.textContent).toBe("Copied web-00000000-0000-4000-8000-000000000001");
-      act(() => vi.advanceTimersByTime(1500));
+
+      // A second copy starts the wait again, so the first one's timer cannot
+      // empty the line early.
+      act(() => vi.advanceTimersByTime(1000));
+      await act(async () => fireEvent.click(second));
+      expect(status.textContent).toBe("Copied web-00000000-0000-4000-8000-000000000002");
+      act(() => vi.advanceTimersByTime(1499));
+      expect(status.textContent).toBe("Copied web-00000000-0000-4000-8000-000000000002");
+      act(() => vi.advanceTimersByTime(1));
       expect(status.textContent).toBe("");
+
+      await act(async () => fireEvent.click(second));
+      expect(status.textContent).toBe("Copied web-00000000-0000-4000-8000-000000000002");
     } finally {
       vi.useRealTimers();
     }

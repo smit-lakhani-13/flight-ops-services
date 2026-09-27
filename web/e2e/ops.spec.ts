@@ -71,6 +71,7 @@ test("the request log shows each X-Request-Id the API echoed back", async ({ pag
   await expect(page.getByTestId("flight-table")).toBeVisible();
   const requests = page.getByRole("button", { name: /^Requests/ });
   await requests.click();
+  await expect(requests).toHaveAttribute("aria-expanded", "true");
   // The drawer comes last on the page, so it takes the focus when it opens.
   await expect(page.getByRole("button", { name: "Close", exact: true })).toBeFocused();
 
