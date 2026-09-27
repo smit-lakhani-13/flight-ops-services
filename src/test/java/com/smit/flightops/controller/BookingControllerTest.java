@@ -226,6 +226,71 @@ class BookingControllerTest {
     }
 
     /**
+     * U+202E, the right-to-left override, turns the rest of a line around
+     * wherever the name is shown, such as the console's booking table. U+2028
+     * and U+2029 break a line in viewers that honour them. None is a control or
+     * a surrogate, so the earlier rules let all of them through.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"Jane\u202AX", "Jane\u202BX", "Jane\u202CX", "Jane\u202DX", "Jane\u202EeoD",
+                            "Jane\u2066X", "Jane\u2067X", "Jane\u2068X", "Jane\u2069X",
+                            "Jane\u200EX", "Jane\u200FX", "Jane\u061CX", "Jane\u2028Doe", "Jane\u2029Doe"})
+    @DisplayName("a passenger name with a text-direction control or a line separator is refused at the edge")
+    void directionControlsAndLineSeparatorsInANameAreRejected(String passengerName) throws Exception {
+        mockMvc.perform(post("/api/v1/bookings")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body("UA123", passengerName, 1)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.fieldErrors.passengerName")
+                        .value("must not contain text-direction controls or line separators"));
+
+        verify(bookingService, never()).book(any());
+    }
+
+    /**
+     * A name made only of a direction mark passes {@code @NotBlank}, since the
+     * mark is not whitespace, and breaks two patterns: the blank one, because
+     * the mark is a format character, and the direction one. Both rank as
+     * patterns, so the handler keeps the message that sorts first. This fails if
+     * a reworded message changes which one wins.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"\u200E", "\u202E", "\u2066"})
+    @DisplayName("a passenger name made only of a direction mark is blank")
+    void aNameMadeOnlyOfADirectionMarkIsBlank(String passengerName) throws Exception {
+        mockMvc.perform(post("/api/v1/bookings")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body("UA123", passengerName, 1)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.fieldErrors.passengerName").value("must not be blank"));
+
+        verify(bookingService, never()).book(any());
+    }
+
+    /**
+     * The direction rule lists the code points it refuses, singly or as ranges,
+     * instead of refusing every format character ({@code \p{Cf}}), so the
+     * zero-width non-joiner and joiner, U+200C and U+200D, still pass: some
+     * scripts need the first, and emoji such as the technologist below are built
+     * with the second.
+     */
+    @ParameterizedTest
+    @ValueSource(strings = {"Jane\u200CDoe", "Jane Doe \uD83D\uDC69\u200D\uD83D\uDCBB"})
+    @DisplayName("a name with a zero-width non-joiner or joiner is booked")
+    void aNameWithAZeroWidthNonJoinerOrJoinerIsAccepted(String passengerName) throws Exception {
+        when(bookingService.book(any())).thenReturn(dto());
+
+        mockMvc.perform(post("/api/v1/bookings")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body("UA123", passengerName, 1)))
+                .andExpect(status().isCreated());
+
+        verify(bookingService).book(argThat(request -> request.passengerName().equals(passengerName)));
+    }
+
+    /**
      * The fingerprint joins the fields with U+001F. If either field could carry
      * it, these two different bookings would hash the same and the second would
      * be replayed as the first.
@@ -264,6 +329,47 @@ class BookingControllerTest {
         String body = """
                 {"flightNumber":"UA123","passengerName":"Jane Doe",%s"idempotencyKey":"demo-1"}
                 """.formatted(seats);
+
+        mockMvc.perform(post("/api/v1/bookings")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("MALFORMED_REQUEST"));
+
+        verify(bookingService, never()).book(any());
+    }
+
+    /**
+     * The API has no cabin class. Dropped, the field would get a 201 that reads
+     * as if business class had been booked.
+     */
+    @Test
+    @DisplayName("a booking with a field the API does not have is 400 MALFORMED_REQUEST, not a 201 that ignores it")
+    void aBookingWithAnUnknownFieldIsRefused() throws Exception {
+        String body = """
+                {"flightNumber":"UA123","passengerName":"Jane Doe","seats":3,
+                 "idempotencyKey":"demo-1","cabin":"BUSINESS"}
+                """;
+
+        mockMvc.perform(post("/api/v1/bookings")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("MALFORMED_REQUEST"));
+
+        verify(bookingService, never()).book(any());
+    }
+
+    /**
+     * Read leniently, the last value wins: one seat would be booked, while a
+     * proxy or a log that kept the first value would show three.
+     */
+    @Test
+    @DisplayName("a booking with the seat count sent twice is 400 MALFORMED_REQUEST")
+    void aBookingWithARepeatedFieldIsRefused() throws Exception {
+        String body = """
+                {"flightNumber":"UA123","passengerName":"Jane Doe","seats":3,"seats":1,"idempotencyKey":"demo-1"}
+                """;
 
         mockMvc.perform(post("/api/v1/bookings")
                         .contentType(MediaType.APPLICATION_JSON)

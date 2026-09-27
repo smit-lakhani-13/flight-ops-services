@@ -60,13 +60,22 @@ spring:
     deserialization:
       # A fractional seat count is a client bug, not a request for fewer seats.
       accept-float-as-int: false
+      # A field the API does not have is refused, not dropped. A create
+      # that sends "status": "DELAYED" would otherwise get 201 and a
+      # SCHEDULED flight.
+      fail-on-unknown-properties: true
     mapper:
-      # So is a count sent as a string. The schema says integer; "2" is refused too.
+      # A count sent as a string is refused as well. The schema says integer.
       allow-coercion-of-scalars: false
     datatype:
       enum:
         # Otherwise {"status": 4} is read as the fifth constant, CANCELLED.
         fail-on-numbers-for-enums: true
+    read:
+      # {"status": "DELAYED", "status": "CANCELLED"} is refused. Without
+      # this the last value wins, and a proxy or a log that kept the first
+      # would show a different request from the one that ran.
+      strict-duplicate-detection: true
 
   data:
     web:

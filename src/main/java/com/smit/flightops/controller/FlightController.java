@@ -128,7 +128,8 @@ public class FlightController {
                     `VALIDATION_FAILED` — a field is blank, out of range or has the wrong characters, \
                     `destination` equals `origin`, or `departureTime` is missing, null or not in the \
                     future; `fieldErrors` names each one. `MALFORMED_REQUEST` — the body is empty, \
-                    not valid JSON or not a JSON object, a text field is an array or an object, or \
+                    not valid JSON or not a JSON object, has a field the schema does not list or a key \
+                    twice in one object, a text field is an array or an object, or \
                     `totalSeats` has the wrong JSON type, is too large for its type, or is missing, \
                     null, a string, or written with a decimal point or an exponent (`2.0` included). \
                     The same code answers a `departureTime` that is not an ISO-8601 instant with `Z` \
@@ -174,8 +175,9 @@ public class FlightController {
             @ApiResponse(responseCode = "200", description = "The flight, at its new status."),
             @ApiResponse(responseCode = "400", description = """
                     `VALIDATION_FAILED` — `status` is missing or null. `MALFORMED_REQUEST` — the \
-                    body is empty, not valid JSON or not a JSON object, or `status` has the wrong \
-                    JSON type or names a status that does not exist. This one has the \
+                    body is empty, not valid JSON or not a JSON object, has a field other than \
+                    `status` or `status` twice, or `status` has the wrong JSON type or names a \
+                    status that does not exist. This one has the \
                     `{code, message, timestamp}` shape.""",
                     content = @Content(schema = @Schema(oneOf = {ValidationErrorResponse.class, ErrorResponse.class}))),
             @ApiResponse(responseCode = "401", description = "`UNAUTHENTICATED`",

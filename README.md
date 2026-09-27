@@ -14,7 +14,7 @@ I chose flight bookings because seat inventory is a real consistency problem: ma
 
 **Written and linted, never deployed:** the Kubernetes manifests for EKS, the SAM template and the deploy scripts. The deploy job is gated off and has never run, and the service has never served production traffic; [Status](#status) says exactly what has run.
 
-**Evidence:** 393 tests in the service, 15 of them on PostgreSQL 17 through Testcontainers; [17 decision records](adr/README.md), each with the options it rejected; a [defect log](doc/DEFECT-LOG.md) that includes four review passes over my own code; and a CI that fails on coverage floors, ArchUnit layering rules and Trivy findings, with CodeQL over the Java and the TypeScript.
+**Evidence:** 419 tests in the service, 15 of them on PostgreSQL 17 through Testcontainers; [17 decision records](adr/README.md), each with the options it rejected; a [defect log](doc/DEFECT-LOG.md) that includes four review passes over my own code; and a CI that fails on coverage floors, ArchUnit layering rules and Trivy findings, with CodeQL over the Java and the TypeScript.
 
 [![Ten replays of one idempotency key from the console: ten 201s, one booking, one seat debited](doc/assets/console-race-card.png)](doc/assets/console-race.png)
 
@@ -51,7 +51,7 @@ flowchart TB
 
 | What | State |
 |---|---|
-| The service | Built and tested: 393 tests, 15 of them on PostgreSQL 17 and 1 on ElasticMQ through Testcontainers, which run in CI and skip on a machine without Docker. Every operation in the [API](#api) table, and each meter the console reads at `/actuator/metrics/{name}`, is exercised over HTTP in CI by the console's Playwright suite against the service's jar; the console does not forward `/actuator/prometheus` or the OpenAPI document, which the JUnit suite tests through MockMvc instead. `scripts/demo.sh` replays a guided tour against a local instance. |
+| The service | Built and tested: 419 tests, 15 of them on PostgreSQL 17 and 1 on ElasticMQ through Testcontainers, which run in CI and skip on a machine without Docker. Every operation in the [API](#api) table, and each meter the console reads at `/actuator/metrics/{name}`, is exercised over HTTP in CI by the console's Playwright suite against the service's jar; the console does not forward `/actuator/prometheus` or the OpenAPI document, which the JUnit suite tests through MockMvc instead. `scripts/demo.sh` replays a guided tour against a local instance. |
 | The SQS publisher and the Lambda | Unit-tested against mocked AWS SDK clients, and run in CI against emulators in containers: the publisher sends to ElasticMQ, where the test reads the message back, and the handler writes to DynamoDB Local on a table keyed as `lambda/template.yaml` keys it (the Lambda module has 28 tests, 3 of them on DynamoDB Local). Never connected to SQS or DynamoDB in AWS. |
 | The container image | Built from the `Dockerfile`, started without a database and scanned by Trivy in CI on every push or pull request to `main`. Never pushed to a registry. The job logs the image size on every run; [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md#the-service-image) records one measurement and what moves it. |
 | The console | Built and tested in CI on every push or pull request to `main`: lint, types, 126 unit tests, the production build, and 25 Playwright tests in Chromium against the service's own jar, three of them at eleven viewports. Never hosted. |
