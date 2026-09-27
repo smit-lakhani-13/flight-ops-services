@@ -89,6 +89,13 @@ public class GlobalExceptionHandler {
                 .body(ErrorResponse.of("FLIGHT_NOT_BOOKABLE", e.getMessage(), clock.instant()));
     }
 
+    /** Its own code because the flight has flown, so no retry of the cancellation can succeed. */
+    @ExceptionHandler(BookingNotCancellableException.class)
+    public ResponseEntity<ErrorResponse> handleNotCancellable(BookingNotCancellableException e) {
+        return json(HttpStatus.CONFLICT)
+                .body(ErrorResponse.of("BOOKING_NOT_CANCELLABLE", e.getMessage(), clock.instant()));
+    }
+
     @ExceptionHandler(DuplicateFlightException.class)
     public ResponseEntity<ErrorResponse> handleDuplicateFlight(DuplicateFlightException e) {
         return json(HttpStatus.CONFLICT)

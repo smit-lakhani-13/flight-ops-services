@@ -178,7 +178,12 @@ public class BookingController {
                     Cancelling an already-cancelled booking is a 200 no-op rather than an \
                     error: the caller asked for a state the system is already in, and the \
                     seats are released only once. Nothing is deleted — the row keeps \
-                    its `cancelledAt`, so the history survives.""")
+                    its `cancelledAt`, so the history survives.
+
+                    An active booking on a `DEPARTED` or `ARRIVED` flight is refused \
+                    with `BOOKING_NOT_CANCELLABLE` and keeps its seats, because the \
+                    flight has flown. A booking cancelled before departure still \
+                    answers 200.""")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description =
                     "Cancelled, or already cancelled. The body is the booking either way."),
@@ -190,6 +195,10 @@ public class BookingController {
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "404", description =
                     "`BOOKING_NOT_FOUND` — its own code, so a 404 here never claims the flight is missing.",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(responseCode = "409", description = """
+                    `BOOKING_NOT_CANCELLABLE`: the booking is active and its flight has \
+                    departed or arrived, and no retry will ever succeed.""",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "503", description = "`LOCK_TIMEOUT`, with `Retry-After`.",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class)))

@@ -4,6 +4,7 @@ import com.smit.flightops.dto.BookingDto;
 import com.smit.flightops.dto.BookingRequest;
 import com.smit.flightops.entity.Booking;
 import com.smit.flightops.entity.Flight;
+import com.smit.flightops.exception.BookingNotCancellableException;
 import com.smit.flightops.exception.BookingNotFoundException;
 import com.smit.flightops.exception.FlightNotFoundException;
 import com.smit.flightops.exception.IdempotencyKeyConflictException;
@@ -145,6 +146,13 @@ public class BookingWriter {
      * is a no-op. {@code Flight.releaseSeats} clamps to {@code totalSeats}, which
      * bounds a double credit but does not prevent it.
      *
+     * <p>An active booking on a departed or arrived flight is refused, and nothing
+     * changes. A booking already cancelled is not: idempotency comes first, so its
+     * retry stays a 200 whatever the flight has done since. The status is read
+     * under the flight row lock, so a {@code PATCH} to DEPARTED that committed
+     * first is seen here, and one that read the row before this cancellation
+     * released its seats fails on {@code @Version}.
+     *
      * <p>No counters here: the commit can still fail, although not on
      * {@code Flight}'s {@code @Version}, because the row is locked from read to
      * commit. There is no {@code BookingCancelled} event either. It would need a
@@ -160,6 +168,10 @@ public class BookingWriter {
 
         Booking booking = bookingRepository.findByIdForUpdate(bookingId)
                 .orElseThrow(() -> new BookingNotFoundException(bookingId));
+
+        if (!booking.isCancelled() && !flight.getStatus().acceptsCancellations()) {
+            throw new BookingNotCancellableException(bookingId, flightNumber, flight.getStatus());
+        }
 
         boolean released = booking.cancel(clock.instant());
         if (released) {

@@ -417,6 +417,11 @@ Which statuses are bookable is a separate question.
 `src/main/java/com/smit/flightops/entity/FlightStatus.java#isBookable` answers
 it with an exhaustive switch and no `default`. Adding a constant is then a
 compile error until someone decides whether the new status accepts bookings.
+Whether a booking can still be cancelled is a third question, and
+`src/main/java/com/smit/flightops/entity/FlightStatus.java#acceptsCancellations`
+answers it the same way. A booking on a `CANCELLED` flight can be, because
+refunds happen on cancelled flights. One still active on a `DEPARTED` or
+`ARRIVED` flight cannot, because the flight has already flown.
 
 ---
 
