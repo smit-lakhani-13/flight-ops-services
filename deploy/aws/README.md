@@ -10,7 +10,7 @@ scripts parse and are shellcheck-clean, and `selftest.sh` runs the teardown,
 the cost check, the ECR lookup and `up.sh`'s checks against stubbed tools.
 None of that is a real run.
 `doc/DEPLOYMENT.md` records the date of the first one; until then that field
-reads `—`.
+reads `not yet`.
 
 ## Contents
 

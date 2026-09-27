@@ -4,9 +4,9 @@ There are three ways to run this service, costing $0, about $0 and $7.72 a
 day. This document gives the commands for each one, prices the third, and shows
 how to create it and, more importantly, how to destroy it.
 
-**Executed on: —**
+**Executed on:** not yet.
 
-The line is blank because none of this has been run against an AWS account.
+It says not yet because none of this has been run against an AWS account.
 The templates lint, the scripts pass shellcheck and a self-test
 against stubbed tools, and the manifests validate against Kubernetes 1.36. None
 of that proves they work. When it is run, this line gets the dates, and a new
@@ -37,7 +37,7 @@ or a funded AWS account, and the project has none of the three.
 | **Async half on AWS** | outbox → SQS → Lambda → DynamoDB, on real infrastructure | an AWS account, SAM CLI | ~$0 (free tier) |
 | **Full stack on EKS** | all of that plus rolling deploys, IRSA, HPA, a public URL | an AWS account, five CLIs, JDK 21, 50 minutes | $7.72/day |
 
-The middle one is underrated. It is the interesting half of the architecture:
+The middle shape is the interesting half of the architecture:
 the transactional outbox crossing a real queue into a real consumer. It also
 costs nothing. SQS gives a million requests a month free forever, DynamoDB
 on-demand bills per write with no hourly charge, and an idle Lambda costs
@@ -74,10 +74,15 @@ With Docker you also get what the H2 profile lacks: Flyway migrations, and
 PostgreSQL's own row locks and `lock_timeout`.
 
 ```bash
-docker compose up --build
+docker compose up --build --wait
 scripts/demo.sh
 docker compose down -v
 ```
+
+`--wait` starts the stack in the background and returns once `db` and `app`
+report healthy, so the demo runs against it; `down -v` then removes the stack
+and its database volume. `compose.yaml` is written for this and has not been
+run end to end; the PostgreSQL tests in CI are the verified path.
 
 [`compose.yaml`](../compose.yaml) sets `SPRING_PROFILES_ACTIVE=postgres`: the
 local database, Flyway and the log publisher. The `Dockerfile` makes `prod` the

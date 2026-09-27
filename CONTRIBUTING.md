@@ -106,6 +106,9 @@ Against real PostgreSQL:
 docker compose up --build
 ```
 
+`compose.yaml` is written for this and has not been run end to end; the
+PostgreSQL tests in CI are the verified path.
+
 The console in `web/` needs Node 24 and the service running on port 8080:
 
 ```bash

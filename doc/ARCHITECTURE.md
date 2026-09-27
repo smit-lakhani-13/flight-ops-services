@@ -260,7 +260,12 @@ What keeps the lock from becoming an outage:
   [ADR 0002](../adr/0002-pessimistic-locking.md) explains why I did not use a
   per-query hint. A request that cannot get the lock fails within seconds with
   `503 LOCK_TIMEOUT`. Without the bound it would hold a connection until the
-  pool was empty. H2 gets the same bound, spelled `SET LOCK_TIMEOUT 3000`.
+  pool was empty. The bound shortens a hot flight's queue but does not isolate
+  it: each waiter holds a pooled connection for up to 3 s, so one flight's
+  waiters can fill a pod's pool of ten. Other requests on that pod, for any
+  flight, then wait for a connection, 5 s at most in these profiles, and get
+  `503 DATABASE_UNAVAILABLE` if none comes free ([Still open](#still-open)).
+  H2 gets the same bound, spelled `SET LOCK_TIMEOUT 3000`.
   `LockTimeoutTest` lowers it to 250 ms on H2 and proves a lock timeout becomes
   a 503 with `Retry-After`. `LockTimeoutPostgresTest` runs in CI against
   PostgreSQL 17 and shows the 3 s `lock_timeout` itself firing, with SQLSTATE
@@ -897,3 +902,4 @@ The README keeps a short version of this list under
 |---|---|---|
 | There is no rate limiting. A single caller with valid credentials can take every connection in the pool. | A token bucket per principal at the gateway, or Bucket4j in front of the write endpoints. | Out of scope for the service. It belongs at the ingress, and I would sooner say so than add a half-measure here. |
 | The service and Flyway both log in as the RDS master user, a member of `rds_superuser`, and that login owns every table. Code running in a pod, or anyone who can read `flight-ops-secret`, can drop the seat checks V2 added or a whole table, and the data stack keeps no backups to restore from. [OPERATIONS.md](OPERATIONS.md#the-database-user) traces where the login comes from. | Two logins. A migration user owns the schema, and only the step that runs Flyway holds its password. A runtime user gets `SELECT`, `INSERT`, `UPDATE` and `DELETE` on the tables and `USAGE` on their sequences. It could still delete rows, but not change the schema. | Not built. Flyway would move to an initContainer or a Job with its own Secret key, and the application container would get `SPRING_FLYWAY_ENABLED=false` and the runtime login. A new migration would grant the runtime user its rights, written so that it still runs where no such role exists, as on the test and compose databases. The instance is not publicly accessible, so `deploy/aws/up.sh` would set the runtime password from a pod inside the cluster. |
+| A hot flight's lock waiters each hold a pooled connection for up to 3 s, so they can fill a pod's pool of ten. Other requests on that pod, for any flight, then wait for a connection, 5 s at most in the `postgres` and `prod` profiles, and get `503 DATABASE_UNAVAILABLE` if none comes free. | Waiters on one flight that cannot starve requests for other flights. | Not built. [ADR 0002](../adr/0002-pessimistic-locking.md) records the consequence, and [OPERATIONS.md](OPERATIONS.md#503s-with-retry-after-a-lock-timeout-storm) has the playbook. |
