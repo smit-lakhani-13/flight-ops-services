@@ -2,14 +2,16 @@
 
 ## Reporting a vulnerability
 
-Use GitHub's private vulnerability reporting: **Security → Report a
-vulnerability** on this repository. It opens a private advisory that only the
-maintainer can see. A public issue tells everyone at once.
+Use GitHub's private vulnerability reporting:
+[report a vulnerability](https://github.com/smit-lakhani-13/flight-ops-services/security/advisories/new),
+or **Security → Report a vulnerability** on this repository. It opens a
+private advisory that only you and the maintainer can see. A public issue
+tells everyone at once.
 
-If that button is missing, the setting is off. Then open a public issue with
-one sentence and no detail: "I have a security finding, please open a private
-channel." Do not put the finding in it. The fallback gives a reporter an option
-between full disclosure and silence.
+If that link gives a 404, private reporting is switched off. Then open a
+public issue with one sentence and no detail: "I have a security finding,
+please open a private channel." Do not put the finding in it. The fallback
+gives a reporter an option between full disclosure and silence.
 
 Please include what you did, what happened and what you expected. A proof of
 concept helps. A working exploit is not required.

@@ -25,8 +25,8 @@ before 2026-09-22, and its Boot 4.1.1 upgrade came before some of the work in
 
 **What "released" means here.** A version number in `pom.xml` and a git tag. It
 does not mean deployed. Nothing in this repository has ever run in AWS, and
-[doc/DEPLOYMENT.md](doc/DEPLOYMENT.md) records that in a dated line that is
-still blank.
+[doc/DEPLOYMENT.md](doc/DEPLOYMENT.md) records that in a dated line that still
+says not yet.
 
 ## Unreleased
 

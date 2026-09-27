@@ -47,7 +47,10 @@ on the reason above. Only the old reason was wrong.
 
 * **The wait is bounded.** Without `lock_timeout`, a stuck transaction holds
   every later request until the connection pool is empty, and the whole service
-  times out. With it, the failure stays on one endpoint as a 503.
+  times out. With it, a lock wait ends after 3 s as `503 LOCK_TIMEOUT`. The
+  waiters still hold pooled connections for those 3 s, so a hot flight can fill
+  a pod's pool of ten; other requests on that pod then wait for a connection,
+  5 s at most, and get `503 DATABASE_UNAVAILABLE` if none comes free.
   `LockTimeoutTest` pins the 503, the `Retry-After` header and the counter on
   H2 with a 250 ms timeout, so it runs on a laptop. `LockTimeoutPostgresTest`
   runs in CI against PostgreSQL 17 with the profile's own 3 s `lock_timeout`,
@@ -94,15 +97,15 @@ first connection and sets READ COMMITTED on each new connection only when that
 level differs. So if the server's default was READ COMMITTED when the pod
 started, a later change would reach new connections until the pod restarts.
 
-**Correction (2026-09-26).** The bullet on the bounded wait says the failure
-stays on one endpoint as a 503. Only the lock wait stays on the flight's
-writes: `lock_timeout` ends it, as a 503, on the requests that wait for the
-flight row lock, which are bookings, booking cancellations, flight status
-changes and flight cancellations. But each waiter holds a pooled
-connection while it waits, so a hot flight's waiters can fill a pod's pool of
-ten. Other requests on that pod, for any flight, then wait for a connection,
-5 s at most in the `postgres` and `prod` profiles, and get
-`503 DATABASE_UNAVAILABLE` if none comes free.
+**Correction (2026-09-26).** The bullet on the bounded wait said the failure
+stayed on one endpoint as a 503. The lock wait stays with one flight instead:
+`lock_timeout` ends it, as a 503, on the requests that wait for that flight's
+row lock, which are bookings, booking cancellations, flight status changes and
+flight cancellations. But each waiter holds a pooled connection while it waits,
+so a hot flight's waiters can fill a pod's pool of ten. Other requests on that
+pod, for any flight, then wait for a connection, 5 s at most in the `postgres`
+and `prod` profiles, and get `503 DATABASE_UNAVAILABLE` if none comes free. The
+bullet has since been reworded to say so.
 
 ## Alternatives considered
 
