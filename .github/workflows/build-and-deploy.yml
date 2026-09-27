@@ -724,8 +724,9 @@ jobs:
       #
       # CRITICAL only, unlike the filesystem gate. This scans the whole base
       # image, where a HIGH in an OS package the JRE never calls would block
-      # every deploy until Temurin ships a rebuild. ECR scans on push too, so a
-      # HIGH is still reported. The image job runs the same scan on every
+      # every deploy until Temurin ships a rebuild and the Dependabot pull
+      # request that moves the digest to it is merged. ECR scans on push too,
+      # so a HIGH is still reported. The image job runs the same scan on every
       # trigger.
       - name: Scan the image before pushing it
         if: steps.image.outputs.exists == 'false'
