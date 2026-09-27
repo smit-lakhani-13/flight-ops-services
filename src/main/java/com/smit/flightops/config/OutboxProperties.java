@@ -13,7 +13,9 @@ import java.time.Duration;
  *
  * @param enabled         run the poller. On by default; a deployment with one
  *                        dedicated drainer pod sets it false on the other replicas.
- * @param pollInterval    milliseconds between drains; roughly the most a healthy event waits (1s).
+ * @param pollInterval    milliseconds between drains (1s). With no backlog an event waits up
+ *                        to this long plus the sends ahead of it; a backlog, a failed send or
+ *                        a prune run adds more.
  * @param batchSize       rows claimed per drain; bounds how long one replica holds locks.
  * @param maxAttempts     failures before a row is no longer claimed (10). Without it the
  *                        {@code ORDER BY id} claim would retry a bad row first, forever.

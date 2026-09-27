@@ -47,6 +47,13 @@ still blank.
   Dependabot leaves the Lambda's Testcontainers version alone, as it does
   JUnit, because `lambda/pom.xml` copies the one Boot manages for the service.
 
+- **What the database login can do, and what would replace it.** The service
+  and Flyway both log in as the RDS master user, a member of `rds_superuser`
+  that owns every table. `doc/OPERATIONS.md` now traces where that login comes
+  from and what it allows, and `doc/ARCHITECTURE.md` lists the fix, a
+  migration user and a least-privilege runtime user, as still open. No code
+  changes.
+
 ### Changed
 
 - **Version.** Both poms say `1.3.0-SNAPSHOT` until the next tag, so a build
@@ -54,6 +61,30 @@ still blank.
   OpenAPI document.
 
 ### Fixed
+
+- **A request body had no size limit.** Jackson builds a whole string field
+  before Bean Validation checks its `@Size`, so a `passengerName` of millions
+  of characters held tens of MB of heap, and a few such requests at once could
+  exhaust the heap and end the JVM. Spring's `FormContentFilter` also read a
+  form-encoded `PUT`, `PATCH` or `DELETE` body in full before the credentials
+  were checked. A body over `app.http.max-body-bytes` (`HTTP_MAX_BODY_BYTES`),
+  16384 bytes by default, now gets `413 PAYLOAD_TOO_LARGE` before anything
+  parses more than the limit. `RequestBodyLimitFilter` refuses a declared
+  `Content-Length` over the limit unread, ahead of Spring Security, and counts
+  a chunked body as it is read. `GlobalExceptionHandler#handleMalformed`
+  answers a chunked JSON body over the limit with the same 413, not
+  `400 MALFORMED_REQUEST`. The OpenAPI document declares the 413 on the three
+  writes, and `doc/api.md` lists the code.
+
+- **A booking on a flight that had flown could still be cancelled.**
+  `DELETE /api/v1/bookings/{bookingId}` never read the flight's status, so on
+  a `DEPARTED` or `ARRIVED` flight it answered 200, marked the booking
+  cancelled and put its seats back, rewriting the record of a flight that had
+  already flown. `BookingWriter#cancelBooking` now refuses an active booking
+  on such a flight with `409 BOOKING_NOT_CANCELLABLE` and changes nothing,
+  using the new `FlightStatus#acceptsCancellations`. A booking cancelled
+  before departure still answers 200 with its original `cancelledAt`, and one
+  on a `CANCELLED` flight can still be cancelled.
 
 - **Tests that proved less than their names said.**
   `BearerTokenChallengeTest#aSignedTokensScopeMapsOntoTheRules` signs an RS256
@@ -186,6 +217,81 @@ still blank.
   the passenger name checks above. Markdown prose lines over 80 columns are
   rewrapped where they can break, except in `README.md` and the released
   sections here.
+
+- **The image is built from pinned base images.** Both `FROM` lines in the
+  `Dockerfile` named only a tag, so every build took whatever the tag pointed
+  to that day, and the deploy job's own build could push a base other than the
+  one the `image` job had built and started. Each line now names the tag and a
+  sha256 digest. The docker entry in `.github/dependabot.yml` moves the digest
+  when upstream rebuilds the tag, and it now runs weekly, because OS and JRE
+  fixes reach a pinned base only that way. The `# syntax=docker/dockerfile:1`
+  frontend line still floats.
+
+- **The database connection verifies the server.**
+  `deploy/aws/data.yaml#JdbcUrl` had no `sslmode`, so the driver used
+  `prefer`: it checked neither the certificate nor the host name and fell back
+  to plaintext when the server declined TLS, so anything on the path could
+  stand in for RDS. The URL now sets `sslmode=verify-full`, with `sslrootcert`
+  naming the RDS global CA bundle, committed as `certs/rds-global-bundle.pem`
+  and copied into the image. `doc/DEPLOYMENT.md` gives its source, checksum
+  and refresh steps, and `SECURITY.md` covers the database leg under
+  Transport. A `DB_URL` repository variable copied from the old output must be
+  replaced by hand. Local runs, compose and CI keep their own URLs.
+
+- **Runbooks that promised more than the code delivers.** `doc/OPERATIONS.md`
+  and `doc/DEPLOYMENT.md` put the outbox drain at about 100 events a second
+  per replica, but `OutboxPublisher#drainOutbox` sends one row at a time and
+  waits the poll interval after each drain, so a replica drains
+  `batch / (poll interval + batch × send latency)` events a second, and never
+  more than `1 / send latency`. Both now show that arithmetic. Below that cap
+  the throughput playbook prefers a shorter interval to a bigger batch, which
+  holds its row locks longer, and at the cap it adds replicas, up to the HPA's
+  four. The command in "Events stop arriving" read only the last 10 lines of
+  each pod, kubectl's default with a label selector, and now passes
+  `--tail=-1` and `--prefix`. Where the poll interval is set and described,
+  an event's latency now counts the sends ahead of it, and says that a
+  backlog, a failed send or a prune run adds more.
+
+### Security
+
+- **The deploy job pushes the image CI scanned, and runs no scanner.** It
+  built its own copy of the image and scanned it with Trivy after assuming
+  the deploy role. The action downloads the Trivy CLI when it runs, and its
+  SHA pin does not cover those bytes, so a replaced release asset would have
+  run beside the AWS session keys, the ECR login and the OIDC request token.
+  The `image` job, which holds no AWS credentials, is now the only image
+  build and scan. On a run that can deploy it saves the image, records the
+  archive's sha256 before the scan, and uploads it for one day once the scan
+  passes. The deploy job checks the sha256, loads the image, tags it and
+  pushes those bytes. The one tool it still downloads is kubectl, by version
+  and with no checksum held in this repository. It is installed before the
+  AWS keys are exported, but every kubectl step after that runs with them:
+  apply, rollout, smoke test and the failure diagnostics. `id-token: write` is
+  job-level, so the OIDC request variables are still in every step
+  (`.github/workflows/build-and-deploy.yml`).
+  The job is gated off and has never run.
+
+- **The load balancer controller's IAM policy is no longer downloaded.**
+  Step 8 of `up.sh` fetched it by Git tag from the controller's repository
+  and created the policy with no check. A tag can be moved, so the
+  controller's role would have got whatever the tag pointed at that day. The
+  v3.5.0 document is now committed byte for byte beside the scripts, as the
+  file `deploy/aws/up.sh#LBC_POLICY_FILE` names. Step 1 checks its sha256
+  against `deploy/aws/up.sh#LBC_POLICY_SHA256` with
+  `deploy/aws/lib.sh#require_sha256` before anything bills, step 8 checks it
+  again just before it creates the policy, and `deploy/aws/selftest.sh` makes
+  the same check in CI. `doc/DEPLOYMENT.md` records the source and says how
+  to move to a new release.
+
+- **The controller's policy has a name this project owns.** It was
+  `AWSLoadBalancerControllerIAMPolicy`, the name AWS's install guide uses. In
+  an account where another cluster had created it, `up.sh` would have
+  attached that copy whatever its release, and `down.sh` would have deleted
+  its versions and, if nothing was attached, the policy. `up.sh` now creates
+  `flight-ops-lbc-v3.5.0`, from `deploy/aws/lib.sh#LBC_POLICY_PREFIX` and the
+  tag, tagged `Project=flight-ops`. `down.sh` deletes only policies with that
+  prefix, and `deploy/aws/selftest.sh` checks that it never names the generic
+  one.
 
 ## 1.2.0 — 2026-09-26
 

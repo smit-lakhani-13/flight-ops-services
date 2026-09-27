@@ -134,7 +134,8 @@ app:
   outbox:
     # Runs on every replica; SKIP LOCKED in the claim makes that safe without a leader.
     enabled: ${OUTBOX_ENABLED:true}
-    # Milliseconds between drains. A healthy event waits about this long at most.
+    # Milliseconds between drains. With no backlog an event waits up to this long
+    # plus the sends ahead of it; a backlog, a failed send or a prune run adds more.
     poll-interval: ${OUTBOX_POLL_INTERVAL:1000}
     # Rows claimed per drain; bounds how long one replica holds the row locks.
     batch-size: ${OUTBOX_BATCH_SIZE:100}
@@ -169,6 +170,13 @@ app:
   aws:
     region: ${AWS_REGION:ap-south-1}
     sqs-queue-url: ${SQS_QUEUE_URL:}
+  http:
+    # Bytes. A larger request body gets 413 PAYLOAD_TOO_LARGE before anything
+    # parses more than the limit; Jackson would otherwise build a string field
+    # of any length before @Size saw it. A booking with every field at its
+    # longest and every character escaped is under 4 KB. See
+    # RequestBodyLimitFilter.
+    max-body-bytes: ${HTTP_MAX_BODY_BYTES:16384}
 
 springdoc:
   # Every endpoint speaks JSON, so the document says application/json, not */*.

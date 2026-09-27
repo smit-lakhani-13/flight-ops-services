@@ -32,5 +32,8 @@ data:
   # at startup when the publisher is sqs.
   SQS_QUEUE_URL: ""
 
-  DB_URL: "jdbc:postgresql://flight-ops-db.example.rds.amazonaws.com:5432/flightops"
+  # The aws overlay replaces this with the JdbcUrl output of
+  # deploy/aws/data.yaml, which has the same shape: TLS with the server's
+  # certificate and host name verified against the CA bundle in the image.
+  DB_URL: "jdbc:postgresql://flight-ops-db.example.rds.amazonaws.com:5432/flightops?sslmode=verify-full&sslrootcert=/app/certs/rds-global-bundle.pem"
   DB_USER: "flightops"
