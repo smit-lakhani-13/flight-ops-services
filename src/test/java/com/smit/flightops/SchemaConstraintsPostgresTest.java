@@ -29,7 +29,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * those migrations say matters: by plain SQL, bypassing the entities.
  *
  * <p>On H2 the schema comes from the entities, and {@code FlightRepositoryTest}
- * shows it refusing the same rows. {@code ddl-auto: validate} compares neither
+ * shows it refusing {@code CANCELED} and a NULL version. H2's ENUM upper-cases
+ * {@code cancelled} and stores {@code CANCELLED}, so only this class shows a
+ * lower-case status refused. {@code ddl-auto: validate} compares neither
  * check constraints nor nullability, so without this class nothing would notice
  * a migration that stopped enforcing either.
  *

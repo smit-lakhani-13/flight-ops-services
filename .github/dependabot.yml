@@ -125,12 +125,21 @@ updates:
   # other JDK. Maven 4 is its own upgrade.
   #
   # Both FROM lines are tag@sha256:digest, so a build pulls those bytes and
-  # not whatever the tag points to that day. Dependabot keeps the digests
-  # current: when upstream rebuilds a tag, it opens a pull request that moves
-  # the digest and keeps the tag. OS and JRE fixes arrive only that way now,
-  # and until one is merged a fixable CRITICAL in the pinned base fails the
-  # image job's scan on every pull request. So this entry runs weekly, where
-  # the others run monthly.
+  # not whatever the tag points to that day. For the runtime base,
+  # 21-jre-alpine, Dependabot keeps the digest current: when upstream rebuilds
+  # the tag, it opens a pull request that moves the digest and keeps the tag.
+  # The runtime's OS and JRE fixes arrive only that way now, and until one is
+  # merged a fixable CRITICAL in the pinned base fails the image job's scan on
+  # every pull request. So this entry runs weekly, where the others run
+  # monthly.
+  #
+  # The build stage gets no such pull request: Dependabot has offered only
+  # JDK-changing maven tags (PR #1 proposed 3-eclipse-temurin-26, PR #77
+  # 3-eclipse-temurin-24), which the image job fails, so close them unmerged.
+  # Move that digest by hand: the Digest line this prints is the new pin.
+  #   docker buildx imagetools inspect maven:3.9-eclipse-temurin-21
+  # The image job scans the runtime image only, so a stale build stage fails
+  # no check.
   - package-ecosystem: docker
     directory: "/"
     schedule:

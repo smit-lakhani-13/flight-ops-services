@@ -73,8 +73,8 @@ services:
       # Chattier than the prod profile, which leaves org.hibernate.SQL at WARN.
       SQL_LOG_LEVEL: DEBUG
     # Loopback only. A bare "8080:8080" listens on every interface, and on
-    # Linux Docker's own firewall rules bypass a host firewall such as ufw. The
-    # two hashes above are of passwords printed in the README.
+    # Linux, Docker's own firewall rules bypass a host firewall such as ufw.
+    # The two hashes above are of passwords printed in the README.
     ports:
       - "127.0.0.1:8080:8080"
     healthcheck:

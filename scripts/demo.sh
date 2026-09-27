@@ -141,7 +141,7 @@ run "curl -s $AUTH '$API/flights' | jq_or_cat"
 pause
 
 say "Creating a flight. I send it lowercase; the service normalises it, and the"
-say "Location header names the URL that resolves, not the one I typed."
+say "Location header names the stored, upper-case form, not the one I typed."
 run "curl -s -i $AUTH -X POST '$API/flights' -H 'Content-Type: application/json' \\
   -d '{\"flightNumber\":\"$NEW_FLIGHT\",\"origin\":\"ewr\",\"destination\":\"lhr\",\"totalSeats\":3,\"departureTime\":\"$DEPART\"}' | head -4"
 pause

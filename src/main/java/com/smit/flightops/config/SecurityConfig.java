@@ -147,8 +147,8 @@ public class SecurityConfig {
     }
 
     /**
-     * Stops startup when Boot built the decoder from properties that leave a claim
-     * unchecked, and otherwise says what the decoder checks, for the startup log. Boot
+     * Stops startup when the decoder properties leave a claim unchecked, whoever built
+     * the decoder, and otherwise says what the decoder checks, for the startup log. Boot
      * builds one from {@code issuer-uri}, {@code jwk-set-uri} or
      * {@code public-key-location}, but adds the aud validator only for
      * {@code audiences} and the iss validator only for {@code issuer-uri}.

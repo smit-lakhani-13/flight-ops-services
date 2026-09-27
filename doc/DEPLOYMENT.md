@@ -97,7 +97,7 @@ and the deploy job would push only an image that passed it.
 
 `compose.yaml` publishes the application on `127.0.0.1:8080` only, so it
 answers on the laptop and not to the rest of the network. A bare `8080:8080`
-would listen on every interface, and on Linux Docker's own firewall rules
+would listen on every interface, and on Linux, Docker's own firewall rules
 bypass a host firewall such as ufw.
 
 ### PostgreSQL without compose
@@ -263,10 +263,12 @@ starts it with no database and scans it, holding no AWS credentials. On a run
 that can deploy, it saves the image and records the archive's sha256 before its
 scan runs, and uploads it as a run artefact kept for one day once the scan
 passes. The deploy job downloads the archive, checks that sha256, loads the
-image, tags it with the commit SHA and pushes it. So the image is scanned once,
-and the registry gets the bytes that were scanned. A "Re-run failed jobs" more
-than a day later finds no artefact unless the image is already in ECR; re-run
-all jobs instead.
+image, tags it with the commit SHA and pushes it. So CI scans the image once,
+and the registry gets the bytes that were scanned. ECR would scan them again on
+push (`ScanOnPush` in `deploy/aws/foundation.yaml#EcrRepository`), and that scan
+would also report a HIGH, which the CI gate lets through because it fails only
+on a CRITICAL. A "Re-run failed jobs" more than a day later finds no artefact
+unless the image is already in ECR; re-run all jobs instead.
 
 After the checkout, the deploy job's step "Is this commit still the head of
 main?" compares `git ls-remote origin refs/heads/main` with the run's commit. A
@@ -368,11 +370,11 @@ image, and a pod running it on those nodes would crash-loop with
 when the image is meant for the cluster. The Lambda runs on arm64, but it
 ships as a jar and not an image, so this applies to the service image only.
 
-The `image` job records the size on every run. In CI run 36032424801 on
-2026-09-24 the image measured 299.5 MB (299477691 bytes), as
-`docker image inspect` reports it on the runner. The image has never been
-pushed, so no registry has reported a size for it. The measurement predates
-the database CA bundle below, which adds 165,408 bytes. Both base images are
+The `image` job records the size on every run. In CI run 36328834211 on
+2026-09-27, on `main` at 9f625d2, the image measured 300.3 MB (300252803 bytes),
+as `docker image inspect` reports it on the runner. That image was built on the
+pinned base images and holds the database CA bundle below. The image has never
+been pushed, so no registry has reported a size for it. Both base images are
 pinned by digest as well as tag, so the figure moves when a Dependabot pull
 request moves the runtime base's digest or a dependency changes.
 
@@ -547,7 +549,8 @@ that name them in one commit:
    installs that release, and `LBC_POLICY_SHA256` to the sum just printed.
    The policy's name follows the tag.
 3. Update every document that names the release. In this section, that is
-   the source link, the fetch date, the tag, the sum and the policy's name.
+   the committed file's path, the source link, the fetch date, the tag, the
+   sum and the policy's name.
    `SECURITY.md`, `deploy/aws/README.md` (the "Who creates what" row, the
    checksum row under "When something goes wrong" and the file table) and the
    file tree in `doc/ARCHITECTURE.md` name the file, the policy or both.
@@ -789,12 +792,12 @@ aws configure set region ap-south-1
 ```
 
 The three stacks `up.sh` deploys itself (the foundation, the data stack and the
-Lambda) carry the tag `Project=flight-ops`. It passes `--tags
-Project=flight-ops` to each one, and CloudFormation copies stack tags to the
-resources that take them. `deploy/aws/cluster.yaml` puts the same tag on what
-eksctl creates from it: the cluster, its VPC and NAT gateway, and the node
-group. `up.sh` creates the load balancer controller's IAM policy outside any
-stack, so it tags that policy itself, and `down.sh` deletes it by its
+Lambda) carry the tag `Project=flight-ops`. It passes
+`--tags Project=flight-ops` to each one, and CloudFormation copies stack tags
+to the resources that take them. `deploy/aws/cluster.yaml` puts the same tag
+on what eksctl creates from it: the cluster, its VPC and NAT gateway, and the
+node group. `up.sh` creates the load balancer controller's IAM policy outside
+any stack, so it tags that policy itself, and `down.sh` deletes it by its
 `flight-ops-lbc-` prefix and warns if it cannot. The tag shows the policy in the
 console; the catch-all query below does not list it, for the reason section 6
 gives. A few things are left untagged: the four EKS addons, the two IAM roles
@@ -994,9 +997,13 @@ are:
    ```
 4. Point the domain at the ALB: an ALIAS record in Route 53, or a CNAME
    elsewhere.
-5. Add `server.forward-headers-strategy: framework`, so the application sees
-   the original scheme instead of the load balancer's, and its redirects and
-   generated links stay on `https`.
+5. Optionally, pin `server.forward-headers-strategy: native`. In a pod,
+   Spring Boot already detects Kubernetes and adds Tomcat's `RemoteIpValve`,
+   which trusts `X-Forwarded-Proto` from private addresses, the ALB's
+   included. So redirects and generated links stay on `https` without this
+   step, and pinning `native` keeps that if the platform is not detected.
+   Avoid `framework`: it swaps the valve for Spring's `ForwardedHeaderFilter`,
+   which does not check where the headers came from.
 
 ACM certificates are free, and the ALB costs the same either way. The change
 takes about ten minutes plus DNS propagation. The only thing stopping me is the

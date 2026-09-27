@@ -105,8 +105,8 @@ class FlightControllerTest {
     }
 
     /**
-     * The service normalises {@code " ua999 "} to {@code UA999}, and only that
-     * form resolves, so the test follows the header instead of trusting it.
+     * The service normalises {@code " ua999 "} to {@code UA999}, and the header
+     * names that stored form. The test follows the header instead of trusting it.
      */
     @Test
     @DisplayName("create is 201 and its Location header resolves, carrying the normalised number")

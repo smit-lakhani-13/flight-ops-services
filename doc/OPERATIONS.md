@@ -29,7 +29,7 @@ JVM.
 | Variable | Default | What it does |
 |---|---|---|
 | `SERVER_PORT` | `8080` | HTTP port |
-| `HTTP_MAX_BODY_BYTES` | `16384` | the largest request body, in bytes. A larger one gets `413 PAYLOAD_TOO_LARGE` before anything parses more than the limit. Zero or less stops startup with `app.http.max-body-bytes must be positive` |
+| `HTTP_MAX_BODY_BYTES` | `16384` | the largest request body read, in bytes. A declared `Content-Length` over it gets `413 PAYLOAD_TOO_LARGE` unread; a body without one, such as a chunked body, gets it once a read passes the limit, so nothing parses more. A body nothing reads is never counted. Zero or less stops startup with `app.http.max-body-bytes must be positive` |
 | `DB_URL` | `jdbc:postgresql://localhost:5432/flightops` in `postgres`. **None in `prod`** | JDBC URL. Unset in `prod`, startup fails with `'url' must start with "jdbc"`. The default profile uses H2 and does not connect to it. Set while the datasource is still in-memory H2, under no profile or one no document matches, it stops startup. See [Profiles](#profiles) |
 | `DB_USER` | `postgres` in `postgres`. None in `prod` | database user, for the connection pool and for Flyway alike. In the cluster it is the RDS master user. See [The database user](#the-database-user) |
 | `DB_PASSWORD` | *(none)* | **Required** in `postgres` and `prod`. Unset, startup fails at Flyway's first connection with `password authentication failed`, which does not name the variable. See the `postgres` profile in `application.yml` |
@@ -151,10 +151,11 @@ every replica shares it. Point liveness at the database and a database blip
 restarts every replica at once. Point readiness at it and the same blip, or
 one hot flight's lock waiters filling the pool, takes every pod out at once,
 and the load balancer has no target left for any request. Instead the pods
-stay in, and each answers `503 DATABASE_UNAVAILABLE` with `Retry-After` once
-the pool's `connection-timeout`, 5 s in `prod`, runs out. `/actuator/health`
-still includes `db`, and [alert 6](#what-to-alert-on) reads it there
-(`HealthGroupsTest#readinessLeavesTheDatabaseOut`).
+stay in (`HealthGroupsTest.java#readinessLeavesTheDatabaseOut`), and each
+answers `503 DATABASE_UNAVAILABLE` with `Retry-After` once the pool's
+`connection-timeout`, 5 s in `prod`, runs out. `/actuator/health` still
+includes `db`, and [alert 6](#what-to-alert-on) reads it there
+(`HealthGroupsTest.java#operatorSeesWhichComponentIsDown`).
 
 ## Metrics
 
@@ -466,6 +467,10 @@ Caused by: java.lang.IllegalArgumentException: There is no password encoder mapp
 The first of the two names the property, so read it to tell `api` from `ops`.
 The last is the encoder's own exception, and it names only the id.
 
+The id is case-sensitive, so write `{bcrypt}`. An `{argon2}` or `{scrypt}` hash
+fails the same self-check with a `NoClassDefFoundError`. Both encoders need
+BouncyCastle, and the build does not include it. Use `{bcrypt}` or `{pbkdf2}`.
+
 The profile is `prod` and the id names no adaptive hash. Under `prod`,
 `config/SecurityConfig.java#refuseUnhashed` accepts only `bcrypt`, `pbkdf2`,
 `scrypt` and `argon2`, so `{noop}`, `{ldap}`, `{MD5}`, `{SHA-256}` and the
@@ -473,10 +478,6 @@ other deprecated ids stop startup. The last `Caused by` line names
 `app.security.api-password (API_PASSWORD)` and says it
 `must be a hashed password under the prod profile`. Put a `{bcrypt}` hash in
 the Secret; every profile but `prod` takes `{noop}`.
-
-The id is case-sensitive, so write `{bcrypt}`. An `{argon2}` or `{scrypt}` hash
-fails the same check with a `NoClassDefFoundError`. Both encoders need
-BouncyCastle, and the build does not include it. Use `{bcrypt}` or `{pbkdf2}`.
 
 The prefix check and the `prod` refusal name the property and never the
 value. The encoder's own exception can quote part of it: for an unknown id,
@@ -592,7 +593,11 @@ backlog lasts, so that rate is what the pod can drain at its settings, and
 claim and the commit included.
 
 To see what a row is waiting for, ask the table. A row whose `next_attempt_at`
-is in the future is deferred, and the poller will try it again:
+is in the future and whose `attempts` is below `OUTBOX_MAX_ATTEMPTS` is
+deferred, and the poller will try it again. A row at or above the ceiling is
+dead whatever its `next_attempt_at` says, and waits for
+[the re-drive below](#outbox_dead--0-a-poison-row). The query lists every
+unsent row, dead ones included:
 
 ```sql
 SELECT id, attempts, next_attempt_at, last_error
