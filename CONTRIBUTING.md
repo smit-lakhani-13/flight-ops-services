@@ -203,6 +203,7 @@ for a commit on `main` that got no push run.
 
 | Job | Gate | Fails when |
 |---|---|---|
+| `build` | "Build and test", "Build and test the Lambda consumer" | a module does not compile, or a test in it fails |
 | `build` | `maven-enforcer` | wrong JDK, wrong Maven, duplicate dependency versions, or a transitive downgrade (`requireUpperBoundDeps`) |
 | `build` | JaCoCo | bundle coverage below 80% line or 50% branch |
 | `build` | ArchUnit | a layering rule is broken (9 rules in `ArchitectureTest`) |
@@ -224,6 +225,7 @@ for a commit on `main` that got no push run.
 | `image` | `docker build` | the `Dockerfile` does not build |
 | `image` | "The image will not start without a database" | the image, run with no environment, does not stop with `'url' must start with` |
 | `image` | Trivy, on the image | the image the job built has a CRITICAL vulnerability with a fix available. It is the only image scan: `deploy` pushes this image and runs no scan of its own |
+| `web` | "Install" (`npm ci`) | `web/package-lock.json` does not match `web/package.json` |
 | `web` | "Node is the major web/.nvmrc names" | the runner's Node is not the major `web/.nvmrc` names |
 | `web` | ESLint | any error or warning under `web/` |
 | `web` | `next build`, `tsc --noEmit` | the console does not build, or its code, tests or configs do not type-check |
@@ -362,8 +364,9 @@ Documentation is part of the change and ships with it:
 | React | 19.2.8 | `web/package.json` |
 | TypeScript | 5.9.3 | `web/package.json` |
 
-`pom.xml` changes one dependency version that Boot manages: it sets
-`jackson-2-bom.version` to 2.22.2. Boot 4 runs on Jackson 3 and still manages
+`pom.xml` changes two dependency versions that Boot manages: it sets
+`tomcat.version` to 11.0.26, as the table says, and `jackson-2-bom.version` to
+2.22.2. Boot 4 runs on Jackson 3 and still manages
 the Jackson 2 coordinates at 2.21.5 for libraries that have not moved. The
 OpenAPI document is built by swagger-core, which is one of them and needs at
 least 2.22.1. Boot's dependency management would have handed it the older

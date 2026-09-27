@@ -607,9 +607,9 @@ and restore the seats the booking had just debited.
 ├── pom.xml, mvnw               the service's build; the wrapper pins Maven
 ├── README.md, CHANGELOG.md, CONTRIBUTING.md, SECURITY.md, LICENSE
 └── .github/                    workflows/build-and-deploy.yml (build,
-                                infra-lint, trivy-fs, docs-check and image on
-                                every trigger, dependency-review on pull
-                                requests, and the gated deploy),
+                                infra-lint, trivy-fs, docs-check, image and
+                                web on every trigger, dependency-review on
+                                pull requests, and the gated deploy),
                                 workflows/codeql.yml, dependabot.yml
 ```
 

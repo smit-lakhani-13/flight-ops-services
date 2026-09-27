@@ -175,8 +175,8 @@ and `web/lib/proxy.ts#forward` passes an allow-listed subset on to the API, so
 the API still has no CORS policy ([adr/0017](adr/0017-web-console.md)).
 
 * The credential lives in React state only, never in browser storage or a
-  cookie. The console's server copies it onto the one upstream request and
-  neither logs nor keeps it. A reload signs out.
+  cookie. The console's server copies it onto each upstream request, ten for a
+  race, and neither logs nor keeps it. A reload signs out.
 * `WWW-Authenticate` and `Set-Cookie` never reach the browser, so it never
   opens its Basic prompt and never caches a credential for the console's
   origin. A forged cross-site request to the console carries no credential
@@ -410,6 +410,12 @@ bundle comes from and how to refresh it.
 - `deploy/aws/cluster.yaml` puts the nodes in private subnets with no public
   IPs, so inbound traffic would arrive only through the load balancer. No
   cluster has been created.
+
+- No NetworkPolicy is applied, so any pod in the cluster can reach the service
+  on port 8080 without passing the load balancer. A production cluster would
+  switch on the VPC CNI's network policy support, which
+  `deploy/aws/cluster.yaml` leaves off, and add a default-deny ingress policy
+  that admits only the load balancer's subnets to that port.
 
 - `deploy/aws/cluster.yaml` sets `disablePodIMDS`, so pods cannot reach the
   instance metadata service or the node instance role's credentials: the hop

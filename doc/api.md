@@ -146,14 +146,15 @@ A few behaviours the table does not show:
   stay sold (`entity/FlightStatus.java#acceptsCancellations`). A booking on a
   `CANCELLED` flight can still be cancelled.
 
-Not every 503 has the same test behind it. A booking and a booking
-cancellation wait out a real row lock in `LockTimeoutTest`, and the booking
-does on PostgreSQL in CI too (`LockTimeoutPostgresTest`). The 503s for a
-status change, a flight cancellation and `DATABASE_UNAVAILABLE` are checked
-only in the `@WebMvcTest` slice, with the service mocked
-(`FlightControllerTest`). `HealthGroupsTest` stubs the `db` health indicator
-`DOWN` and checks that `/actuator/health` answers 503 while readiness and
-liveness stay 200. No test takes a real database down.
+Not every 503 has the same test behind it. A booking, a booking
+cancellation, a status change and a flight cancellation each wait out a
+real row lock in `LockTimeoutTest`, and the booking does on PostgreSQL in
+CI too (`LockTimeoutPostgresTest`). `DATABASE_UNAVAILABLE` is checked only
+in the `@WebMvcTest` slices, with the service mocked
+(`FlightControllerTest`, `ErrorStatusMappingTest`). `HealthGroupsTest` stubs
+the `db` health indicator `DOWN` and checks that `/actuator/health` answers
+503 while readiness and liveness stay 200. No test takes a real database
+down.
 
 ## Request rules
 

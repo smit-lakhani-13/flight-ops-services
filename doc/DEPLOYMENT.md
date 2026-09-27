@@ -424,10 +424,10 @@ deploy job is gated on a `DEPLOY_ENABLED` repository variable that has never
 been set. A gate on the branch alone would make the first push to a fresh
 clone assume an IAM role built from an unset `AWS_ACCOUNT_ID` secret, and go
 red for a reason unrelated to the code. So `build`, `infra-lint`, `trivy-fs`,
-`docs-check` and `image` run on every push or pull request to `main`, with
-`dependency-review` on pull requests only. The deploy job reports as skipped
-until someone provisions the role with `up.sh` and sets the variable. Read the
-green build badge as "it builds and the tests pass".
+`docs-check`, `image` and `web` run on every push or pull request to `main`,
+with `dependency-review` on pull requests only. The deploy job reports as
+skipped until someone provisions the role with `up.sh` and sets the variable.
+Read the green build badge as "it builds and the tests pass".
 
 ### The order, and why it is that order
 

@@ -60,9 +60,10 @@ request, so the same build can point anywhere.
 | `/bookings/{bookingId}` | One booking and its cancellation, which is idempotent, and refused with `409 BOOKING_NOT_CANCELLABLE` for an active booking once its flight has departed or arrived | `GET` and `DELETE /api/v1/bookings/{bookingId}` |
 | `/ops` | Health, liveness and readiness without credentials; health and seven meters as `ops` | `GET /actuator/health`, `.../liveness`, `.../readiness`, `/actuator/metrics/{name}` |
 
-Each API error is shown with its code, its status, the service's message and,
-for the codes the console knows, one line on what the code means. Field errors
-land next to their fields.
+Each API error is shown with its code, its status and the service's message. A
+401, a 403, a 503, an answer from the console's own server and no answer at all
+also get a one-line hint on what to do next. Field errors land next to their
+fields.
 
 ## How a call travels
 
@@ -83,7 +84,9 @@ The page never calls the API itself. It calls this console's own origin under
 Everything else, the other actuator endpoints, the OpenAPI document and Swagger
 UI included, answers `404 CONSOLE_PATH_REFUSED` without reaching the API. A
 write to one of the forwarded actuator paths answers `405` with an `Allow`
-header.
+header. `OPTIONS` never reaches `forward`: Next answers it on any `/api/` path,
+refused ones included, with `204`, an `Allow` header that lists every method
+the route exports, and no CORS headers.
 
 Four request headers go upstream: `Authorization`, `Content-Type`, `Accept` and
 `X-Request-Id`. Cookies, `Origin`, `Host` and forwarding headers do not. On the
@@ -119,9 +122,9 @@ no `Allow` header.
 ## Where the credential lives
 
 In React state, and nowhere else: not in `localStorage`, `sessionStorage` or a
-cookie. The console's server copies it onto the one upstream request and drops
-it. A reload signs you out; that is the price of storing nothing, and the
-end-to-end tests check it.
+cookie. The console's server copies it onto each upstream request, ten for a
+race, and drops it. A reload signs you out; that is the price of storing
+nothing, and the end-to-end tests check it.
 
 ## Why the race runs on the server
 
@@ -141,16 +144,19 @@ stack, the icons are inline SVGs in `components/icons.tsx`, and the parts every
 page shares (buttons, fields, cards, status badges, the seat bar, key and value
 lists, skeletons, empty states and stat tiles) are in `components/ui.tsx`.
 
-The tokens are in `app/globals.css`: one accent colour, two corner radii and
-two shadows. Surfaces are slate and the accent is sky. Colour otherwise carries
-meaning only: each flight status has its own, and an HTTP answer is green for
-a 2xx, amber for a 4xx, orange for a 409 and red for a 5xx. Text keeps at
-least 4.5:1 contrast in both schemes, apart from a disabled control, which is
-dimmed. A field's border and the focus outline keep at least 3:1 against what
-surrounds them. The dark scheme follows the system setting, with no toggle.
-Every link, button and field shows an outline in the accent colour when the
-keyboard reaches it, and the only motion is a colour transition, left out when
-the system asks for less motion.
+The tokens are in `app/globals.css`: one accent colour, two corner radii and two
+shadows. Surfaces are slate and the accent is sky. Colour otherwise carries
+meaning only: each flight status has its own, and an HTTP answer is green for a
+2xx, amber for a 4xx, orange for a 409 and red for a 5xx. An error banner is
+coloured by what went wrong instead: violet when the console's own server
+answered in the API's place or could not be reached, and otherwise red for a
+401, a 403 or a 5xx other than a 503, orange for a 409 or a 503, grey for a 404
+and amber for any other refusal. Text keeps at least 4.5:1 contrast in both
+schemes, apart from a disabled control, which is dimmed. A field's border and
+the focus outline keep at least 3:1 against what surrounds them. The dark scheme
+follows the system setting, with no toggle. Every link, button and field shows
+an outline in the accent colour when the keyboard reaches it, and the only
+motion is a colour transition, left out when the system asks for less motion.
 
 Below 1280 px, which takes in every phone and tablet viewport the tests use, and
 on any touch screen however wide, every button, nav link, field and select is at
@@ -189,13 +195,15 @@ change of account is announced.
 | `npm test` | Vitest: the proxy, the race and the `/api` route against a stubbed `fetch`, the browser's API client and the sign-in probe, the error classifier and its timeout hint, the request log, the resource hook and its pending state, the helpers that name a page from its address, and in jsdom the shared parts in `components/ui.tsx` (button tones and the busy state, field wiring, the seat bar, page titles, links and the Location mapping), the error banner, the booking form's replay comparison, status line and seat counts, the transition control and the pager, including where each leaves the focus, and the request log drawer's focus, Escape, copy buttons and the one line that says what was copied; and a test that reads `FlightStatus.java` and fails if the console's copy of the transition table drifts from it |
 | `npm run e2e` | Playwright on Chromium against the built console and a running service: sign-in and sign-out, flights, bookings, replays and the race, validation, the proxy's refusals, the ops pages, and the layout of every page at eleven viewports |
 
-`npm run e2e` starts the console itself on port 3100 and expects the service
-at `API_BASE_URL`. Each run creates flights with fresh numbers, so it needs no
-clean database. CI runs it against the service's own jar on the default H2
-profile. `scripts/numbers.sh` prints how many tests each suite declares,
-counting each test once rather than once per viewport. Before the first
-`npm run e2e` on a machine, install the browser once with
-`npx playwright install chromium`.
+Run `npm run build` first. `npm run e2e` then serves that build with
+`next start` on port 3100 (`CONSOLE_PORT` picks another) and expects the service
+at `API_BASE_URL`. Outside CI, a console already listening on that port is
+reused as it is, with its own `API_BASE_URL`, so stop it first. Each run creates
+flights with fresh numbers, so it needs no clean database. CI runs it against
+the service's own jar on the default H2 profile. `scripts/numbers.sh` prints how
+many tests each suite declares, counting each test once rather than once per
+viewport. Before the first `npm run e2e` on a machine, install the browser once
+with `npx playwright install chromium`.
 
 The suite runs as eleven Playwright projects, all of them Chromium.
 `desktop-1280` runs every spec. The other ten run only `e2e/layout.spec.ts`:
