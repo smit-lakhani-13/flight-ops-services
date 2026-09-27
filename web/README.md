@@ -179,11 +179,12 @@ keyboard's focus, since it comes last in the page. Escape inside it closes it
 and hands the focus back to the Requests button, and the page gains room to
 scroll its end clear of the drawer. A button that is busy keeps the focus and
 ignores presses, rather than going disabled and dropping it. A press that takes
-its own button away passes the focus on: an accepted status move to the group
-of moves that follow, and the pager, on reaching its first or last page, to its
-other button. Signing in, signing out and a Try again that brings back a
-flight's or a booking's page all move the focus to the page's title, and a
-change of account is announced.
+its own button away passes the focus on: an accepted status move to the group of
+moves that follow, the pager, on reaching its first or last page, to its other
+button, and a Next or Previous whose page fails to arrive, to the list's Try
+again. Signing in, signing out and a Try again that brings back a flight's page,
+a booking's page or a page of the flight list all move the focus to the page's
+title, and a change of account is announced.
 
 ![A flight's page at 390 px wide: the header wraps onto three rows and every button, nav link and field is at least 44 px tall](../doc/assets/console-phone.png)
 
@@ -193,7 +194,7 @@ change of account is announced.
 |---|---|
 | `npm run lint` | ESLint with Next.js's core web vitals and TypeScript rules, no warnings allowed |
 | `npx tsc --noEmit` | The type-checker, strict, with unchecked index access |
-| `npm test` | Vitest: the proxy, the race and the `/api` route against a stubbed `fetch`, the browser's API client and the sign-in probe, the error classifier and its timeout hint, the request log, the resource hook and its pending state, the helpers that name a page from its address, and in jsdom the shared parts in `components/ui.tsx` (button tones and the busy state, field wiring, the seat bar, page titles, links and the Location mapping), the error banner, the booking form's replay comparison, status line and seat counts, the transition control and the pager, including where each leaves the focus, and the request log drawer's focus, Escape, copy buttons and the one line that says what was copied; and a test that reads `FlightStatus.java` and fails if the console's copy of the transition table drifts from it |
+| `npm test` | Vitest: the proxy, the race and the `/api` route against a stubbed `fetch`, the browser's API client and the sign-in probe, the error classifier and its timeout hint, the request log, the resource hook, its pending state and a write that wins over an older read, the helpers that name a page from its address, and in jsdom the shared parts in `components/ui.tsx` (button tones and the busy state, field wiring, the seat bar, page titles, links and the Location mapping), the error banner, the booking form's replay comparison, status line and seat counts, the transition control and the pager, including where each leaves the focus, and the request log drawer's focus, Escape, copy buttons and the one line that says what was copied; and a test that reads `FlightStatus.java` and fails if the console's copy of the transition table drifts from it |
 | `npm run e2e` | Playwright on Chromium against the built console and a running service: sign-in and sign-out, flights, bookings, replays and the race, validation, the proxy's refusals and the security headers, the ops pages, and the layout of every page at eleven viewports |
 
 Run `npm run build` first. `npm run e2e` then serves that build with

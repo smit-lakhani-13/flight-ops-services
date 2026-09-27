@@ -4,10 +4,10 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { CreateFlightForm } from "@/components/CreateFlightForm";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { FlightTable } from "@/components/FlightTable";
-import { CloseIcon, InboxIcon, PlusIcon, SearchIcon } from "@/components/icons";
+import { CloseIcon, InboxIcon, PlusIcon, RefreshIcon, SearchIcon } from "@/components/icons";
 import { Pager } from "@/components/Pager";
 import { RequireSession } from "@/components/RequireSession";
-import { Button, Card, EmptyState, Field, PageTitle, Select, Skeleton, TextInput } from "@/components/ui";
+import { Button, Card, EmptyState, Field, focusIsInOrLost, focusPageTitle, PageTitle, Select, Skeleton, TextInput } from "@/components/ui";
 import { useApi } from "@/lib/session";
 import type { Flight, Page } from "@/lib/types";
 import { useResource } from "@/lib/use-resource";
@@ -77,10 +77,32 @@ function Flights() {
       }),
     [api, filters],
   );
-  const { value: result, pending } = useResource(load);
+  const { value: result, pending, reload } = useResource(load);
   // Said once each answer arrives, and emptied while a search is out, so the
   // same count twice is still a change a screen reader announces.
   const found = pending || !result?.ok || !result.data ? "" : foundText(result.data.page);
+  const failed = result !== null && !(result.ok && result.data);
+  const stale = pending && result !== null && !failed;
+
+  // A failed read replaces the table and the pager, so a Next or Previous
+  // that asked for it is gone; the focus goes to Try again, which reads the
+  // same page with the same filters. Once that read succeeds Try again goes
+  // too, and the focus goes to the page's heading.
+  const tryAgain = useRef<HTMLButtonElement>(null);
+  const retried = useRef(false);
+  useEffect(() => {
+    if (pending) return;
+    if (failed) {
+      if (focusIsInOrLost(null)) tryAgain.current?.focus();
+    } else if (retried.current) {
+      retried.current = false;
+      if (focusIsInOrLost(null)) focusPageTitle();
+    }
+  }, [pending, failed]);
+  function retry() {
+    retried.current = true;
+    reload();
+  }
 
   function search(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -163,8 +185,9 @@ function Flights() {
           {found}
         </p>
         {/* While a new page, sort or search is out, the last answer stays on
-            screen, dimmed and marked busy, so it does not pass for the new one. */}
-        <div aria-busy={pending && result !== null} className={pending && result !== null ? "opacity-60" : undefined}>
+            screen, dimmed and marked busy, so it does not pass for the new one.
+            After a failure only Try again stays, busy itself. */}
+        <div aria-busy={stale} className={stale ? "opacity-60" : undefined}>
           {result === null ? (
             <Skeleton rows={5} label="Loading flights" />
           ) : result.ok && result.data ? (
@@ -194,7 +217,12 @@ function Flights() {
               </>
             )
           ) : (
-            <ErrorBanner error={result.error} />
+            <div className="flex flex-col items-start gap-3">
+              {!pending && <ErrorBanner error={result.error} />}
+              <Button ref={tryAgain} tone="secondary" icon={<RefreshIcon />} busy={pending} onClick={retry}>
+                Try again
+              </Button>
+            </div>
           )}
         </div>
       </Card>

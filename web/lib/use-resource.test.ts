@@ -68,6 +68,32 @@ describe("useResource", () => {
     expect(result.current.value).toBe("page two");
   });
 
+  it("keeps a write's answer over a load that started before it", async () => {
+    const first = deferred<string>();
+    const second = deferred<string>();
+    const third = deferred<string>();
+    const answers = [first, second, third];
+    let calls = 0;
+    const load = () => answers[calls++]!.promise;
+    const { result, rerender } = renderHook(() => useResource(load));
+    await act(async () => first.resolve("SCHEDULED"));
+    const set = result.current.set;
+
+    // A read goes out, a write answers, then the read answers late.
+    act(() => result.current.reload());
+    act(() => result.current.set("BOARDING"));
+    await act(async () => second.resolve("SCHEDULED"));
+    expect(result.current.value).toBe("BOARDING");
+    expect(result.current.pending).toBe(false);
+
+    // A read sent after the write is applied as usual.
+    act(() => result.current.reload());
+    await act(async () => third.resolve("DEPARTED"));
+    expect(result.current.value).toBe("DEPARTED");
+    rerender();
+    expect(result.current.set).toBe(set);
+  });
+
   it("reports a load that rejects instead of leaving it unhandled", async () => {
     const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const failure = new Error("bug");
