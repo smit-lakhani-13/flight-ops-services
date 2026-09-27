@@ -100,7 +100,8 @@ class RequestBodyLimitTest {
     @Test
     @DisplayName("a declared length over the limit is 413 before the credentials are checked")
     void aDeclaredLengthOverTheLimitIsRefusedBeforeTheCredentials() throws Exception {
-        assertPayloadTooLarge(client.send(HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/v1/bookings"))
+        assertPayloadTooLarge(client.send(
+                HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/v1/bookings"))
                         .header("Content-Type", "application/json")
                         .POST(declared(booking("limit-declared-anonymous", LIMIT + 1)))
                         .build(),
