@@ -109,6 +109,21 @@ says not yet.
   `ContainerErrorDispatchTest` are among the new classes. No production code
   changes.
 
+- **Tests for four claims that nothing checked.** `FlightTest` now walks every
+  move the status graph allows, and checks that the allowed and refused lists
+  name each of the 30 moves between distinct statuses once; before, a `BOARDING`
+  that could no longer go to `DELAYED` or `DEPARTED` passed the build.
+  `SecurityRulesTest#aCrossSitePreflightIsNotApproved` sends an anonymous
+  cross-site preflight and expects no CORS headers back, which ADR 0006's CSRF
+  decision rests on: Spring Security switches CORS on by itself once a
+  `CorsConfigurationSource` bean exists. `AwsConfigTest` checks the SQS client's
+  call and attempt caps, and the Lambda's `TimeoutBudgetTest` reads
+  `lambda/template.yaml` and checks that a batch whose DynamoDB calls all time
+  out still ends inside the function's `Timeout`. `FixedErrorMessagesTest` now
+  asserts that an unhandled exception's stack trace is logged, not only its
+  text. The Lambda's client settings moved to a constant that the test reads; no
+  behaviour changes.
+
 ### Changed
 
 - **The doc checkers know the console.** `scripts/refcheck.py` also checks
