@@ -93,9 +93,10 @@ public class OutboxPublisher {
         for (OutboxEvent event : batch) {
             Map<String, String> headers = headersFor(event);
             // Every line of this send carries the booking's traceparent, a field of its
-            // own under ECS. The drain runs under a trace of its own, so otherwise no
-            // line would name the booking's trace, not even the transport's success
-            // line. Removed per event, because the scheduler thread is reused.
+            // own in the ECS JSON log. The drain runs under a trace of its own. With
+            // the sqs transport no line would otherwise name the booking's trace:
+            // SqsEventPublisher's success line prints no headers. Removed per event,
+            // because the scheduler thread is reused.
             String traceparent = headers.get(TRACEPARENT);
             if (traceparent != null) {
                 MDC.put(TRACEPARENT, traceparent);

@@ -148,7 +148,8 @@ class OutboxMetricsTest {
             assertThat(entered.await(5, TimeUnit.SECONDS)).as("the refresher is inside the query").isTrue();
 
             // Preemptive, so a gauge that queried again would fail here rather than hang
-            // the build; 5 s is far below the pool's 30 s wait this rules out.
+            // the build; 5 s is no more than the wait this rules out, the pool's
+            // connection timeout (5 s under postgres and prod, 30 s on H2).
             String scrape = assertTimeoutPreemptively(Duration.ofSeconds(5), () -> prometheus.scrape());
 
             assertThat(scrape).contains("outbox_pending NaN").contains("outbox_dead NaN");

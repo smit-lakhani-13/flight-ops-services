@@ -132,10 +132,11 @@ database.
 `src/main/java/com/smit/flightops/observability/OutboxMetrics.java#refresh`
 runs the two counts every 15 seconds on a thread of its own, `outbox-metrics`,
 not on the scheduler thread the drain and the pruner share. A count on the
-scrape thread would wait out the pool's 30 s connection timeout while the
-database is unreachable, once per gauge. Prometheus's default scrape timeout
-is 10 s, so every other series in the response would be lost with the two
-gauges, during the outage they are needed for.
+scrape thread would wait out the pool's connection timeout (5 s under
+`postgres` and `prod`, 30 s on H2) while the database is unreachable, once
+per gauge. Prometheus's default scrape timeout is 10 s, so every other series
+in the response would be lost with the two gauges, during the outage they are
+needed for.
 
 A failed count is logged at DEBUG, and the gauge keeps its last good value. A
 gauge reports `NaN` until its first successful count, and again once that

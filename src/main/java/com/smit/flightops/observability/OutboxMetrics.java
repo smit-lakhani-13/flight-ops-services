@@ -34,17 +34,17 @@ import java.util.concurrent.atomic.AtomicReference;
  * </ul>
  *
  * <p>The gauges read counts that {@link #refresh()} caches, never the database. A
- * query on the scrape thread would wait out Hikari's 30 s connection timeout while the
- * database is unreachable, once per gauge, and a scraper would give up on the whole
- * response and lose every other series with it. The refresh runs every
- * {@link #REFRESH_INTERVAL} on a thread of its own, {@code outbox-metrics}, not on the
- * scheduler thread the drain and the pruner share, so a refresh stuck on the pool
- * delays neither. A failed count is logged at DEBUG and keeps the last good one. A
- * gauge reports {@code NaN} until its first successful count, and again once that
- * count is older than {@link #STALE_AFTER} by the application's {@link Clock}. Both
- * count through {@code idx_outbox_unpublished}, so they stay cheap however large the
- * table is. Not conditional on {@code app.outbox.enabled}: a replica that does not
- * drain still shows the backlog.
+ * query on the scrape thread would wait out the pool's connection timeout (5 s under
+ * postgres and prod, 30 s on H2) while the database is unreachable, once per gauge,
+ * and a scraper would give up on the whole response and lose every other series with
+ * it. The refresh runs every {@link #REFRESH_INTERVAL} on a thread of its own,
+ * {@code outbox-metrics}, not on the scheduler thread the drain and the pruner share,
+ * so a refresh stuck on the pool delays neither. A failed count is logged at DEBUG and
+ * keeps the last good one. A gauge reports {@code NaN} until its first successful
+ * count, and again once that count is older than {@link #STALE_AFTER} by the
+ * application's {@link Clock}. Both count through {@code idx_outbox_unpublished}, so
+ * they stay cheap however large the table is. Not conditional on
+ * {@code app.outbox.enabled}: a replica that does not drain still shows the backlog.
  */
 @Component
 public class OutboxMetrics {
@@ -63,7 +63,11 @@ public class OutboxMetrics {
     /** The row hit the attempt ceiling on this send and will not be claimed again. */
     public static final String EXHAUSTED = "exhausted";
 
-    /** Shorter than a usual scrape interval, so a scrape reads a count at most this old. */
+    /**
+     * About one scrape interval, so each scrape usually reads a count refreshed since the
+     * last one. A count is served until it is older than {@link #STALE_AFTER}, and then as
+     * {@code NaN}.
+     */
     static final Duration REFRESH_INTERVAL = Duration.ofSeconds(15);
 
     /**

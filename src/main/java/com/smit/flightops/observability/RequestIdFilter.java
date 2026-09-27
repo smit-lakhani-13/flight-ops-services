@@ -25,10 +25,10 @@ import java.util.regex.Pattern;
  * header, where a {@code \r\n} would forge an entry; anything else is replaced, not
  * rejected, since a bad diagnostic header is no reason to fail a request.
  *
- * <p>Every answer of 400 or above also gets one INFO line carrying the id, because
- * most of them log nothing else: a 401 or a 404 would otherwise leave the id a caller
- * quotes pointing at no line at all. A failure that escapes the chain gets no line
- * here, because {@code ApiErrorController} logs it.
+ * <p>Every answer of 400 or above outside {@code /actuator/} also gets one INFO line
+ * carrying the id, because most of them log nothing else: a 401 or a 404 would
+ * otherwise leave the id a caller quotes pointing at no line at all. A failure that
+ * escapes the chain gets no line here, because {@code ApiErrorController} logs it.
  *
  * @see "adr/0011-correlation-ids-and-metrics.md"
  */

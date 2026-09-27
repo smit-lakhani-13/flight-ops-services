@@ -55,7 +55,7 @@ public class JsonAccessDeniedHandler implements AccessDeniedHandler {
      * log-injection query treats as a sanitiser.
      *
      * <p>Public because {@code RequestIdFilter} writes the same path on its line for
-     * every answer of 400 or above.
+     * every answer of 400 or above outside {@code /actuator/}.
      */
     public static String printable(String uri) {
         return uri == null ? "null" : uri.replaceAll("[^\\x21-\\x7E]", "?");

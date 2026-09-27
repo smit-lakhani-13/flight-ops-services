@@ -31,9 +31,10 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * The drain runs under a trace of its own, so the booking's trace reaches the log lines
- * of a send only through the MDC. A leaked key would label the next event's lines, or
- * any later line on the reused scheduler thread, with the wrong booking's trace.
+ * The drain runs under a trace of its own. With the sqs transport no line would name
+ * the booking's trace without the MDC: {@code SqsEventPublisher}'s success line prints
+ * no headers. A leaked key would label the next event's lines, or any later line on
+ * the reused scheduler thread, with the wrong booking's trace.
  */
 class OutboxPublisherLogContextTest {
 

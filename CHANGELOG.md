@@ -180,9 +180,9 @@ still blank.
 - **A database outage would have taken every metric with it.** The
   `outbox_pending` and `outbox_dead` gauges counted rows on the scrape
   thread, so with the database unreachable each count would wait out the
-  pool's 30 s connection timeout. A scrape would take about a minute, and
-  Prometheus's default 10 s timeout would drop every series the pod exports,
-  not only the two gauges.
+  pool's connection timeout (5 s under `postgres` and `prod`, 30 s on H2). A
+  scrape would take at least twice that, and Prometheus's default 10 s
+  timeout would drop every series the pod exports, not only the two gauges.
   `src/main/java/com/smit/flightops/observability/OutboxMetrics.java#refresh`
   now runs both counts every 15 s on a daemon thread of its own, and the
   gauges read the cached values. A gauge reads `NaN` until its first count
@@ -195,9 +195,9 @@ still blank.
   drain's own trace, and no line of the send named the booking's trace.
   `src/main/java/com/smit/flightops/service/OutboxPublisher.java#drainOutbox`
   now puts each event's stored `traceparent` in the MDC while it sends that
-  event, and removes it afterwards, so in ECS the send line and the drain's
-  warnings for that event carry it as a field. The log messages are
-  unchanged.
+  event, and removes it afterwards, so in the ECS JSON log the send line and
+  the drain's warnings for that event carry it as a field. The log messages
+  are unchanged.
 
 - **The flight log could record a change the database refused.**
   `src/main/java/com/smit/flightops/service/FlightService.java#updateStatus`
