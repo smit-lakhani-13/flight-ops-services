@@ -1,5 +1,12 @@
 import { expect, test, type Route } from "@playwright/test";
-import { API_ACCOUNT, basic, createBooking, createFlight, go, openFlight, signIn, uniqueFlightNumber } from "./support";
+import { API_ACCOUNT, basic, createBooking, createFlight, go, openFlight, routeOf, signIn, uniqueFlightNumber } from "./support";
+
+// What the console's own server answers while the service is down.
+const serviceDown = (route: Route) =>
+  route.fulfill({
+    status: 502,
+    json: { code: "CONSOLE_UPSTREAM_UNREACHABLE", message: "The console could not reach the API. Is the service running?" },
+  });
 
 test("search narrows the list by airport", async ({ page }) => {
   await signIn(page);
@@ -11,6 +18,39 @@ test("search narrows the list by airport", async ({ page }) => {
   const table = page.getByTestId("flight-table");
   await expect(table).toContainText("UA456");
   await expect(table).not.toContainText("UA123");
+});
+
+test("a page of the list that fails to arrive offers Try again, which reads that page again", async ({ page, request }) => {
+  // Eleven flights on one route make two pages of ten.
+  const first = uniqueFlightNumber();
+  const route = routeOf(first);
+  await createFlight(request, first);
+  for (let i = 0; i < 10; i++) await createFlight(request, uniqueFlightNumber(), 20, route);
+  await signIn(page);
+  await go(page, "Flights");
+  const search = page.getByRole("form", { name: "Search flights" });
+  await search.getByLabel("Origin").fill(route.origin);
+  await search.getByLabel("Destination").fill(route.destination);
+  await search.getByRole("button", { name: "Search" }).click();
+  await expect(page.getByText(/total · page 1 of \d+/)).toBeVisible();
+
+  // Next, pressed from the keyboard, asks for the second page while the
+  // service is down. The pager goes with the table, and the focus goes to
+  // Try again rather than back to the page.
+  const secondPage = (url: URL) => url.pathname === "/api/v1/flights" && url.searchParams.get("page") === "1";
+  await page.route(secondPage, serviceDown);
+  await page.getByRole("button", { name: "Next" }).press("Enter");
+  const tryAgain = page.getByRole("button", { name: "Try again" });
+  await expect(page.getByTestId("error-banner")).toHaveAttribute("data-code", "CONSOLE_UPSTREAM_UNREACHABLE");
+  await expect(tryAgain).toBeFocused();
+
+  // Try again reads the second page, not the first, and hands the focus to
+  // the page's heading once the list is back.
+  await page.unroute(secondPage, serviceDown);
+  await tryAgain.press("Enter");
+  await expect(page.getByText(/total · page 2 of \d+/)).toBeVisible();
+  await expect(tryAgain).toHaveCount(0);
+  await expect(page.getByRole("heading", { level: 1 })).toBeFocused();
 });
 
 test("creating a flight shows the API's message per field, then opens the new flight", async ({ page }) => {
@@ -57,15 +97,9 @@ test("Try again after an outage reads the flight and its bookings again", async 
   const bookingId = await createBooking(request, flightNumber);
   await signIn(page);
 
-  // What the console's own server answers while the service is down, for
-  // this flight's two reads only.
-  const down = (route: Route) =>
-    route.fulfill({
-      status: 502,
-      json: { code: "CONSOLE_UPSTREAM_UNREACHABLE", message: "The console could not reach the API. Is the service running?" },
-    });
-  await page.route((url) => url.pathname === `/api/v1/flights/${flightNumber}`, down);
-  await page.route((url) => url.pathname === "/api/v1/bookings" && url.searchParams.get("flightNumber") === flightNumber, down);
+  // The service is down for this flight's two reads only.
+  await page.route((url) => url.pathname === `/api/v1/flights/${flightNumber}`, serviceDown);
+  await page.route((url) => url.pathname === "/api/v1/bookings" && url.searchParams.get("flightNumber") === flightNumber, serviceDown);
   await openFlight(page, flightNumber);
   await expect(page.getByTestId("error-banner")).toHaveAttribute("data-code", "CONSOLE_UPSTREAM_UNREACHABLE");
 
@@ -85,18 +119,13 @@ test("a Try again that fails as well is announced once, and a failed Refresh on 
   const card = (title: string) => page.locator("section").filter({ has: page.getByRole("heading", { name: title }) });
   const bookingsBanner = card("Bookings on this flight").getByTestId("error-banner");
   const alerts = page.locator('[data-testid="error-banner"][role="alert"]');
-  const down = (route: Route) =>
-    route.fulfill({
-      status: 502,
-      json: { code: "CONSOLE_UPSTREAM_UNREACHABLE", message: "The console could not reach the API. Is the service running?" },
-    });
   const flightUrl = (url: URL) => url.pathname === `/api/v1/flights/${flightNumber}`;
   const bookingsUrl = (url: URL) => url.pathname === "/api/v1/bookings" && url.searchParams.get("flightNumber") === flightNumber;
 
   // The service goes down. The cancel fails, and so does the read it starts,
   // which keeps the flight on screen under that read's quiet error.
-  await page.route(flightUrl, down);
-  await page.route(bookingsUrl, down);
+  await page.route(flightUrl, serviceDown);
+  await page.route(bookingsUrl, serviceDown);
   await page.getByRole("button", { name: "Cancel flight" }).click();
   await page.getByRole("button", { name: "Yes, cancel it" }).click();
   const tryAgain = page.getByRole("button", { name: "Try again" });
@@ -113,7 +142,7 @@ test("a Try again that fails as well is announced once, and a failed Refresh on 
 
   // The flight comes back and the bookings stay down. The card's own Refresh
   // is a press of its own, so its failure is an alert.
-  await page.unroute(flightUrl, down);
+  await page.unroute(flightUrl, serviceDown);
   await tryAgain.click();
   await expect(page.getByTestId("flight-status")).toHaveText("SCHEDULED");
   await expect(tryAgain).toHaveCount(0);

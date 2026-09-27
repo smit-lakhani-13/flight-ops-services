@@ -59,13 +59,21 @@ export function routeOf(flightNumber: string): { origin: string; destination: st
   return { origin: "EWR", destination };
 }
 
-/** Creates a flight through the console's own proxy, as the pages would. */
-export async function createFlight(request: APIRequestContext, flightNumber: string, totalSeats = 20): Promise<void> {
+/**
+ * Creates a flight through the console's own proxy, as the pages would. It
+ * flies its own route unless a test passes one to share.
+ */
+export async function createFlight(
+  request: APIRequestContext,
+  flightNumber: string,
+  totalSeats = 20,
+  route = routeOf(flightNumber),
+): Promise<void> {
   const response = await request.post("/api/v1/flights", {
     headers: { Authorization: basic(API_ACCOUNT) },
     data: {
       flightNumber,
-      ...routeOf(flightNumber),
+      ...route,
       totalSeats,
       departureTime: new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString(),
     },
