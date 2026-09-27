@@ -106,6 +106,13 @@ spring:
 server:
   port: ${SERVER_PORT:8080}
   shutdown: graceful
+  tomcat:
+    # Longer than the idle timeout of the load balancer that
+    # deploy/k8s/components/ingress/ingress.yaml asks for, which it leaves at
+    # the ALB's 60s default. The ALB then closes an idle connection first and
+    # never sends a request down one that Tomcat has just closed, which the
+    # client would get as a 502. Tomcat's own default is the same 60s.
+    keep-alive-timeout: 75s
 
 management:
   # The OpenTelemetry starter brings a push registry that publishes to
@@ -290,6 +297,18 @@ spring:
       # neither bound can fail one. The base document keeps 30s, so the H2
       # concurrency tests, which share its pool of ten, are unaffected.
       connection-timeout: 5000
+      # Bounds a statement already sent, in seconds, after which pgJDBC closes
+      # the connection. Without it, a database that stops answering
+      # mid-statement, through a host failure or a dropped network path, holds
+      # the connection and its thread until the kernel gives up on TCP, about
+      # 15 minutes; the outbox drain, on its one scheduler thread, stops that
+      # long. The failure reaches GlobalExceptionHandler as 503
+      # DATABASE_UNAVAILABLE. Flyway borrows from this pool too, so a migration
+      # statement longer than 30s fails; one that needs longer gets its own
+      # connection through spring.flyway.url. Not in the base document, because
+      # H2 refuses a setting it does not know.
+      data-source-properties:
+        socketTimeout: 30
   jpa:
     hibernate:
       # Flyway creates the schema; Hibernate fails fast if the entities drift from it.
@@ -323,6 +342,9 @@ spring:
       # Repeated from postgres, which gives the reason. Without it prod waits
       # the base document's 30s for a connection.
       connection-timeout: 5000
+      # Repeated from postgres, which gives the reason.
+      data-source-properties:
+        socketTimeout: 30
   jpa:
     hibernate:
       ddl-auto: validate
