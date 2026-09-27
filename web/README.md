@@ -57,7 +57,7 @@ request, so the same build can point anywhere.
 | `/flights` | Search by route, sort, page; create a flight with per-field errors | `GET /api/v1/flights`, `POST /api/v1/flights` |
 | `/flights/{flightNumber}` | The flight, the moves its status allows, any status on request, cancel, its bookings | `GET`, `PATCH .../status` and `DELETE /api/v1/flights/{flightNumber}`; `GET /api/v1/bookings?flightNumber=` |
 | `/book` | Book, replay the same key, change the body on the same key, the race | `GET /api/v1/flights/{flightNumber}`, `POST /api/v1/bookings`, and the console's own `POST /api/race` |
-| `/bookings/{bookingId}` | One booking and its cancellation, which is idempotent | `GET` and `DELETE /api/v1/bookings/{bookingId}` |
+| `/bookings/{bookingId}` | One booking and its cancellation, which is idempotent, and refused with `409 BOOKING_NOT_CANCELLABLE` for an active booking once its flight has departed or arrived | `GET` and `DELETE /api/v1/bookings/{bookingId}` |
 | `/ops` | Health, liveness and readiness without credentials; health and seven meters as `ops` | `GET /actuator/health`, `.../liveness`, `.../readiness`, `/actuator/metrics/{name}` |
 
 Each API error is shown with its code, its status, the service's message and,
@@ -152,17 +152,20 @@ Every link, button and field shows an outline in the accent colour when the
 keyboard reaches it, and the only motion is a colour transition, left out when
 the system asks for less motion.
 
-Below 1280 px, which takes in every phone and tablet viewport the tests use,
-and on any touch screen however wide, every button, nav link, field and select
-is at least 44 px tall, and every field has 16 px text, so iOS does not zoom in
-when one takes focus. A desk with a mouse keeps a denser layout from 1280 px
-up. The navigation wraps onto its own row rather than folding into a menu, and
-wide tables scroll inside their own box instead of widening the page. On a
-phone the tables also drop their secondary columns: a flight's status moves
-under its number and its departure under its route, a long passenger name is
-cut short with the whole name in its title, and the request log keeps the
-call, the answer and the id sent, and wraps a long call. Below 1024 px a
-booking's times give way to a "cancelled" tag.
+Below 1280 px, which takes in every phone and tablet viewport the tests use, and
+on any touch screen however wide, every button, nav link, field and select is at
+least 44 px tall, and every field has 16 px text, so iOS does not zoom in when
+one takes focus. A desk with a mouse keeps a denser layout from 1280 px up. The
+navigation wraps onto its own row rather than folding into a menu, and wide
+tables scroll inside their own box instead of widening the page. Where the
+navigation wraps under the brand and the Requests button, the keyboard still
+follows the page's own order: the brand, the navigation, then Requests and the
+account. That is the order a desktop and a screen reader follow too, so the one
+step back up stays inside the header. On a phone the tables also drop their
+secondary columns: a flight's status moves under its number and its departure
+under its route, a long passenger name is cut short with the whole name in its
+title, and the request log keeps the call, the answer and the id sent, and wraps
+a long call. Below 1024 px a booking's times give way to a "cancelled" tag.
 
 The request log opens as a drawer over the foot of the page and takes the
 keyboard's focus, since it comes last in the page. Escape inside it closes it
@@ -183,7 +186,7 @@ change of account is announced.
 |---|---|
 | `npm run lint` | ESLint with Next.js's core web vitals and TypeScript rules, no warnings allowed |
 | `npx tsc --noEmit` | The type-checker, strict, with unchecked index access |
-| `npm test` | Vitest: the proxy, the race and the `/api` route against a stubbed `fetch`, the browser's API client and the sign-in probe, the error classifier and its timeout hint, the request log, the resource hook and its pending state, the helpers that name a page from its address, and in jsdom the shared parts in `components/ui.tsx` (button tones and the busy state, field wiring, the seat bar, page titles, links and the Location mapping), the error banner, the booking form's replay comparison, status line and seat counts, the transition control and the pager, including where each leaves the focus, and the request log drawer's focus, Escape and copy buttons; and a test that reads `FlightStatus.java` and fails if the console's copy of the transition table drifts from it |
+| `npm test` | Vitest: the proxy, the race and the `/api` route against a stubbed `fetch`, the browser's API client and the sign-in probe, the error classifier and its timeout hint, the request log, the resource hook and its pending state, the helpers that name a page from its address, and in jsdom the shared parts in `components/ui.tsx` (button tones and the busy state, field wiring, the seat bar, page titles, links and the Location mapping), the error banner, the booking form's replay comparison, status line and seat counts, the transition control and the pager, including where each leaves the focus, and the request log drawer's focus, Escape, copy buttons and the one line that says what was copied; and a test that reads `FlightStatus.java` and fails if the console's copy of the transition table drifts from it |
 | `npm run e2e` | Playwright on Chromium against the built console and a running service: sign-in and sign-out, flights, bookings, replays and the race, validation, the proxy's refusals, the ops pages, and the layout of every page at eleven viewports |
 
 `npm run e2e` starts the console itself on port 3100 and expects the service

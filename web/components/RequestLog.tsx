@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
 import { useRequestLog } from "@/lib/request-log";
 import { CheckIcon, CloseIcon, CopyIcon, ListIcon } from "./icons";
 import { Button, EmptyState, HttpStatus, MUTED, NONE, STATUS_EDGE, statusClass } from "./ui";
@@ -17,7 +17,8 @@ import { Button, EmptyState, HttpStatus, MUTED, NONE, STATUS_EDGE, statusClass }
 // Location and the duration join from there up, and a long call wraps rather
 // than widening every row. On a short screen, or at a high zoom, the whole
 // drawer scrolls as one, and the scroll padding keeps a focused row clear of
-// the sticky headings.
+// the sticky headings. A copied id is said once, in the drawer's one status
+// line, while its button keeps its name.
 const WIDE = "hidden sm:table-cell";
 
 export function RequestLog({ onClose }: { onClose: (returnFocus: boolean) => void }) {
@@ -25,9 +26,18 @@ export function RequestLog({ onClose }: { onClose: (returnFocus: boolean) => voi
   const close = useRef<HTMLButtonElement>(null);
   const drawer = useRef<HTMLElement>(null);
   const [cleared, setCleared] = useState<number>();
+  const [copied, setCopied] = useState<string>();
+  const copiedTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const title = useId();
 
   useEffect(() => close.current?.focus(), []);
+  useEffect(() => () => clearTimeout(copiedTimer.current), []);
+
+  const onCopied = useCallback((value: string) => {
+    setCopied(value);
+    clearTimeout(copiedTimer.current);
+    copiedTimer.current = setTimeout(() => setCopied(undefined), 1500);
+  }, []);
 
   function onKeyDown(event: KeyboardEvent<HTMLElement>) {
     if (event.key !== "Escape" || event.defaultPrevented || event.nativeEvent.isComposing) return;
@@ -52,6 +62,9 @@ export function RequestLog({ onClose }: { onClose: (returnFocus: boolean) => voi
           </h2>
           <p className={`text-xs ${MUTED}`}>
             Last {entries.length} of up to 20 calls from this tab, newest first
+          </p>
+          <p role="status" className="sr-only">
+            {copied ? `Copied ${copied}` : ""}
           </p>
         </div>
         <div className="flex gap-2">
@@ -109,7 +122,7 @@ export function RequestLog({ onClose }: { onClose: (returnFocus: boolean) => voi
                     </td>
                     <td className="px-2 py-1 wrap-anywhere sm:whitespace-nowrap">
                       <span className="inline-flex items-center gap-1">
-                        <CopyButton value={entry.requestId} />
+                        <CopyButton value={entry.requestId} copied={copied === entry.requestId} onCopied={onCopied} />
                         <span data-testid="sent-id">{entry.requestId}</span>
                       </span>
                     </td>
@@ -142,17 +155,11 @@ const HEADINGS = [
 // A copy button beside an id. The clipboard can refuse (an insecure origin, a
 // denied permission); the id is still there to select by hand, so a refusal is
 // silently ignored.
-function CopyButton({ value }: { value: string }) {
-  const [copied, setCopied] = useState(false);
-  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  useEffect(() => () => clearTimeout(timer.current), []);
-
+function CopyButton({ value, copied, onCopied }: { value: string; copied: boolean; onCopied: (value: string) => void }) {
   async function copy() {
     try {
       await navigator.clipboard.writeText(value);
-      setCopied(true);
-      clearTimeout(timer.current);
-      timer.current = setTimeout(() => setCopied(false), 1500);
+      onCopied(value);
     } catch {
       // Nothing to do: see above.
     }
@@ -162,7 +169,7 @@ function CopyButton({ value }: { value: string }) {
     <Button
       tone="ghost"
       iconOnly
-      aria-label={copied ? `Copied ${value}` : `Copy ${value}`}
+      aria-label={`Copy ${value}`}
       title={copied ? "Copied" : "Copy"}
       icon={copied ? <CheckIcon className="size-4 text-emerald-600 dark:text-emerald-400" /> : <CopyIcon />}
       onClick={copy}

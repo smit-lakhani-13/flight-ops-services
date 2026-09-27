@@ -16,7 +16,10 @@ test("search narrows the list by airport", async ({ page }) => {
 test("creating a flight shows the API's message per field, then opens the new flight", async ({ page }) => {
   await signIn(page);
   await go(page, "Flights");
-  await page.getByRole("button", { name: "New flight" }).click();
+  // The toggle keeps its name; aria-expanded says the form is open.
+  const toggle = page.getByRole("button", { name: "New flight" });
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-expanded", "true");
   const form = page.getByRole("form", { name: "Create flight" });
 
   await form.getByLabel("Origin").fill("JF1");
