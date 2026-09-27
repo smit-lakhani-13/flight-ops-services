@@ -734,7 +734,48 @@ jobs:
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # A re-run keeps the commit of the run it repeats. "Re-run failed jobs"
+      # on an older run would apply that commit's manifests over a newer
+      # release, pass the rollout and the smoke test, and go green: a rollback
+      # no one asked for. So the job deploys a commit only while it is still
+      # the head of main, as the remote reports it. Otherwise it assumes no
+      # role, pushes no image and applies nothing. Each later step but the
+      # failure diagnostics checks this step's output, or the ECR lookup's,
+      # which is empty when that lookup is skipped.
+      #
+      # A superseded commit is not a failure: the head of main has a run of
+      # its own, and that run, or a manual run on main, is what deploys it. So
+      # the job ends green, with a notice and a line in the job summary. A
+      # deliberate redeploy is a manual run (workflow_dispatch) on main, which
+      # deploys the head.
+      #
+      # Checked before the AWS steps, not just before the apply, because main
+      # moving during this run is harmless: the concurrency group at the top
+      # of this file holds the newer commit's run until this one ends, so that
+      # commit deploys after this one. `git ls-remote` asks the remote, so the
+      # shallow checkout is enough. It authenticates with the credentials
+      # checkout keeps for later git commands, which `contents: read` covers.
+      - name: Is this commit still the head of main?
+        id: head
+        run: |
+          if ! remote=$(git ls-remote --exit-code origin refs/heads/main); then
+            echo "::error::could not read the head of main from origin"
+            exit 1
+          fi
+          main_head=${remote%%[[:space:]]*}
+
+          if [ "$main_head" = "$GITHUB_SHA" ]; then
+            echo "$GITHUB_SHA is the head of main"
+            echo 'current=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo 'current=false' >> "$GITHUB_OUTPUT"
+          echo "::notice title=Nothing deployed::$GITHUB_SHA is no longer the head of main ($main_head), so nothing was pushed or applied. To redeploy on purpose, run the workflow on main with workflow_dispatch."
+          echo "Nothing was deployed: \`$GITHUB_SHA\` is no longer the head of \`main\` (\`$main_head\`). To redeploy on purpose, run the workflow on \`main\` with **workflow_dispatch**, which deploys the head of \`main\`." >> "$GITHUB_STEP_SUMMARY"
+
       - name: Configure AWS credentials (OIDC)
+        if: steps.head.outputs.current == 'true'
         uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
         with:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/github-actions-deploy
@@ -743,6 +784,7 @@ jobs:
 
       - name: Log in to Amazon ECR
         id: ecr
+        if: steps.head.outputs.current == 'true'
         uses: aws-actions/amazon-ecr-login@03f1aad4c6c7ffd436567f42f9384779290529bd # v2.1.7
 
       # Tagged with the commit SHA, never `latest`, in a repository with
@@ -754,11 +796,14 @@ jobs:
       # ImageTagAlreadyExists. So the tag is looked up first, and if it is there
       # the download and push are skipped. The tag is the commit SHA and cannot
       # move, so the image in the registry was built from this commit.
+      # A re-run gets this far only while its commit is still the head of
+      # main; see "Is this commit still the head of main?" above.
       #
       # Any error other than ImageNotFoundException stops the job; the script's
       # header says why, and selftest.sh tests all three outcomes.
       - name: Is this commit already in ECR?
         id: image
+        if: steps.head.outputs.current == 'true'
         env:
           REGISTRY: ${{ steps.ecr.outputs.registry }}
         run: |
@@ -812,6 +857,7 @@ jobs:
       # beyond the namespace-scoped access entry) and the Ingress (it bills an
       # ALB, an operator's decision). up.sh applies both.
       - name: Render and apply the manifests
+        if: steps.head.outputs.current == 'true'
         env:
           AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
           IMAGE_TAG: ${{ github.sha }}
@@ -839,22 +885,74 @@ jobs:
       # slow pull. Raise this if maxReplicas in deploy/k8s/base/hpa.yaml is
       # raised.
       - name: Wait for the rollout
+        if: steps.head.outputs.current == 'true'
         run: |
           kubectl rollout status "deployment/$DEPLOYMENT" \
             -n "$K8S_NAMESPACE" --timeout=12m
 
       # A completed rollout proves the pods pass their readiness probe, not
-      # that the application answers. This asks it for readiness and the
-      # OpenAPI document.
+      # that the application answers. This asks one pod of the new release for
+      # readiness, the root health and the OpenAPI document.
       #
       # Through a port-forward, not the ALB: it works whether or not the
-      # Ingress exists, needs no DNS, and tests the pod itself. Both endpoints
-      # are anonymous (the kubelet has no credentials either), so no secret is
-      # needed.
+      # Ingress exists, needs no DNS, and tests the pod itself. All three
+      # endpoints are anonymous (the kubelet has no credentials either), so no
+      # secret is needed.
+      #
+      # The pod is picked here, not left to `port-forward deployment/...`.
+      # kubectl would take the pod that has been Ready longest, and right after
+      # a rollout that is the last old pod, still Ready during its preStop
+      # sleep: the test would pass on the old image, or fail when that pod
+      # exits. So the step reads the Deployment's revision, finds the
+      # ReplicaSet at that revision and its pod-template-hash, and takes a
+      # Running, Ready pod with that hash, not being deleted, whose container
+      # runs $IMAGE.
       - name: Smoke test through a port-forward
+        if: steps.head.outputs.current == 'true'
         run: |
+          revision=$(kubectl -n "$K8S_NAMESPACE" get "deployment/$DEPLOYMENT" \
+            -o jsonpath='{.metadata.annotations.deployment\.kubernetes\.io/revision}')
+          replicasets=$(kubectl -n "$K8S_NAMESPACE" get replicasets -o json)
+          rs=$(jq -r --arg dep "$DEPLOYMENT" --arg rev "$revision" '
+            [.items[]
+              | select(any(.metadata.ownerReferences[]?;
+                  .kind == "Deployment" and .name == $dep))
+              | select(.metadata.annotations["deployment.kubernetes.io/revision"] == $rev)
+              | .metadata.name]
+            | if length == 1 then .[0] else empty end' <<<"$replicasets")
+          template_hash=$(jq -r --arg rs "$rs" '.items[]
+            | select(.metadata.name == $rs)
+            | .metadata.labels["pod-template-hash"] // empty' <<<"$replicasets")
+          if [ -z "$revision" ] || [ -z "$rs" ] || [ -z "$template_hash" ]; then
+            echo "::error::found no single ReplicaSet of deployment/$DEPLOYMENT at revision '$revision' with a pod-template-hash"
+            kubectl -n "$K8S_NAMESPACE" get replicasets -o wide
+            exit 1
+          fi
+
+          pods=$(kubectl -n "$K8S_NAMESPACE" get pods \
+            -l "app=flight-ops,pod-template-hash=$template_hash" -o json)
+          pod=$(jq -r --arg img "$IMAGE" '
+            [.items[]
+              | select(.metadata.deletionTimestamp == null)
+              | select(.status.phase == "Running")
+              | select(any(.status.conditions[]?;
+                  .type == "Ready" and .status == "True"))
+              | select(any(.spec.containers[];
+                  .name == "flight-ops" and .image == $img))
+              | .metadata.name]
+            | .[0] // empty' <<<"$pods")
+          if [ -z "$pod" ]; then
+            echo "::error::no Running, Ready pod of ReplicaSet $rs (revision $revision) runs $IMAGE"
+            exit 1
+          fi
+          pod_image=$(jq -r --arg pod "$pod" '.items[]
+            | select(.metadata.name == $pod)
+            | .spec.containers[] | select(.name == "flight-ops") | .image' <<<"$pods")
+          echo "smoke-testing pod $pod, ReplicaSet $rs, revision $revision"
+          echo "  image: $pod_image"
+
           kubectl -n "$K8S_NAMESPACE" port-forward \
-            "deployment/$DEPLOYMENT" 18080:8080 >/tmp/port-forward.log 2>&1 &
+            "pod/$pod" 18080:8080 >/tmp/port-forward.log 2>&1 &
           pf=$!
           trap 'kill "$pf" 2>/dev/null || true' EXIT
 
@@ -882,11 +980,75 @@ jobs:
             *) echo '  readiness is not UP'; exit 1 ;;
           esac
 
+          # The root health aggregates every health indicator, the database
+          # among them. An anonymous caller gets the overall status and the
+          # group names, no components, so this matches the overall status.
+          health=$(curl -sS --max-time 10 http://127.0.0.1:18080/actuator/health)
+          echo "health: $health"
+          case "$health" in
+            *'"status":"UP"'*) echo '  health UP' ;;
+            *) echo '  health is not UP'; exit 1 ;;
+          esac
+
           docs=$(curl -sS --max-time 10 http://127.0.0.1:18080/v3/api-docs)
           case "$docs" in
             *'"openapi"'*) echo '  OpenAPI document served' ;;
             *) printf '  unexpected /v3/api-docs: %.200s\n' "$docs"; exit 1 ;;
           esac
+
+      # A pod of the new release has answered, so the image gets a second tag,
+      # deployed-<sha>. The first rule of the ECR lifecycle policy in
+      # deploy/aws/foundation.yaml keeps the last 10 images tagged that way,
+      # and a lower rule cannot expire them. Without it, a run of failed
+      # deploys, each of which still pushes an image, would expire the image
+      # the old pods run and `kubectl rollout undo` goes back to.
+      #
+      # IMMUTABLE forbids moving a tag, not adding one. put-image gets the
+      # manifest and its media type as ECR holds them (docker can push an OCI
+      # index), and --image-digest makes ECR refuse a manifest that is not the
+      # one the commit's tag names. A tag already there, from a manual
+      # redeploy of the same commit, is left as it is.
+      - name: Tag the image as deployed
+        if: steps.head.outputs.current == 'true'
+        run: |
+          tag="deployed-$GITHUB_SHA"
+          tags=$(aws ecr describe-images \
+            --repository-name "$ECR_REPOSITORY" \
+            --image-ids "imageTag=$GITHUB_SHA" \
+            --query 'imageDetails[0].imageTags' --output text)
+          if tr '\t' '\n' <<<"$tags" | grep -qxF "$tag"; then
+            echo "$IMAGE is already tagged $tag"
+            exit 0
+          fi
+
+          aws ecr batch-get-image \
+            --repository-name "$ECR_REPOSITORY" \
+            --image-ids "imageTag=$GITHUB_SHA" \
+            --accepted-media-types \
+              application/vnd.oci.image.index.v1+json \
+              application/vnd.oci.image.manifest.v1+json \
+              application/vnd.docker.distribution.manifest.list.v2+json \
+              application/vnd.docker.distribution.manifest.v2+json \
+            --output json > /tmp/image.json
+          digest=$(jq -r '.images[0].imageId.imageDigest // empty' /tmp/image.json)
+          media_type=$(jq -r '.images[0].imageManifestMediaType // empty' /tmp/image.json)
+          jq -j '.images[0].imageManifest // empty' /tmp/image.json > /tmp/manifest.json
+          if [ -z "$digest" ] || [ -z "$media_type" ] || [ ! -s /tmp/manifest.json ]; then
+            jq '.failures' /tmp/image.json
+            echo "::error::could not read the manifest of $IMAGE"
+            exit 1
+          fi
+
+          if ! aws ecr put-image \
+              --repository-name "$ECR_REPOSITORY" \
+              --image-tag "$tag" \
+              --image-digest "$digest" \
+              --image-manifest file:///tmp/manifest.json \
+              --image-manifest-media-type "$media_type" > /dev/null; then
+            echo "::error::the release is deployed, but $IMAGE could not be tagged $tag, so the lifecycle policy does not protect it"
+            exit 1
+          fi
+          echo "tagged $IMAGE ($digest) as $tag"
 
       # Diagnostics beyond "timed out waiting for the condition". `auth can-i
       # --list` is here because a broken access entry, the likeliest failure on
@@ -907,3 +1069,8 @@ jobs:
       # bug. With maxUnavailable: 0 a failed rollout has taken no traffic; the
       # old pods are still serving. Roll back by hand after reading the logs:
       #   kubectl rollout undo deployment/flight-ops -n flight-ops
+      # After more than one failed deploy the previous revision failed too:
+      # find the one that served in `kubectl rollout history` and pass it with
+      # --to-revision. `rollout undo` does not undo migrations, so every
+      # migration must keep the previous release working (expand now, contract
+      # in a later release).

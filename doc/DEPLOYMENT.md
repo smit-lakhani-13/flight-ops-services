@@ -244,6 +244,17 @@ and the registry gets the bytes that were scanned. A "Re-run failed jobs" more
 than a day later finds no artefact unless the image is already in ECR; re-run
 all jobs instead.
 
+After the checkout, the deploy job's step "Is this commit still the head of
+main?" compares `git ls-remote origin refs/heads/main` with the run's commit. A
+re-run keeps the commit of the run it repeats, so "Re-run failed jobs" on an
+older run would otherwise put that commit back over a newer release and go
+green. When the two differ, the job assumes no role, pushes and applies nothing
+and still passes, with a notice and a line in the job summary. The head of
+`main` normally has a run of its own. When it has none, as after a commit that
+skipped CI or a pending run that was cancelled, a manual run
+(`workflow_dispatch`) on `main` deploys it, as it does for a deliberate
+redeploy.
+
 Before it downloads the image, the deploy job asks ECR whether the commit's
 image is already there, in the step "Is this commit already in ECR?". It runs
 [`deploy/aws/ecr-image-exists.sh`](../deploy/aws/ecr-image-exists.sh), which
@@ -252,13 +263,31 @@ calls `ecr:DescribeImages` and reports the image missing only on
 would push the image again and fail, because the repository's tags are
 immutable.
 
-Every step checks whether its resource exists before creating it. To resume an
-interrupted run, run the same command again. If eksctl stopped part way through
-step 4, the re-run finishes the cluster. It waits for the control plane, then
-creates whichever of the vpc-cni, kube-proxy and coredns addons, the cluster's
-IAM OIDC provider and the `ng-1` node group is missing. Step 1 asks for eksctl
-0.184.0 or later, because older releases install those addons self-managed and
-the re-run looks them up as EKS addons.
+After the rollout, the smoke test reaches one pod of the new release through a
+port-forward. It reads the Deployment's revision, finds the ReplicaSet at that
+revision and its `pod-template-hash`, and picks a Running, Ready pod with that
+hash whose container runs this commit's image. It prints the pod and the image,
+and fails if there is no such pod. `port-forward deployment/flight-ops`
+would pick the pod that has been Ready longest, which right after a rollout is
+the last old pod in its `preStop` sleep. The pod must answer readiness, the
+root `/actuator/health` and `/v3/api-docs`.
+
+When the smoke test passes, the job gives the image a second tag,
+`deployed-<sha>`, with `ecr:BatchGetImage` and `ecr:PutImage`. The first rule
+of the lifecycle policy in `deploy/aws/foundation.yaml#EcrRepository` keeps
+the last ten images tagged that way, and the rule that keeps the last five
+tagged images cannot expire them. Every deploy pushes its image before the
+rollout, so without that tag five failed deploys in a row would expire the
+image the old pods still run, and a pod on a new node or a
+`kubectl rollout undo` could no longer pull it.
+
+Every step of `up.sh` checks whether its resource exists before creating it. To
+resume an interrupted run, run the same command again. If eksctl stopped part
+way through step 4, the re-run finishes the cluster. It waits for the control
+plane, then creates whichever of the vpc-cni, kube-proxy and coredns addons, the
+cluster's IAM OIDC provider and the `ng-1` node group is missing. Step 1 asks
+for eksctl 0.184.0 or later, because older releases install those addons
+self-managed and the re-run looks them up as EKS addons.
 
 Two cases still need a hand. A re-run in the first minutes of step 4, before
 EKS lists the cluster, calls `eksctl create cluster` a second time, and that
@@ -547,7 +576,7 @@ Prices are for `ap-south-1`, on-demand, from the AWS price list on 22 September
 | RDS db.t4g.micro (instance hours) | $0.021/hr | $0.50 |
 | EBS (2 × 20 GB gp3), public IPv4 | | $0.62 |
 | SQS, Lambda, DynamoDB, X-Ray, two CloudWatch alarms | free tier at this volume; an account's first ten standard alarms are free | $0.00 |
-| ECR, under 1 GB of images | $0.10/GB-month after any free tier | $0.00 |
+| ECR, up to about 1.5 GB of images (15 kept at most) | $0.10/GB-month after any free tier | $0.00 |
 | | | **$7.72** |
 
 The figures assume 1.5 GB/day through the NAT gateway, about 0.25 LCU on the

@@ -187,9 +187,11 @@ for a commit on `main` that got no push run.
 | `image` | `docker build` | the `Dockerfile` does not build |
 | `image` | "The image will not start without a database" | the image, run with no environment, does not stop with `'url' must start with` |
 | `image` | Trivy, on the image | the image the job built has a CRITICAL vulnerability with a fix available. It is the only image scan: `deploy` pushes this image and runs no scan of its own |
+| `deploy` | "Is this commit still the head of main?" | `git ls-remote` cannot read the head of `main`. A commit that is no longer the head is not a failure: the job pushes and applies nothing, passes, and says so in a notice and the job summary |
 | `deploy` | "Is this commit already in ECR?" | `describe-images` fails with anything other than `ImageNotFoundException` |
 | `deploy` | "Load the image and tag it for ECR" | the downloaded archive's sha256 is not the one the `image` job recorded when it saved the image |
-| `deploy` | rollout and smoke test | the rollout does not finish in 12 minutes, or readiness is not `UP`, or `/v3/api-docs` is not served through a port-forward |
+| `deploy` | rollout and smoke test | the rollout does not finish in 12 minutes, or no Running, Ready pod of the new ReplicaSet runs this commit's image, or readiness or `/actuator/health` is not `UP`, or `/v3/api-docs` is not served through a port-forward to that pod |
+| `deploy` | "Tag the image as deployed" | the image that passed the smoke test cannot be read or tagged `deployed-<sha>` in ECR |
 
 No Trivy finding is silenced, and there is no `.trivyignore`. Trivy reads one
 from the repository root if it is ever added. Each entry would carry the CVE
