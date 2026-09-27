@@ -93,11 +93,13 @@ class MalformedRequestTest {
     /**
      * LANDED is a plausible status that does not exist; ARRIVED is the real
      * one. The YAML is read as JSON and fails, because the header, not the
-     * body, picks the converter.
+     * body, picks the converter. A real name with padding is not a name:
+     * Jackson's enum reader would trim it and apply the status.
      */
     @ParameterizedTest
     @ValueSource(strings = {"{\"status\":\"LANDED\"}", "{\"status\":2}", "{\"status\":\"BOARDING\"",
-                            "status: BOARDING"})
+                            "status: BOARDING", "{\"status\":\" BOARDING\"}",
+                            "{\"status\":\"\\u0000CANCELLED\\t\"}"})
     @DisplayName("an unreadable status change is 400 with the fixed message, not Jackson's text")
     void unreadableStatusBodiesGetTheFixedMessage(String body) throws Exception {
         assertMalformed(json(HttpMethod.PATCH, STATUS, body));

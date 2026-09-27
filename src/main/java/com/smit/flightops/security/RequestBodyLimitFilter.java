@@ -36,13 +36,14 @@ import java.util.List;
  * {@link PayloadTooLargeException}. Jackson reports that wrapped in
  * {@code HttpMessageNotReadableException}, and {@code GlobalExceptionHandler} answers
  * with the same 413. Only {@code getInputStream} is counted: it is how Spring MVC reads
- * a JSON body and how {@code FormContentFilter} reads a form one.
+ * a JSON body.
  *
  * <p>The order puts it after {@code RequestIdFilter}, so the 413 carries
- * {@code X-Request-Id}. It also puts it before {@code FormContentFilter}, which reads a
- * form-encoded {@code PUT}, {@code PATCH} or {@code DELETE} body in full before Spring
- * Security runs, so that read is counted as well. An oversized declared length or form
- * body without credentials therefore gets 413, not 401. {@code HttpConfig} builds it.
+ * {@code X-Request-Id}, and ahead of Spring Security, so an oversized declared length
+ * without credentials gets 413, not 401. The order is the one before
+ * {@code FormContentFilter}, which is off ({@code spring.mvc.formcontent.filter}): it
+ * read a form-encoded {@code PUT}, {@code PATCH} or {@code DELETE} body in full before
+ * Spring Security ran. {@code HttpConfig} builds it.
  * Because its 413 is written before Spring Security's {@code HeaderWriterFilter},
  * {@link #reject} applies the same default header writers itself.
  *
@@ -79,8 +80,8 @@ public class RequestBodyLimitFilter extends OncePerRequestFilter {
         try {
             chain.doFilter(new CountedRequest(request, maxBodyBytes), response);
         } catch (PayloadTooLargeException e) {
-            // A body read outside Spring MVC, such as FormContentFilter's. Without
-            // this the container would forward the IOException to /error as a 500.
+            // A body read outside Spring MVC, by a filter. Without this the
+            // container would forward the IOException to /error as a 500.
             reject(request, response);
         }
     }

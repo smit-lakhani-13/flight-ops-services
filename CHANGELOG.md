@@ -757,6 +757,81 @@ says not yet.
   skip only where no secret can exist; it now says it is a skip on every pull
   request, this repository's own included, as the code does.
 
+- **A badly encoded query value, or a query name with a control character, was a
+  500.** Tomcat decodes the query string when a parameter is first read, and a
+  value that is not valid percent-encoded UTF-8, such as `?origin=%FF`, threw an
+  exception no handler named. Spring Security's firewall refuses a name with a
+  control character, such as `?%0D%0AFORGED=1`, at the same point, with an
+  exception of its own. Each was `500 INTERNAL_ERROR` and an ERROR stack trace,
+  on the public `/actuator/health` too, and the stack trace quoted the decoded
+  value or name, so a `%0D%0A` in it started a forged line on the plain-text
+  log. `exception/GlobalExceptionHandler.java#handleMalformed` now answers both
+  with `400 MALFORMED_REQUEST` and one WARN line through
+  `GlobalExceptionHandler.java#printable`, and
+  `ContainerErrorDispatchTest.java#aBadlyEncodedQueryValueIsA400` covers both
+  endpoints and the name.
+
+- **A form-encoded body was parsed before the credentials.** Spring's
+  `FormContentFilter` read a form-encoded `PUT`, `PATCH` or `DELETE` body ahead
+  of Spring Security, and a bad percent escape in it, such as `a=%zz`, was a 500
+  and an ERROR stack trace on any path, for a caller with no credentials. The
+  writes read JSON only, so form parsing is off
+  (`spring.mvc.formcontent.filter.enabled` in
+  `src/main/resources/application.yml`), and such a request without credentials
+  gets 401 like any other
+  (`RequestBodyLimitTest.java#aFormBodyIsNotReadBeforeTheCredentials`).
+  `SECURITY.md` no longer says that an oversized form body gets 413 before the
+  credentials are checked.
+
+- **`/logout` answered 204 to anyone.** Spring Security's logout filter runs
+  ahead of the rules and, with CSRF off, matched `GET`, `POST`, `PUT` and
+  `DELETE`, so `/logout` was a 204 for any caller, a wrong password included,
+  although the rules end in `denyAll()`. The API keeps no session, so
+  `config/SecurityConfig.java#apiSecurityFilterChain` turns the filter off, and
+  the path is denied like any other that no rule names
+  (`SecurityRulesTest.java#logoutIsDenied`).
+
+- **The bearer-token metadata was open and claimed certificate-bound tokens.**
+  With bearer tokens on, Spring Security's resource server serves its RFC 9728
+  metadata at `GET /.well-known/oauth-protected-resource`, and under it, to any
+  caller, ahead of the rules. `SECURITY.md` and `config/SecurityConfig.java`
+  said that `denyAll()` closes the list and did not name the path. The document
+  also said tokens are bound to a client certificate, which nothing here checks.
+  `config/SecurityConfig.java#apiSecurityFilterChain` turns that claim off, both
+  files now name the path, and
+  `BearerTokenChallengeTest.java#theProtectedResourceMetadataIsPublic` checks
+  the document.
+
+- **A padded status name was applied.** Jackson's enum reader retries a name
+  it does not know with the value trimmed, so a `PATCH` with `" DELAYED"`, or
+  with `CANCELLED` between a NUL and a tab, changed the flight's status.
+  `dto/StatusUpdate.java#ExactName` reads the exact name only, and anything
+  else is `400 MALFORMED_REQUEST`, as an unknown name was
+  (`MalformedRequestTest.java#unreadableStatusBodiesGetTheFixedMessage`).
+
+- **A header line Tomcat refused was logged in full.** Tomcat logs a request
+  it cannot parse at INFO and quotes the refused header line, so an
+  `Authorization` header with one stray control character wrote the credential
+  to the log, with no request id. `org.apache.coyote.http11.Http11Processor`
+  now logs at WARN (`src/main/resources/application.yml`), and the caller still
+  gets the 400
+  (`ContainerErrorDispatchTest.java#aRefusedHeaderLineIsNotLogged`).
+
+- **Two claims about headers.** `doc/api.md` said that `HEAD` follows the same
+  rule as `GET`. On `/actuator` itself Boot's matcher covers `GET` only, so a
+  `HEAD` there is 403, from `ops` too, and the page now says so. `SECURITY.md`
+  said that every answer from the console's server carries the three hygiene
+  headers. The two answers Next writes itself, the 500 for a malformed percent
+  escape and the 308 for a trailing or doubled slash, do not, and it now names
+  them.
+
+- **A placeholder scrypt value was said to stop startup.** `doc/api.md` said
+  that without BouncyCastle only a bcrypt or pbkdf2 value passes the three
+  startup checks. A malformed value behind `{scrypt}` or `{argon2}`, such as
+  `{scrypt}REPLACE_ME`, passes all three, as `{bcrypt}REPLACE_ME` does, and the
+  scrypt encoder logs nothing. The page, the playbook in `doc/OPERATIONS.md`
+  and the known limitation in `SECURITY.md` now say so.
+
 ### Security
 
 - **The deploy job pushes the image CI scanned, and runs no scanner.** It

@@ -153,4 +153,32 @@ describe("runRace", () => {
     expect(seen).toHaveLength(RACE_SIZE);
     expect(seen.every((r) => r.headers.get("authorization") === null)).toBe(true);
   });
+
+  it("sends the caller's bytes and media type, not a re-serialised body", async () => {
+    const seen: Request[] = [];
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      seen.push(new Request(String(input), init));
+      return new Response(null, { status: 400 });
+    }) as unknown as typeof fetch;
+    // A duplicate key, a seat count written as 2.0 and a byte that is not
+    // UTF-8 (0xE9 in place of the "?"): JSON.parse takes all three, the API
+    // refuses each one.
+    const sent = new TextEncoder().encode(
+      '{"flightNumber":"UA123","passengerName":"Ren?e","seats":2.0,"seats":1,"idempotencyKey":"k"}',
+    );
+    sent[sent.indexOf(0x3f)] = 0xe9;
+    const type = "application/json; charset=utf-8";
+    const request = new Request("http://console.test/api/race", {
+      method: "POST",
+      body: sent,
+      headers: { "Content-Type": type },
+    });
+
+    await runRace(request, { fetch: fetchImpl, baseUrl: BASE });
+
+    expect(seen).toHaveLength(RACE_SIZE);
+    const bodies = await Promise.all(seen.map(async (r) => new Uint8Array(await r.arrayBuffer())));
+    expect(bodies.every((body) => body.length === sent.length && body.every((b, i) => b === sent[i]))).toBe(true);
+    expect(seen.every((r) => r.headers.get("content-type") === type)).toBe(true);
+  });
 });

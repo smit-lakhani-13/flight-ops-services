@@ -498,11 +498,15 @@ The usual cause is `{bcrypt}REPLACE_ME`, copied from
 `deploy/k8s/secret.example.yaml` without the real hash. Every startup check
 passes it. `BCryptPasswordEncoder` logs a WARN and returns false in place of
 throwing, so the pod goes Ready and every login as that user gets a 401.
+`{argon2}REPLACE_ME` behaves the same, with the WARN `Malformed password hash`,
+and `{scrypt}REPLACE_ME` too, with no log line at all.
 
-The WARN comes from `o.s.s.c.bcrypt.BCryptPasswordEncoder`. The self-check
-logs it once at startup for each such value, and every login logs it again. A
-WARN at startup therefore means a stored value is not a bcrypt hash, before
-anyone has tried to log in. Set a real hash, as in
+The bcrypt WARN comes from `o.s.s.c.bcrypt.BCryptPasswordEncoder`, and the
+argon2 one from `o.s.s.c.argon2.Argon2PasswordEncoder`. The self-check logs it
+once at startup for each such value, and every login logs it again. One of those
+WARNs at startup therefore means a stored value is not a real hash, before
+anyone has tried to log in. A scrypt placeholder gives no such sign. Set a real
+hash, as in
 [Rotating the API or ops password](#rotating-the-api-or-ops-password).
 [SECURITY.md](../SECURITY.md#known-limitations) lists this as a known limit.
 

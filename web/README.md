@@ -89,7 +89,10 @@ UI included, answers `404 CONSOLE_PATH_REFUSED` without reaching the API. A
 write to one of the forwarded actuator paths answers `405` with an `Allow`
 header. `OPTIONS` never reaches `forward`: Next answers it on any `/api/` path,
 refused ones included, with `204`, an `Allow` header that lists every method
-the route exports, and no CORS headers.
+the route exports, and no CORS headers. A path with a malformed percent
+escape, such as `/api/v1/%zz`, never reaches `forward` either: Next answers it
+with a bare `500` in plain text, outside the envelope and without the headers
+set in `web/next.config.ts`.
 
 Four request headers go upstream: `Authorization`, `Content-Type`, `Accept` and
 `X-Request-Id`. Cookies, `Origin`, `Host` and forwarding headers do not. On the
@@ -135,10 +138,11 @@ nothing, and the end-to-end tests check it.
 A browser opens at most six HTTP/1.1 connections to one origin and queues the
 rest, so ten `fetch()` calls from a tab are not ten concurrent requests.
 `web/lib/race.ts#runRace` sends the ten from the console's server in the same
-tick, with byte-identical bodies and one idempotency key, and returns every
-answer. Act 4 of `scripts/demo.sh` runs the same experiment with
-`xargs -P 10 curl`; the console shows it on one screen: ten `201`s with the
-same booking id, and the flight's seat count down by the seats of one booking.
+tick, each with the body the page sent, byte for byte, and so one idempotency
+key, and returns every answer. Act 4 of `scripts/demo.sh` runs the same
+experiment with `xargs -P 10 curl`; the console shows it on one screen: ten
+`201`s with the same booking id, and the flight's seat count down by the seats
+of one booking.
 
 ## Design
 
