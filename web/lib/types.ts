@@ -74,7 +74,11 @@ export interface Metric {
   name: string;
   description?: string;
   baseUnit?: string;
-  measurements: { statistic: string; value: number }[];
+  /**
+   * The actuator writes a double that is not a number as a string: an outbox
+   * gauge with no fresh count arrives as "NaN" (doc/OPERATIONS.md#metrics).
+   */
+  measurements: { statistic: string; value: number | string }[];
   availableTags: { tag: string; values: string[] }[];
 }
 

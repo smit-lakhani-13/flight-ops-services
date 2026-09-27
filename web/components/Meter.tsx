@@ -31,7 +31,7 @@ export function Meter({
       const only = tags.length === 1 ? tags[0] : undefined;
       if (!only || only.values.length > 4) return { whole, split: null };
       const counts = await Promise.all(
-        [...only.values].sort().map(async (value): Promise<[string, number | null]> => {
+        [...only.values].sort().map(async (value): Promise<[string, number | string | null]> => {
           const part = await api.get<Metric>(`actuator/metrics/${name}`, { tag: `${only.tag}:${value}` });
           const first = part.data?.measurements[0];
           return [value, first ? first.value : null];
@@ -73,8 +73,16 @@ export function Meter({
               <Stat
                 key={m.statistic}
                 label={m.statistic.replace("_", " ")}
-                value={formatValue(m.value)}
-                note={m.statistic.includes("TIME") || m.statistic === "MAX" ? metric.baseUnit : undefined}
+                value={
+                  isNumber(m.value) ? formatValue(m.value) : <span className="text-amber-700 dark:text-amber-400">{formatValue(m.value)}</span>
+                }
+                note={
+                  !isNumber(m.value)
+                    ? "no fresh count"
+                    : m.statistic.includes("TIME") || m.statistic === "MAX"
+                      ? metric.baseUnit
+                      : undefined
+                }
                 testId={`meter-${name}-${m.statistic}`}
               />
             ))}
@@ -109,7 +117,9 @@ export function Meter({
           )}
         </>
       ) : result.status === 404 ? (
-        <p className={`text-sm ${MUTED}`}>Not registered yet: the meter appears with its first event.</p>
+        // The service registers every meter at startup, so a 404 means the
+        // console asks for a name the service does not have.
+        <p className="text-sm text-rose-700 dark:text-rose-400">The service has no meter by this name.</p>
       ) : (
         <ErrorBanner error={result.error} announce={false} />
       )}
@@ -117,6 +127,12 @@ export function Meter({
   );
 }
 
-function formatValue(value: number): string {
+function isNumber(value: number | string): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+/** A count as it is, a fraction to three places, and "NaN" or any other non-number as sent. */
+function formatValue(value: number | string): string {
+  if (!isNumber(value)) return String(value);
   return Number.isInteger(value) ? String(value) : value.toFixed(3);
 }

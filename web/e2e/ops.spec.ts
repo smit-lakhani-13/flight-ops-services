@@ -11,11 +11,26 @@ test("health, liveness and readiness need no credentials", async ({ page }) => {
   await expect(page.getByRole("form", { name: "Sign in" })).toBeVisible();
 });
 
-test("the ops account sees the components, and the meter counts a booking and its replay", async ({ page, request }) => {
+test("the ops account sees the components and all seven meters, and one counts a booking and its replay", async ({ page, request }) => {
   await signIn(page, OPS_ACCOUNT);
   await go(page, "Ops");
   const signedIn = page.getByTestId("health-actuator-health-signed-in");
   await expect(signedIn.getByTestId("health-components")).toContainText("db");
+
+  // The service registers every meter at startup, so each card shows a
+  // number. A name the console and the service disagree on would show none.
+  const meters = [
+    ["bookings.booked", "COUNT"],
+    ["bookings.cancelled", "COUNT"],
+    ["bookings.lock_timeout", "COUNT"],
+    ["outbox.pending", "VALUE"],
+    ["outbox.dead", "VALUE"],
+    ["outbox.publish", "COUNT"],
+    ["outbox.pruned", "COUNT"],
+  ];
+  for (const [name, statistic] of meters) {
+    await expect(page.getByTestId(`meter-${name}-${statistic}`)).toHaveText(/^\d+$/);
+  }
 
   // Both outcomes are registered at zero from startup, so their elements show
   // either way; the counts are what prove the per-tag reads work. The specs
