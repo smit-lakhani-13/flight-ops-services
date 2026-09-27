@@ -28,6 +28,7 @@ import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.util.StringUtils;
 
 import java.util.List;
+import java.util.Set;
 
 /**
  * Who may call what. The callers are other services with no browser, session or cookie,
@@ -67,6 +68,14 @@ public class SecurityConfig {
     private static final String[] DOC_PATHS = {
             "/v3/api-docs/**", "/v3/api-docs.yaml", "/swagger-ui.html", "/swagger-ui/**"
     };
+
+    /**
+     * The ids of the adaptive hashing encoders, the only ones {@code prod} accepts. Every
+     * other id {@code PasswordEncoderFactories} registers is deprecated.
+     */
+    private static final Set<String> HASHING_IDS = Set.of(
+            "bcrypt", "pbkdf2", "pbkdf2@SpringSecurity_v5_8", "scrypt", "scrypt@SpringSecurity_v5_8",
+            "argon2", "argon2@SpringSecurity_v5_8");
 
     @Bean
     SecurityFilterChain apiSecurityFilterChain(HttpSecurity http,
@@ -196,12 +205,13 @@ public class SecurityConfig {
     @Bean
     UserDetailsService userDetailsService(ApiSecurityProperties properties, PasswordEncoder encoder,
                                           Environment environment) {
+        assertVerifiable(encoder, "app.security.api-password", properties.apiPassword());
+        assertVerifiable(encoder, "app.security.ops-password", properties.opsPassword());
+        // After the self-check, so a misspelt id such as {BCRYPT} gets the encoder's reason.
         if (environment.acceptsProfiles(Profiles.of("prod"))) {
             refuseUnhashed("app.security.api-password", "API_PASSWORD", properties.apiPassword());
             refuseUnhashed("app.security.ops-password", "OPS_PASSWORD", properties.opsPassword());
         }
-        assertVerifiable(encoder, "app.security.api-password", properties.apiPassword());
-        assertVerifiable(encoder, "app.security.ops-password", properties.opsPassword());
         return new InMemoryUserDetailsManager(
                 User.withUsername("api")
                         .password(properties.apiPassword())
@@ -216,18 +226,22 @@ public class SecurityConfig {
     }
 
     /**
-     * Under {@code prod}, refuses {@code {noop}}: the stored value is then the password
-     * itself, so anyone who can read the Secret or the pod's environment can log in. The
-     * default profile keeps its {@code {noop}} values for localhost. A case-sensitive
-     * match is enough, because {@code {NOOP}} is an unknown id that
-     * {@link #assertVerifiable} refuses. Like the prefix check in
-     * {@link ApiSecurityProperties}, it names the property and never the value.
+     * Under {@code prod}, accepts only an id in {@link #HASHING_IDS}, read as the
+     * {@code DelegatingPasswordEncoder} reads it, from braces at index 0. Two of the ids
+     * it refuses keep the password as it was typed: {@code {noop}} stores it, and
+     * {@code {ldap}} compares a value with no {@code {SHA}} or {@code {SSHA}} prefix as
+     * plain text. Anyone who can read the Secret or the pod's environment could then log
+     * in. The default profile keeps its {@code {noop}} values for localhost. Like the
+     * prefix check in {@link ApiSecurityProperties}, it names the property and never the
+     * value.
      */
     private static void refuseUnhashed(String property, String variable, String encoded) {
-        if (encoded.startsWith("{noop}")) {
+        int end = encoded.indexOf('}');
+        String id = encoded.startsWith("{") && end > 0 ? encoded.substring(1, end) : "";
+        if (!HASHING_IDS.contains(id)) {
             throw new IllegalStateException(property + " (" + variable + ") must be a hashed password "
-                    + "under the prod profile, for example {bcrypt}$2y$10$...; {noop} is refused, "
-                    + "and the value is not shown");
+                    + "under the prod profile, for example {bcrypt}$2y$10$...; only a bcrypt, pbkdf2, "
+                    + "scrypt or argon2 id is accepted, and the value is not shown");
         }
     }
 

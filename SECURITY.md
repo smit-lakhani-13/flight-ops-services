@@ -176,10 +176,7 @@ reverse, and the ADR is where to start.
 
 - **Three startup checks.** `ApiSecurityProperties` rejects a missing or
   unprefixed value when the properties are bound, naming the property and the
-  variable: `app.security.api-password (API_PASSWORD)`. Under `prod`,
-  `config/SecurityConfig.java#refuseUnhashed` rejects a `{noop}` value, so a
-  deployment cannot run on a password kept in plain text in its Secret. The
-  default profile keeps its `{noop}` passwords. `SecurityConfig` then
+  variable: `app.security.api-password (API_PASSWORD)`. `SecurityConfig` then
   asks the encoder to verify each value once. An id the encoder does not know,
   such as `{BCRYPT}` or a misspelt `{bcrpyt}`, stops startup there. The log
   names the property, then gives the encoder's reason:
@@ -187,7 +184,15 @@ reverse, and the ADR is where to start.
   An argon2 or scrypt hash stops it the same way, on a `NoClassDefFoundError`.
   Without the checks, the pod would report itself healthy
   and answer every login as that user with a 500. The id is case-sensitive, so
-  write `{bcrypt}`. `PasswordVerifiabilityTest` covers the self-check and the
+  write `{bcrypt}`. Last, under `prod`,
+  `config/SecurityConfig.java#refuseUnhashed` accepts only the adaptive hashes:
+  `bcrypt`, `pbkdf2`, `scrypt` and `argon2`, the last three with or without
+  `@SpringSecurity_v5_8`. It refuses every other id, so a deployment cannot run
+  on a password kept in plain text in its Secret. `{noop}` stores the password
+  itself, `{ldap}` compares a value with no `{SHA}` or `{SSHA}` prefix as plain
+  text, and `MD4`, `MD5`, `SHA-1`, `SHA-256` and `sha256` are deprecated
+  digests. The default profile keeps its `{noop}` passwords.
+  `PasswordVerifiabilityTest` covers the self-check and the
   `prod` refusal. The self-check's limit is listed under
   [Known limitations](#known-limitations).
 

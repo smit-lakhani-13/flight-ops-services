@@ -205,11 +205,15 @@ still blank.
   beside `jwk-set-uri`, naming the property and the reason. The startup log
   names what the decoder checks. `SecurityConfigJwtTest` covers each case.
 
-- **No `{noop}` passwords under `prod`.** A `{noop}` value is the password
-  itself, so anyone who could read the Secret or the pod's environment could
-  log in with it. `config/SecurityConfig.java#refuseUnhashed` now stops a
-  `prod` start on one, naming `app.security.api-password (API_PASSWORD)` or
-  `app.security.ops-password (OPS_PASSWORD)` and never the value. The default
+- **Only hashed passwords under `prod`.** A `{noop}` value is the password
+  itself, and `{ldap}` compares a value with no `{SHA}` or `{SSHA}` prefix as
+  plain text, so anyone who could read the Secret or the pod's environment
+  could log in with it. `config/SecurityConfig.java#refuseUnhashed` now stops a
+  `prod` start on any id but `bcrypt`, `pbkdf2`, `scrypt` and `argon2`, the
+  last three with or without `@SpringSecurity_v5_8`, naming
+  `app.security.api-password (API_PASSWORD)` or
+  `app.security.ops-password (OPS_PASSWORD)` and never the value. It runs after
+  the self-check, so a misspelt id still gets the encoder's reason. The default
   profile keeps `{noop}dev-secret` and `{noop}dev-ops`.
 
 - **Local compose listens on loopback only.** `compose.yaml` published

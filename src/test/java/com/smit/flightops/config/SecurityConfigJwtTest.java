@@ -6,12 +6,15 @@ import com.smit.flightops.security.JsonAuthenticationEntryPoint;
 import jakarta.servlet.Filter;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.boot.autoconfigure.AutoConfigurations;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.security.oauth2.server.resource.autoconfigure.OAuth2ResourceServerAutoConfiguration;
 import org.springframework.boot.test.context.assertj.AssertableWebApplicationContext;
 import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.server.resource.web.authentication.BearerTokenAuthenticationFilter;
 import org.springframework.security.web.SecurityFilterChain;
@@ -38,6 +41,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * are never contacted. {@code BearerTokenChallengeTest} covers the other side: a decoder
  * bean defined in code, with none of these properties, still starts.
  */
+@ExtendWith(OutputCaptureExtension.class)
 class SecurityConfigJwtTest {
 
     private static final String JWT = "spring.security.oauth2.resourceserver.jwt";
@@ -86,6 +90,19 @@ class SecurityConfigJwtTest {
                 });
     }
 
+    /** A pinned key proves who signed a token, not which API it was for. */
+    @Test
+    @DisplayName("a public-key-location without audiences stops startup and names the audiences property")
+    void aPublicKeyLocationWithoutAudiencesStopsStartup() throws Exception {
+        runner.withPropertyValues(JWT + ".public-key-location=" + writePublicKey().toUri())
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(context.getStartupFailure()).rootCause()
+                            .isInstanceOf(IllegalStateException.class)
+                            .hasMessageStartingWith(JWT + ".audiences must be set");
+                });
+    }
+
     /** Boot adds no iss validator to a jwk-set-uri decoder unless issuer-uri is set too. */
     @Test
     @DisplayName("a jwk-set-uri with audiences but no issuer-uri stops startup and names issuer-uri")
@@ -99,15 +116,20 @@ class SecurityConfigJwtTest {
                 });
     }
 
-    /** The comma-separated form is how an environment variable carries a list. */
+    /**
+     * The comma-separated form is how an environment variable carries a list. The startup
+     * log names both audiences and the issuer the decoder checks.
+     */
     @Test
     @DisplayName("a jwk-set-uri with an issuer and comma-separated audiences starts with bearer tokens on")
-    void aJwkSetUriWithAnIssuerAndAudiencesStarts() {
+    void aJwkSetUriWithAnIssuerAndAudiencesStarts(CapturedOutput output) {
         runner.withPropertyValues(JWK_SET_URI, ISSUER_URI, JWT + ".audiences=flight-ops-service,flight-ops-admin")
                 .run(context -> {
                     assertThat(context).hasNotFailed().hasSingleBean(JwtDecoder.class);
                     assertThat(filters(context)).anyMatch(BearerTokenAuthenticationFilter.class::isInstance);
                 });
+        assertThat(output).contains("bearer tokens will be validated "
+                + "(aud in [flight-ops-service, flight-ops-admin], iss https://idp.example.invalid/)");
     }
 
     /**

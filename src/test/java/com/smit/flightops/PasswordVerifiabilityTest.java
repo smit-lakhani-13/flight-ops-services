@@ -7,6 +7,8 @@ import com.smit.flightops.security.JsonAccessDeniedHandler;
 import com.smit.flightops.security.JsonAuthenticationEntryPoint;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.test.context.runner.WebApplicationContextRunner;
 import org.springframework.security.core.userdetails.UserDetailsService;
@@ -22,9 +24,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * The startup self-check in {@link SecurityConfig}: a password the delegating encoder
  * cannot verify at all must stop the context, naming the property, instead of starting a
- * pod that answers every authenticated request with a 500. Under {@code prod}, an
- * unhashed {@code {noop}} value must stop it too. It runs {@code SecurityConfig} alone,
- * with the beans its filter chain needs, so each case is a fresh context.
+ * pod that answers every authenticated request with a 500. Under {@code prod}, an id
+ * that is not an adaptive hash, such as {@code {noop}} or {@code {ldap}}, must stop it
+ * too. It runs {@code SecurityConfig} alone, with the beans its filter chain needs, so
+ * each case is a fresh context.
  */
 class PasswordVerifiabilityTest {
 
@@ -35,6 +38,9 @@ class PasswordVerifiabilityTest {
      */
     private static final String PBKDF2 = "{pbkdf2@SpringSecurity_v5_8}"
             + "121d6e31e4311b8f86148a1f52ad230ba826a490b92480b597f5143ed5b3065f16244b86fea0666610927ed85357315d";
+
+    /** A bcrypt hash, the form the deployment's Secret holds. */
+    private static final String BCRYPT = "{bcrypt}$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy";
 
     @EnableConfigurationProperties(ApiSecurityProperties.class)
     static class Properties {
@@ -94,29 +100,51 @@ class PasswordVerifiabilityTest {
     /**
      * A {@code {noop}} value is the password itself, so under {@code prod} a leaked Secret
      * or an environment dump would be a working login. The value must not reach the log.
+     * Each account in turn, with the other one hashed.
      */
-    @Test
+    @ParameterizedTest
+    @CsvSource({"app.security.api-password, API_PASSWORD, app.security.ops-password",
+            "app.security.ops-password, OPS_PASSWORD, app.security.api-password"})
     @DisplayName("under the prod profile a {noop} password stops startup, naming the property and not the value")
-    void theProdProfileRefusesAnUnhashedPassword() {
+    void theProdProfileRefusesAnUnhashedPassword(String property, String variable, String other) {
         runner.withPropertyValues("spring.profiles.active=prod",
-                        "app.security.api-password=" + PBKDF2,
-                        "app.security.ops-password={noop}leaked-ops-value")
+                        other + "=" + PBKDF2,
+                        property + "={noop}leaked-value")
                 .run(context -> {
                     assertThat(context).hasFailed();
                     assertThat(stackTrace(context.getStartupFailure()))
-                            .contains("app.security.ops-password (OPS_PASSWORD) must be a hashed password "
+                            .contains(property + " (" + variable + ") must be a hashed password "
                                     + "under the prod profile")
-                            .doesNotContain("leaked-ops-value");
+                            .doesNotContain("leaked-value");
                 });
     }
 
-    /** The default profile's {@code {noop}} values are the other tests' baseline; prod takes hashes. */
+    /**
+     * {@code {ldap}} compares a value with no {@code {SHA}} or {@code {SSHA}} prefix as plain
+     * text, so this value passes the self-check and would log in with "plain-text".
+     */
+    @Test
+    @DisplayName("under the prod profile an {ldap} value kept in plain text stops startup")
+    void theProdProfileRefusesAnLdapValueInPlainText() {
+        runner.withPropertyValues("spring.profiles.active=prod",
+                        "app.security.api-password={ldap}plain-text",
+                        "app.security.ops-password=" + PBKDF2)
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(stackTrace(context.getStartupFailure()))
+                            .contains("app.security.api-password (API_PASSWORD) must be a hashed password "
+                                    + "under the prod profile")
+                            .doesNotContain("plain-text");
+                });
+    }
+
+    /** The default profile's {@code {noop}} values are the other tests' baseline; prod takes bcrypt and pbkdf2. */
     @Test
     @DisplayName("under the prod profile hashed passwords start the context")
     void theProdProfileAcceptsHashedPasswords() {
         runner.withPropertyValues("spring.profiles.active=prod",
                         "app.security.api-password=" + PBKDF2,
-                        "app.security.ops-password=" + PBKDF2)
+                        "app.security.ops-password=" + BCRYPT)
                 .run(context -> assertThat(context).hasNotFailed());
     }
 
