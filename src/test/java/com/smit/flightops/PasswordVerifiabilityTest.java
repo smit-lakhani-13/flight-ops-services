@@ -138,6 +138,24 @@ class PasswordVerifiabilityTest {
                 });
     }
 
+    /**
+     * The adaptive-hash check runs after the self-check, so a misspelt id gets the
+     * encoder's reason under {@code prod} too, not a hint to hash a value that is hashed.
+     */
+    @Test
+    @DisplayName("under the prod profile a misspelt id still gets the encoder's reason")
+    void theProdProfileReportsAMisspeltIdThroughTheSelfCheck() {
+        runner.withPropertyValues("spring.profiles.active=prod",
+                        "app.security.api-password={BCRYPT}x",
+                        "app.security.ops-password=" + PBKDF2)
+                .run(context -> {
+                    assertThat(context).hasFailed();
+                    assertThat(stackTrace(context.getStartupFailure()))
+                            .contains("app.security.api-password cannot be verified")
+                            .doesNotContain("must be a hashed password");
+                });
+    }
+
     /** The default profile's {@code {noop}} values are the other tests' baseline; prod takes bcrypt and pbkdf2. */
     @Test
     @DisplayName("under the prod profile hashed passwords start the context")

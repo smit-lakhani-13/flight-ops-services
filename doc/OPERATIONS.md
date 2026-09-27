@@ -32,7 +32,7 @@ JVM.
 | `DB_URL` | `jdbc:postgresql://localhost:5432/flightops` in `postgres`. **None in `prod`** | JDBC URL. Unset in `prod`, startup fails with `'url' must start with "jdbc"`. The default profile uses H2 and does not connect to it. Set while the datasource is still in-memory H2, under no profile or one no document matches, it stops startup. See [Profiles](#profiles) |
 | `DB_USER` | `postgres` in `postgres`. None in `prod` | database user |
 | `DB_PASSWORD` | *(none)* | **Required** in `postgres` and `prod`. Unset, startup fails at Flyway's first connection with `password authentication failed`, which does not name the variable. See the `postgres` profile in `application.yml` |
-| `API_PASSWORD` | `{noop}dev-secret`. None in `prod` | the `api` account. **Must carry an `{id}` prefix** the encoder knows, such as `{bcrypt}$2y$10$…`. Unprefixed, or unset in `prod`, startup fails naming `app.security.api-password (API_PASSWORD)`. An unknown id stops startup too, and so does `{noop}` in `prod`. See [the playbook](#pods-crash-loop-at-startup-and-the-log-names-appsecurityapi-password) |
+| `API_PASSWORD` | `{noop}dev-secret`. None in `prod` | the `api` account. **Must carry an `{id}` prefix** the encoder knows, such as `{bcrypt}$2y$10$…`. Unprefixed, or unset in `prod`, startup fails naming `app.security.api-password (API_PASSWORD)`. An unknown id stops startup too, and so, in `prod`, does any id but `bcrypt`, `pbkdf2`, `scrypt` and `argon2`, such as `{noop}` or `{ldap}`. See [the playbook](#pods-crash-loop-at-startup-and-the-log-names-appsecurityapi-password) |
 | `OPS_PASSWORD` | `{noop}dev-ops`. None in `prod` | the `ops` account. Same prefix rule, named `app.security.ops-password (OPS_PASSWORD)` |
 | `APP_EVENTS_PUBLISHER` | `log`; `sqs` in `prod` | `sqs` or `log`. Any other value stops startup with `app.events.publisher must be one of [log, sqs], not "<value>"`. Read in every profile: the base document is `${APP_EVENTS_PUBLISHER:log}` and `prod` is `${APP_EVENTS_PUBLISHER:sqs}`. `log` writes and drains the outbox without sending anything. Choosing `sqs` without `SQS_QUEUE_URL` stops startup with `app.events.publisher=sqs requires app.aws.sqs-queue-url (env SQS_QUEUE_URL)`. A laptop publishes only when someone sets both. The startup log names the choice: `Outbox publisher started with event transport 'log'` |
 | `SQS_QUEUE_URL` | *(empty)* | required when the publisher is `sqs` |
@@ -359,8 +359,10 @@ Caused by: java.lang.IllegalArgumentException: There is no password encoder mapp
 The first of the two names the property, so read it to tell `api` from `ops`.
 The last is the encoder's own exception, and it names only the id.
 
-The value is `{noop}` and the profile is `prod`. `SecurityConfig` refuses an
-unhashed password there. The last `Caused by` line names
+The profile is `prod` and the id names no adaptive hash. Under `prod`,
+`config/SecurityConfig.java#refuseUnhashed` accepts only `bcrypt`, `pbkdf2`,
+`scrypt` and `argon2`, so `{noop}`, `{ldap}`, `{MD5}`, `{SHA-256}` and the
+other deprecated ids stop startup. The last `Caused by` line names
 `app.security.api-password (API_PASSWORD)` and says it
 `must be a hashed password under the prod profile`. Put a `{bcrypt}` hash in
 the Secret; every profile but `prod` takes `{noop}`.

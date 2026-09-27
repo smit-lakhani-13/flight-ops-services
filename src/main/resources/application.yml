@@ -274,7 +274,8 @@ app:
   security:
     # No defaults. A missing value stops startup naming the property, because the
     # literal ${API_PASSWORD} fails the {id} prefix check in ApiSecurityProperties.
-    # A {noop} value stops it too: SecurityConfig refuses unhashed passwords here.
+    # So does any id but bcrypt, pbkdf2, scrypt or argon2, such as {noop} or
+    # {ldap}: SecurityConfig refuses it here.
     api-password: ${API_PASSWORD}
     ops-password: ${OPS_PASSWORD}
   events:

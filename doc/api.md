@@ -43,14 +43,16 @@ a bad value and a login:
   message names `app.security.api-password (API_PASSWORD)`.
 - `SecurityConfig` then asks the encoder to verify each value once
   (`config/SecurityConfig.java#assertVerifiable`). An id the encoder does not
-  know, such as `{foo}`, also stops startup, and so does `{argon2}`, because
-  the build has no BouncyCastle.
+  know, such as `{foo}`, also stops startup, and so do `{argon2}` and
+  `{scrypt}`, because the build has no BouncyCastle.
 - Last, under `prod`, `SecurityConfig` accepts only an adaptive hash
   (`config/SecurityConfig.java#refuseUnhashed`): `bcrypt`, `pbkdf2`, `scrypt`
   and `argon2`, the last three with or without `@SpringSecurity_v5_8`. It
   refuses every other id, so a deployment's passwords are hashes. That
   includes `{noop}`, and `{ldap}`, which compares a value with no `{SHA}` or
-  `{SSHA}` prefix as plain text. The default profile keeps `{noop}dev-secret`.
+  `{SSHA}` prefix as plain text. Without BouncyCastle, only the bcrypt and
+  pbkdf2 ids get past the self-check. The default profile keeps
+  `{noop}dev-secret`.
 
 No check prints the value. Without them, `@ConfigurationProperties` would
 bind the literal string `${API_PASSWORD}` as the password, and the service
