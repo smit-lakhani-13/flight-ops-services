@@ -18,7 +18,9 @@ import { Button, EmptyState, HttpStatus, MUTED, NONE, STATUS_EDGE, statusClass }
 // than widening every row. On a short screen, or at a high zoom, the whole
 // drawer scrolls as one, and the scroll padding keeps a focused row clear of
 // the sticky headings. A copied id is said once, in the drawer's one status
-// line, while its button keeps its name.
+// line, while its button keeps its name and its title: a title that changed
+// would change the focused button's description, which a screen reader can
+// say as well.
 const WIDE = "hidden sm:table-cell";
 
 export function RequestLog({ onClose }: { onClose: (returnFocus: boolean) => void }) {
@@ -170,7 +172,7 @@ function CopyButton({ value, copied, onCopied }: { value: string; copied: boolea
       tone="ghost"
       iconOnly
       aria-label={`Copy ${value}`}
-      title={copied ? "Copied" : "Copy"}
+      title="Copy"
       icon={copied ? <CheckIcon className="size-4 text-emerald-600 dark:text-emerald-400" /> : <CopyIcon />}
       onClick={copy}
     />
