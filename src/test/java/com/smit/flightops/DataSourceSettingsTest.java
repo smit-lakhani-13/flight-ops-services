@@ -30,13 +30,13 @@ class DataSourceSettingsTest {
 
     /**
      * A 5 s wait for a connection, so a saturated pool answers 503 DATABASE_UNAVAILABLE
-     * before a caller gives up, and READ COMMITTED, which the flight lock's re-read of
-     * the idempotency key needs. The URL and the lock timeout prove the profile's own
-     * document was read, not only the base one.
+     * before a caller gives up, READ COMMITTED, which the flight lock's re-read of the
+     * idempotency key needs, and a 30 s limit on a statement already sent. The URL and
+     * the lock timeout prove the profile's own document was read, not only the base one.
      */
     @ParameterizedTest
     @ValueSource(strings = {"postgres", "prod"})
-    @DisplayName("each PostgreSQL profile sets a 5 s connection wait and READ COMMITTED on the pool")
+    @DisplayName("each PostgreSQL profile sets a 5 s connection wait, READ COMMITTED and a 30 s socket timeout")
     void postgresProfilesSetTheWaitAndTheIsolation(String profile) {
         runner.withPropertyValues("spring.profiles.active=" + profile).run(context -> {
             HikariDataSource pool = context.getBean(HikariDataSource.class);
@@ -45,6 +45,7 @@ class DataSourceSettingsTest {
             assertThat(pool.getConnectionInitSql()).isEqualTo("SET lock_timeout = '3s'");
             assertThat(pool.getConnectionTimeout()).isEqualTo(5_000L);
             assertThat(pool.getTransactionIsolation()).isEqualTo("TRANSACTION_READ_COMMITTED");
+            assertThat(pool.getDataSourceProperties()).containsEntry("socketTimeout", "30");
         });
     }
 
@@ -52,7 +53,8 @@ class DataSourceSettingsTest {
      * The base document keeps Hikari's 30 s wait, so the H2 concurrency tests, which share
      * its pool of ten, are unaffected by the PostgreSQL profiles' 5 s. READ COMMITTED comes
      * from the same base document the PostgreSQL profiles inherit it from. The H2 URL and
-     * H2's lock timeout prove no profile document was read.
+     * H2's lock timeout prove no profile document was read. No socket timeout, which the
+     * H2 driver would refuse.
      */
     @Test
     @DisplayName("the default H2 profile keeps the 30 s connection wait and sets READ COMMITTED")
@@ -64,6 +66,7 @@ class DataSourceSettingsTest {
             assertThat(pool.getConnectionInitSql()).isEqualTo("SET LOCK_TIMEOUT 3000");
             assertThat(pool.getConnectionTimeout()).isEqualTo(30_000L);
             assertThat(pool.getTransactionIsolation()).isEqualTo("TRANSACTION_READ_COMMITTED");
+            assertThat(pool.getDataSourceProperties()).doesNotContainKey("socketTimeout");
         });
     }
 }

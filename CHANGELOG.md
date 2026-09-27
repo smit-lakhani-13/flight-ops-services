@@ -406,6 +406,26 @@ says not yet.
   callers usually set. The default H2 profile keeps 30 s for its concurrency
   tests. `DataSourceSettingsTest` checks the value each profile resolves to.
 
+- **A statement the database stopped answering had no time limit.** The
+  `postgres` and `prod` profiles bounded a lock wait and the wait for a
+  connection, but not a statement already sent. A database host that failed,
+  or a network path that dropped packets mid-statement, held the connection
+  and its thread until the kernel gave up on TCP, about 15 minutes, and the
+  outbox drain stopped for as long. Both profiles now give pgJDBC a 30 s
+  `socketTimeout`, after which the driver closes the connection and the
+  caller gets `503 DATABASE_UNAVAILABLE`. Flyway shares the pool, so a
+  migration statement that needs longer takes its own connection through
+  `spring.flyway.url`. `DataSourceSettingsTest` checks that both profiles set
+  it and the H2 default does not, and alert 6 in `doc/OPERATIONS.md` says so.
+
+- **Tomcat could close a connection the load balancer was about to reuse.**
+  Tomcat kept an idle connection for its default 60 s, the same as the ALB's
+  default idle timeout, which the Ingress leaves as it is. A request sent as
+  both ran out could meet a closing socket and come back as a 502 with no line
+  in the service's log. `server.tomcat.keep-alive-timeout` is now 75 s, so the
+  load balancer closes an idle connection first. `TomcatKeepAliveTest` reads
+  the value from the running connector.
+
 - **The booking path's isolation level was left to the server.**
   `BookingWriter#insertNewBooking` re-reads the idempotency key once it holds
   the flight row lock, and that read sees a competing booking only under READ
