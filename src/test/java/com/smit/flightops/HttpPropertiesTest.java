@@ -13,8 +13,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * The body limit's binding. A limit of zero would refuse every write while every read
- * and the health checks stayed green, so it stops startup instead.
+ * The body limit's binding. A limit of zero would refuse every non-empty body, so both
+ * POSTs and the status PATCH, while every read, the DELETEs and the health checks
+ * stayed green. It stops startup instead.
  */
 class HttpPropertiesTest {
 

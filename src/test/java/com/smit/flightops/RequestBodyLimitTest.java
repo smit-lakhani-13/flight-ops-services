@@ -26,8 +26,9 @@ import static org.assertj.core.api.Assertions.assertThat;
  * {@code Content-Length} that the counting stream exists for. These tests send it
  * over a socket instead.
  *
- * <p>Each body is one byte either side of the default limit, with the padding inside
- * the JSON object, so a reader has to reach the last byte to finish the object.
+ * <p>The padded booking bodies are exactly the limit or one byte over it, with the
+ * padding inside the JSON object, so a reader has to reach the last byte to finish the
+ * object. The form body is a little over the limit.
  * {@code BodyPublishers.ofInputStream} has no length, so the client sends such a body
  * with {@code Transfer-Encoding: chunked}.
  *
@@ -94,6 +95,16 @@ class RequestBodyLimitTest {
     @DisplayName("a JSON body declaring one byte over the limit is 413 PAYLOAD_TOO_LARGE, in JSON, with X-Request-Id")
     void aDeclaredLengthOverTheLimitIsRefused() throws Exception {
         assertPayloadTooLarge(book(declared(booking("limit-declared-over", LIMIT + 1))));
+    }
+
+    @Test
+    @DisplayName("a declared length over the limit is 413 before the credentials are checked")
+    void aDeclaredLengthOverTheLimitIsRefusedBeforeTheCredentials() throws Exception {
+        assertPayloadTooLarge(client.send(HttpRequest.newBuilder(URI.create("http://localhost:" + port + "/api/v1/bookings"))
+                        .header("Content-Type", "application/json")
+                        .POST(declared(booking("limit-declared-anonymous", LIMIT + 1)))
+                        .build(),
+                BodyHandlers.ofString()));
     }
 
     /**

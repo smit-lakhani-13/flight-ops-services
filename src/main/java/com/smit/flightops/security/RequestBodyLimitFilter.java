@@ -17,10 +17,10 @@ import java.io.IOException;
 
 /**
  * Refuses a request body over {@code app.http.max-body-bytes} with 413
- * {@code PAYLOAD_TOO_LARGE} before anything parses it. Jackson builds a whole string
- * value before Bean Validation checks its {@code @Size}, so without a cap one field of
- * millions of characters holds tens of MB of heap, and a few such requests at once
- * exhaust it.
+ * {@code PAYLOAD_TOO_LARGE}, and nothing parses more than the limit. Jackson builds a
+ * whole string value before Bean Validation checks its {@code @Size}, so without a cap
+ * one field of millions of characters holds tens of MB of heap, and a few such requests
+ * at once exhaust it.
  *
  * <p>A declared {@code Content-Length} over the limit is answered here, and the body is
  * never read. The container never reads past a declared length, so a body that declares

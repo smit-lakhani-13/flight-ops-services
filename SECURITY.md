@@ -263,10 +263,12 @@ work is written down. What is missing is a domain.
   instant are each `400 MALFORMED_REQUEST`. None of them is converted into a
   value the client did not write.
 
-- A request body over 16 KiB gets `413 PAYLOAD_TOO_LARGE` before anything
-  parses it (`RequestBodyLimitFilter`). Jackson builds a whole string field
-  before Bean Validation checks its `@Size`, so without the cap one field of
-  millions of characters would hold tens of MB of heap, and a few such
+- A request body over the limit (16 KiB by default) gets
+  `413 PAYLOAD_TOO_LARGE`, and nothing parses more than the limit: a declared
+  `Content-Length` over it is refused unread, and a chunked body is refused at
+  the read that passes it (`RequestBodyLimitFilter`). Jackson builds a whole
+  string field before Bean Validation checks its `@Size`, so without the cap one
+  field of millions of characters would hold tens of MB of heap, and a few such
   requests at once could exhaust the heap and end the JVM through
   `-XX:+ExitOnOutOfMemoryError`. The filter runs ahead of Spring Security,
   because Spring's `FormContentFilter` reads a form-encoded `PUT`, `PATCH` or
