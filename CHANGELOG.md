@@ -55,6 +55,20 @@ still blank.
 
 ### Fixed
 
+- **A request body had no size limit.** Jackson builds a whole string field
+  before Bean Validation checks its `@Size`, so a `passengerName` of millions
+  of characters held tens of MB of heap, and a few such requests at once could
+  exhaust the heap and end the JVM. Spring's `FormContentFilter` also read a
+  form-encoded `PUT`, `PATCH` or `DELETE` body in full before the credentials
+  were checked. A body over `app.http.max-body-bytes` (`HTTP_MAX_BODY_BYTES`),
+  16384 bytes by default, now gets `413 PAYLOAD_TOO_LARGE` before anything
+  parses more than the limit. `RequestBodyLimitFilter` refuses a declared
+  `Content-Length` over the limit unread, ahead of Spring Security, and counts
+  a chunked body as it is read. `GlobalExceptionHandler#handleMalformed`
+  answers a chunked JSON body over the limit with the same 413, not
+  `400 MALFORMED_REQUEST`. The OpenAPI document declares the 413 on the three
+  writes, and `doc/api.md` lists the code.
+
 - **A booking on a flight that had flown could still be cancelled.**
   `DELETE /api/v1/bookings/{bookingId}` never read the flight's status, so on
   a `DEPARTED` or `ARRIVED` flight it answered 200, marked the booking
