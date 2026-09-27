@@ -133,18 +133,36 @@ class SecurityConfigJwtTest {
     }
 
     /**
+     * The setup application.yml and SECURITY.md give: issuer-uri and audiences, no key
+     * set. Boot's decoder reads the issuer's discovery document on the first token.
+     */
+    @Test
+    @DisplayName("an issuer-uri with audiences starts with bearer tokens on, the setup the docs give")
+    void anIssuerUriWithAudiencesStarts(CapturedOutput output) {
+        runner.withPropertyValues(ISSUER_URI, JWT + ".audiences=flight-ops-service")
+                .run(context -> {
+                    assertThat(context).hasNotFailed().hasSingleBean(JwtDecoder.class);
+                    assertThat(filters(context)).anyMatch(BearerTokenAuthenticationFilter.class::isInstance);
+                });
+        assertThat(output).contains("bearer tokens will be validated "
+                + "(aud in [flight-ops-service], iss https://idp.example.invalid/)");
+    }
+
+    /**
      * A key the operator pinned is not a shared key set, so the issuer is not forced here.
      * Adding issuer-uri would also switch Boot to its discovery decoder.
      */
     @Test
     @DisplayName("a public-key-location with audiences starts without an issuer-uri")
-    void aPublicKeyWithAudiencesStartsWithoutAnIssuer() throws Exception {
-        runner.withPropertyValues(JWT + ".public-key-location=" + writePublicKey().toUri(),
+    void aPublicKeyWithAudiencesStartsWithoutAnIssuer(CapturedOutput output) throws Exception {
+        Path key = writePublicKey();
+        runner.withPropertyValues(JWT + ".public-key-location=" + key.toUri(),
                         JWT + ".audiences=flight-ops-service")
                 .run(context -> {
                     assertThat(context).hasNotFailed().hasSingleBean(JwtDecoder.class);
                     assertThat(filters(context)).anyMatch(BearerTokenAuthenticationFilter.class::isInstance);
                 });
+        assertThat(output).contains("(aud in [flight-ops-service], key from " + key.toUri() + ")");
     }
 
     /** The shipped configuration: no decoder, Basic alone, and the check never runs. */
