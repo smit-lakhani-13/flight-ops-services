@@ -85,21 +85,32 @@ public class FlightService {
         return FlightDto.from(saved);
     }
 
-    /** No explicit save: dirty checking writes the UPDATE and bumps {@code @Version}. */
+    /**
+     * No explicit save: dirty checking writes the UPDATE and bumps {@code @Version}. The
+     * flush runs that UPDATE here instead of at commit, so a version clash (409) or a
+     * lock timeout (503) fails the call before the log line, and the log does not
+     * record a change the database refused. Only a failure of the commit itself, a
+     * dropped connection for example, can still follow the line.
+     */
     @Transactional
     public FlightDto updateStatus(String flightNumber, FlightStatus status) {
         Flight flight = load(flightNumber);
         FlightStatus previous = flight.getStatus();
         flight.updateStatus(status);
+        flightRepository.flush();
         log.info("Flight {} status {} -> {}", flight.getFlightNumber(), previous, status);
         return FlightDto.from(flight);
     }
 
-    /** Soft cancel: bookings hold a foreign key to this row, so it is never deleted. */
+    /**
+     * Soft cancel: bookings hold a foreign key to this row, so it is never deleted.
+     * Flushed before the log line, as in {@link #updateStatus}.
+     */
     @Transactional
     public void cancel(String flightNumber) {
         Flight flight = load(flightNumber);
         flight.cancel();
+        flightRepository.flush();
         log.info("Flight {} cancelled", flight.getFlightNumber());
     }
 

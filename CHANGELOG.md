@@ -54,6 +54,20 @@ still blank.
   migration user and a least-privilege runtime user, as still open. No code
   changes.
 
+- **An error answer now leaves a line in the log.** Most 4xx answers, a 401
+  or a 404 among them, logged nothing, so the `X-Request-Id` a caller quoted
+  from one would have found no line on any pod.
+  `src/main/java/com/smit/flightops/observability/RequestIdFilter.java` now
+  logs one INFO line for each answer of 400 or above, under the request id:
+  the method, the path made printable by the rule the 403 handler's line
+  uses, and the status. It never logs the query string, a header or the
+  principal, and it skips `/actuator/`, so a failing readiness probe does not
+  log a line every period. ADR 0011 notes it. A request whose chain throws
+  gets no line, although Spring's `ServerHttpObservationFilter` has set 500
+  on the response by then, because `ApiErrorController` logs that failure at
+  ERROR under the same id. `EscapedFailureLogTest` checks this in a running
+  server.
+
 ### Changed
 
 - **Version.** Both poms say `1.3.0-SNAPSHOT` until the next tag, so a build
@@ -325,6 +339,35 @@ still blank.
   `spring.datasource.hikari.transaction-isolation` to
   `TRANSACTION_READ_COMMITTED`, ADR 0002 records the dependency, and
   `DataSourceSettingsTest` checks that both PostgreSQL profiles resolve it.
+
+- **A database outage would have taken every metric with it.** The
+  `outbox_pending` and `outbox_dead` gauges counted rows on the scrape
+  thread, so with the database unreachable each count would wait out the
+  pool's connection timeout (5 s under `postgres` and `prod`, 30 s on H2). A
+  scrape would take at least twice that, and Prometheus's default 10 s
+  timeout would drop every series the pod exports, not only the two gauges.
+  `src/main/java/com/smit/flightops/observability/OutboxMetrics.java#refresh`
+  now runs both counts every 15 s on a daemon thread of its own, and the
+  gauges read the cached values. A gauge reads `NaN` until its first count
+  and again once its last good count is more than 45 s old.
+  `doc/OPERATIONS.md` said the rest of the response was unaffected by a
+  failed count, and now describes the cache.
+
+- **The SQS send line could not be tied to its booking.** The `sqs`
+  transport logs `Published BookingCreated to SQS (messageId=…)` under the
+  drain's own trace, and no line of the send named the booking's trace.
+  `src/main/java/com/smit/flightops/service/OutboxPublisher.java#drainOutbox`
+  now puts each event's stored `traceparent` in the MDC while it sends that
+  event, and removes it afterwards, so in the ECS JSON log the send line and
+  the drain's warnings for that event carry it as a field. The log messages
+  are unchanged.
+
+- **The flight log could record a change the database refused.**
+  `src/main/java/com/smit/flightops/service/FlightService.java#updateStatus`
+  and `#cancel` logged the change and left the UPDATE to the commit, so the
+  loser of a race would log a status change and then get a 409, or a 503
+  after a lock timeout. Both now flush before the log line, so a refused
+  write fails the call before the change line is written.
 
 ### Security
 
