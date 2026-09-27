@@ -312,8 +312,9 @@ printf "   /actuator/prometheus       -> %s (no credentials)\n" "$(curl -s -o /d
 printf "   /actuator/prometheus       -> %s lines of metrics (as ops)\n" "$(curl -s "${OPS_ARGS[@]}" "$BASE/actuator/prometheus" | wc -l | tr -d ' ')"
 say "Liveness and readiness are split because Kubernetes asks two different questions:"
 say "'is this process wedged, restart it?' and 'can it take traffic right now?'"
-say "The db indicator sits in readiness only. A database outage should take the"
-say "pod out of the load balancer, not restart every replica in a loop."
+say "The db indicator sits in neither. Every replica shares the database, so in"
+say "liveness an outage restarts them all in a loop, and in readiness it takes"
+say "them all out of the load balancer. It stays in /actuator/health, for alerts."
 echo
 say "Anonymous and the api user see status only. Ops also sees the components,"
 say "in every profile."

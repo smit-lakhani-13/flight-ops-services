@@ -119,7 +119,8 @@ class LockTimeoutPostgresTest {
                 assertThat(sqlStateOf(result.getResolvedException()))
                         .as("PostgreSQL's lock_not_available")
                         .isEqualTo("55P03");
-                // Not H2's 250 ms, and not Hikari's 30 s connection timeout.
+                // Not H2's 250 ms. The pool's 5 s connection timeout would not
+                // carry 55P03, so the SQLSTATE above already rules it out.
                 assertThat(elapsedMs).isBetween(2_500L, 15_000L);
                 assertThat(lockTimeoutCount())
                         .as("the 503 must also move bookings.lock_timeout")

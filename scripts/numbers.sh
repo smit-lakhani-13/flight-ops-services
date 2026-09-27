@@ -39,9 +39,12 @@ printf 'dto/ records           %s\n' \
   "$(git ls-files 'src/main/java/**/dto/*.java' | wc -l | tr -d ' ')"
 printf 'exception/ classes     %s (GlobalExceptionHandler and ApiErrorController among them)\n' \
   "$(git ls-files 'src/main/java/**/exception/*.java' | wc -l | tr -d ' ')"
+# By version number, as Flyway applies them: git ls-files sorts by bytes, which
+# puts V10 before V2. sort -n on the bare number works with BSD and GNU tools.
 printf 'Flyway migrations      %s (%s)\n' \
   "$(git ls-files 'src/main/resources/db/migration/*.sql' | wc -l | tr -d ' ')" \
-  "$(git ls-files 'src/main/resources/db/migration/*.sql' | sed 's#.*/\(V[0-9]*\)__.*#\1#' | paste -sd, -)"
+  "$(git ls-files 'src/main/resources/db/migration/*.sql' \
+      | sed 's#.*/V\([0-9]*\)__.*#\1#' | sort -n | sed 's/^/V/' | paste -sd, -)"
 # *Test.java only: src/test/java also holds support classes, and a
 # @TestConfiguration is not a test class.
 printf 'test classes (app)     %s\n' \

@@ -104,12 +104,16 @@ with `authenticated()` any caller with credentials could reach it.
 ### 401 and 403
 
 No credentials, or credentials that do not verify, get `401 UNAUTHENTICATED`.
-Valid credentials without the authority get `403 FORBIDDEN`. The filter that
-rejects a password or token answers the 401 itself. Past that point, Spring's
-`ExceptionTranslationFilter` picks between the two by whether the
-authentication is anonymous. A 401 tells a client to retry with credentials.
-A 403 tells it that retrying will not help. Collapsing the two sends a correct
-client into a credential refresh loop over a permissions problem.
+A body over the size limit gets `413 PAYLOAD_TOO_LARGE` first when its
+declared `Content-Length` shows it, or when it is a form-encoded `PUT`,
+`PATCH` or `DELETE`, because that limit runs ahead of Spring Security (see
+[Data exposure](#data-exposure)). Valid credentials without the authority get
+`403 FORBIDDEN`. The filter that rejects a password or token answers the 401
+itself. Past that point, Spring's `ExceptionTranslationFilter` picks between
+the two by whether the authentication is anonymous. A 401 tells a client to
+retry with credentials. A 403 tells it that retrying will not help. Collapsing
+the two sends a correct client into a credential refresh loop over a
+permissions problem.
 
 The 401's `WWW-Authenticate` challenge follows the credential that failed. A
 rejected bearer token gets
@@ -130,7 +134,10 @@ become a second home for a credential.
 I checked what happens without the two writers by swapping Spring's defaults
 back in. Those call `sendError`, and the container forwards to `/error`.
 `ApiErrorController` then answers with the right code and its generic message
-about the method and the path, and a 403 leaves no log line.
+about the method and the path. At the time, a 403 left no log line.
+`RequestIdFilter` now logs the status of each 4xx it answers outside
+`/actuator/`, so the 403 would leave only that filter's INFO line, which does
+not say why the request was refused.
 
 ### The OpenAPI document is public and the API is not
 
@@ -229,8 +236,9 @@ reverse, and the ADR is where to start.
 ## Transport
 
 Nothing is deployed, so nothing is on the internet today. This section
-describes what `deploy/k8s/components/ingress` would create the day someone
-applies it.
+describes the two legs a deploy would have: the Ingress that
+`deploy/k8s/components/ingress` would create the day someone applies it, and
+the connection from the pods to RDS.
 
 That Ingress listens on **port 80 with no TLS**. Basic credentials would cross
 the internet base64-encoded, and anyone who captures them can decode them.
@@ -242,6 +250,14 @@ to stop them. The HTTPS recipe (ACM, DNS validation, three Ingress annotations
 and `server.forward-headers-strategy`) is in
 [doc/DEPLOYMENT.md §8](doc/DEPLOYMENT.md#8-http-and-what-https-would-take). The
 work is written down. What is missing is a domain.
+
+The leg from the pods to RDS would be TLS with the server verified. The data
+stack's `JdbcUrl` output sets `sslmode=verify-full` and points the driver at
+the RDS CA bundle in the image, so it refuses a server whose certificate does
+not chain to that bundle or does not name the endpoint. The driver's default,
+`prefer`, would take any certificate, or none.
+[doc/DEPLOYMENT.md](doc/DEPLOYMENT.md#the-database-connection) says where the
+bundle comes from and how to refresh it.
 
 ## Data exposure
 
@@ -264,7 +280,12 @@ work is written down. What is missing is a domain.
   An unpaired UTF-16 surrogate is refused for the same reason, with
   `must not contain unpaired surrogates`: `getBytes(UTF_8)` turns it into
   `?`, so two different names would share a fingerprint. `BookingControllerTest`
-  covers all three.
+  covers all three. The query filters `origin`, `destination` and
+  `flightNumber` refuse a control character that is still there once the value
+  is trimmed, with `400 MALFORMED_REQUEST` before any query runs
+  (`controller/QueryParams.java#withoutControlCharacters`).
+  PostgreSQL refused a NUL there with SQLState 22021, which reached the caller
+  as a misleading `409 DUPLICATE_REQUEST`.
 
 - The writes read JSON only. swagger-core puts a YAML reader on the classpath,
   and none of the `spring.jackson` settings reach it, so each `POST` and `PATCH`
@@ -277,6 +298,17 @@ work is written down. What is missing is a domain.
   text, a status sent as a number and a departure time that is not an ISO-8601
   instant are each `400 MALFORMED_REQUEST`. None of them is converted into a
   value the client did not write.
+
+- A request body over the limit (16 KiB by default) gets
+  `413 PAYLOAD_TOO_LARGE`, and nothing parses more than the limit: a declared
+  `Content-Length` over it is refused unread, and a chunked body is refused at
+  the read that passes it (`RequestBodyLimitFilter`). Jackson builds a whole
+  string field before Bean Validation checks its `@Size`, so without the cap one
+  field of millions of characters would hold tens of MB of heap, and a few such
+  requests at once could exhaust the heap and end the JVM through
+  `-XX:+ExitOnOutOfMemoryError`. The filter runs ahead of Spring Security,
+  because Spring's `FormContentFilter` reads a form-encoded `PUT`, `PATCH` or
+  `DELETE` body in full before the credentials are checked.
 
 - Error responses are `{code, message, timestamp}`, or
   `{code, fieldErrors, timestamp}` for a validation failure. They never carry
@@ -352,6 +384,14 @@ work is written down. What is missing is a domain.
   step fails the job on any error other than `ImageNotFoundException`, so a
   missing permission cannot pass for a missing image.
 
+- The load balancer controller's IRSA role gets the policy the controller's
+  maintainers publish for v3.5.0, unchanged. `up.sh` creates it from
+  `deploy/aws/lbc-iam-policy-v3.5.0.json` and checks the file's sha256 first,
+  so a change to what the controller may do is a reviewed diff, never a
+  download. The policy is named `flight-ops-lbc-v3.5.0`, not AWS's
+  `AWSLoadBalancerControllerIAMPolicy`, so the scripts never attach or delete
+  another cluster's copy.
+
 - The Lambda's role comes from SAM policy templates in `lambda/template.yaml`,
   and it is wider than the handler needs. `DynamoDBWritePolicy` grants
   `PutItem`, `UpdateItem` and `BatchWriteItem` on the table and its indexes, and
@@ -363,14 +403,14 @@ work is written down. What is missing is a domain.
 
 | | |
 |---|---|
-| Dependency updates | Dependabot, monthly, on both Maven modules, the Actions workflows and the Dockerfile base images |
+| Dependency updates | Dependabot, monthly on both Maven modules and the Actions workflows, and weekly on the Dockerfile base images. Both `FROM` lines name a tag and a digest, so a build pulls the bytes the digest names, and Dependabot moves the digest when the tag is rebuilt. The Dockerfile frontend line, `# syntax=docker/dockerfile:1`, is still a tag |
 | SBOM | CycloneDX, `target/bom.json` and `lambda/target/bom.json`, on every build, both typed `application`. The service jar also carries the one the Spring Boot parent writes, `target/classes/META-INF/sbom/application.cdx.json` |
 | Upper-bound dependency check | `maven-enforcer` `requireUpperBoundDeps`. A transitive downgrade fails the build |
 | Coverage floor | JaCoCo. The build fails under 80% line or 50% branch coverage |
 | Architecture rules | ArchUnit, 9 rules. A violation fails the build; it is not just reported |
-| Vulnerability and secret scanning | Trivy scans the filesystem for vulnerabilities and committed secrets on every push or pull request to `main`, and fails on a fixable HIGH or CRITICAL. The `image` job scans the image it has just built, on the same triggers, and fails on a fixable CRITICAL. No image has ever been pushed. The deploy job, which is gated off and has never run, would repeat the image scan before a push. Only the filesystem scan uploads SARIF, and only on a push to `main`. A pull request from a fork has a read-only token, so the upload would fail on permissions and say nothing about the code. The image scans report in the job log, and ECR's own scan-on-push would cover the image in the registry |
+| Vulnerability and secret scanning | Trivy scans the filesystem for vulnerabilities and committed secrets on every push or pull request to `main`, and fails on a fixable HIGH or CRITICAL. The `image` job scans the image it has just built, on the same triggers, and fails on a fixable CRITICAL. That is the only image scan in CI. The deploy job, which is gated off and has never run, would push the bytes the `image` job built and scanned, handed over as a run artefact and checked against the checksum that job recorded, and it runs no build and no scanner beside its AWS credentials. No image has ever been pushed. Only the filesystem scan uploads SARIF, and only on a push to `main`. A pull request from a fork has a read-only token, so the upload would fail on permissions and say nothing about the code. The image scan reports in the job log, and ECR's own scan-on-push would cover the image in the registry |
 | Static analysis | CodeQL `security-extended`, on every push or pull request to `main`, weekly, and by hand |
-| Pinned actions | Every `uses:` is a full commit SHA with the version as a trailing comment, and Dependabot rewrites the comment along with the SHA. A tag is a mutable pointer in someone else's repository. Re-pointing `@v4` at a malicious commit needs no access to this repository, and that is what happened to `tj-actions/changed-files` in March 2025. The cost is a pull request for every patch release |
+| Pinned actions | Every `uses:` is a full commit SHA with the version as a trailing comment, and Dependabot rewrites the comment along with the SHA. A tag is a mutable pointer in someone else's repository. Re-pointing `@v4` at a malicious commit needs no access to this repository, and that is what happened to `tj-actions/changed-files` in March 2025. The cost is a pull request for every patch release. A pin fixes the action's own code, not a tool it downloads when it runs, such as the Trivy CLI. So Trivy runs only in jobs that hold no AWS credentials. The one tool the deploy job still downloads is kubectl, by version, with no checksum held in this repository. It is installed before the AWS keys are exported, but every kubectl step after that runs with them: apply, rollout, smoke test and the failure diagnostics |
 
 ## Known limitations
 
@@ -378,7 +418,7 @@ work is written down. What is missing is a domain.
    right place for a limit is the ingress or a WAF, not application code.
    Neither has one, so nothing limits a client today, and that is a real gap.
 
-2. **No TLS.** See [Transport](#transport).
+2. **No TLS at the ingress.** See [Transport](#transport).
 
 3. **Kubernetes Secrets.** Secrets live in Kubernetes Secrets, not in Secrets
    Manager.
@@ -392,12 +432,12 @@ work is written down. What is missing is a domain.
    `SPRING_PROFILES_ACTIVE=prod`, so a container started with no profile fails
    closed: a bare `docker run` stops with `'url' must start with "jdbc"`. CI
    checks that on every push or pull request to `main`, in the `image` job's
-   step "The image will not start without a database". The deploy job
-   runs the same step before it pushes an image. That job is gated off, so its
-   copy has never run. `compose.yaml` selects `postgres`, and the ConfigMap sets
-   `prod`. A profile no document matches, such as `Prod`, with `DB_URL` set
-   stops at startup too (`config/EmbeddedDatabaseGuard.java`), where before it
-   started on in-memory H2.
+   step "The image will not start without a database". The deploy job, which is
+   gated off, would push the image that step checked and runs no copy of it.
+   `compose.yaml` selects `postgres`, and the ConfigMap sets `prod`. A profile
+   no document matches, such as `Prod`, with `DB_URL` set stops at startup too
+   (`config/EmbeddedDatabaseGuard.java`), where before it started on in-memory
+   H2.
 
 6. **A placeholder hash starts.** The startup self-check proves the encoder can
    read a value. It cannot tell a malformed value behind a known prefix from a

@@ -4,6 +4,8 @@ import com.smit.flightops.dto.BookingDto;
 import com.smit.flightops.dto.BookingRequest;
 import com.smit.flightops.entity.Booking;
 import com.smit.flightops.entity.Flight;
+import com.smit.flightops.entity.FlightStatus;
+import com.smit.flightops.exception.BookingNotCancellableException;
 import com.smit.flightops.exception.BookingNotFoundException;
 import com.smit.flightops.exception.FlightNotBookableException;
 import com.smit.flightops.exception.FlightNotFoundException;
@@ -15,6 +17,8 @@ import com.smit.flightops.repository.FlightRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InOrder;
 import org.mockito.InjectMocks;
@@ -281,6 +285,71 @@ class BookingWriterTest {
         // The original cancellation time, which a client reconciling its state needs.
         assertThat(result.booking().cancelledAt()).isEqualTo(CANCELLED_AT.minusSeconds(60));
         assertThat(flight.getAvailableSeats()).isEqualTo(177);
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = FlightStatus.class, names = {"DEPARTED", "ARRIVED"})
+    @DisplayName("an active booking on a departed or arrived flight is refused, and nothing changes")
+    void cancellingOnAFlownFlightIsRefused(FlightStatus status) {
+        Flight flight = flight();
+        flight.reserveSeats(3);
+        // Through DEPARTED, because the entity refuses SCHEDULED -> ARRIVED.
+        flight.updateStatus(FlightStatus.DEPARTED);
+        flight.updateStatus(status);
+        Booking booking = new Booking(flight, "Jane Doe", 3, "cancel-4", null, CREATED_AT);
+
+        when(bookingRepository.findFlightNumberById(10L)).thenReturn(Optional.of("UA123"));
+        when(flightRepository.findByFlightNumberForUpdate("UA123")).thenReturn(Optional.of(flight));
+        when(bookingRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(booking));
+
+        assertThatThrownBy(() -> bookingWriter.cancelBooking(10L))
+                .isInstanceOf(BookingNotCancellableException.class)
+                .hasMessageContaining("UA123")
+                .hasMessageContaining(status.name());
+
+        assertThat(booking.isCancelled()).isFalse();
+        assertThat(flight.getAvailableSeats()).isEqualTo(177);
+    }
+
+    @Test
+    @DisplayName("a booking cancelled before departure is still a no-op after it, not a refusal")
+    void cancellationRepeatedAfterDepartureIsANoOp() {
+        Flight flight = flight();
+        flight.reserveSeats(3);
+        Booking booking = new Booking(flight, "Jane Doe", 3, "cancel-5", null, CREATED_AT);
+        booking.cancel(CANCELLED_AT.minusSeconds(60));
+        flight.updateStatus(FlightStatus.DEPARTED);
+
+        when(bookingRepository.findFlightNumberById(11L)).thenReturn(Optional.of("UA123"));
+        when(flightRepository.findByFlightNumberForUpdate("UA123")).thenReturn(Optional.of(flight));
+        when(bookingRepository.findByIdForUpdate(11L)).thenReturn(Optional.of(booking));
+
+        BookingWriter.Cancellation result = bookingWriter.cancelBooking(11L);
+
+        // The client asked for a state the booking is already in, so the retry
+        // answers as it did before the flight left.
+        assertThat(result.seatsReleased()).isFalse();
+        assertThat(result.booking().cancelledAt()).isEqualTo(CANCELLED_AT.minusSeconds(60));
+        assertThat(flight.getAvailableSeats()).isEqualTo(177);
+    }
+
+    @Test
+    @DisplayName("a booking on a cancelled flight can still be cancelled, because refunds happen there")
+    void cancellingOnACancelledFlightStillReleasesSeats() {
+        Flight flight = flight();
+        flight.reserveSeats(3);
+        flight.cancel();
+        Booking booking = new Booking(flight, "Jane Doe", 3, "cancel-6", null, CREATED_AT);
+
+        when(bookingRepository.findFlightNumberById(12L)).thenReturn(Optional.of("UA123"));
+        when(flightRepository.findByFlightNumberForUpdate("UA123")).thenReturn(Optional.of(flight));
+        when(bookingRepository.findByIdForUpdate(12L)).thenReturn(Optional.of(booking));
+
+        BookingWriter.Cancellation result = bookingWriter.cancelBooking(12L);
+
+        assertThat(result.seatsReleased()).isTrue();
+        assertThat(result.booking().cancelledAt()).isEqualTo(CANCELLED_AT);
+        assertThat(flight.getAvailableSeats()).isEqualTo(180);
     }
 
     @Test

@@ -1,6 +1,7 @@
 package com.smit.flightops;
 
 import com.smit.flightops.entity.OutboxEvent;
+import com.smit.flightops.observability.OutboxMetrics;
 import com.smit.flightops.repository.OutboxEventRepository;
 import com.smit.flightops.service.EventPublisher;
 import com.smit.flightops.service.OutboxPublisher;
@@ -48,6 +49,7 @@ class OutboxRetryBackoffTest {
     @Autowired private OutboxEventRepository outboxEventRepository;
     @Autowired private OutboxPublisher outboxPublisher;
     @Autowired private MeterRegistry meterRegistry;
+    @Autowired private OutboxMetrics outboxMetrics;
     @Autowired private JdbcTemplate jdbcTemplate;
     @Autowired private Clock clock;
 
@@ -88,6 +90,8 @@ class OutboxRetryBackoffTest {
         verify(eventPublisher, times(1)).publish(anyString(), anyString(), anyMap());
         OutboxEvent after = reread(event);
         assertThat(after.getAttempts()).as("one attempt, not ten").isEqualTo(1);
+        // The gauges read a cached count; refresh it rather than wait for the refresher.
+        outboxMetrics.refresh();
         assertThat(meterRegistry.get("outbox.dead").gauge().value())
                 .as("nothing is abandoned by an outage shorter than the backoff")
                 .isZero();

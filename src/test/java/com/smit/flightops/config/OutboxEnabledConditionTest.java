@@ -57,7 +57,7 @@ class OutboxEnabledConditionTest {
             .withBean(OutboxEventRepository.class, () -> mock(OutboxEventRepository.class))
             .withBean(EventPublisher.class, () -> mock(EventPublisher.class))
             .withBean(OutboxMetrics.class, () -> new OutboxMetrics(new SimpleMeterRegistry(),
-                    mock(OutboxEventRepository.class), bind(Map.of())))
+                    mock(OutboxEventRepository.class), bind(Map.of()), Clock.systemUTC()))
             .withBean(TransactionTemplate.class,
                     () -> new TransactionTemplate(mock(PlatformTransactionManager.class)))
             .withBean(Clock.class, Clock::systemUTC);

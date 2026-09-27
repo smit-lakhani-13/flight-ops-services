@@ -9,6 +9,12 @@ import java.util.Objects;
  * {@code BookingService} it would be one caller's rule, and a second caller (a bulk
  * import, an admin endpoint, a message consumer) would forget it. The switches have
  * no {@code default}, so a new constant does not compile until someone classifies it.
+ *
+ * <p>The schema knows the constants too. On PostgreSQL {@code ck_flights_status}, from
+ * V10__flight_status_check.sql, lists them exactly, so a new constant also needs a
+ * migration that drops and re-adds it. Flyway runs at startup, so that migration ships
+ * with the code that first writes the new value. H2 needs nothing: Hibernate declares
+ * the column there as an ENUM of these constants.
  */
 public enum FlightStatus {
 
@@ -35,6 +41,20 @@ public enum FlightStatus {
         return switch (this) {
             case SCHEDULED, BOARDING, DELAYED -> true;
             case DEPARTED, ARRIVED, CANCELLED -> false;
+        };
+    }
+
+    /**
+     * Whether a booking on a flight in this status may still be cancelled. Not
+     * the inverse of {@link #isBookable()}: a cancelled flight still takes
+     * cancellations, because refunds happen on cancelled flights. A departed or
+     * arrived flight does not, because cancelling then would rewrite the record
+     * of a flight that has already flown.
+     */
+    public boolean acceptsCancellations() {
+        return switch (this) {
+            case SCHEDULED, BOARDING, DELAYED, CANCELLED -> true;
+            case DEPARTED, ARRIVED -> false;
         };
     }
 
