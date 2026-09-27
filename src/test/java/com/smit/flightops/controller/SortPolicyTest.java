@@ -61,10 +61,11 @@ class SortPolicyTest {
     }
 
     @Test
-    @DisplayName("the flight list's default order is departure time then id, both plainly ascending")
-    void defaultFlightOrderMatchesTheIndex() {
-        // What V11__flights_departure_time_index.sql indexes, column for column:
-        // Hibernate renders this as ORDER BY departure_time, id.
+    @DisplayName("an ascending order outside the nullable set stays plain and gets a plain id tiebreaker")
+    void plainOrderGetsAPlainIdTiebreaker() {
+        // The shape of V11__flights_departure_time_index.sql, ORDER BY departure_time, id,
+        // but through this class's own sets. FlightControllerTest#searchAcceptsPagingParameters
+        // pins the real default, with FlightController's sets and @PageableDefault.
         Sort sort = stable(Sort.by("departureTime"));
 
         assertThat(sort).containsExactly(Sort.Order.asc("departureTime"), Sort.Order.asc("id"));

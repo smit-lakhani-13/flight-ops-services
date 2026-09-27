@@ -127,6 +127,15 @@ says not yet.
   text. The Lambda's client settings moved to a constant that the test reads; no
   behaviour changes.
 
+- **A test for the documented bearer token setup.**
+  `config/SecurityConfigJwtTest.java#anIssuerUriWithAudiencesStarts` starts
+  the service with `issuer-uri` and `audiences` alone, the setup
+  `application.yml` and `SECURITY.md` give, and checks that the bearer filter
+  is on and that the startup log names both checks. Before, a rule that
+  required `jwk-set-uri` beside `issuer-uri` still passed the build. The
+  public key case now also checks that the log names where the key came from.
+  No production code changes.
+
 ### Changed
 
 - **The doc checkers know the console.** `scripts/refcheck.py` also checks
@@ -226,6 +235,14 @@ says not yet.
   MockMvc never writes the session cookie, so the old `Set-Cookie` check could
   not catch a session. The PostgreSQL replay race checks that every caller
   gets the same booking back, as its name says.
+  `ErrorContractTest.java#cancellationRepeatedAfterDepartureIsStillANoOp`
+  cancelled the only booking on its flight, so a second credit on the retry
+  would have been clamped at `totalSeats` and the seat check could not fail;
+  another booking now keeps one seat sold. A `SortPolicyTest` case named for
+  the flight list's default order ran only the test's own sets, and is renamed
+  `controller/SortPolicyTest.java#plainOrderGetsAPlainIdTiebreaker`;
+  `FlightControllerTest.java#searchAcceptsPagingParameters` pins the real
+  default.
 
 - **Tests with an expiry date.** `ErrorContractTest` created flights departing
   in 2030 and 2031 against the real clock, so six of its tests would have

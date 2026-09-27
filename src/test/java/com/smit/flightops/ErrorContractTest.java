@@ -654,6 +654,9 @@ class ErrorContractTest {
     @DisplayName("a booking cancelled before departure still answers 200 with its original cancelledAt after it")
     void cancellationRepeatedAfterDepartureIsStillANoOp() throws Exception {
         createFlight("ZZ402", "BOM", "GOI", "2099-01-01T10:00:00Z");
+        // One seat stays sold, for the reason cancellationReturnsSeatsExactlyOnce gives:
+        // on an otherwise empty flight the clamp would hide a second credit.
+        book("ZZ402", "Grace Hopper", 1, "contract-flown-repeat-keep");
         long bookingId = book("ZZ402", "Ada Lovelace", 2, "contract-flown-repeat");
 
         String cancelled = mockMvc.perform(delete("/api/v1/bookings/" + bookingId))
@@ -666,7 +669,7 @@ class ErrorContractTest {
         mockMvc.perform(delete("/api/v1/bookings/" + bookingId))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.cancelledAt").value(cancelledAt));
-        assertThat(availableSeats("ZZ402")).isEqualTo(50);
+        assertThat(availableSeats("ZZ402")).isEqualTo(49);
     }
 
     // ------------------------------------------------------------------

@@ -21,10 +21,10 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * Which probe a database failure reaches. Every replica shares the database, and each
  * pod's own pool carries the same load, so a db component in readiness would withdraw
  * every pod at once when either fails, and the load balancer would have no target
- * left. The db indicator here is
- * DOWN, named {@code dbHealthIndicator} so Boot's own backs off: {@code /actuator/health}
- * reports it for the alert, and the two probe groups do not include it. Its own H2
- * database keeps its schema out of the other contexts' tables.
+ * left. The db indicator here is DOWN, named {@code dbHealthIndicator} so Boot's own
+ * backs off: {@code /actuator/health} reports it for the alert, and the two probe
+ * groups do not include it. Its own H2 database keeps its schema out of the other
+ * contexts' tables.
  */
 @SpringBootTest(properties = "spring.datasource.url=jdbc:h2:mem:healthgroupstest;DB_CLOSE_DELAY=-1")
 @AutoConfigureMockMvc
