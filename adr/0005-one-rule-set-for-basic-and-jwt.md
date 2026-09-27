@@ -46,10 +46,12 @@ Basic alone and no dead configuration.
   issue `flights:read` and `flights:write`, or the mapping breaks without any
   error.
 
-* **The audience is a second contract.** `issuer-uri` alone accepts any token
-  the issuer signed, including one minted for another client in the tenant.
-  Turning JWT on also needs
+* **The audience is a second contract.** `issuer-uri` alone would accept any
+  token the issuer signed, including one minted for another client in the
+  tenant. Turning JWT on also needs
   `spring.security.oauth2.resourceserver.jwt.audiences: [flight-ops-service]`.
+  `config/SecurityConfig.java#requireIssuerAndAudience` now stops startup when a
+  decoder property is set without it, or a `jwk-set-uri` without `issuer-uri`.
   [SECURITY.md](../SECURITY.md) has the warning.
 
 * `anyRequest().denyAll()` closes the list. A new endpoint under `/api/**` is
@@ -57,6 +59,11 @@ Basic alone and no dead configuration.
   it, or a method the rules do not name such as `PUT`, is unreachable until
   someone decides who may reach it. That default is why the OpenAPI paths
   needed an explicit rule (see [ADR 0012](0012-openapi-public-read.md)).
+
+**Correction (2026-09-27).** The audience bullet used to say that `issuer-uri`
+alone accepts any token the issuer signed, and left the warning to SECURITY.md.
+`config/SecurityConfig.java#requireIssuerAndAudience` now stops startup on that
+configuration, so the bullet says what it would accept and names the check.
 
 ## Alternatives considered
 

@@ -11,8 +11,10 @@ import java.time.Duration;
  * ({@code max-retry-backoff} against {@code retry-backoff}), which a field annotation
  * cannot express.
  *
- * @param enabled         run the poller. On by default; a deployment with one
- *                        dedicated drainer pod sets it false on the other replicas.
+ * @param enabled         run the poller and the pruner. On by default; a deployment with
+ *                        one dedicated drainer pod sets it false on the other replicas.
+ *                        {@link OutboxEnabledCondition} is what switches them, and it binds
+ *                        the same property with the same default, so the two cannot disagree.
  * @param pollInterval    milliseconds between drains (1s). With no backlog an event waits up
  *                        to this long plus the sends ahead of it; a backlog, a failed send or
  *                        a prune run adds more.
@@ -30,7 +32,7 @@ import java.time.Duration;
  *                        thirteen and a half minutes (810s of waits), longer than a deployment.
  */
 @ConfigurationProperties(prefix = "app.outbox")
-public record OutboxProperties(boolean enabled,
+public record OutboxProperties(@DefaultValue("true") boolean enabled,
                                long pollInterval,
                                int batchSize,
                                @DefaultValue("10") int maxAttempts,

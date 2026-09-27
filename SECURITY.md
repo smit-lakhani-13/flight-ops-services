@@ -31,8 +31,10 @@ users. Each one is marked where it comes up.
 
 There are two ways in and one rule set. HTTP Basic is always on. JWT bearer
 tokens are accepted when `spring.security.oauth2.resourceserver.jwt.issuer-uri`
-is set, and the startup log says which mode is active. Both feed the same
-`authorizeHttpRequests` block, so a rule can be wrong in only one place.
+and `audiences` are both set, and the startup log says which mode is active.
+`issuer-uri` without `audiences` stops startup, as the warning below explains.
+Both feed the same `authorizeHttpRequests` block, so a rule can be wrong in only
+one place.
 Spring's default `JwtGrantedAuthoritiesConverter` maps a token's `scope` claim
 to authorities prefixed `SCOPE_`. A token carrying
 `scope: "flights:read flights:write"` therefore holds the same strings the
@@ -43,9 +45,17 @@ to authorities prefixed `SCOPE_`. A token carrying
 **Warning:** if you enable JWT, set the audience too. `issuer-uri` alone
 validates the signature, the issuer and the lifetime, and that is not enough.
 An issuer mints tokens for every application registered with it, so a token
-issued to another client of the same tenant arrives correctly signed and is
-accepted. The audience claim is the only field that says which API the token
+issued to another client of the same tenant arrives correctly signed and would
+be accepted. The audience claim is the only field that says which API the token
 was for.
+
+Startup enforces it. When `issuer-uri`, `jwk-set-uri` or `public-key-location`
+is set, `config/SecurityConfig.java#requireIssuerAndAudience` stops startup
+unless `audiences` is set too, naming the property and the reason. A
+`jwk-set-uri` also needs `issuer-uri`, because Boot adds no issuer check to
+that decoder without it, and any key in the set would do. A
+`public-key-location` alone is not made to name an issuer: the operator pinned
+that key. A `JwtDecoder` bean built in code is left to its author.
 
 ```yaml
 spring.security.oauth2.resourceserver.jwt.issuer-uri: https://your-idp.example.com/
@@ -171,7 +181,7 @@ reverse, and the ADR is where to start.
   a per-user data migration, with no flag day. `{argon2}` and `{scrypt}` also
   need `org.bouncycastle:bcprov-jdk18on`, which this build does not include.
 
-- **Two startup checks.** `ApiSecurityProperties` rejects a missing or
+- **Three startup checks.** `ApiSecurityProperties` rejects a missing or
   unprefixed value when the properties are bound, naming the property and the
   variable: `app.security.api-password (API_PASSWORD)`. `SecurityConfig` then
   asks the encoder to verify each value once. An id the encoder does not know,
@@ -181,8 +191,17 @@ reverse, and the ADR is where to start.
   An argon2 or scrypt hash stops it the same way, on a `NoClassDefFoundError`.
   Without the checks, the pod would report itself healthy
   and answer every login as that user with a 500. The id is case-sensitive, so
-  write `{bcrypt}`. `PasswordVerifiabilityTest` covers the self-check. Its
-  limit is listed under [Known limitations](#known-limitations).
+  write `{bcrypt}`. Last, under `prod`,
+  `config/SecurityConfig.java#refuseUnhashed` accepts only the adaptive hashes:
+  `bcrypt`, `pbkdf2`, `scrypt` and `argon2`, the last three with or without
+  `@SpringSecurity_v5_8`. It refuses every other id, so a deployment cannot run
+  on a password kept in plain text in its Secret. `{noop}` stores the password
+  itself, `{ldap}` compares a value with no `{SHA}` or `{SSHA}` prefix as plain
+  text, and `MD4`, `MD5`, `SHA-1`, `SHA-256` and `sha256` are deprecated
+  digests. The default profile keeps its `{noop}` passwords.
+  `PasswordVerifiabilityTest` covers the self-check and the
+  `prod` refusal. The self-check's limit is listed under
+  [Known limitations](#known-limitations).
 
 - **No password in the log.** The prefix check throws from the
   record's constructor, and its message ends with `API_PASSWORD is not set`
@@ -413,15 +432,18 @@ bundle comes from and how to refresh it.
    `SPRING_PROFILES_ACTIVE=prod`, so a container started with no profile fails
    closed: a bare `docker run` stops with `'url' must start with "jdbc"`. CI
    checks that on every push or pull request to `main`, in the `image` job's
-   step "The image will not start without a database". The deploy job, which
-   is gated off, would push the image that step checked and runs no copy of
-   it. `compose.yaml` selects `postgres`, and the ConfigMap sets `prod`.
+   step "The image will not start without a database". The deploy job, which is
+   gated off, would push the image that step checked and runs no copy of it.
+   `compose.yaml` selects `postgres`, and the ConfigMap sets `prod`. A profile
+   no document matches, such as `Prod`, with `DB_URL` set stops at startup too
+   (`config/EmbeddedDatabaseGuard.java`), where before it started on in-memory
+   H2.
 
 6. **A placeholder hash starts.** The startup self-check proves the encoder can
    read a value. It cannot tell a malformed value behind a known prefix from a
    wrong password, because `BCryptPasswordEncoder` returns false for both.
    `{bcrypt}REPLACE_ME`, the value in `deploy/k8s/secret.example.yaml`, passes
-   both checks. The encoder logs `Encoded password does not look like BCrypt` at
+   every check. The encoder logs `Encoded password does not look like BCrypt` at
    WARN, once at startup for each such value and again on every login. Every
    login as that user gets a 401, and the pod stays Ready.
 
