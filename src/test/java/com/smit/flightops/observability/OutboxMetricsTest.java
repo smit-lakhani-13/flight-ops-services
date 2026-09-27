@@ -8,6 +8,7 @@ import io.micrometer.prometheusmetrics.PrometheusConfig;
 import io.micrometer.prometheusmetrics.PrometheusMeterRegistry;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.dao.DataAccessResourceFailureException;
 
 import java.time.Clock;
@@ -181,6 +182,40 @@ class OutboxMetricsTest {
         thread.join(5_000);
         assertThat(thread.isAlive()).as("stop() shuts the executor down").isFalse();
         assertThat(gauge(registry, OutboxMetrics.PENDING)).isEqualTo(2);
+    }
+
+    /**
+     * The same, through Spring: nothing in the application calls start() or stop(), so
+     * the annotations are all that run the refresher and end it. The thread is the one
+     * this test's mock saw, never one found by name, because a context cached by another
+     * test class in the same JVM has an {@code outbox-metrics} thread of its own.
+     */
+    @Test
+    @DisplayName("Spring starts the refresher with the context and stops it on close")
+    void theContextStartsAndStopsTheRefresher() throws Exception {
+        AtomicReference<Thread> refresher = new AtomicReference<>();
+        when(repository.countByPublishedAtIsNullAndAttemptsLessThan(MAX_ATTEMPTS)).thenAnswer(invocation -> {
+            refresher.set(Thread.currentThread());
+            return 2L;
+        });
+
+        new ApplicationContextRunner()
+                .withBean(MeterRegistry.class, SimpleMeterRegistry::new)
+                .withBean(OutboxEventRepository.class, () -> repository)
+                .withBean(OutboxProperties.class, OutboxMetricsTest::properties)
+                .withBean(Clock.class, () -> clock)
+                .withBean(OutboxMetrics.class)
+                .run(context -> {
+                    // refresh() counts pending first, so once the dead count has been
+                    // asked for, the pending one is already cached.
+                    verify(repository, timeout(5_000))
+                            .countByPublishedAtIsNullAndAttemptsGreaterThanEqual(MAX_ATTEMPTS);
+                    assertThat(gauge(context.getBean(MeterRegistry.class), OutboxMetrics.PENDING)).isEqualTo(2);
+                });
+
+        Thread thread = refresher.get();
+        thread.join(5_000);
+        assertThat(thread.isAlive()).as("closing the context stops the refresher").isFalse();
     }
 
     /** A Clock a test can move forward. */
