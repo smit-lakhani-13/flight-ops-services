@@ -33,8 +33,8 @@ or a funded AWS account, and the project has none of the three.
 
 | | Proves | Needs | Cost |
 |---|---|---|---|
-| **Localhost** | the API, the outbox, idempotency, seat locking, every test | JDK 21, optionally Docker | $0 |
-| **Async half on AWS** | outbox → SQS → Lambda → DynamoDB, on real infrastructure | an AWS account, SAM CLI | ~$0 (free tier) |
+| **Localhost** | the API, the outbox, idempotency, seat locking, every test | JDK 21, optionally Docker; Node 24 and Playwright's Chromium for the console's tests | $0 |
+| **Async half on AWS** | outbox → SQS → Lambda → DynamoDB, on real infrastructure | an AWS account, the SAM and AWS CLIs, JDK 21 | ~$0 (free tier) |
 | **Full stack on EKS** | all of that plus rolling deploys, IRSA, HPA, a public URL | an AWS account, five CLIs, JDK 21, 50 minutes | $7.72/day |
 
 The middle shape is the interesting half of the architecture:
@@ -158,9 +158,9 @@ directory. `--template-file` names the template, so `sam deploy` never reads a
 for these commands; it only stops a later bare `sam deploy`, which does prefer
 that built template, from deploying a stale copy.
 
-This takes two minutes and creates the queue, the DLQ, two CloudWatch alarms
-on them with no notification target, the DynamoDB table and the Lambda. Then
-point a locally running service at it:
+This creates the queue, the DLQ, two CloudWatch alarms on them with no
+notification target, the DynamoDB table and the Lambda. Then point a locally
+running service at it:
 
 ```bash
 SQS_QUEUE_URL=$(aws cloudformation describe-stacks --stack-name flight-ops-lambda \
@@ -223,7 +223,10 @@ infrastructure, and the run then stops twice for you:
   `saved`. The closing summary repeats them. The cluster holds only their
   bcrypt hashes. A re-run that finds the Secret already there skips this.
 - Step 10 prints the values to set in the GitHub repository settings, and waits
-  for `done`.
+  for `done`. The CI role trusts only `main` of the repository that the
+  `GitHubOwner` and `GitHubRepo` defaults in `deploy/aws/foundation.yaml` name,
+  and `up.sh` does not override them, so in any other repository, set both to
+  match it before the first run.
 
 | | | |
 |---|---|---|
@@ -302,8 +305,9 @@ rollout, so without that tag five failed deploys in a row would expire the
 image the old pods still run, and a pod on a new node or a
 `kubectl rollout undo` could no longer pull it.
 
-Every step of `up.sh` checks whether its resource exists before creating it. To
-resume an interrupted run, run the same command again. If eksctl stopped part
+Every step of `up.sh` either checks whether its resource exists or uses a
+command that is safe to repeat. To resume an interrupted run, run the same
+command again. If eksctl stopped part
 way through step 4, the re-run finishes the cluster. It waits for the control
 plane, then creates whichever of the vpc-cni, kube-proxy and coredns addons, the
 cluster's IAM OIDC provider and the `ng-1` node group is missing. Step 1 asks
@@ -443,8 +447,9 @@ described above.
 4. **EKS** (~20 min). The long one.
 5. **Access entry.** CI gets `AmazonEKSEditPolicy` scoped to one namespace,
    through the access-entry API. I kept away from the `aws-auth` ConfigMap,
-   because one malformed edit to it locks every principal out of the cluster at
-   once, including the one that would fix it. The associate call's exit code
+   because Kubernetes accepts a malformed edit to it and every role it maps can
+   lose access at once, where an access entry is validated when it is created.
+   The associate call's exit code
    cannot tell "already associated" from "refused". So this step reads the
    association back and stops unless the policy is scoped to
    `namespace/flight-ops`.
@@ -640,9 +645,9 @@ is request rate or queue depth, through KEDA or the Prometheus adapter.
 `/actuator/prometheus` already serves, because `micrometer-registry-prometheus`
 is on the classpath, so the adapter is the missing piece.
 
-A Kubernetes Secret is base64-encoded and unencrypted, as
-`secret.example.yaml` says. The production answer is Secrets Manager through
-the Secrets Store CSI driver.
+To anyone with `get secret` in the namespace, a Kubernetes Secret is only
+base64-encoded, as `secret.example.yaml` says. The production answer is Secrets
+Manager through the Secrets Store CSI driver.
 
 ## 5. What it costs
 
@@ -678,9 +683,9 @@ AWS invoices India in INR with 18% GST. At ₹95.8 to the dollar:
 | **30 days** | **$232** | **$273** | **₹26,200** |
 
 Nobody chooses the last row. It is what happens when the teardown is put off
-until after the weekend. Creating the stack takes 50 minutes and deleting it
-takes 20, and neither number decides the bill. Whether someone remembers the
-teardown does, which is why the 30-day row is here.
+until after the weekend. Creating the stack should take about 50 minutes and
+deleting it about 20, and neither number decides the bill. Whether someone
+remembers the teardown does, which is why the 30-day row is here.
 
 `up.sh` creates two budgets: $60/month, alerting at 50/80/100% of actual
 spend and when the forecast passes 100%, and $8/day, alerting at 80%. That
@@ -699,14 +704,17 @@ anything.
 | **A. As designed** | nothing | 7.72 | $137 |
 | A′. Public subnets | `privateNetworking: false` and `vpc.nat.gateway: Disable` in `deploy/aws/cluster.yaml`; no NAT gateway; nodes get public IPs | 6.42 | $114 |
 | B. EKS Fargate | no node group; CoreDNS and the controller also move to Fargate; more setup | 7.12 | $126 |
-| **C. One EC2 t3.small** | `compose.yaml` on a single instance, plus the SAM stack. No EKS, no ALB, no RDS | **0.80** | **$14** |
+| **C. One EC2 t3.small** | `compose.yaml` on a single instance, with the override described below, plus the SAM stack. No EKS, no ALB, no RDS | **0.80** | **$14** |
 | D. Prepare only | nothing created | 0 | $0 |
 
 If the goal is a live URL, C is the one to take seriously. It is a t3.small at
 $0.0224/hour running `docker compose up` with an Elastic IP, plus the free-tier
-SAM stack. It proves the service works on AWS and proves nothing about EKS.
-Ninety per cent of the cost of shape A pays for Kubernetes. Whether that is
-worth $123 over fifteen days depends on who is asking.
+SAM stack. With the changes the next paragraph lists, and an instance role that
+may send to the SAM stack's queue, it would show the service running on AWS,
+and nothing about EKS.
+Ninety per cent of the cost of shape A is what EKS, its networking and RDS add
+over shape C. Whether that is worth $123 over fifteen days depends on who is
+asking.
 
 `compose.yaml` is not ready for shape C as it stands. It publishes port 8080 on
 loopback only, and its two password hashes are of passwords the README prints.
@@ -848,8 +856,9 @@ still catches an eksctl stack that failed to delete, IRSA roles and all. With
 `--keep-foundation` there are thirteen, because that flag leaves the ECR
 repository behind and skips its check. It also leaves the foundation stack and
 its own resources out of the stacks check and the tag catch-all. Any other
-leftover still fails. The kept repository keeps its images, so CI's "Is this
-commit already in ECR?" step reuses an image it pushed before.
+leftover still fails. The kept repository keeps the images its lifecycle policy
+allows, so a later deploy of a commit whose image is still there skips the
+download, load and push that follow CI's "Is this commit already in ECR?" step.
 
 The exit code answers "is it gone". The deletes themselves cannot, because a
 CloudFormation stack can delete successfully and still leave a load balancer
@@ -865,17 +874,18 @@ it deletes the kubeconfig.
 
 The order matters:
 
-- **Delete the Ingress first.** If you delete the namespace with the Ingress
-  still in it, the controller is removed at the same time and never sees the
-  event that would delete the ALB. The load balancer stays up, attached to
-  nothing, at $19/month, until someone finds it in the console.
+- **Delete the Ingress first.** The controller runs in `kube-system`, not in
+  the application namespace. Uninstall it or delete the cluster while the
+  Ingress still exists, and nothing is left to delete the ALB. The load
+  balancer stays up, attached to nothing, at $19/month, until someone finds it
+  in the EC2 console.
 
 - **Database before the cluster.** Its security group is in eksctl's
   VPC, and the VPC delete blocks on it. eksctl then fails after twenty minutes
   with a message about a dependency it does not name.
 
-If a check fails, run the script again. Most failures are about ordering, and a
-second pass succeeds.
+If a check fails, run the script again. A second pass should clear a delete
+that had not finished, or one that was blocked by another still in progress.
 
 The checks say nothing about the bill. Cost Explorer lags, so look again the
 next day and expect zero, not "small". Data transferred earlier in the month is

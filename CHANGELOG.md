@@ -13,8 +13,11 @@ a major release. It is 1.1.0 because 1.0.0 was never tagged, never
 published and never consumed, so no client anywhere could break. From this
 release on, a change to what the documented contract returns for a request it
 accepts is a major, whether it is a response field, a status or an error code.
+The changelog in the 1.1.0 tag made any change to a status or an error code a
+major, and this wording replaced that a few hours later.
 Starting to reject input the contract never allowed, such as a fractional seat
-count or a flight number with a slash, is a fix.
+count, is a fix, and so is refusing input the published schema admitted but no
+real client needs, such as a flight number with a slash.
 
 **On the dates.** 1.0.0 was never tagged, so its entry was written afterwards
 from the history and dated by its last commit. All dates are IST. 1.0.0 and
@@ -80,9 +83,9 @@ says not yet.
   there says so. [ADR 0017](adr/0017-web-console.md) records the design and
   `web/README.md` maps each page to the calls it makes. The pages are laid out
   for phones, tablets and desktops, with touch-sized controls and 16 px field
-  text below 1280 px and on any touch screen, and a Playwright spec checks
-  every page at eleven Chromium viewports and the keyboard's outline on every
-  stop of the sign-in page. Built and tested in CI, never hosted.
+  text below 1280 px or when touch is the main pointer, and a Playwright spec
+  checks every page at eleven Chromium viewports and the keyboard's outline on
+  every stop of the sign-in page. Built and tested in CI, never hosted.
 
 - **CI checks the console on every push or pull request to `main`.** A new
   `web` job lints, type-checks, unit-tests and builds it, then packages the
@@ -432,6 +435,23 @@ says not yet.
   `--tail=-1` and `--prefix`. Where the poll interval is set and described,
   an event's latency now counts the sends ahead of it, and says that a
   backlog, a failed send or a prune run adds more.
+
+- **Claims a second read of the documents did not bear out.** Two runbooks
+  checked a crash-looping pod's Secret with `kubectl get secret -o
+  jsonpath='{.data}'`, which prints every value in base64, the database password
+  included; `doc/OPERATIONS.md` and `deploy/aws/README.md` now use `kubectl
+  describe secret`, which lists each key and its size. `doc/ARCHITECTURE.md` now
+  shows the console as one more API client. The README and the defect log no
+  longer say that most defects were reproduced against a running instance, and
+  the log no longer says that every entry names its commit. `doc/api.md` puts
+  Tomcat's limit at Spring Boot's 8 KB default for the request line and headers
+  together, and states the whole transition rule. `doc/DEPLOYMENT.md`, ADR 0009,
+  `deploy/aws/README.md` and the comments in `down.sh`, `up.sh` and
+  `cluster.yaml` now give the reason the Ingress goes first, say that an `up.sh`
+  step either checks first or is safe to repeat, and say that a bad `aws-auth`
+  edit cuts off the roles it maps rather than everyone; ADR 0009 gains a dated
+  correction. The defect log, ADR 0013 and `OutboxPublisher` agree that a shift
+  of the 2s base turns negative at attempt 54, not 64.
 
 - **A full pool made callers wait 30 s for their 503.** The `postgres` and
   `prod` profiles kept Hikari's default 30 s `connection-timeout`, longer than

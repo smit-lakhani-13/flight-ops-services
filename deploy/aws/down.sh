@@ -7,10 +7,10 @@
 #
 # Order matters in two places:
 #
-#   1. The Ingress goes first. Deleting the namespace with an Ingress still in
-#      it removes the Kubernetes object while the controller, also being
-#      deleted, never gets to delete the ALB. The load balancer survives with
-#      nothing in the cluster pointing at it, and bills until someone finds it.
+#   1. The Ingress goes first. The controller runs in kube-system, and once it
+#      is uninstalled or the cluster is deleted, nothing is left to delete the
+#      ALB. The load balancer survives with nothing in the cluster pointing at
+#      it, and bills until someone finds it.
 #   2. The data stack goes before the cluster. Its security group lives in
 #      eksctl's VPC, and a security group with a rule referencing it blocks the
 #      VPC delete. eksctl then fails after 20 minutes with a message about a

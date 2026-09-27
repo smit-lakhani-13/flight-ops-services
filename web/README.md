@@ -4,8 +4,10 @@ A Next.js and strict TypeScript front end for every operation of
 flight-ops-service. You sign in with one of the service's two accounts, then
 list, create and move flights, book seats with an idempotency key, replay a
 booking, send ten identical bookings at once, cancel, and read the health
-endpoints and the meters. Every call is shown in a request log with the request
-id the console sent and the one the service echoed.
+endpoints and the meters. A request log lists the tab's last twenty calls, with
+the request id the console sent and the one the service echoed. The race is one
+call there, answered by the console itself, and the ids of its ten requests are
+in the race's own table.
 
 It is built and tested in CI on every push or pull request to `main`, never
 hosted. [ADR 0017](../adr/0017-web-console.md) records why it is shaped the way
@@ -24,12 +26,13 @@ What is worth reading here:
   calls from one tab are not ten concurrent requests; the console's server
   sends them instead.
 
-![Ten replays of one idempotency key from the console: ten 201s, one booking, one seat debited](../doc/assets/console-race.png)
+![Ten identical booking requests on one idempotency key, sent at once from the console: ten 201s, one booking, one seat debited](../doc/assets/console-race.png)
 
 ## Run it
 
-Node 24 (`.nvmrc`) and the service on port 8080. From the repository root, in
-one terminal:
+Node 24 (`.nvmrc`), a JDK 21 for the service
+([CONTRIBUTING.md](../CONTRIBUTING.md#use-jdk-21)), and the service on port
+8080. From the repository root, in one terminal:
 
 ```bash
 ./mvnw spring-boot:run
@@ -153,16 +156,19 @@ coloured by what went wrong instead: violet when the console's own server
 answered in the API's place or could not be reached, and otherwise red for a
 401, a 403 or a 5xx other than a 503, orange for a 409 or a 503, grey for a 404
 and amber for any other refusal. Text keeps at least 4.5:1 contrast in both
-schemes, apart from a disabled control, which is dimmed. A field's border and
-the focus outline keep at least 3:1 against what surrounds them. The dark scheme
+schemes, apart from a disabled or busy button and the flights list while a
+newer page is loading, both of which are dimmed. A field's border and the focus
+outline keep at least 3:1 against what surrounds them. The ratios
+are worked out from the colour values; no test measures them. The dark scheme
 follows the system setting, with no toggle. Every link, button and field shows
 an outline in the accent colour when the keyboard reaches it, and the only
 motion is a colour transition, left out when the system asks for less motion.
 
 Below 1280 px, which takes in every phone and tablet viewport the tests use, and
-on any touch screen however wide, every button, nav link, field and select is at
-least 44 px tall, and every field has 16 px text, so iOS does not zoom in when
-one takes focus. A desk with a mouse keeps a denser layout from 1280 px up. The
+at any width where touch is the main input, such as a large tablet, every
+button, nav link, field and select is at least 44 px tall, and every field has
+16 px text, so iOS does not zoom in when one takes focus. A desk with a mouse
+keeps a denser layout from 1280 px up. The
 navigation wraps onto its own row rather than folding into a menu, and wide
 tables scroll inside their own box instead of widening the page. Where the
 navigation wraps under the brand and the Requests button, the keyboard still
@@ -193,7 +199,7 @@ title, and a change of account is announced.
 | Command | What it runs |
 |---|---|
 | `npm run lint` | ESLint with Next.js's core web vitals and TypeScript rules, no warnings allowed |
-| `npx tsc --noEmit` | The type-checker, strict, with unchecked index access |
+| `npx tsc --noEmit` | The type-checker, strict, with `tsconfig.json#noUncheckedIndexedAccess`, so the type of a read by index includes `undefined` |
 | `npm test` | Vitest: the proxy, the race and the `/api` route against a stubbed `fetch`, the browser's API client and the sign-in probe, the error classifier and its timeout hint, the request log, the resource hook, its pending state and a write that wins over an older read, the helpers that name a page from its address, and in jsdom the shared parts in `components/ui.tsx` (button tones and the busy state, field wiring, the seat bar, page titles, links and the Location mapping), the error banner, a meter card given the actuator's `NaN` for a gauge with no fresh count or a 404 for a name the service lacks, the booking form's replay comparison, status line and seat counts, the transition control and the pager, including where each leaves the focus, and the request log drawer's focus on Escape and on Close, its copy buttons, and the one line that says what was copied until 1.5 s after the last copy; and a test that reads `FlightStatus.java` and fails if the console's copy of the transition table drifts from it |
 | `npm run e2e` | Playwright on Chromium against the built console and a running service: sign-in and sign-out, flights, bookings, replays and the race, validation, the proxy's refusals and the security headers, the ops pages with a number on each of the seven meters, and the layout of every page at eleven viewports |
 

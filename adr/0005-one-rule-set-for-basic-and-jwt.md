@@ -58,7 +58,11 @@ Basic alone and no dead configuration.
   covered by the scope rules for GET, HEAD, POST, PATCH and DELETE. One outside
   it, or a method the rules do not name such as `PUT`, is unreachable until
   someone decides who may reach it. That default is why the OpenAPI paths
-  needed an explicit rule (see [ADR 0012](0012-openapi-public-read.md)).
+  needed an explicit rule (see [ADR 0012](0012-openapi-public-read.md)). An
+  actuator endpoint is the exception: once it is added to
+  `management.endpoints.web.exposure.include`, the
+  `EndpointRequest.toAnyEndpoint()` rule lets the `ops` account reach it with
+  no new rule.
 
 **Correction (2026-09-27).** The audience bullet used to say that `issuer-uri`
 alone accepts any token the issuer signed, and left the warning to SECURITY.md.

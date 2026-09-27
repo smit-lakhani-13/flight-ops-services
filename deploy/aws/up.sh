@@ -218,8 +218,8 @@ log "kubectl and helm use $KUBECONFIG; your ~/.kube/config and its context are u
 step "5/12  Cluster access for the CI role"
 # ---------------------------------------------------------------------------
 # API access entries, not aws-auth ConfigMap edits. The ConfigMap is the old
-# mechanism and a malformed edit locks everyone out of the cluster with no way
-# back in short of recreating it.
+# mechanism: Kubernetes accepts a malformed edit to it, and every role it maps
+# can lose access at once. An access entry is validated when it is created.
 #
 # Scoped to one namespace. The CI role can roll out the application and cannot
 # touch kube-system, the LB controller, or another namespace.

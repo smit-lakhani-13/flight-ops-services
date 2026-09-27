@@ -128,9 +128,11 @@ message says to unset `DB_URL` to run on H2.
 | `/actuator/health/readiness` | none | should traffic come here |
 | `/actuator/health` | `ops`, in every profile | the same, plus components: `db`, `diskSpace`, `ssl`, … |
 
-The probes are open to anonymous callers because the kubelet has no
-credentials and cannot be given any. An anonymous caller gets a status only,
-so it cannot find out which database this is.
+The probes are open to anonymous callers because the kubelet holds no
+credentials for this service. A probe could send a fixed `Authorization`
+header, but that would put a password in the Deployment and fail every probe
+after the next rotation. An anonymous caller gets a status only, so it cannot
+find out which database this is.
 
 Component detail follows the role. `application.yml` sets
 `show-details: when-authorized` with `roles: OPS`, so only the `ops` user sees
@@ -161,7 +163,7 @@ Micrometer provides, the service adds five counters and two gauges, from
 |---|---|---|---|
 | `bookings_booked_total` | counter | `outcome=created\|replayed` | a replay and a new booking are both a 201 on the same URI, and only this label separates selling seats from a client stuck in a retry loop. A high `replayed` share means clients are retrying. That is fine, and useful to know |
 | `bookings_cancelled_total` | counter | `outcome=cancelled\|already_cancelled` | `already_cancelled` is a repeated `DELETE`: it returns 200 and releases nothing. It is not an error. If it climbs while `cancelled` stays flat, a client thinks its cancellations are not sticking |
-| `bookings_lock_timeout_total` | counter | | a write gave up after 3s waiting for the flight row lock: a booking or a cancellation, or a flight status change or flight cancellation queued behind one. **Non-zero means users are seeing 503s.** It is the earliest sign of the whole write path stalling |
+| `bookings_lock_timeout_total` | counter | | a write gave up after 3s waiting for the flight row lock: a booking or a cancellation, or a flight status change or flight cancellation queued behind one. **A non-zero rate means users are seeing 503s.** It is the earliest sign of the whole write path stalling |
 | `outbox_pending` | gauge | | rows waiting to publish and still within the attempt ceiling, including rows the retry backoff is holding back. A rising line is publisher lag, and it shows an SQS outage before any consumer notices missing events. Each failing row stays here for as long as its ten attempts take (about 13.5 minutes with the defaults), and only then moves to `outbox_dead` |
 | `outbox_dead` | gauge | | rows that exhausted `OUTBOX_MAX_ATTEMPTS`. **Should always be 0.** A dead row does not come back by itself: the claim never returns it, and its event is never sent until someone re-drives it ([the playbook](#outbox_dead--0-a-poison-row)) |
 | `outbox_publish_total` | counter | `result=success\|failure\|exhausted` | the transport's health. A send that uses up a row's last attempt counts under `failure` as well as `exhausted`, so `failure` is the full error rate. That rate shows a partial outage that `outbox_pending` hides while the backlog still drains faster than it grows |
@@ -277,8 +279,8 @@ created the row. The link is the `traceparent` the writer captured:
 
 The publisher's own trace is `d21efe52…`. The `traceparent` it carries is
 `10cd4f19…`, the booking request's. That value goes onto the SQS message as an
-attribute and the Lambda logs it, so one trace id links three processes, and
-two searches find it:
+attribute and the Lambda logs it, so one trace id links the booking request to
+the Lambda that handled its event, and two searches find it:
 
 ```bash
 kubectl logs -n flight-ops -l app=flight-ops --tail=10000 | grep 10cd4f19102abf7a3f922f252b6d4a97
@@ -415,10 +417,11 @@ If the log names `app.security.api-password` or `app.security.ops-password`
 instead, see the next playbook.
 
 Either way, check the Secret. All three of `DB_PASSWORD`, `API_PASSWORD` and
-`OPS_PASSWORD` must be present:
+`OPS_PASSWORD` must be present. `describe` lists each key and its size, and
+never a value:
 
 ```bash
-kubectl get secret flight-ops-secret -n flight-ops -o jsonpath='{.data}' | tr ',' '\n'
+kubectl describe secret flight-ops-secret -n flight-ops
 ```
 
 ### Pods crash-loop at startup, and the log names `app.security.api-password`
@@ -472,8 +475,11 @@ The id is case-sensitive, so write `{bcrypt}`. An `{argon2}` or `{scrypt}` hash
 fails the same check with a `NoClassDefFoundError`. Both encoders need
 BouncyCastle, and the build does not include it. Use `{bcrypt}` or `{pbkdf2}`.
 
-No message prints the password or the hash, so a failed start leaves no
-secret in the pod log.
+The prefix check and the `prod` refusal name the property and never the
+value. The encoder's own exception can quote part of it: for an unknown id,
+both `Caused by` lines give the text between the value's first `{` and the
+next `}`, and never what follows. A plaintext password that starts with a
+braced group could leave part of itself in the pod log.
 
 The prefix check and the self-check exist because Spring's delegating encoder
 throws on a value it cannot read, where a wrong password would simply fail to
@@ -643,7 +649,7 @@ means the handler never reported the message: the function was throttled,
 timed out, failed to start or crashed. SQS keeps the message id when it moves
 a message to the DLQ, and the log group keeps 14 days, like the DLQ, so the
 line outlasts the message. Fix the handler or the data. Then redrive with the
-console's "Start DLQ redrive", or re-send the messages to the main queue.
+SQS console's "Start DLQ redrive", or re-send the messages to the main queue.
 Delete a message that is permanently malformed, and leave a note saying why.
 Left alone, it expires 14 days after it was first sent, because SQS keeps a
 message's original enqueue time when it moves it to the DLQ. Nothing notes
@@ -658,8 +664,8 @@ row lock, so they queue too, and their timeouts count in
 `bookings_lock_timeout_total`. Past `lock_timeout = 3s` the request gets a 503
 with `Retry-After`. That is correct
 under contention, and a problem if it is sustained. Check whether one flight
-is hot (`bookings_lock_timeout_total` against the per-flight booking rate) and
-whether a transaction is stuck:
+is hot (no meter carries a flight tag, so count recent rows per `flight_id` in
+`bookings`) and whether a transaction is stuck:
 
 ```sql
 SELECT pid, state, wait_event_type, query_start, left(query, 80)
@@ -672,7 +678,9 @@ SELECT pid, state, wait_event_type, query_start, left(query, 80)
 `FlywayValidateException` on a checksum means a migration file changed after
 it was applied. Never edit an applied migration; add a new one. On a demo
 database, drop and recreate it. On any other, first establish which version is
-correct, then run `flyway repair`.
+correct, then run `flyway repair` with the Flyway command-line tool, which this
+repository does not include. Point it at `src/main/resources/db/migration` and
+run it from somewhere that can reach the database.
 
 `Detected failed migration to version 11` means the `CREATE INDEX
 CONCURRENTLY` in `V11__flights_departure_time_index.sql` stopped part way,
@@ -756,8 +764,10 @@ the property at startup either way.
 - **Nothing scrapes `/actuator/prometheus`.** Nothing is deployed, and the
   cluster that `deploy/aws/up.sh` would build has no Prometheus, no Grafana
   and no Alertmanager. The metrics are correct and exported, and the PromQL
-  above is what you would write once something scrapes them. Adding
-  kube-prometheus-stack costs roughly $1/day of extra node capacity.
+  above is what you would write once something scrapes them. Nobody has sized
+  kube-prometheus-stack for this cluster. If it needs a third t3.medium, that
+  node costs about $1/day at the rate in
+  [DEPLOYMENT.md §5](DEPLOYMENT.md#5-what-it-costs).
 
 - **Nothing ships pod logs anywhere.** `kubectl logs` is the interface. The
   cross-process trace hunt is `kubectl logs | grep <traceId>` on this side and
@@ -782,7 +792,7 @@ the property at startup either way.
   (`lambda/template.yaml#BookingEventDLQAlarm`,
   `lambda/template.yaml#BookingEventBacklogAlarm`), linted in CI and never
   deployed, with no notification target: an alarm would change state in the
-  console and tell no one. Rows 1 to 3 and the pool half of row 6 are
+  CloudWatch console and tell no one. Rows 1 to 3 and the pool half of row 6 are
   Prometheus conditions, and nothing scrapes `/actuator/prometheus`. The `db`
   half of row 6 would need an authenticated poll of `/actuator/health`, and
   row 7 an RDS alarm, and neither exists.

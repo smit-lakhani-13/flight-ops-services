@@ -3,8 +3,10 @@
 This document shows how the pieces fit, why they are arranged this way, and
 where in the source each claim can be checked. On every CI run,
 `scripts/refcheck.py` checks every path and `path#symbol` named here and
-`scripts/linkcheck.py` checks every heading link. A rename that leaves this
-document behind fails the `docs-check` job.
+`scripts/linkcheck.py` checks every heading link. Renaming a file cited here
+by path fails the `docs-check` job, and so does renaming a symbol cited as
+`path#symbol` once the old name is gone from that file. Names given bare, such
+as `LockTimeoutTest`, are not checked.
 
 Each decision where I weighed alternatives has its own file in
 [`adr/`](../adr/README.md), with the options I rejected. This document is the
@@ -14,7 +16,7 @@ map, and the ADRs hold the reasoning.
 
 | Section | What it covers |
 |---|---|
-| [The shape of it](#the-shape-of-it) | Two processes, one queue |
+| [The shape of it](#the-shape-of-it) | Two processes, one queue, and the console |
 | [One booking, end to end](#one-booking-end-to-end) | `POST /api/v1/bookings`, method by method |
 | [Idempotency, as a decision table](#idempotency-as-a-decision-table) | Replay, reuse and races on one key |
 | [Concurrency: what is locked, and in what order](#concurrency-what-is-locked-and-in-what-order) | The flight row lock and its timeout |
@@ -33,11 +35,15 @@ map, and the ADRs hold the reasoning.
 
 Two processes and one queue. The service owns bookings and seat inventory and
 answers HTTP synchronously. The Lambda owns a read-optimised projection of
-booking events and never talks to the service.
+booking events and never talks to the service. The console in `web/` is one
+more process, and to the service one more API client: its own server forwards
+an allow-listed set of calls to the API
+([ADR 0017](../adr/0017-web-console.md)). It is built and tested in CI, never
+hosted.
 
 ```mermaid
 flowchart LR
-    client["API client<br/>Basic or JWT"]
+    client["API client, or the console's proxy<br/>Basic or JWT"]
     subgraph service["flight-ops-service (Spring Boot 4.1, Java 21)"]
         controller["controller/"]
         svc["service/"]
@@ -83,7 +89,7 @@ around the clock. Inside the service, the boundary between layers is the
 ArchUnit rule `layers_are_respected`, not a network hop.
 
 Some parts are stubs. The authorisation rules, the locking, the idempotency,
-the migrations and the event contract are production shapes. The user store is
+the migrations and the event contract are real and tested. The user store is
 two in-memory accounts, and the deployment has never been run against real
 AWS. The README's [status table](../README.md#status) is the authoritative
 list.
@@ -352,7 +358,7 @@ Each of these choices prevents a specific failure:
    and stores it on the row (V6). Micrometer's `Propagator` formats it. With
    no current span the writer stores no header, because a consumer cannot
    tell a made-up id from a real one.
-   `OutboxTest.theDrainDoesNotOverwriteTheTrace` drains inside a different
+   `OutboxTest.java#theDrainDoesNotOverwriteTheTrace` drains inside a different
    span, so that regression stays covered. The sampled flag follows
    `management.tracing.sampling.probability`, which Boot defaults to 0.1. Most
    values on the queue are real ids marked not-sampled, so check that before
@@ -570,9 +576,15 @@ and restore the seats the booking had just debited.
 │                               to DynamoDB consumer, its tests, template.yaml
 │                               (SAM) and events/, the hand-written SQS fixtures
 ├── contracts/                  the event schema both modules test against
+├── web/                        the console, a Next.js application with its own
+│                               package.json: app/ the pages and API routes,
+│                               components/ the UI, lib/ the proxy, the race and
+│                               the helpers the pages share, e2e/ the Playwright
+│                               specs; built and tested in CI, never hosted
 ├── doc/                        the API reference, this document, the defect
-│                               log, the deployment runbook and costs, and
-│                               operations
+│                               log, the deployment runbook and costs,
+│                               operations, and assets/, which holds the
+│                               console screenshots
 ├── adr/                        the decision records and their index
 ├── scripts/                    refcheck.py, linkcheck.py, numbers.sh
 │                               --check-readme and sweeps.sh run in CI;
@@ -613,8 +625,9 @@ and restore the seats the booking had just debited.
                                 workflows/codeql.yml, dependabot.yml
 ```
 
-A DTO never reaches the repository, and an entity never reaches a controller.
-Nothing in `service/`, `entity/` or `repository/` knows about HTTP. That stays
+An entity never reaches a controller, and no repository imports a DTO today,
+though no rule checks it. Nothing in `service/`, `entity/` or `repository/`
+knows about HTTP. That stays
 in the web edge: `controller/`, `exception/`, `security/`,
 `observability/RequestIdFilter` and `config/SecurityConfig`. ArchUnit fails the
 build if HTTP types leak inward or a controller touches an entity;
@@ -725,8 +738,10 @@ receive.
   rejects anything below 1 with
   `booking event has <n> for 'seats'; expected at least 1`. Each case is
   reported, so the message ends in the DLQ instead of DynamoDB
-  (`lambda/src/test/java/com/smit/flightops/lambda/BookingEventHandlerTest.java#aSeatsValueThatIsNotAPositiveWholeNumberIsNotWritten`).
-  The contract test parses with the same mapper.
+  (`lambda/src/test/java/com/smit/flightops/lambda/BookingEventHandlerTest.java#aSeatsValueThatIsNotAPositiveWholeNumberIsNotWritten`,
+  with `BookingEventHandlerTest.java#anAbsentSeatsFieldIsNotWritten` and
+  `BookingEventHandlerTest.java#anExplicitNullSeatsFieldIsNotWritten` for a
+  missing and a null field). The contract test parses with the same mapper.
 
 - The sort key is `timestamp#bookingId`. The `bookingId` keeps two bookings on
   one flight in the same instant apart, and
@@ -734,8 +749,11 @@ receive.
   timestamp with `uuuu-MM-dd'T'HH:mm:ss.SSSSSS'Z'`. DynamoDB sorts range keys as
   bytes, and `Instant.toString()` prints 0, 3, 6 or 9 fractional digits.
   `…:00Z` would then sort after `…:00.000001Z`, because `Z` is `0x5A` and
-  `.` is `0x2E`. The contract test asserts that the `#` lands at index 27, so a
-  pattern changed on one side only fails it.
+  `.` is `0x2E`. The Lambda's contract test asserts that the `#` lands at index
+  27, and
+  `src/test/java/com/smit/flightops/BookingEventContractTest.java#theTimestampIsFixedWidth`
+  asserts the producer's six fractional digits and `Z`, so a pattern changed on
+  either side fails a test.
 
 - The producer's `traceparent` arrives as a message attribute. A missing
   attribute map, a missing `traceparent` key and a value sent as binary all
@@ -768,8 +786,9 @@ receive.
   `software.amazon.awssdk:dynamodb` pulls in `apache5-client` and
   `netty-nio-client` transitively. `lambda/pom.xml` excludes both, and also
   excludes `apache-client`, so an SDK bump that brings it back cannot slip in.
-  It adds `url-connection-client` (34 KB, no transitive dependencies), the
-  client that AWS documents for Lambda. The jar went from 16.6 MiB to 10.3 MiB.
+  It adds `url-connection-client` (34 KB, and nothing the SDK does not already
+  bring), the client that AWS documents for Lambda. The jar went from 16.6 MiB
+  to 10.3 MiB.
   The client holder names `UrlConnectionHttpClient`, because the SDK's own
   discovery ranks Apache 5 first. A dependency that brought Apache 5 back would
   otherwise take over. The cost is no HTTP/2, no tunable pool and synchronous
@@ -808,7 +827,7 @@ costs:
 | `EventPublisher` | A JMS broker (Solace PubSub+, TIBCO EMS), Kafka, EventBridge | `EventPublisher` itself does not change, because the payload is already serialised. A JMS broker would take a publisher behind `@ConditionalOnProperty`, a `ConnectionFactory` bean and the vendor's client library, a mode in `EventProperties.java#MODES`, a test, and a new consumer, because the Lambda reads `SQSEvent`. [ADR 0015](../adr/0015-event-transport.md) sets out each option from the vendors' documentation; none has been built or run here |
 | `issuer-uri` and `audiences` | Cognito, Okta, Entra | Configuration: set `spring.security.oauth2.resourceserver.jwt.issuer-uri` and `.audiences`. `issuer-uri` alone would accept a token the issuer minted for another client in the tenant, so `SecurityConfig.java#requireIssuerAndAudience` stops startup without `audiences`. The rules already treat a JWT scope and a Basic authority identically |
 | `Clock` (`TimeConfig.java`) | A fixed clock in a test | Already used everywhere |
-| The OTLP tracing endpoint | An OTLP collector | Set `management.opentelemetry.tracing.export.otlp.endpoint`, for example as the environment variable `MANAGEMENT_OPENTELEMETRY_TRACING_EXPORT_OTLP_ENDPOINT`. Ids are already generated and already on every log line |
+| The OTLP tracing endpoint | An OTLP collector | Set `management.opentelemetry.tracing.export.otlp.endpoint`, for example as the environment variable `MANAGEMENT_OPENTELEMETRY_TRACING_EXPORT_OTLP_ENDPOINT`. Trace and span ids are already generated and already on the service's request log lines |
 | The outbox poller | Debezium reading the WAL | A replication slot, a connector to operate, and a disk that fills if the consumer stops. I considered it and rejected it at this size |
 | The database | Oracle | Two native outbox queries rewritten, the session-wide lock-wait bound narrowed to per-query hints, and a second set of migrations. [ADR 0016](../adr/0016-oracle-port.md) sets this out from documentation, as a proposal; none of it has been built or run |
 

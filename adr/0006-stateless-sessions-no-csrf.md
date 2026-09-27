@@ -28,16 +28,18 @@ I set `SessionCreationPolicy.STATELESS` and `csrf.disable()` together, in
   again. What closes that gap is the request shape. Every write needs a JSON
   body (`consumes = application/json` on each `POST` and the `PATCH`) or is a
   `DELETE`. A cross-site HTML form can send neither, and a script would need a
-  CORS preflight, which this service never approves. A bearer token is never
-  attached automatically.
+  CORS preflight, which this service never approves:
+  `src/test/java/com/smit/flightops/SecurityRulesTest.java#aCrossSitePreflightIsNotApproved`
+  fails if one is approved. A bearer token is never attached automatically.
 
 * If a future change adds a session cookie or cookie-based auth, accepts a
   form or `text/plain` body on a write, or adds a CORS policy that allows
   credentials, **CSRF protection must come back on in the same commit**. These
   are the ways the decision becomes wrong, which is why I state them here.
 
-* No session means no server-side state to replicate. Horizontal scaling is
-  free, and a pod restart costs nobody their login.
+* No session means no server-side state to replicate, so another replica needs
+  no session store or sticky routing, and a pod restart costs nobody their
+  login.
 
 * Every request pays the full authentication cost. For Basic that is a BCrypt
   verification, which is slow by design and takes milliseconds. It is also

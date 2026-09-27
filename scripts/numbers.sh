@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Every number the documentation claims, recomputed from the tree, so the
-# counts are read off a command instead of remembered.
+# The file, line and test counts and the project, Boot and Java versions the
+# documentation claims, recomputed from the tree, so they are read off a
+# command instead of remembered.
 #
 # Test totals come from the surefire XML, so they count what ran. They need a
 # build first:

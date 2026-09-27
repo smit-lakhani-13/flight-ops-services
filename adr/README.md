@@ -44,9 +44,12 @@ status line says so.
 Copy the shape of an existing record; there is no template file. Give it a title
 that states the decision in the indicative and a `Status:` line naming the
 commit. Then write Context, Decision, Consequences and Alternatives considered.
-Number it next in sequence and link it from the table above. Cite code as
-`path` or `path#symbol`, so `scripts/refcheck.py` fails CI if the
-citation stops being true.
+Number it next in sequence, link it from the table above, and update the
+record counts in the top-level README in the same pull request, or
+`scripts/numbers.sh --check-readme` fails CI. Cite code as
+`path` or `path#symbol`, so `scripts/refcheck.py` fails CI if the cited file
+is gone or the symbol no longer appears in it (a mention in a comment is
+enough). It cannot tell whether the sentence around a citation is still true.
 
 If you cannot write a real "Alternatives considered" for a record, it is
 probably a description of how the code works. That belongs in
