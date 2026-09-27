@@ -1,13 +1,15 @@
 package com.smit.flightops.service;
 
 import com.smit.flightops.config.EventProperties;
+import com.smit.flightops.config.OutboxEnabledCondition;
 import com.smit.flightops.config.OutboxProperties;
 import com.smit.flightops.entity.OutboxEvent;
 import com.smit.flightops.observability.OutboxMetrics;
 import com.smit.flightops.repository.OutboxEventRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.slf4j.MDC;
+import org.springframework.context.annotation.Conditional;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
@@ -32,10 +34,13 @@ import java.util.Map;
  * @see OutboxEventRepository#claimUnpublished
  */
 @Component
-@ConditionalOnProperty(name = "app.outbox.enabled", havingValue = "true", matchIfMissing = true)
+@Conditional(OutboxEnabledCondition.class)
 public class OutboxPublisher {
 
     private static final Logger log = LoggerFactory.getLogger(OutboxPublisher.class);
+
+    /** The message header, and the MDC key while that event is sent. */
+    static final String TRACEPARENT = "traceparent";
 
     private final OutboxEventRepository outboxEventRepository;
     private final EventPublisher eventPublisher;
@@ -87,8 +92,18 @@ public class OutboxPublisher {
 
         int published = 0;
         for (OutboxEvent event : batch) {
+            Map<String, String> headers = headersFor(event);
+            // Every line of this send carries the booking's traceparent, a field of its
+            // own in the ECS JSON log. The drain runs under a trace of its own. With
+            // the sqs transport no line would otherwise name the booking's trace:
+            // SqsEventPublisher's success line prints no headers. Removed per event,
+            // because the scheduler thread is reused.
+            String traceparent = headers.get(TRACEPARENT);
+            if (traceparent != null) {
+                MDC.put(TRACEPARENT, traceparent);
+            }
             try {
-                eventPublisher.publish(event.getEventType(), event.getPayload(), headersFor(event));
+                eventPublisher.publish(event.getEventType(), event.getPayload(), headers);
                 event.markPublished(now);
                 metrics.publishSucceeded();
                 published++;
@@ -112,6 +127,8 @@ public class OutboxPublisher {
                             event.getId(), event.getEventType(), event.getAttempts(),
                             properties.maxAttempts(), e.toString());
                 }
+            } finally {
+                MDC.remove(TRACEPARENT);
             }
         }
 
@@ -150,6 +167,6 @@ public class OutboxPublisher {
         String traceparent = event.getTraceparent();
         return traceparent == null || traceparent.isBlank()
                 ? Map.of()
-                : Map.of("traceparent", traceparent);
+                : Map.of(TRACEPARENT, traceparent);
     }
 }

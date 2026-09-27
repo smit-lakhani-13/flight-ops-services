@@ -78,9 +78,14 @@ image's default with `ENV SPRING_PROFILES_ACTIVE=prod`, and
 RDS, IRSA and the SQS publisher and has no default passwords. Run bare, with no
 `DB_URL`, the image stops at startup with `'url' must start with "jdbc"`.
 Without that default it would start on in-memory H2 and serve the `{noop}` dev
-passwords. The deploy job checks for that failure before it pushes an image, in
-the step "The image will not start without a database". The `image` job runs
-the same check on every push or pull request to `main`.
+passwords. The `image` job checks for that failure on every push or pull
+request to `main`, in the step "The image will not start without a database",
+and the deploy job would push only an image that passed it.
+
+`compose.yaml` publishes the application on `127.0.0.1:8080` only, so it
+answers on the laptop and not to the rest of the network. A bare `8080:8080`
+would listen on every interface, and on Linux Docker's own firewall rules
+bypass a host firewall such as ufw.
 
 ### PostgreSQL without compose
 
@@ -89,9 +94,13 @@ container and select the `postgres` profile:
 
 ```bash
 docker run --name pg -e POSTGRES_PASSWORD=pass -e POSTGRES_DB=flightops \
-  -p 5432:5432 -d postgres:17-alpine
+  -p 127.0.0.1:5432:5432 -d postgres:17-alpine
 DB_PASSWORD=pass ./mvnw spring-boot:run -Dspring-boot.run.profiles=postgres
 ```
+
+The port is published on loopback only, as in `compose.yaml`. A bare
+`-p 5432:5432` would offer a database whose password is `pass` to the rest of
+the network.
 
 `DB_PASSWORD` has no default. In the `postgres` profile,
 `spring.datasource.password` is plain `${DB_PASSWORD}`, so `application.yml`
@@ -104,7 +113,7 @@ repository. Leave the variable out and Hikari sends the literal string
 
 The `postgres` profile also changes who owns the schema. Flyway applies the
 migrations in `src/main/resources/db/migration/`, from `V1__init.sql` to
-`V8__drop_unused_active_booking_index.sql`, and Hibernate runs
+`V11__flights_departure_time_index.sql`, and Hibernate runs
 `ddl-auto: validate`. An entity that no longer matches the tables, columns or
 column types then fails startup instead of altering them. Validation does not
 compare check constraints or indexes.
@@ -180,8 +189,10 @@ ALERT_EMAIL=you@example.com ./deploy/aws/up.sh  # ~50 minutes
 
 The preflight checks the tools, the credentials and `./mvnw -v`, which must
 report JDK 21 because the enforcer rule in `lambda/pom.xml` accepts nothing
-else. No system Maven is needed. `gettext`, which provides `envsubst`, is
-needed only to run `deploy/aws/render-aws.sh` by hand.
+else. It also checks the sha256 of the load balancer controller's
+[IAM policy file](#the-load-balancer-controllers-iam-policy). No system Maven
+is needed. `gettext`, which provides `envsubst`, is needed only to run
+`deploy/aws/render-aws.sh` by hand.
 
 `up.sh` runs in twelve steps. Step 1 prints the cost table and asks you to type
 `yes`, and nothing before that costs anything. Steps 2 to 8 build the
@@ -216,28 +227,67 @@ URL. It skips the demo when the Secret came from an earlier run, because it
 no longer knows the passwords.
 
 CI deploys the application, and the script does not. The image tag is the
-commit SHA, and only the job that built the image knows it. A laptop build
-would tag whatever happened to be checked out, including uncommitted work. The
+commit SHA of the CI run that built the image. A laptop build would tag
+whatever happened to be checked out, including uncommitted work. The
 split also keeps every password away from GitHub. `up.sh` writes the database
 password and the bcrypt hashes of the API and ops passwords into a Kubernetes
 Secret, and prints the API and ops passwords to the terminal. CI applies a
 Deployment that refers to the Secret by name.
 
-Before it builds, the deploy job asks ECR whether the commit's image is already
-there, in the step "Is this commit already in ECR?". It runs
+The deploy job builds and scans nothing. The `image` job builds the image,
+starts it with no database and scans it, holding no AWS credentials. On a run
+that can deploy, it saves the image and records the archive's sha256 before its
+scan runs, and uploads it as a run artefact kept for one day once the scan
+passes. The deploy job downloads the archive, checks that sha256, loads the
+image, tags it with the commit SHA and pushes it. So the image is scanned once,
+and the registry gets the bytes that were scanned. A "Re-run failed jobs" more
+than a day later finds no artefact unless the image is already in ECR; re-run
+all jobs instead.
+
+After the checkout, the deploy job's step "Is this commit still the head of
+main?" compares `git ls-remote origin refs/heads/main` with the run's commit. A
+re-run keeps the commit of the run it repeats, so "Re-run failed jobs" on an
+older run would otherwise put that commit back over a newer release and go
+green. When the two differ, the job assumes no role, pushes and applies nothing
+and still passes, with a notice and a line in the job summary. The head of
+`main` normally has a run of its own. When it has none, as after a commit that
+skipped CI or a pending run that was cancelled, a manual run
+(`workflow_dispatch`) on `main` deploys it, as it does for a deliberate
+redeploy.
+
+Before it downloads the image, the deploy job asks ECR whether the commit's
+image is already there, in the step "Is this commit already in ECR?". It runs
 [`deploy/aws/ecr-image-exists.sh`](../deploy/aws/ecr-image-exists.sh), which
 calls `ecr:DescribeImages` and reports the image missing only on
 `ImageNotFoundException`. Any other error fails the job. Guessing "missing"
-would rebuild the image and then fail at the push, because the repository's tags
-are immutable.
+would push the image again and fail, because the repository's tags are
+immutable.
 
-Every step checks whether its resource exists before creating it. To resume an
-interrupted run, run the same command again. If eksctl stopped part way through
-step 4, the re-run finishes the cluster. It waits for the control plane, then
-creates whichever of the vpc-cni, kube-proxy and coredns addons, the cluster's
-IAM OIDC provider and the `ng-1` node group is missing. Step 1 asks for eksctl
-0.184.0 or later, because older releases install those addons self-managed and
-the re-run looks them up as EKS addons.
+After the rollout, the smoke test reaches one pod of the new release through a
+port-forward. It reads the Deployment's revision, finds the ReplicaSet at that
+revision and its `pod-template-hash`, and picks a Running, Ready pod with that
+hash whose container runs this commit's image. It prints the pod and the image,
+and fails if there is no such pod. `port-forward deployment/flight-ops`
+would pick the pod that has been Ready longest, which right after a rollout is
+the last old pod in its `preStop` sleep. The pod must answer readiness, the
+root `/actuator/health` and `/v3/api-docs`.
+
+When the smoke test passes, the job gives the image a second tag,
+`deployed-<sha>`, with `ecr:BatchGetImage` and `ecr:PutImage`. The first rule
+of the lifecycle policy in `deploy/aws/foundation.yaml#EcrRepository` keeps
+the last ten images tagged that way, and the rule that keeps the last five
+tagged images cannot expire them. Every deploy pushes its image before the
+rollout, so without that tag five failed deploys in a row would expire the
+image the old pods still run, and a pod on a new node or a
+`kubectl rollout undo` could no longer pull it.
+
+Every step of `up.sh` checks whether its resource exists before creating it. To
+resume an interrupted run, run the same command again. If eksctl stopped part
+way through step 4, the re-run finishes the cluster. It waits for the control
+plane, then creates whichever of the vpc-cni, kube-proxy and coredns addons, the
+cluster's IAM OIDC provider and the `ng-1` node group is missing. Step 1 asks
+for eksctl 0.184.0 or later, because older releases install those addons
+self-managed and the re-run looks them up as EKS addons.
 
 Two cases still need a hand. A re-run in the first minutes of step 4, before
 EKS lists the cluster, calls `eksctl create cluster` a second time, and that
@@ -245,6 +295,36 @@ most likely fails on the existing CloudFormation stack. Wait for the stack to
 settle, then re-run. The database password exists only in the shell from step 6
 until step 9 writes the Secret. A run that stops in between stops again at
 step 9, and the message says how to set a new password.
+
+The Secret can also outlive its database: delete the data stack, keep the
+cluster, and re-run. Step 6 then creates a new database with a new password,
+and step 9 writes it into the existing Secret's `DB_PASSWORD` and restarts the
+deployment, whose pods would otherwise keep the old value. The value reaches
+`kubectl` on stdin, so it is on no command line and in no file. The API and
+ops hashes stay, so the passwords from the first run still work. Step 6
+records the new database in `deploy/aws/.state/flight-ops.env` before it
+starts, and step 9 clears the record once the Secret holds the password and
+the pods have restarted. A run that stops before the Secret is patched leaves
+the record, so the next one stops at step 9 and says how to set a new
+password, even with an old Secret there. If that next one's shell exports
+`DB_PASSWORD`, as it does after those instructions, step 9 writes that value
+in instead. Only a password step 6 generated in the same run is known to be
+the new database's. An exported one may be left over from an earlier fix, so
+step 9 warns that it cannot check it, that a wrong one fails every pod's
+database login, and how to give the database the password the Secret then
+holds. One that stops after the patch leaves the next one only the restart to
+do. A re-run that finds no record leaves the Secret alone. Like the rest of
+that file, the record belongs to the checkout the run started from.
+
+The cluster's kubeconfig is the scripts' own. Step 4 points `KUBECONFIG` at
+`deploy/aws/.state/kubeconfig`, mode 0600, before `eksctl create cluster`, so
+neither eksctl nor `aws eks update-kubeconfig` writes `~/.kube/config` or
+changes its current context. A context selected meanwhile in
+`~/.kube/config`, or in any kubeconfig but the scripts' own, cannot send a
+`kubectl` or `helm` call to another cluster. The closing summary prints the
+`export KUBECONFIG=...` line for a shell of your own. A shell with that export
+shares the file, and `aws eks update-kubeconfig --name <other>` there would
+switch its current context under a running script.
 
 ### The service image
 
@@ -259,9 +339,62 @@ ships as a jar and not an image, so this applies to the service image only.
 The `image` job records the size on every run. In CI run 36032424801 on
 2026-09-24 the image measured 299.5 MB (299477691 bytes), as
 `docker image inspect` reports it on the runner. The image has never been
-pushed, so no registry has reported a size for it. The runtime base,
-`eclipse-temurin:21-jre-alpine`, is a tag and not a digest, so the figure
-moves when that tag is rebuilt or a dependency changes.
+pushed, so no registry has reported a size for it. The measurement predates
+the database CA bundle below, which adds 165,408 bytes. Both base images are
+pinned by digest as well as tag, so the figure moves when a Dependabot pull
+request moves the runtime base's digest or a dependency changes.
+
+### The database connection
+
+The data stack's `JdbcUrl` output in `deploy/aws/data.yaml` is the one place
+the deployed JDBC URL is built. It ends in
+`?sslmode=verify-full&sslrootcert=/app/certs/rds-global-bundle.pem`, so the
+driver accepts only a server whose certificate chains to a CA in that file and
+names the endpoint it dialled. Without `sslmode` the driver would use
+`prefer`, which checks neither and falls back to plaintext when the server
+declines TLS. `up.sh`, the aws overlay and the `prod` profile pass the URL on
+unchanged. Localhost, the `postgres` profile, `compose.yaml` and CI have their
+own URLs with no TLS, and none of them changes. Neither does the `image` job's
+check that the image will not start without a database, because the image
+still has no URL until `DB_URL` gives it one.
+
+The file is the RDS global CA bundle, committed as
+`certs/rds-global-bundle.pem`. The `Dockerfile` copies it into the runtime
+stage, root-owned and read-only, at the path the URL names. It holds public
+certificates and no key.
+
+| | |
+|---|---|
+| Source | `https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem` |
+| SHA-256 | `e5bb2084ccf45087bda1c9bffdea0eb15ee67f0b91646106e466714f9de3c7e3` |
+| Certificates | 108 |
+| Fetched | 2026-09-26 |
+
+Refresh it when AWS publishes a new bundle, and before the instance moves to a
+CA the committed file does not hold:
+
+```bash
+curl -sSf -o certs/rds-global-bundle.pem \
+  https://truststore.pki.rds.amazonaws.com/global/global-bundle.pem
+shasum -a 256 certs/rds-global-bundle.pem
+grep -c 'BEGIN CERTIFICATE' certs/rds-global-bundle.pem
+```
+
+Put the new checksum, count and date in the table and commit them with the
+file. The `Dockerfile` copies the bundle at build time, so pods get the new
+one only with the next image that is built and deployed.
+
+The deploy job renders whatever the `DB_URL` repository variable holds. A
+variable set from a data stack whose output had no `sslmode` keeps that old
+URL until someone replaces it, in single quotes because of the `?` and `&`:
+
+```bash
+gh variable set DB_URL --body '<the JdbcUrl output>'
+```
+
+`up.sh` leaves an existing data stack alone, so a stack created from the older
+template still outputs the old URL. Append the query string above to that
+value by hand.
 
 ### The deploy job, gated off
 
@@ -306,10 +439,95 @@ described above.
 7. **IRSA.** The pods' AWS identity, with no access keys. Cluster setup that
    happens once. No deploy repeats it.
 8. **Load balancer controller and metrics-server.** Also set up once, and no
-   deploy repeats it.
+   deploy repeats it. The controller gets the region and VPC id from the Helm
+   install, because the nodes do not let pods reach the instance metadata
+   service. The controller's IAM policy comes from a file in this repository, as
+   the next section describes.
 9. **Namespace and Secret.** Generated passwords, never written to disk. The API
    and ops passwords are bcrypt-hashed. The database password is stored as it
-   is, because the JDBC driver needs it.
+   is, because the JDBC driver needs it. `htpasswd` reads each password on
+   stdin, and `deploy/aws/lib.sh#create_secret` hands `kubectl create` the whole
+   Secret on stdin, so no value is on a command line, where the process list
+   would show it. An existing Secret is left alone, unless step 6 created a
+   database whose password the Secret does not hold yet, in this run or in one
+   that stopped before step 9: then only `DB_PASSWORD` changes, and the
+   deployment is restarted. A `DB_PASSWORD` that step 6 of this run did not
+   generate goes into a new Secret or an existing one after the same warning,
+   `deploy/aws/lib.sh#warn_db_password_from_shell`.
+
+### The load balancer controller's IAM policy
+
+The controller's IRSA role gets the IAM policy that the controller's
+maintainers publish with each release, as the install guide's iam_policy.json
+in the kubernetes-sigs/aws-load-balancer-controller repository. `up.sh` does
+not download it. A tag is a mutable pointer in someone else's repository, so a
+download would put whatever the tag pointed at that day on the role. The copy
+for the release `up.sh` installs is committed as
+`deploy/aws/lbc-iam-policy-v3.5.0.json`, byte for byte, upstream's
+indentation included, so a diff against the next release shows only what
+changed:
+
+- Source, fetched on 26 September 2026:
+  [iam_policy.json at v3.5.0](https://raw.githubusercontent.com/kubernetes-sigs/aws-load-balancer-controller/v3.5.0/docs/install/iam_policy.json)
+- Tag: `v3.5.0`, in `deploy/aws/up.sh#LBC_POLICY_TAG`, matching the Helm chart
+  version in `deploy/aws/up.sh#LBC_CHART_VERSION`
+- sha256: `16f232c9d9f79366fe949c4550ad517a202380058a9e48d45a4e215044a20a6a`,
+  in `deploy/aws/up.sh#LBC_POLICY_SHA256`
+
+Step 1 checks the file against the sum with
+`deploy/aws/lib.sh#require_sha256`, before anything bills, and step 8 checks
+it again just before it creates the policy from it. `deploy/aws/selftest.sh`
+makes the same check in CI. A file changed without its sum stops all three,
+so a change to what the controller may do arrives as a reviewed diff.
+
+The policy is named `flight-ops-lbc-v3.5.0`, from
+`deploy/aws/lib.sh#LBC_POLICY_PREFIX` and the tag, and tagged
+`Project=flight-ops`. AWS's install guide calls the same policy
+`AWSLoadBalancerControllerIAMPolicy`, so an account with another cluster may
+already hold one by that name, perhaps from an older release. `up.sh` never
+attaches it, and `down.sh` never deletes it. `down.sh` deletes every customer
+managed policy whose name starts with `flight-ops-lbc-`, after the cluster
+delete has removed the role it was attached to.
+
+To move to a new release, change the tag, the file, the sum and the documents
+that name them in one commit:
+
+1. Download the new release's file beside the old one, and read the diff.
+   Every added action is a new permission for the controller.
+
+   ```bash
+   old=$(sed -n 's/^LBC_POLICY_TAG=\([^ ]*\).*/\1/p' deploy/aws/up.sh)
+   new=v3.6.0   # the new release
+   repo=kubernetes-sigs/aws-load-balancer-controller
+   curl -fsSL -o "deploy/aws/lbc-iam-policy-$new.json" \
+     "https://raw.githubusercontent.com/$repo/$new/docs/install/iam_policy.json"
+   diff -u "deploy/aws/lbc-iam-policy-$old.json" \
+     "deploy/aws/lbc-iam-policy-$new.json"
+   shasum -a 256 "deploy/aws/lbc-iam-policy-$new.json"   # or sha256sum
+   ```
+
+2. Delete the old file with `git rm`. In `deploy/aws/up.sh`, set
+   `LBC_POLICY_TAG` to the new tag, `LBC_CHART_VERSION` to the chart that
+   installs that release, and `LBC_POLICY_SHA256` to the sum just printed.
+   The policy's name follows the tag.
+3. Update every document that names the release. In this section, that is
+   the source link, the fetch date, the tag, the sum and the policy's name.
+   `SECURITY.md`, `deploy/aws/README.md` (the "Who creates what" row, the
+   checksum row under "When something goes wrong" and the file table) and the
+   file tree in `doc/ARCHITECTURE.md` name the file, the policy or both.
+   `git grep -n -F "$old"` lists what is left. Leave the changelog's released
+   sections as they are, and add an Unreleased entry instead. The fixture
+   ARNs in `deploy/aws/selftest.sh` need no change.
+4. Run `deploy/aws/selftest.sh`, which fails while the file and the sum
+   disagree, and `python3 scripts/refcheck.py`, which fails while a path in a
+   code span still names the old file. It does not read the file tree in
+   `doc/ARCHITECTURE.md` or the README's checksum row, so the `git grep`
+   in step 3 is what finds those. Both must pass.
+
+Make the move while no cluster exists. On a running cluster, a re-run of
+`up.sh` creates the new policy but leaves the controller's role on the old
+one, because eksctl does not change a service account it has already
+created.
 
 ### The manifests
 
@@ -322,7 +540,7 @@ described above.
 | `deploy/k8s/secret.example.yaml` | a template. `up.sh` generates the real Secret and never writes it to disk |
 
 CI renders the overlay with
-`AWS_ACCOUNT_ID=… IMAGE_TAG=… SQS_QUEUE_URL=… DB_URL=… ./deploy/aws/render-aws.sh`,
+`AWS_ACCOUNT_ID=… IMAGE_TAG=… SQS_QUEUE_URL=… DB_URL='…' ./deploy/aws/render-aws.sh`,
 and a person can run the same command. It exits 2 if any of the four is unset
 or empty, and 3 if a `${…}` placeholder survives substitution. So a missing
 value is a failed command, and never a manifest holding the literal
@@ -342,17 +560,35 @@ The rolling update sets `maxUnavailable: 0`, and a `PodDisruptionBudget` covers
 voluntary disruptions such as a node drain. A rollout and a drain are different
 events, so each has its own guard.
 
+Both count a pod as available once it is Ready, and behind the ALB Ready has to
+include the load balancer's view. `deploy/k8s/namespace.yaml` labels the
+namespace `elbv2.k8s.aws/pod-readiness-gate-inject: enabled`, so while the
+Ingress exists the load balancer controller adds a readiness gate to each new
+pod. The pod is then Ready only once the ALB reports its target healthy, and
+neither a rollout nor a drain can remove the last healthy target while a new
+one is still in its first health checks. The gate is added when a pod is
+created. Pods already running when the label or the Ingress arrives have none
+until the next rollout replaces them, and that rollout already waits on the
+ALB, because its new pods carry the gate. CI's role cannot label the
+namespace, so a namespace created before the label gets it only when `up.sh`
+runs again or someone applies `namespace.yaml` by hand. The cost is that a pod
+in this namespace is created only while the controller's webhook answers. With
+the controller down, a rollout waits with `FailedCreate` events and the old
+pods keep serving.
+
 The heap is `-XX:MaxRAMPercentage=50.0`, so it follows the container's 768Mi
 memory limit, and going over that limit gets the container OOMKilled. There is
 no CPU limit. CFS throttling hits a JVM hardest during class loading and GC,
 inside the startup probe's window. It would also make the HPA measure the
 throttle instead of the load.
 
-Shutdown is a 5s `preStop` sleep plus a 30s
-`spring.lifecycle.timeout-per-shutdown-phase`. That is 35s, inside the 45s
-`terminationGracePeriodSeconds`. Get that inequality backwards and the kubelet
-sends SIGKILL mid-request. I pinned the 30s in `application.yml`, because the
-manifest comment does arithmetic on it.
+Shutdown is a 15s `preStop` sleep plus a 30s
+`spring.lifecycle.timeout-per-shutdown-phase`. That is 45s, inside the 55s
+`terminationGracePeriodSeconds`. The sleep keeps the pod serving while the
+load balancer controller deregisters its target and the ALB stops sending to
+it, which can take longer than a few seconds. Get that inequality backwards
+and the kubelet sends SIGKILL mid-request. I pinned the 30s in
+`application.yml`, because the manifest comment does arithmetic on it.
 
 The Dockerfile's `ENTRYPOINT` is `sh -c "exec java …"`. `exec` makes the JVM
 PID 1, so it receives SIGTERM. Without it the shell is PID 1 and forwards
@@ -398,7 +634,7 @@ Prices are for `ap-south-1`, on-demand, from the AWS price list on 22 September
 | RDS db.t4g.micro (instance hours) | $0.021/hr | $0.50 |
 | EBS (2 × 20 GB gp3), public IPv4 | | $0.62 |
 | SQS, Lambda, DynamoDB, X-Ray, two CloudWatch alarms | free tier at this volume; an account's first ten standard alarms are free | $0.00 |
-| ECR, under 1 GB of images | $0.10/GB-month after any free tier | $0.00 |
+| ECR, up to about 1.5 GB of images (15 kept at most) | $0.10/GB-month after any free tier | $0.00 |
 | | | **$7.72** |
 
 The figures assume 1.5 GB/day through the NAT gateway, about 0.25 LCU on the
@@ -447,6 +683,14 @@ $0.0224/hour running `docker compose up` with an Elastic IP, plus the free-tier
 SAM stack. It proves the service works on AWS and proves nothing about EKS.
 Ninety per cent of the cost of shape A pays for Kubernetes. Whether that is
 worth $123 over fifteen days depends on who is asking.
+
+`compose.yaml` is not ready for shape C as it stands. It publishes port 8080 on
+loopback only, and its two password hashes are of passwords the README prints.
+Shape C needs a compose override file that sets its own bcrypt hashes for
+`API_PASSWORD` and `OPS_PASSWORD` and puts a proxy that terminates TLS in front
+of the application, in place of a bare port 8080 open to the internet. For the
+SAM stack to receive events, it also needs `APP_EVENTS_PUBLISHER=sqs` and
+`SQS_QUEUE_URL`, because `compose.yaml` selects the log publisher.
 
 B saves $0.60/day and costs an afternoon: Fargate profiles for `kube-system`,
 CoreDNS patched off its EC2-only annotation, and somewhere for the load
@@ -503,16 +747,19 @@ image-pull error, so set the CLI default to match:
 aws configure set region ap-south-1
 ```
 
-The three stacks `up.sh` deploys itself (the foundation, the data stack and
-the Lambda) carry the tag `Project=flight-ops`. It passes
-`--tags Project=flight-ops` to each one, and CloudFormation copies stack tags
-to the resources that take them. `deploy/aws/cluster.yaml` puts the same tag
-on what eksctl creates from it: the cluster, its VPC and NAT gateway, and the
-node group. A few things are left untagged: the four EKS addons, the two IAM
-roles made by `eksctl create iamserviceaccount`, the load balancer controller's
-IAM policy, and the shared SAM bucket. None of them bills more than cents. The
-addons and the roles go with the cluster, and `down.sh` deletes the policy by
-name. The catch-all query is:
+The three stacks `up.sh` deploys itself (the foundation, the data stack and the
+Lambda) carry the tag `Project=flight-ops`. It passes `--tags
+Project=flight-ops` to each one, and CloudFormation copies stack tags to the
+resources that take them. `deploy/aws/cluster.yaml` puts the same tag on what
+eksctl creates from it: the cluster, its VPC and NAT gateway, and the node
+group. `up.sh` creates the load balancer controller's IAM policy outside any
+stack, so it tags that policy itself, and `down.sh` deletes it by its
+`flight-ops-lbc-` prefix and warns if it cannot. The tag shows the policy in the
+console; the catch-all query below does not list it, for the reason section 6
+gives. A few things are left untagged: the four EKS addons, the two IAM roles
+made by `eksctl create iamserviceaccount`, and the shared SAM bucket. None of
+them bills more than cents, and the addons and the roles go with the cluster.
+The catch-all query is:
 
 ```bash
 aws resourcegroupstaggingapi get-resources --tag-filters Key=Project,Values=flight-ops
@@ -546,11 +793,17 @@ No AWS account id is hard-coded anywhere. The files under `lambda/events/` use
 the placeholder `123456789012`, and the workflow reads
 `${{ secrets.AWS_ACCOUNT_ID }}`. No access key is stored either.
 `DefaultCredentialsProvider` in `AwsConfig` reads `~/.aws` on a laptop and the
-projected service-account token under IRSA. The deploy job, which is gated
-off and has never run, would use GitHub's OIDC provider and short-lived STS
-credentials. `deploy/aws/foundation.yaml` pins the trust policy's `sub` claim
-to this repository's `main` branch, because a bare wildcard there lets any
-repository on GitHub assume the role.
+projected service-account token under IRSA. That token is the pod's only AWS
+or Kubernetes credential: `automountServiceAccountToken` is false, so no
+Kubernetes API token is mounted, and `disablePodIMDS` in
+`deploy/aws/cluster.yaml` stops pods reaching the instance metadata service
+and the node role behind it. That setting applies when a node group is
+created, so a node group from before it keeps the old behaviour until it is
+replaced. The deploy job, which is gated off and has never run, would use
+GitHub's OIDC provider and short-lived STS credentials.
+`deploy/aws/foundation.yaml` pins the trust policy's `sub` claim to this
+repository's `main` branch, because a bare wildcard there lets any repository
+on GitHub assume the role.
 
 ## 6. Tearing it down
 
@@ -562,9 +815,9 @@ Type `delete` when it asks. The deletes take about 20 minutes. Then the script
 runs fourteen checks and exits non-zero if any of them finds something. They
 cover both kinds of load balancer, clusters, instances, NAT gateways, volumes,
 Elastic IPs, RDS instances and snapshots, stacks, log groups, secrets and ECR,
-plus a catch-all query for anything tagged `Project=flight-ops`. The
-catch-all runs in ap-south-1, and AWS reports IAM resources from us-east-1, so
-it sees no IAM role or OIDC provider. IAM bills nothing, and the stacks check
+plus a catch-all query for anything tagged `Project=flight-ops`. The catch-all
+runs in ap-south-1, and AWS reports IAM resources from us-east-1, so it sees no
+IAM role, IAM policy or OIDC provider. IAM bills nothing, and the stacks check
 still catches an eksctl stack that failed to delete, IRSA roles and all. With
 `--keep-foundation` there are thirteen, because that flag leaves the ECR
 repository behind and skips its check. It also leaves the foundation stack and
@@ -577,10 +830,12 @@ CloudFormation stack can delete successfully and still leave a load balancer
 behind. Each stack and the cluster print ✓ only after their wait confirms the
 delete, and otherwise warn and leave the verdict to the checks.
 
-`down.sh` writes a temporary kubeconfig for this cluster and never uses the
-caller's current context, which may point at another cluster. If the cluster
-cannot be reached, it warns that an ALB may be orphaned and asks you to type
-`continue`. It then skips the load balancer controller and namespace steps.
+`down.sh` uses the scripts' own kubeconfig, `deploy/aws/.state/kubeconfig`,
+rewrites this cluster's entry in it, and never uses the caller's current
+context, which may point at another cluster. If the cluster cannot be reached,
+it warns that an ALB may be orphaned and asks you to type `continue`. It then
+skips the load balancer controller and namespace steps. When the checks pass,
+it deletes the kubeconfig.
 
 The order matters:
 
@@ -600,6 +855,13 @@ The checks say nothing about the bill. Cost Explorer lags, so look again the
 next day and expect zero, not "small". Data transferred earlier in the month is
 still billed at month end, because deleting a resource refunds nothing.
 
+`down.sh` changes nothing in GitHub, and prints what is left to do there. Set
+`DEPLOY_ENABLED` back to `false` before you start, or every push to `main`
+runs the deploy job against a cluster that no longer exists, and fails. After
+the teardown, rename the job back to `deploy (gated off)`, with
+`CONTRIBUTING.md` in the same commit, so that
+[the gate](#the-deploy-job-gated-off) shows in the checks list again.
+
 ## 7. What breaks first
 
 Reasoned from the configuration, not measured under load, the order would be:
@@ -615,22 +877,47 @@ Reasoned from the configuration, not measured under load, the order would be:
 2. **Seat lock contention.** Concurrent bookings for the *same flight* queue
    behind `SELECT ... FOR UPDATE`. That queue is what prevents overselling, so
    it is expected. `SET lock_timeout = '3s'` bounds the wait, and after that a
-   request gets 503 with `Retry-After`. Different flights never contend, so this
-   limit depends on concurrency per flight and not on total traffic.
+   request gets 503 with `Retry-After`. Different flights never contend for the
+   lock, so this limit depends on concurrency per flight and not on total
+   traffic. They do share each pod's pool, though: a hot flight's waiters each
+   hold a connection, so other requests on that pod can wait for one, 5 s at
+   most before `503 DATABASE_UNAVAILABLE`.
 
-3. **Outbox drain rate.** One publisher polls every second and claims up to 100
-   rows with `FOR UPDATE SKIP LOCKED`, so the ceiling is roughly 100 events per
-   second per replica. The `outbox.pending` gauge shows the backlog before
-   anyone notices it downstream.
+3. **Outbox drain rate.** Each replica's publisher claims up to 100 rows with
+   `FOR UPDATE SKIP LOCKED` and sends them one at a time, each a blocking
+   `SendMessage`
+   (`src/main/java/com/smit/flightops/service/SqsEventPublisher.java#publish`).
+   The job is `fixedDelay`, so the next drain starts a second after the last
+   one ends. With a send latency of L seconds, a replica drains about
+   `100 / (1 + 100 × L)` events a second. 100 a second is a bound it never
+   reaches, and `1 / L` is its ceiling whatever the batch size or interval.
+   Nothing here has measured L. If it were 20 ms, a drain would spend 2 s
+   sending, for 100 / 3, about 33 events a second. A batch of 1000 would give
+   1000 / 21, about 48, and hold its row locks and a pooled connection for
+   20 s each drain. A 100 ms interval would give 100 / 2.1, also about 48,
+   with no longer hold. The SQS client bounds each send at 5 s, retries
+   included
+   (`src/main/java/com/smit/flightops/config/AwsConfig.java#sqsClient`), so a
+   drain of 100 whose sends all time out takes up to 500 s. More replicas
+   raise the total, each claiming a disjoint batch, up to the four of point 1,
+   and the CPU-based HPA does not add them for a backlog alone. Past that,
+   short of the larger instance class point 1 describes, the change is in
+   code: `SendMessageBatch`, in the SQS SDK the service already uses, takes
+   up to ten messages a call, and the drain would have to map each entry's
+   failure back to its row. The `outbox.pending` gauge shows the backlog
+   before anyone notices it downstream.
+   [OPERATIONS.md](OPERATIONS.md#events-stop-arriving-outbox_pending-climbs)
+   has the playbook, and how to measure L.
 
 4. **Lambda concurrency.** The SQS event source sets
    `ScalingConfig.MaximumConcurrency: 5`, so a backlog runs at most five
    invocations. It reserves nothing from the account pool and limits only the
    poller, and `lambda/template.yaml` explains the trade-off. Messages over the
    cap wait in the queue, and their receive count is not raised, so a long
-   backlog is slow and does not reach the DLQ. An account pool that runs dry can
-   still throttle, and that does raise the count towards `maxReceiveCount: 3`.
-   Raise the cap before raising traffic; AWS accepts 2 to 1000.
+   backlog is slow and does not reach the DLQ. A message still waiting 10 days
+   after it was sent is deleted. An account pool that runs dry can still
+   throttle, and that does raise the count towards `maxReceiveCount: 3`. Raise
+   the cap before raising traffic; AWS accepts 2 to 1000.
 
 5. **Node IP addresses, not CPU.** With the VPC CNI each pod takes a real VPC
    IP, and a t3.medium holds at most 17 pods. Two nodes hold the HPA's ceiling

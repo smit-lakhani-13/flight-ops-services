@@ -1,9 +1,9 @@
 # Deploying to AWS
 
-Six scripts, a shared library, two CloudFormation templates and the eksctl
-cluster definition. Together they create the whole demo (cluster, database,
-queue, Lambda, load balancer) in an empty account, and delete it again with
-proof that it is gone.
+Six scripts, a shared library, two CloudFormation templates, the eksctl
+cluster definition and the load balancer controller's IAM policy. Together
+they create the whole demo (cluster, database, queue, Lambda, load balancer)
+in an empty account, and delete it again with proof that it is gone.
 
 Nothing here has been run against a real account. The templates lint, the
 scripts parse and are shellcheck-clean, and `selftest.sh` runs the teardown,
@@ -96,7 +96,25 @@ of its networking addons, OIDC provider and node group is missing. A stop in
 the first minutes, before EKS lists the cluster, needs its CloudFormation stack
 to settle before the re-run (`doc/DEPLOYMENT.md` section 4). A run that stops
 between steps 6 and 9 is different: the database password was only in that
-shell, and step 9 says how to set a new one.
+shell, and step 9 says how to set a new one. If the data stack was deleted and
+the cluster kept, the re-run creates a new database, and step 9 writes its
+password into the existing Secret and restarts the pods. The API and ops
+passwords stay as they were. Step 6 records the new database in
+`deploy/aws/.state/flight-ops.env` until the Secret holds its password, so if
+that run stops between the two steps, the next one stops at step 9 too and
+says how to set a new password, although a Secret exists. From a shell that
+exports `DB_PASSWORD`, it does not stop: step 9 writes that value into the
+Secret, which it cannot check against the database, and warns what a wrong
+one does and how to put it right.
+
+The scripts keep the cluster's kubeconfig in `deploy/aws/.state/kubeconfig`,
+mode 0600. They never write `~/.kube/config` or change its current context,
+and a context selected in `~/.kube/config`, or in any kubeconfig but this one,
+cannot send a run to another cluster. The closing summary prints the
+`export KUBECONFIG=...` line that points a shell at the file; the `kubectl`
+commands on this page need it. A shell with that export shares the file, so
+`aws eks update-kubeconfig --name <other>` there would switch its current
+context under a running script.
 
 After step 1 it stops twice more. On a first run, step 9 prints the generated
 passwords and waits for `saved`. Step 10 prints four values and waits for
@@ -106,7 +124,7 @@ passwords and waits for `saved`. Step 10 prints four values and waits for
 Secret    AWS_ACCOUNT_ID   123456789012
 Variable  DEPLOY_ENABLED   true
 Variable  SQS_QUEUE_URL    https://sqs.ap-south-1.amazonaws.com/…/booking-events
-Variable  DB_URL           jdbc:postgresql://…:5432/flightops
+Variable  DB_URL           jdbc:postgresql://…:5432/flightops?sslmode=verify-full&sslrootcert=/app/certs/rds-global-bundle.pem
 ```
 
 Before you set `DEPLOY_ENABLED`, rename the deploy job in
@@ -127,10 +145,10 @@ aws dynamodb scan --table-name flight-status-events --select COUNT
 
 ### Why CI deploys the application and this script does not
 
-The image tag is the commit SHA, and only the job that built the image knows
-it. A script that built and pushed from a laptop would tag whatever was checked
-out, including uncommitted changes, and the cluster would run something that
-does not exist in git.
+The image tag is the commit SHA of the CI run that built the image. A script
+that built and pushed from a laptop would tag whatever was checked out,
+including uncommitted changes, and the cluster would run something that does
+not exist in git.
 
 No password reaches GitHub either. `up.sh` generates the database, API and ops
 passwords. It writes the database password and the bcrypt hashes of the other
@@ -146,7 +164,7 @@ its contents.
 | SQS, DLQ, two CloudWatch alarms, DynamoDB, the Lambda | `lambda/template.yaml` via `sam deploy`, from the jar Maven builds | SAM owns its own stack; it is also the only half that is useful on its own |
 | Cluster, VPC, NAT, nodes | `cluster.yaml` via `eksctl` | eksctl's VPC layout is what the RDS template reads its subnets from |
 | RDS, its subnet group and security group | `data.yaml` | needs eksctl's VPC, so it cannot come earlier |
-| IRSA roles, LB controller, metrics-server | `up.sh` | one-off cluster setup, not per-deploy |
+| IRSA roles, LB controller and its IAM policy, metrics-server | `up.sh`, the policy from `lbc-iam-policy-v3.5.0.json` | one-off cluster setup, not per-deploy |
 | Namespace, Secret, EKS access entry | `up.sh` | holds passwords, and grants CI its scoped access |
 | Deployment, Service, HPA, PDB, ConfigMap, ServiceAccount | CI, from `deploy/k8s/overlays/aws` | changes every release |
 | Ingress, and therefore the ALB | `up.sh` | optional: without it the app is reachable by port-forward, and the ALB's share of the bill goes |
@@ -184,10 +202,11 @@ step's own message does not, because a CloudFormation delete can report
 success while leaving a load balancer behind; each stack and the cluster print
 `✓` only when their wait confirms the delete.
 
-`down.sh` writes its own temporary kubeconfig for the cluster and checks that
-the API server answers. If it cannot reach the cluster, it says so, asks you to
-type `continue`, and skips the Helm and namespace steps. It never acts on the
-context your shell had selected.
+`down.sh` uses the same kubeconfig as `up.sh`, rewrites the cluster's entry in
+it, and checks that the API server answers. If it cannot reach the cluster, it
+says so, asks you to type `continue`, and skips the Helm and namespace steps.
+It never acts on the context your shell had selected. A clean run deletes the
+file.
 
 Two orderings in that script matter:
 
@@ -202,15 +221,23 @@ Two orderings in that script matter:
 
 `--keep-foundation` keeps ECR, the CI role and the budgets. CI's "Is this
 commit already in ECR?" step then finds an image already pushed for the commit
-it deploys, and skips the build. The sweep leaves out the foundation stack and
-the resources it owns, and still checks everything else. The kept images stay
-in ECR, which bills storage at $0.10 per GB-month after any free tier, so five
-images cost cents a month. The shared SAM bucket also stays, as it does after a
-full teardown, unless you pass `--delete-sam-bucket`.
+it deploys, and skips the download and push. The sweep leaves out the
+foundation stack and the resources it owns, and still checks everything else.
+The kept images stay in ECR, which bills storage at $0.10 per GB-month after
+any free tier, so the fifteen or fewer images the lifecycle policy keeps cost
+cents a month. The shared SAM bucket also stays, as it does after a full
+teardown, unless you pass `--delete-sam-bucket`.
 
 Two things the sweep cannot prove. Cost Explorer lags, so check again the next
 day and expect zero, not "small". And data already transferred this month is
 still billed at month end.
+
+Nothing in GitHub changes. Set the `DEPLOY_ENABLED` variable to `false`
+before you start: while it is `true`, every push to `main` runs the deploy job
+against a cluster that no longer exists, and fails. After the teardown, rename
+the job back to `deploy (gated off)`, and change `CONTRIBUTING.md`, which
+quotes the name, in the same commit. The plan `down.sh` prints before it
+deletes anything names `DEPLOY_ENABLED`, and the end of a clean run lists both.
 
 ## When something goes wrong
 
@@ -218,12 +245,14 @@ still billed at month end.
 |---|---|
 | `kubectl get ingress` shows no ADDRESS, forever, no error | the load balancer controller is not running, or its IRSA role is missing. `kubectl logs -n kube-system deploy/aws-load-balancer-controller` |
 | Pods `CrashLoopBackOff`, log shows `APPLICATION FAILED TO START` on `app.security.api-password (API_PASSWORD)` | `API_PASSWORD` (or `OPS_PASSWORD`) is missing from the Secret, or has no `{id}` prefix. The message never shows the value. `kubectl get secret flight-ops-secret -n flight-ops -o jsonpath='{.data}'` should list `DB_PASSWORD`, `API_PASSWORD`, `OPS_PASSWORD` |
-| Pods `CrashLoopBackOff`, Flyway reports `password authentication failed` | `DB_PASSWORD` in the Secret does not match the database |
+| Pods `CrashLoopBackOff`, Flyway reports `password authentication failed` | `DB_PASSWORD` in the Secret does not match the database. A re-run of `up.sh` that creates the data stack again writes the new password into the Secret at step 9 |
+| A rollout or a scale-up makes no progress, and `kubectl get events -n flight-ops` shows `FailedCreate` naming the webhook `mpod.elbv2.k8s.aws` | the namespace's readiness gate label sends every pod create to the load balancer controller, and the controller is not answering. The old pods keep serving. `kubectl get deploy -n kube-system aws-load-balancer-controller` |
 | Pods `CrashLoopBackOff`, log shows `app.security.api-password cannot be verified by the configured DelegatingPasswordEncoder` | the password carries an algorithm id no encoder verifies, such as `{bcrpyt}`, and the log adds `There is no password encoder mapped for the id`. An `{argon2}` or `{scrypt}` hash stops startup the same way, because the build leaves out BouncyCastle |
 | Every API call returns 401, log warns `Encoded password does not look like BCrypt` | the Secret still holds `{bcrypt}REPLACE_ME` from `deploy/k8s/secret.example.yaml`. Recreate it with a real hash |
 | `kubectl get hpa` shows `<unknown>/70%` | metrics-server is not installed. `aws eks describe-addon --cluster-name flight-ops-cluster --addon-name metrics-server` |
 | `up.sh` stops at step 1 on the JDK | the Maven wrapper does not see JDK 21. Point `JAVA_HOME` at `openjdk@21` |
 | `up.sh` stops at step 1: `up.sh needs eksctl 0.184.0 or later` | an older eksctl installs the cluster's networking addons self-managed, and step 4's re-run looks them up as EKS addons. `brew upgrade eksctl` |
+| `up.sh` stops at step 1, or at step 8 if the file changed during the run: `…/lbc-iam-policy-v3.5.0.json has sha256 '…', not the … recorded for it` | the committed controller policy is not the file its sum was recorded for. Restore it with `git checkout -- deploy/aws/lbc-iam-policy-v3.5.0.json`, or, for a new release, change the file, the tag and the sum together as `doc/DEPLOYMENT.md` describes |
 | `up.sh` stops at step 4: `cluster flight-ops-cluster is not ACTIVE` | the cluster is `FAILED` or `DELETING`, or still not `ACTIVE` after 20 minutes. The message prints the `describe-cluster` command to check it |
 | `up.sh` stops at step 4: `addon vpc-cni did not become ACTIVE` or `node group ng-1 did not become ACTIVE` | the addon is `CREATE_FAILED` or `DEGRADED`, or the node group is `CREATE_FAILED`, or the wait ran out (10 minutes for vpc-cni, 40 for the node group). The message prints the command that shows its health. A re-run does not replace a `CREATE_FAILED` node group: delete it with `eksctl delete nodegroup --cluster flight-ops-cluster --name ng-1 --region ap-south-1 --wait`, then re-run |
 | `up.sh` stops at step 4: `could not create addon <name>`, `could not associate an IAM OIDC provider` or `could not create node group ng-1` | EKS or eksctl refused the create. Its own error is printed just above |
@@ -232,9 +261,13 @@ still billed at month end.
 | `up.sh` stops at step 5: `has no AmazonEKSEditPolicy scoped to namespace/flight-ops` | the policy association was refused and is not there. The message prints the `list-associated-access-policies` command to check it |
 | `up.sh` stops at step 6 on the data stack's status | `ROLLBACK_COMPLETE` or `DELETE_FAILED` cannot be used: delete the stack and re-run (the message prints both commands). A status ending `_IN_PROGRESS`: wait, then re-run. A status read that fails for another reason also stops the run, so a throttled call is never taken for "no stack" |
 | `up.sh` stops at step 9: `the data stack already existed, so the database password is not available here` | the run that created the data stack stopped before step 9 wrote the Secret. Delete the data stack and re-run, or set a new password with the `modify-db-instance` command the message prints and re-run from the same shell |
+| `up.sh` stops at step 9: `secret flight-ops-secret still holds the old database's password` | a run that created a new database, with a Secret from an earlier one in the cluster, stopped before step 9 wrote the new password. Set a new password with the `modify-db-instance` command the message prints and re-run from the same shell; step 9 then writes it into the Secret and restarts the pods |
+| `up.sh` warns at step 9: `DB_PASSWORD comes from your shell` | this run did not create the database, so step 9 wrote the exported `DB_PASSWORD` into the Secret without a way to check it, as expected after the `modify-db-instance` commands an earlier stop printed. If Flyway then reports `password authentication failed`, the value was stale: with the same `DB_PASSWORD` exported, run the `modify-db-instance` command the warning prints, so the database takes the password the Secret holds, then re-run |
+| `up.sh` stops at step 9: `could not update DB_PASSWORD`, `could not tell whether deployment/flight-ops exists` or `could not restart deployment/flight-ops` | step 6 created a new database, and the Secret or the running pods may still hold the old one's password. Re-run once the cluster answers. The state file records how far step 9 got, so the re-run restarts the pods, or, if the Secret was never patched, says how to set a new password |
 | `up.sh` waits 30 minutes at step 10, then stops | CI never created the deployment. Check the workflow run: the deploy job is skipped unless `DEPLOY_ENABLED` is `true` and the run is on `main` |
 | Pods run but nothing reaches SQS | IRSA is not attached. `kubectl describe pod` should show `AWS_WEB_IDENTITY_TOKEN_FILE` |
 | Connection timeouts to RDS | the security group admits the cluster SG and the shared node SG. Confirm with `aws ec2 describe-security-groups` that the ids in `data.yaml`'s parameters match the live cluster |
+| Pods `CrashLoopBackOff`, Flyway reports `SSL error:`, `could not be verified by hostnameverifier` or `Could not open SSL root certificate file` | the driver refused the database's certificate, because `DB_URL` sets `sslmode=verify-full`. `SSL error:` with `PKIX path building failed`: the certificate does not chain to a CA in `certs/rds-global-bundle.pem`, usually because the instance moved to a CA the committed bundle does not hold. Refresh the bundle as [doc/DEPLOYMENT.md](../../doc/DEPLOYMENT.md#the-database-connection) says, and deploy the new image. The host name message: `DB_URL` names a host the certificate does not, such as a custom DNS name, so use the `JdbcUrl` output as it is. The root certificate message: `DB_URL` has `sslmode=verify-full` but no `sslrootcert`, so the driver looked for `~/.postgresql/root.crt`. Set `DB_URL` to the whole `JdbcUrl` output. If the message names `/app/certs/rds-global-bundle.pem`, the running image lacks the bundle or `DB_URL` has a wrong path: check the image tag and the path in `DB_URL` |
 | `eksctl delete cluster` fails after 20 min | the data stack is still up. Delete it, then re-run `down.sh` |
 | CI stops at "Is this commit already in ECR?" | `describe-images` failed with something other than `ImageNotFoundException`, usually a missing `ecr:DescribeImages` on the CI role. The step log shows the CLI's message |
 | CI stops at "Configure AWS credentials (OIDC)" with `Not authorized to perform sts:AssumeRoleWithWebIdentity` | the role did not accept the token. Its trust policy pins `sub` to `repo:<GitHubOwner>/<GitHubRepo>:ref:refs/heads/main`, with the owner and repo `foundation.yaml` was deployed with (default `smit-lakhani-13/flight-ops-services`). A wrong `AWS_ACCOUNT_ID` secret gives the same message |
@@ -254,6 +287,7 @@ still billed at month end.
 | `foundation.yaml` | ECR, GitHub OIDC provider and role, the SQS publish policy, two budgets |
 | `data.yaml` | RDS PostgreSQL, its subnet group and security group |
 | `cluster.yaml` | the eksctl cluster: Kubernetes version pin, one NAT gateway, OIDC for IRSA, and the managed node group `lib.sh` names; `up.sh` passes it to `eksctl` with `-f` |
+| `lbc-iam-policy-v3.5.0.json` | the AWS Load Balancer Controller's IAM policy for v3.5.0, copied unchanged from upstream; `up.sh` checks its sha256 and creates the policy `flight-ops-lbc-v3.5.0` from it. `doc/DEPLOYMENT.md` gives its source and how to move to a new release |
 
 `cluster.yaml` sits beside the scripts that use it, because `eksctl` takes its
 config from `-f` and has no default location. The SAM template is
@@ -264,6 +298,11 @@ config from `-f` and has no default location. The SAM template is
 in a scratch copy of `lambda/`, where the tests cannot find `../contracts`.
 
 The scripts keep their state in `deploy/aws/.state/flight-ops.env`: the account
-id, the ECR repository URI, the queue URL, the JDBC URL and the load balancer
-hostname. It is gitignored and holds no passwords. Once the sweep passes
-clean, `down.sh` renames it to `flight-ops.env.<account id>.done`.
+id, the ECR repository URI, the queue URL, the JDBC URL, the load balancer
+hostname, and whether a new database's password has yet to reach the Secret.
+It is gitignored and holds no passwords. Once the sweep passes
+clean, `down.sh` renames it to `flight-ops.env.<account id>.done`. The
+cluster's kubeconfig sits beside it, in `deploy/aws/.state/kubeconfig`. It
+holds the API server's address and CA and no token: `kubectl` asks
+`aws eks get-token` for one each time. `down.sh` deletes it with the same
+clean sweep.

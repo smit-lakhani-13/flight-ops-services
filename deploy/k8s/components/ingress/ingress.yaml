@@ -45,15 +45,18 @@ metadata:
     alb.ingress.kubernetes.io/target-type: ip
 
     # The ALB checks health on its own, apart from the kubelet. Readiness
-    # answers its question: should traffic go here?
+    # answers its question: should traffic go here? It leaves out the
+    # database, so a database outage does not fail every target at once.
     alb.ingress.kubernetes.io/healthcheck-path: /actuator/health/readiness
     alb.ingress.kubernetes.io/healthcheck-interval-seconds: "15"
     alb.ingress.kubernetes.io/healthy-threshold-count: "2"
     alb.ingress.kubernetes.io/unhealthy-threshold-count: "3"
 
-    # Under terminationGracePeriodSeconds (45s), or the ALB still drains a
-    # target the kubelet has killed. With the 5s preStop hook, this keeps a
-    # rolling update from dropping requests.
+    # Under terminationGracePeriodSeconds (55s), or the ALB still drains a
+    # target the kubelet has killed. With the 15s preStop hook, and the
+    # readiness gate deploy/k8s/namespace.yaml turns on so that a new pod is
+    # healthy here before an old one goes, this keeps a rolling update from
+    # dropping requests.
     alb.ingress.kubernetes.io/target-group-attributes: deregistration_delay.timeout_seconds=30
 
     # Here, not in the component's kustomization.yaml, because up.sh applies

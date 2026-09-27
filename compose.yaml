@@ -23,9 +23,9 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     # Uncomment to reach the database from the host with psql. Off by default,
-    # because 5432 is often taken on a laptop.
+    # because 5432 is often taken on a laptop. Loopback only, like the app.
     # ports:
-    #   - "5432:5432"
+    #   - "127.0.0.1:5432:5432"
     healthcheck:
       # With -U and -d. On a first start, a bare `pg_isready` passes before the
       # init scripts create the database, and Flyway fails in a way a second
@@ -72,12 +72,16 @@ services:
 
       # Chattier than the prod profile, which leaves org.hibernate.SQL at WARN.
       SQL_LOG_LEVEL: DEBUG
+    # Loopback only. A bare "8080:8080" listens on every interface, and on
+    # Linux Docker's own firewall rules bypass a host firewall such as ufw. The
+    # two hashes above are of passwords printed in the README.
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     healthcheck:
       # Readiness, the check the Kubernetes readiness probe uses. It turns UP
-      # only when startup, the demo seeder included, has finished and the
-      # database answers. During Flyway nothing answers: the port opens after.
+      # only when startup, Flyway and the demo seeder included, has finished.
+      # It does not check the database after that; application.yml says why.
+      # During Flyway nothing answers: the port opens after.
       # wget, because the Alpine runtime image has BusyBox wget and no curl.
       test: ["CMD-SHELL", "wget -qO- http://localhost:8080/actuator/health/readiness | grep -q UP"]
       interval: 10s

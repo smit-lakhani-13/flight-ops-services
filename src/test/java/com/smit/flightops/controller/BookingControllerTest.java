@@ -5,6 +5,7 @@ import com.smit.flightops.support.MetricsTestConfig;
 import com.smit.flightops.dto.BookingDto;
 import com.smit.flightops.dto.BookingRequest;
 import com.smit.flightops.entity.FlightStatus;
+import com.smit.flightops.exception.BookingNotCancellableException;
 import com.smit.flightops.exception.BookingNotFoundException;
 import com.smit.flightops.exception.FlightNotBookableException;
 import com.smit.flightops.exception.InsufficientSeatsException;
@@ -413,6 +414,32 @@ class BookingControllerTest {
                 .andExpect(jsonPath("$.content[0].idempotencyKey").doesNotExist());
     }
 
+    /** {@code FlightControllerTest#aFilterWithAControlCharacterInsideIsRefused} gives the reason. */
+    @Test
+    @DisplayName("a flight number with a control character inside it (A%00B) is 400 MALFORMED_REQUEST, before any query")
+    void aFlightNumberWithAControlCharacterInsideIsRefused() throws Exception {
+        mockMvc.perform(get("/api/v1/bookings").param("flightNumber", "A\u0000B"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("MALFORMED_REQUEST"))
+                .andExpect(jsonPath("$.message").value("flightNumber must not contain control characters."));
+
+        verify(bookingService, never()).findByFlightNumber(any(), any());
+    }
+
+    /** The check is not an alphabet: an unknown flight number is still an empty page. */
+    @Test
+    @DisplayName("a hyphenated flight number is still 200 with an empty page")
+    void aHyphenatedFlightNumberIsStillAnEmptyPage() throws Exception {
+        when(bookingService.findByFlightNumber(eq("A-B"), any()))
+                .thenReturn(new PageImpl<>(List.of(), Pageable.ofSize(20), 0));
+
+        mockMvc.perform(get("/api/v1/bookings").param("flightNumber", "A-B"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content.length()").value(0));
+
+        verify(bookingService).findByFlightNumber(eq("A-B"), any());
+    }
+
     @Test
     @DisplayName("a page size larger than the cap is clamped to 100, not honoured")
     void pageSizeIsCappedAtOneHundred() throws Exception {
@@ -452,6 +479,18 @@ class BookingControllerTest {
         mockMvc.perform(delete("/api/v1/bookings/999"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("BOOKING_NOT_FOUND"));
+    }
+
+    @Test
+    @DisplayName("cancelling a booking on a flight that has flown is 409 BOOKING_NOT_CANCELLABLE")
+    void cancelOnAFlownFlightReturns409() throws Exception {
+        when(bookingService.cancel(1L))
+                .thenThrow(new BookingNotCancellableException(1L, "UA123", FlightStatus.ARRIVED));
+
+        mockMvc.perform(delete("/api/v1/bookings/1"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("BOOKING_NOT_CANCELLABLE"))
+                .andExpect(jsonPath("$.message").value(containsString("ARRIVED")));
     }
 
     @Test

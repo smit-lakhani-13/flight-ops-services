@@ -31,8 +31,8 @@ the licence, and one `basicAuth` security scheme applied globally. The
 security requirement is declared once, on the document. Per-operation
 annotations repeat on every method, and the one someone forgets is the
 endpoint documented as public. `bearerAuth` is absent, because the JWT half of
-`SecurityConfig` only activates when an issuer is configured. Advertising a
-method the running instance rejects is worse than advertising none.
+`SecurityConfig` only activates when a JWT decoder is configured. Advertising
+a method the running instance rejects is worse than advertising none.
 `src/test/java/com/smit/flightops/OpenApiTest.java#theSecurityRequirementIsDocumentedOnceAndAppliesToEverything`
 pins both.
 
@@ -68,7 +68,11 @@ curl -s -o /dev/null -w '%{http_code}\n' localhost:8080/api/v1/flights   # 401
   `src/test/java/com/smit/flightops/OpenApiTest.java#theDocumentCoversTheApiAndItsFailures`
   fails when the document and the list differ. The reads carry a one-line
   summary and no description. A description that restates a getter's name is
-  how these documents stop being read.
+  how these documents stop being read. The 503 `DATABASE_UNAVAILABLE` that
+  every operation can return, and the `Retry-After` and `X-Request-Id`
+  headers, are added once by
+  `src/main/java/com/smit/flightops/config/OpenApiConfig.java#sharedResponses`,
+  for the reason the security requirement is declared once.
 
 * The springdoc starter pulls in swagger-core, which needs a newer Jackson 2
   than Boot 4.1.1 manages. I override `jackson-2-bom.version` for that reason,

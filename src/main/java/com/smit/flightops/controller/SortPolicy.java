@@ -23,6 +23,20 @@ import java.util.Set;
  * <p>{@code ignorecase} is kept only on text. A declared {@code @Query} wraps the
  * column in {@code lower()} whatever its type, and Hibernate refuses that for a
  * number or a time, so {@code ?sort=seats,asc,ignorecase} was a 500.
+ *
+ * <p>Nulls go last on a property that can hold one, and only there. The
+ * {@code sort} parameter cannot say where nulls go, so each database used its
+ * own rule: H2 sorts NULL lowest and PostgreSQL highest, and
+ * {@code ?sort=cancelledAt,asc} listed the active bookings first on H2 and
+ * last on PostgreSQL. So an order on a property the endpoint lists as nullable
+ * is NULLS LAST in both directions. Every other order, the tiebreaker
+ * included, carries no null handling, whatever the request said. On a NOT NULL
+ * column it would change no result, and on PostgreSQL it would cost an index:
+ * DESC NULLS LAST is not the reverse of an ascending index, so
+ * {@code ?sort=id,desc} could no longer read the primary key backwards. The
+ * default flight order is then {@code departure_time, id}, both plainly
+ * ascending, which PostgreSQL sorts NULLS LAST anyway: the order the index in
+ * {@code V11__flights_departure_time_index.sql} holds.
  */
 final class SortPolicy {
 
@@ -36,12 +50,15 @@ final class SortPolicy {
      * @param sortable the properties this endpoint offers, entity-property spelling
      * @param textual  the subset that are strings, where {@code ignorecase} means
      *                 something; it is dropped on the others
+     * @param nullable the subset whose column can be null, where nulls sort last
+     *                 in both directions; the others get no null handling
      * @throws UnknownSortPropertyException if the caller named anything else
      * @throws ResponseStatusException 400 when {@code page * size} passes
      *         {@code Integer.MAX_VALUE}: Spring Data computes the row offset as
      *         an {@code int}, and the query would fail as a 500
      */
-    static Pageable stable(Pageable pageable, Set<String> sortable, Set<String> textual) {
+    static Pageable stable(Pageable pageable, Set<String> sortable, Set<String> textual,
+                           Set<String> nullable) {
         if ((long) pageable.getPageNumber() * pageable.getPageSize() > Integer.MAX_VALUE) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "page * size must not exceed " + Integer.MAX_VALUE + ".");
@@ -51,9 +68,11 @@ final class SortPolicy {
             if (!sortable.contains(order.getProperty())) {
                 throw new UnknownSortPropertyException(order.getProperty());
             }
-            orders.add(order.isIgnoreCase() && !textual.contains(order.getProperty())
-                    ? new Sort.Order(order.getDirection(), order.getProperty(), false, order.getNullHandling())
-                    : order);
+            boolean ignoreCase = order.isIgnoreCase() && textual.contains(order.getProperty());
+            Sort.NullHandling nulls = nullable.contains(order.getProperty())
+                    ? Sort.NullHandling.NULLS_LAST
+                    : Sort.NullHandling.NATIVE;
+            orders.add(new Sort.Order(order.getDirection(), order.getProperty(), ignoreCase, nulls));
         }
         Sort sort = Sort.by(orders);
         if (sort.getOrderFor(TIEBREAKER) == null) {

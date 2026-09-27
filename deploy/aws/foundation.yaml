@@ -77,12 +77,32 @@ Resources:
       # Without this, deleting the stack fails on a non-empty repository and
       # leaves the whole teardown half-done.
       EmptyOnDelete: true
+      # Every deploy pushes its image before the rollout, so a failed deploy
+      # still counts towards the five tagged images rule 2 keeps, while the old
+      # pods go on running the last image that deployed. Five failed deploys
+      # in a row would expire that image, and a pod on a new node, or a
+      # `kubectl rollout undo`, would then fail to pull it. The deploy job adds
+      # a deployed-<sha> tag once a pod of the new release passes its smoke
+      # test, and rule 1 keeps the last 10 images tagged that way. An image
+      # that matches a rule's tag selection cannot be expired by a rule of
+      # lower priority, so rule 2 never expires them.
       LifecyclePolicy:
         LifecyclePolicyText: |
           {
             "rules": [
               {
                 "rulePriority": 1,
+                "description": "Keep the last 10 images that passed a deploy",
+                "selection": {
+                  "tagStatus": "tagged",
+                  "tagPrefixList": ["deployed-"],
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 10
+                },
+                "action": { "type": "expire" }
+              },
+              {
+                "rulePriority": 2,
                 "description": "Keep the last 5 tagged images",
                 "selection": {
                   "tagStatus": "tagged",
@@ -93,7 +113,7 @@ Resources:
                 "action": { "type": "expire" }
               },
               {
-                "rulePriority": 2,
+                "rulePriority": 3,
                 "description": "Untagged layers are build debris",
                 "selection": {
                   "tagStatus": "untagged",
@@ -173,7 +193,8 @@ Resources:
               # GetAuthorizationToken has no resource to scope to: it returns
               # a registry-wide token. Every other ECR action is pinned to the
               # one repository. DescribeImages is the workflow's "is this
-              # commit already in ECR?" check.
+              # commit already in ECR?" check. The deploy job's deployed-<sha>
+              # tag uses DescribeImages, BatchGetImage and PutImage too.
               - Effect: Allow
                 Action: ecr:GetAuthorizationToken
                 Resource: '*'

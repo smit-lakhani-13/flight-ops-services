@@ -15,9 +15,9 @@ changes gets a new record that supersedes the old one. The old one stays,
 because the reasoning that was true at the time explains the code someone is
 reading today. Wrong facts are corrected in place. Where a correction changes
 the reasoning, a dated note says what the record used to claim, as in 0002,
-0003, 0004, 0006, 0007, 0008, 0009 and 0012. The retry backoff in 0013 and the
-annotation scope in 0012 were changed in place, and each record's status line
-says so.
+0003, 0004, 0005, 0006, 0007, 0008, 0009 and 0012. The retry backoff in 0013
+and the annotation scope in 0012 were changed in place, and each record's
+status line says so.
 
 | # | Decision | Status | Taken in |
 |---|---|---|---|

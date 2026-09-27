@@ -5,10 +5,14 @@ import com.smit.flightops.security.JsonAuthenticationEntryPoint;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.boot.context.properties.bind.Bindable;
+import org.springframework.boot.context.properties.bind.Binder;
 import org.springframework.boot.health.actuate.endpoint.HealthEndpoint;
 import org.springframework.boot.security.autoconfigure.actuate.web.servlet.EndpointRequest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.env.Environment;
+import org.springframework.core.env.Profiles;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -21,6 +25,10 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.provisioning.InMemoryUserDetailsManager;
 import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.util.StringUtils;
+
+import java.util.List;
+import java.util.Set;
 
 /**
  * Who may call what. The callers are other services with no browser, session or cookie,
@@ -49,6 +57,9 @@ public class SecurityConfig {
 
     private static final String API_PATHS = "/api/**";
 
+    /** Boot's prefix for the properties it builds a {@link JwtDecoder} from. */
+    private static final String JWT = "spring.security.oauth2.resourceserver.jwt";
+
     /**
      * The springdoc paths, listed one by one so a future {@code /v3/something} is not
      * public by accident. A trailing {@code /**} also matches zero segments, so
@@ -58,11 +69,20 @@ public class SecurityConfig {
             "/v3/api-docs/**", "/v3/api-docs.yaml", "/swagger-ui.html", "/swagger-ui/**"
     };
 
+    /**
+     * The ids of the adaptive hashing encoders, the only ones {@code prod} accepts. Every
+     * other id {@code PasswordEncoderFactories} registers is deprecated.
+     */
+    private static final Set<String> HASHING_IDS = Set.of(
+            "bcrypt", "pbkdf2", "pbkdf2@SpringSecurity_v5_8", "scrypt", "scrypt@SpringSecurity_v5_8",
+            "argon2", "argon2@SpringSecurity_v5_8");
+
     @Bean
     SecurityFilterChain apiSecurityFilterChain(HttpSecurity http,
                                                JsonAuthenticationEntryPoint entryPoint,
                                                JsonAccessDeniedHandler accessDeniedHandler,
-                                               ObjectProvider<JwtDecoder> jwtDecoder) throws Exception {
+                                               ObjectProvider<JwtDecoder> jwtDecoder,
+                                               Environment environment) throws Exception {
         http
                 .authorizeHttpRequests(auth -> auth
                         // Public because the kubelet has no credentials; the health
@@ -96,11 +116,13 @@ public class SecurityConfig {
                         .authenticationEntryPoint(entryPoint)
                         .accessDeniedHandler(accessDeniedHandler));
 
-        // The decoder is Boot's, as configured. Turning bearer tokens on needs both
-        // jwt.issuer-uri and jwt.audiences: an issuer signs tokens for every client in
-        // its tenant, and only the audience names this API. Boot's `audiences` property
-        // puts that validator inside the decoder, where a refactor here cannot drop it.
+        // The decoder is Boot's, as configured. An issuer signs tokens for every client
+        // in its tenant, and only the audience names this API, so
+        // requireIssuerAndAudience stops startup without jwt.audiences. Boot's
+        // `audiences` property puts that validator inside the decoder, where a refactor
+        // here cannot drop it.
         jwtDecoder.ifAvailable(decoder -> {
+            String checks = requireIssuerAndAudience(environment);
             try {
                 // The handlers are passed again because the resource server installs
                 // its own on the bearer filter, which never consults exceptionHandling().
@@ -109,19 +131,59 @@ public class SecurityConfig {
                         .jwt(Customizer.withDefaults())
                         .authenticationEntryPoint(entryPoint)
                         .accessDeniedHandler(accessDeniedHandler));
-                log.info("JWT resource server enabled — bearer tokens will be validated");
+                log.info("JWT resource server enabled; bearer tokens will be validated ({})", checks);
             } catch (Exception e) {
                 // A security layer that failed to configure must stop startup.
                 throw new IllegalStateException("Failed to configure the JWT resource server", e);
             }
         });
         if (jwtDecoder.getIfAvailable() == null) {
-            log.info("No JwtDecoder configured — HTTP Basic only. "
+            log.info("No JwtDecoder configured; HTTP Basic only. "
                     + "Set spring.security.oauth2.resourceserver.jwt.issuer-uri "
                     + "and .audiences to accept bearer tokens.");
         }
 
         return http.build();
+    }
+
+    /**
+     * Stops startup when Boot built the decoder from properties that leave a claim
+     * unchecked, and otherwise says what the decoder checks, for the startup log. Boot
+     * builds one from {@code issuer-uri}, {@code jwk-set-uri} or
+     * {@code public-key-location}, but adds the aud validator only for
+     * {@code audiences} and the iss validator only for {@code issuer-uri}.
+     * {@code audiences} is always required. {@code issuer-uri} is required beside
+     * {@code jwk-set-uri}, whose key set may be shared by every tenant of a provider,
+     * and not beside a {@code public-key-location} alone, a key the operator pinned.
+     * A {@link JwtDecoder} bean defined in code, with none of the properties set,
+     * brings its own validators and passes. The Binder, not {@code getProperty}, so
+     * that {@code audiences[0]} and a comma-separated environment variable both bind.
+     */
+    private static String requireIssuerAndAudience(Environment environment) {
+        Binder binder = Binder.get(environment);
+        String issuerUri = text(binder, JWT + ".issuer-uri");
+        String jwkSetUri = text(binder, JWT + ".jwk-set-uri");
+        String publicKeyLocation = text(binder, JWT + ".public-key-location");
+        if (issuerUri.isEmpty() && jwkSetUri.isEmpty() && publicKeyLocation.isEmpty()) {
+            return "by the JwtDecoder bean defined in code";
+        }
+        List<String> audiences = binder.bind(JWT + ".audiences", Bindable.listOf(String.class))
+                .orElse(List.of()).stream().filter(StringUtils::hasText).toList();
+        if (audiences.isEmpty()) {
+            throw new IllegalStateException(JWT + ".audiences must be set when bearer tokens are "
+                    + "enabled; without it a token the issuer signed for any other client is accepted");
+        }
+        if (!jwkSetUri.isEmpty() && issuerUri.isEmpty()) {
+            throw new IllegalStateException(JWT + ".issuer-uri must be set with " + JWT
+                    + ".jwk-set-uri; without it a token signed by any key in that set is accepted, "
+                    + "whoever issued it");
+        }
+        return "aud in " + audiences
+                + (issuerUri.isEmpty() ? ", key from " + publicKeyLocation : ", iss " + issuerUri);
+    }
+
+    private static String text(Binder binder, String name) {
+        return binder.bind(name, String.class).map(String::strip).orElse("");
     }
 
     /**
@@ -141,9 +203,15 @@ public class SecurityConfig {
      * already has. The {@code api} user holds the same authorities a JWT's scopes map to.
      */
     @Bean
-    UserDetailsService userDetailsService(ApiSecurityProperties properties, PasswordEncoder encoder) {
+    UserDetailsService userDetailsService(ApiSecurityProperties properties, PasswordEncoder encoder,
+                                          Environment environment) {
         assertVerifiable(encoder, "app.security.api-password", properties.apiPassword());
         assertVerifiable(encoder, "app.security.ops-password", properties.opsPassword());
+        // After the self-check, so a misspelt id such as {BCRYPT} gets the encoder's reason.
+        if (environment.acceptsProfiles(Profiles.of("prod"))) {
+            refuseUnhashed("app.security.api-password", "API_PASSWORD", properties.apiPassword());
+            refuseUnhashed("app.security.ops-password", "OPS_PASSWORD", properties.opsPassword());
+        }
         return new InMemoryUserDetailsManager(
                 User.withUsername("api")
                         .password(properties.apiPassword())
@@ -155,6 +223,26 @@ public class SecurityConfig {
                         // that hasRole() checks for.
                         .roles(ROLE_OPS)
                         .build());
+    }
+
+    /**
+     * Under {@code prod}, accepts only an id in {@link #HASHING_IDS}, read as the
+     * {@code DelegatingPasswordEncoder} reads it, from braces at index 0. Two of the ids
+     * it refuses keep the password as it was typed: {@code {noop}} stores it, and
+     * {@code {ldap}} compares a value with no {@code {SHA}} or {@code {SSHA}} prefix as
+     * plain text. Anyone who can read the Secret or the pod's environment could then log
+     * in. The default profile keeps its {@code {noop}} values for localhost. Like the
+     * prefix check in {@link ApiSecurityProperties}, it names the property and never the
+     * value.
+     */
+    private static void refuseUnhashed(String property, String variable, String encoded) {
+        int end = encoded.indexOf('}');
+        String id = encoded.startsWith("{") && end > 0 ? encoded.substring(1, end) : "";
+        if (!HASHING_IDS.contains(id)) {
+            throw new IllegalStateException(property + " (" + variable + ") must be a hashed password "
+                    + "under the prod profile, for example {bcrypt}$2y$10$...; only a bcrypt, pbkdf2, "
+                    + "scrypt or argon2 id is accepted, and the value is not shown");
+        }
     }
 
     /**

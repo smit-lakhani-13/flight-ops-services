@@ -7,6 +7,7 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.core.NestedExceptionUtils;
 import org.springframework.core.NestedRuntimeException;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -28,6 +29,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
+import java.sql.SQLException;
 import java.time.Clock;
 import java.util.Comparator;
 import java.util.Map;
@@ -89,6 +91,13 @@ public class GlobalExceptionHandler {
                 .body(ErrorResponse.of("FLIGHT_NOT_BOOKABLE", e.getMessage(), clock.instant()));
     }
 
+    /** Its own code because the flight has flown, so no retry of the cancellation can succeed. */
+    @ExceptionHandler(BookingNotCancellableException.class)
+    public ResponseEntity<ErrorResponse> handleNotCancellable(BookingNotCancellableException e) {
+        return json(HttpStatus.CONFLICT)
+                .body(ErrorResponse.of("BOOKING_NOT_CANCELLABLE", e.getMessage(), clock.instant()));
+    }
+
     @ExceptionHandler(DuplicateFlightException.class)
     public ResponseEntity<ErrorResponse> handleDuplicateFlight(DuplicateFlightException e) {
         return json(HttpStatus.CONFLICT)
@@ -111,11 +120,24 @@ public class GlobalExceptionHandler {
      * idempotency key never gets here, because {@code BookingService#book}
      * recovers the winner's booking and answers 201, or 409
      * {@code IDEMPOTENCY_KEY_REUSED} when the two requests differ.
+     *
+     * <p>Spring reports a data error, SQLState class 22, as the same exception,
+     * PostgreSQL refusing a NUL in a text value among them. That is a value the
+     * database will never take, so it is 400 {@code MALFORMED_REQUEST}, not a
+     * 409 that tells the caller to retry a request that fails the same way
+     * every time.
      */
     @ExceptionHandler(DataIntegrityViolationException.class)
     public ResponseEntity<ErrorResponse> handleDataIntegrity(DataIntegrityViolationException e) {
         // PostgreSQL's detail quotes the values the client sent.
-        log.warn("Constraint violation: {}", printable(e.getMostSpecificCause().getMessage()));
+        String detail = printable(e.getMostSpecificCause().getMessage());
+        String state = sqlStateOf(e);
+        if (state != null && state.startsWith("22")) {
+            log.warn("Data error: {}", detail);
+            return json(HttpStatus.BAD_REQUEST)
+                    .body(ErrorResponse.of("MALFORMED_REQUEST", "The request contained an invalid value.", clock.instant()));
+        }
+        log.warn("Constraint violation: {}", detail);
         return json(HttpStatus.CONFLICT)
                 .body(ErrorResponse.of("DUPLICATE_REQUEST",
                                        "This request conflicts with an existing record. Please retry.",
@@ -235,9 +257,18 @@ public class GlobalExceptionHandler {
      * decimal point or an exponent, and a time that is not an ISO-8601 instant.
      * None of these reach Bean Validation. The message is generic because
      * Jackson's names internal classes and echoes the payload.
+     *
+     * <p>One cause is not malformed: a body with no {@code Content-Length} that
+     * {@code RequestBodyLimitFilter} stopped at the limit. Jackson wraps the
+     * stream's exception, so it arrives here, and it gets the 413 the filter gives
+     * a declared length over the limit, not a 400.
      */
     @ExceptionHandler({HttpMessageNotReadableException.class, MethodArgumentTypeMismatchException.class})
     public ResponseEntity<ErrorResponse> handleMalformed(Exception e) {
+        if (NestedExceptionUtils.getMostSpecificCause(e) instanceof PayloadTooLargeException tooLarge) {
+            return json(HttpStatus.CONTENT_TOO_LARGE)
+                    .body(ErrorResponse.of("PAYLOAD_TOO_LARGE", tooLarge.getMessage(), clock.instant()));
+        }
         log.warn("Malformed request: {}", printable(e.getMessage()));
         return json(HttpStatus.BAD_REQUEST)
                 .body(ErrorResponse.of("MALFORMED_REQUEST",
@@ -322,6 +353,16 @@ public class GlobalExceptionHandler {
             case "Pattern" -> 3;
             default -> 4;
         };
+    }
+
+    /** The SQLState of the first SQLException in the cause chain, or null if there is none. */
+    private static String sqlStateOf(Throwable thrown) {
+        for (Throwable t = thrown; t != null; t = t.getCause()) {
+            if (t instanceof SQLException sql) {
+                return sql.getSQLState();
+            }
+        }
+        return null;
     }
 
     private static ResponseEntity.BodyBuilder json(HttpStatus status) {

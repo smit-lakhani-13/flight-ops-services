@@ -13,6 +13,7 @@ import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import io.swagger.v3.oas.annotations.responses.ApiResponses;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
+import org.springdoc.core.annotations.ParameterObject;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Sort;
@@ -47,6 +48,12 @@ public class BookingController {
 
     /** The sortable properties that are strings: the only ones {@code ignorecase} applies to. */
     private static final Set<String> TEXTUAL = Set.of("passengerName");
+
+    /**
+     * The sortable properties that can be null, where {@link SortPolicy} puts nulls
+     * last: {@code cancelledAt}, null while the booking is active.
+     */
+    private static final Set<String> NULLABLE = Set.of("cancelledAt");
 
     private final BookingService bookingService;
 
@@ -96,6 +103,9 @@ public class BookingController {
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "404", description = "`FLIGHT_NOT_FOUND`",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(responseCode = "413", description =
+                    "`PAYLOAD_TOO_LARGE`: the body is larger than the limit, 16384 bytes by default, and is refused without being read in full.",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "415", description =
                     "`UNSUPPORTED_MEDIA_TYPE` — the `Content-Type` is missing or is not `application/json`. YAML is refused too.",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
@@ -141,6 +151,8 @@ public class BookingController {
      * {@code createdAt} is not unique and pages would otherwise overlap or skip
      * rows, and rejects a property the endpoint does not offer. The repository
      * method declares its own {@code @Query}, so Spring Data never checks it.
+     * {@link QueryParams} and {@code @ParameterObject} do what they do on
+     * {@link FlightController#search}.
      */
     @Operation(summary = "List the bookings on a flight")
     @ApiResponses({
@@ -148,9 +160,9 @@ public class BookingController {
                     A page of bookings, oldest first unless `sort` says otherwise. An unknown \
                     flight number is an empty page."""),
             @ApiResponse(responseCode = "400", description = """
-                    `UNKNOWN_SORT_PROPERTY` — `sort` names a property this endpoint does not offer. \
-                    `MALFORMED_REQUEST` — `flightNumber` is missing, or `page` times `size` is \
-                    larger than 2147483647.""",
+                    `UNKNOWN_SORT_PROPERTY`: `sort` names a property this endpoint does not offer. \
+                    `MALFORMED_REQUEST`: `flightNumber` is missing or has a control character \
+                    once trimmed, or `page` times `size` is larger than 2147483647.""",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "401", description = "`UNAUTHENTICATED`",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
@@ -160,9 +172,10 @@ public class BookingController {
     @GetMapping
     public Page<BookingDto> byFlight(
             @RequestParam String flightNumber,
-            @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.ASC)
+            @ParameterObject @PageableDefault(size = 20, sort = "createdAt", direction = Sort.Direction.ASC)
             Pageable pageable) {
-        return bookingService.findByFlightNumber(flightNumber, SortPolicy.stable(pageable, SORTABLE, TEXTUAL));
+        return bookingService.findByFlightNumber(QueryParams.withoutControlCharacters("flightNumber", flightNumber),
+                                                 SortPolicy.stable(pageable, SORTABLE, TEXTUAL, NULLABLE));
     }
 
     /**
@@ -178,7 +191,12 @@ public class BookingController {
                     Cancelling an already-cancelled booking is a 200 no-op rather than an \
                     error: the caller asked for a state the system is already in, and the \
                     seats are released only once. Nothing is deleted — the row keeps \
-                    its `cancelledAt`, so the history survives.""")
+                    its `cancelledAt`, so the history survives.
+
+                    An active booking on a `DEPARTED` or `ARRIVED` flight is refused \
+                    with `BOOKING_NOT_CANCELLABLE` and keeps its seats, because the \
+                    flight has flown. A booking cancelled before departure still \
+                    answers 200.""")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description =
                     "Cancelled, or already cancelled. The body is the booking either way."),
@@ -190,6 +208,10 @@ public class BookingController {
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "404", description =
                     "`BOOKING_NOT_FOUND` — its own code, so a 404 here never claims the flight is missing.",
+                    content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
+            @ApiResponse(responseCode = "409", description = """
+                    `BOOKING_NOT_CANCELLABLE`: the booking is active and its flight has \
+                    departed or arrived, and no retry will ever succeed.""",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "503", description = "`LOCK_TIMEOUT`, with `Retry-After`.",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
