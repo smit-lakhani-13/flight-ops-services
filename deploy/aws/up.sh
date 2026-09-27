@@ -14,9 +14,8 @@
 # It costs money from step 4 onwards. Step 1 prints the rate and asks.
 #
 # CI builds and pushes the image and applies the Deployment
-# (.github/workflows/build-and-deploy.yml): the image tag is a commit SHA, and
-# the job that built the commit knows it. This script prints the values CI
-# needs and waits.
+# (.github/workflows/build-and-deploy.yml): the image tag is the commit SHA of
+# the CI run that built it. This script prints the values CI needs and waits.
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)

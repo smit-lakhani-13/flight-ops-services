@@ -207,6 +207,25 @@ still blank.
   Transport. A `DB_URL` repository variable copied from the old output must be
   replaced by hand. Local runs, compose and CI keep their own URLs.
 
+### Security
+
+- **The deploy job pushes the image CI scanned, and runs no scanner.** It
+  built its own copy of the image and scanned it with Trivy after assuming
+  the deploy role. The action downloads the Trivy CLI when it runs, and its
+  SHA pin does not cover those bytes, so a replaced release asset would have
+  run beside the AWS session keys, the ECR login and the OIDC request token.
+  The `image` job, which holds no AWS credentials, is now the only image
+  build and scan. On a run that can deploy it saves the image, records the
+  archive's sha256 before the scan, and uploads it for one day once the scan
+  passes. The deploy job checks the sha256, loads the image, tags it and
+  pushes those bytes. The one tool it still downloads is kubectl, by version
+  and with no checksum held in this repository. It is installed before the
+  AWS keys are exported, but every kubectl step after that runs with them:
+  apply, rollout, smoke test and the failure diagnostics. `id-token: write` is
+  job-level, so the OIDC request variables are still in every step
+  (`.github/workflows/build-and-deploy.yml`).
+  The job is gated off and has never run.
+
 ## 1.2.0 — 2026-09-26
 
 The [fourth review pass](doc/DEFECT-LOG.md#fourth-review-pass), a full audit
