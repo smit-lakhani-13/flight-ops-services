@@ -199,15 +199,15 @@ counting each test once rather than once per viewport. Before the first
 
 The suite runs as eleven Playwright projects, all of them Chromium.
 `desktop-1280` runs every spec. The other ten run only `e2e/layout.spec.ts`:
-four phones (320, 375, 390 and 430 px wide) and four tablets (768, 820, 1024
-and 1180 px), all with touch and a mobile viewport, and two wider desktops
-(1440 and 1920 px). The layout spec walks every page through its links and
-fails if a page scrolls sideways, a table is not in its own scroll box, or the
-header loses its navigation, Sign out or Requests, and, on the touch projects,
-if a control is under 44 px tall or a field's text is under 16 px. A second
-test checks the signed-out overview and a missing page the same way. A third
-tabs through every stop on the sign-in page and fails if any of them lacks a
-solid 2 px outline in the accent colour. Chromium emulating a phone is not
+four phones (320, 375, 390 and 430 px wide) and four tablets (768, 820, 1024 and
+1180 px), all with touch and a mobile viewport, and two wider desktops (1440 and
+1920 px). The layout spec walks every page through its links and fails if a page
+scrolls sideways, a table is not in its own scroll box, or the header loses its
+navigation, Sign out or Requests, and, on the touch projects, if a control or a
+link outside a table is under 44 px tall or a field's text is under 16 px. A
+second test checks the signed-out overview and a missing page the same way. A
+third tabs through every stop on the sign-in page and fails if any of them lacks
+a solid 2 px outline in the accent colour. Chromium emulating a phone is not
 Safari: nothing here has run in WebKit.
 
 ## What it does not do

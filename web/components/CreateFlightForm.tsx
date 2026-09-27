@@ -35,13 +35,15 @@ export function CreateFlightForm() {
     setBusy(true);
     setError(null);
     try {
+      // An empty field goes as null, so the API names it under Departs; any
+      // other value it cannot read goes as typed and gets MALFORMED_REQUEST.
       const departure = new Date(form.departure);
       const body: CreateFlightRequest = {
         flightNumber: form.flightNumber,
         origin: form.origin,
         destination: form.destination,
         totalSeats: countFrom(form.totalSeats),
-        departureTime: Number.isNaN(departure.getTime()) ? form.departure : departure.toISOString(),
+        departureTime: form.departure === "" ? null : Number.isNaN(departure.getTime()) ? form.departure : departure.toISOString(),
       };
       const result = await api.post<Flight>("v1/flights", body);
       if (!result.ok) {

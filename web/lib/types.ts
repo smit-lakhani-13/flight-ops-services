@@ -46,7 +46,7 @@ export interface CreateFlightRequest {
   origin: string;
   destination: string;
   totalSeats: number;
-  departureTime: string;
+  departureTime: string | null;
 }
 
 export interface BookingRequest {
