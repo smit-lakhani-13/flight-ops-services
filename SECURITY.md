@@ -58,7 +58,8 @@ unless `audiences` is set too, naming the property and the reason. A
 `jwk-set-uri` also needs `issuer-uri`, because Boot adds no issuer check to
 that decoder without it, and any key in the set would do. A
 `public-key-location` alone is not made to name an issuer: the operator pinned
-that key. A `JwtDecoder` bean built in code is left to its author.
+that key. A `JwtDecoder` bean built in code is left to its author while
+none of the three properties is set; set one and the same checks apply.
 
 ```yaml
 spring.security.oauth2.resourceserver.jwt.issuer-uri: https://your-idp.example.com/
@@ -139,9 +140,9 @@ I checked what happens without the two writers by swapping Spring's defaults
 back in. Those call `sendError`, and the container forwards to `/error`.
 `ApiErrorController` then answers with the right code and its generic message
 about the method and the path. At the time, a 403 left no log line.
-`RequestIdFilter` now logs the status of each 4xx it answers outside
-`/actuator/`, so the 403 would leave only that filter's INFO line, which does
-not say why the request was refused.
+`RequestIdFilter` now logs the method, the path and the status of each answer
+of 400 or above outside `/actuator/`, so the 403 would leave only that filter's
+INFO line, which does not say why the request was refused.
 
 ### The OpenAPI document is public and the API is not
 
@@ -232,8 +233,8 @@ the API still has no CORS policy ([adr/0017](adr/0017-web-console.md)).
   itself, `{ldap}` compares a value with no `{SHA}` or `{SSHA}` prefix as plain
   text, and `MD4`, `MD5`, `SHA-1`, `SHA-256` and `sha256` are deprecated
   digests. The default profile keeps its `{noop}` passwords.
-  `PasswordVerifiabilityTest` covers the self-check and the
-  `prod` refusal. The self-check's limit is listed under
+  `PasswordVerifiabilityTest` covers the self-check and the `prod` refusal of
+  `{noop}` and `{ldap}`. The self-check's limit is listed under
   [Known limitations](#known-limitations).
 
 - **No password in the log.** The prefix check throws from the
@@ -286,7 +287,7 @@ That is acceptable for a short-lived demo with generated throwaway passwords
 and no real data, and for nothing else. There is no self-signed certificate,
 because it trains people to click through the warning that exists
 to stop them. The HTTPS recipe (ACM, DNS validation, three Ingress annotations
-and `server.forward-headers-strategy`) is in
+and an optional `server.forward-headers-strategy` pin) is in
 [doc/DEPLOYMENT.md §8](doc/DEPLOYMENT.md#8-http-and-what-https-would-take). The
 work is written down. What is missing is a domain.
 
@@ -353,16 +354,17 @@ bundle comes from and how to refresh it.
   instant are each `400 MALFORMED_REQUEST`. None of them is converted into a
   value the client did not write.
 
-- A request body over the limit (16 KiB by default) gets
-  `413 PAYLOAD_TOO_LARGE`, and nothing parses more than the limit: a declared
-  `Content-Length` over it is refused unread, and a chunked body is refused at
-  the read that passes it (`RequestBodyLimitFilter`). Jackson builds a whole
-  string field before Bean Validation checks its `@Size`, so without the cap one
-  field of millions of characters would hold tens of MB of heap, and a few such
-  requests at once could exhaust the heap and end the JVM through
-  `-XX:+ExitOnOutOfMemoryError`. The filter runs ahead of Spring Security,
-  because Spring's `FormContentFilter` reads a form-encoded `PUT`, `PATCH` or
-  `DELETE` body in full before the credentials are checked.
+- A request body over the limit (16 KiB by default) gets `413 PAYLOAD_TOO_LARGE`
+  when its declared length or a read shows it, and nothing parses more than the
+  limit: a declared `Content-Length` over it is refused unread, a chunked body
+  is refused at the read that passes it, and a body nothing reads is never
+  counted (`RequestBodyLimitFilter`). Jackson builds a whole string field before
+  Bean Validation checks its `@Size`, so without the cap one field of millions
+  of characters would hold tens of MB of heap, and a few such requests at once
+  could exhaust the heap and end the JVM through `-XX:+ExitOnOutOfMemoryError`.
+  The filter runs ahead of Spring Security, because Spring's `FormContentFilter`
+  reads a form-encoded `PUT`, `PATCH` or `DELETE` body in full before the
+  credentials are checked.
 
 - Error responses are `{code, message, timestamp}`, or
   `{code, fieldErrors, timestamp}` for a validation failure. They never carry
@@ -458,7 +460,12 @@ bundle comes from and how to refresh it.
   so a change to what the controller may do is a reviewed diff, never a
   download. The policy is named `flight-ops-lbc-v3.5.0`, not AWS's
   `AWSLoadBalancerControllerIAMPolicy`, so the scripts never attach or delete
-  another cluster's copy.
+  another cluster's copy. The policy is wider than one Ingress needs. It
+  allows changes to security group ingress, listeners and listener rules, WAF
+  associations and Shield protections on `Resource: '*'` with no cluster tag
+  condition, so the role could add or revoke ingress rules on any security
+  group in the account and region, the database's included. A policy scoped
+  to this VPC and the cluster tag would narrow it.
 
 - The Lambda's role comes from SAM policy templates in `lambda/template.yaml`,
   and it is wider than the handler needs. `DynamoDBWritePolicy` grants
@@ -471,7 +478,7 @@ bundle comes from and how to refresh it.
 
 | | |
 |---|---|
-| Dependency updates | Dependabot, monthly on both Maven modules, the console's npm packages and the Actions workflows, and weekly on the Dockerfile base images. Both `FROM` lines name a tag and a digest, so a build pulls the bytes the digest names, and Dependabot moves the digest when the tag is rebuilt. The Dockerfile frontend line, `# syntax=docker/dockerfile:1`, is still a tag |
+| Dependency updates | Dependabot, monthly on both Maven modules, the console's npm packages and the Actions workflows, and weekly on the Dockerfile base images. Both `FROM` lines name a tag and a digest, so a build pulls the bytes the digest names, and Dependabot moves the runtime base's digest when its tag is rebuilt. The build stage's digest is moved by hand, because for that image Dependabot has offered only `maven` tags that change the JDK, and the enforcer fails them. The Dockerfile frontend line, `# syntax=docker/dockerfile:1`, is still a tag |
 | SBOM | CycloneDX, `target/bom.json` and `lambda/target/bom.json`, on every build, both typed `application`. The service jar also carries the one the Spring Boot parent writes, `target/classes/META-INF/sbom/application.cdx.json` |
 | Upper-bound dependency check | `maven-enforcer` `requireUpperBoundDeps`. A transitive downgrade fails the build |
 | Coverage floor | JaCoCo, on the service module: its build fails under 80% line or 50% branch coverage. The Lambda module has no coverage gate |

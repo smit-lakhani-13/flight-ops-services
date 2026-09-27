@@ -4,8 +4,10 @@
 
 # ---------- Stage 1: build ----------
 # `mvn`, not `./mvnw`: this base image already pins Maven 3.9 beside JDK 21,
-# which is the wrapper's job elsewhere. The digest is the pin at this layer;
-# the runtime stage's comment says how it moves.
+# which is the wrapper's job elsewhere. The digest is the pin at this layer,
+# and a person moves it: Dependabot has offered only maven tags that change
+# the JDK, which the enforcer rejects. The comment above the docker entry in
+# .github/dependabot.yml has the command.
 FROM maven:3.9-eclipse-temurin-21@sha256:aabe2f8902f17a63be0d223846322678a2d3e62d18ca0aef5648bcb02f6bfe4b AS build
 WORKDIR /app
 

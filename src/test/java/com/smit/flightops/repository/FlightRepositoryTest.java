@@ -22,8 +22,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * Derived-query names are checked only at startup or first execution, so these tests
  * run the flight-number lookups, the paged origin-and-destination search and the
  * locking query that the service calls. Two more show Hibernate's H2 schema
- * refusing the rows V9 and V10 make PostgreSQL refuse, which
- * {@code SchemaConstraintsPostgresTest} checks there.
+ * refusing a NULL version and the misspelt status {@code CANCELED}, which
+ * {@code SchemaConstraintsPostgresTest} checks on PostgreSQL. H2's ENUM
+ * upper-cases a lower-case {@code cancelled} to {@code CANCELLED} rather than
+ * refusing it, so the H2 schema never stores a non-constant but accepts a row
+ * that PostgreSQL refuses.
  *
  * <p>{@code @DataJpaTest} rolls each test back and starts an embedded database,
  * so no test can see another's rows.
@@ -101,7 +104,7 @@ class FlightRepositoryTest {
      * of a value the ENUM does not list.
      */
     @Test
-    @DisplayName("H2 refuses a status that is not a FlightStatus constant, as ck_flights_status does on PostgreSQL")
+    @DisplayName("H2 refuses the misspelt status CANCELED, which ck_flights_status also refuses on PostgreSQL")
     void statusOutsideFlightStatusIsRefused() {
         Flight flight = save("UA123", "EWR", "LHR", 180);
 

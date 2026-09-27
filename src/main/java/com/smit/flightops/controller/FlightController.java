@@ -116,8 +116,9 @@ public class FlightController {
 
     /**
      * {@code Location} is built from the returned DTO, not the request, because
-     * the service trims and upper-cases the number and only that form resolves.
-     * The number is expanded as a URI variable, so it is encoded, never spliced in.
+     * the service trims and upper-cases the number, and the header should name the
+     * stored form. The number is expanded as a URI variable, so it is encoded, never
+     * spliced in.
      */
     @Operation(summary = "Create a flight")
     @ApiResponses({

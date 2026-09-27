@@ -2,11 +2,14 @@
 
 This document shows how the pieces fit, why they are arranged this way, and
 where in the source each claim can be checked. On every CI run,
-`scripts/refcheck.py` checks every path and `path#symbol` named here and
-`scripts/linkcheck.py` checks every heading link. Renaming a file cited here
-by path fails the `docs-check` job, and so does renaming a symbol cited as
-`path#symbol` once the old name is gone from that file. Names given bare, such
-as `LockTimeoutTest`, are not checked.
+`scripts/refcheck.py` checks each inline code span here that names a file with
+a known extension, with any `#symbol` after it, and `scripts/linkcheck.py`
+checks every heading link. Renaming a file cited that way fails the
+`docs-check` job, and so does renaming a symbol cited as `path#symbol` once the
+old name is gone from that file. Names with no extension, such as
+`LockTimeoutTest`, `BookingService#book` and `config/SecurityConfig`, and the
+tree under [Repository layout](#repository-layout) are not checked; the
+exceptions are `Dockerfile`, `mvnw` and `LICENSE`, which it does check.
 
 Each decision where I weighed alternatives has its own file in
 [`adr/`](../adr/README.md), with the options I rejected. This document is the
@@ -116,10 +119,11 @@ sequenceDiagram
 
     C->>F: POST /api/v1/bookings
     F->>F: X-Request-Id validated or minted, MDC set
-    Note over F,S: RequestBodyLimitFilter refuses a body over 16 KiB with 413
+    Note over F,S: RequestBodyLimitFilter refuses a declared length over 16 KiB
     F->>S: continue chain
     S->>S: authenticate, require SCOPE_flights:write
     S->>Ctl: @Valid BookingRequest
+    Note over S,Ctl: 413 here once the read of a chunked body passes 16 KiB
     Ctl->>Svc: book(request)
     Svc->>DB: findByIdempotencyKey(key)
     alt key already committed
@@ -145,7 +149,7 @@ Reading it in the source, in order:
 | Step | Where | What it is responsible for |
 |---|---|---|
 | Correlation | `RequestIdFilter.java#doFilterInternal` | Runs ahead of Spring Security, so a 401 also carries `X-Request-Id`. Logs one INFO line for each answer of 400 or above outside `/actuator/`, except a failure that escapes the chain, which `ApiErrorController` logs |
-| Body limit | `RequestBodyLimitFilter.java#doFilterInternal` | Refuses a body over 16 KiB with 413 before anything parses more than the limit: a declared `Content-Length` unread, a chunked body once the read passes the limit |
+| Body limit | `RequestBodyLimitFilter.java#doFilterInternal` | Refuses a declared `Content-Length` over 16 KiB with 413 unread, before Spring Security runs, and counts a body without one, such as a chunked body, so nothing parses more than the limit. A booking is JSON, so a counted body is first read at binding, after authorisation: without credentials it gets 401, and with them the read that passes the limit is answered 413 by `GlobalExceptionHandler.java#handleMalformed` |
 | Authorisation | `SecurityConfig.java#apiSecurityFilterChain` | One rule set for Basic and JWT alike |
 | Binding and validation | `BookingRequest.java` | Bean Validation on the record components: the flight number is letters and digits, and the passenger name needs one character that is neither whitespace nor a format character, and has no control character, unpaired surrogate, text-direction control, or line or paragraph separator. Failures become 400 before any service code runs. Jackson refuses a `seats` with a decimal point or an exponent, `2.0` included (`accept-float-as-int` is off in `application.yml`), a missing or null one, which a primitive `int` cannot hold, and `"2"` as text (`allow-coercion-of-scalars: false`), each as `400 MALFORMED_REQUEST`. A field the record does not have, or a key sent twice in one object, is `400 MALFORMED_REQUEST` too (`fail-on-unknown-properties` and `strict-duplicate-detection` in `application.yml`). The writes that take a body read JSON only, so any other `Content-Type`, YAML included, gets 415 first |
 | Idempotency | `BookingService.java#book` | Decides replay, conflict or insert. Holds no transaction of its own |
@@ -377,8 +381,8 @@ The outbox costs a table, a poller, a retention job and some latency: the rest
 of any drain under way, up to one poll interval, and the sends ahead of the
 event in its own drain, which can be seconds with a full batch and more under a
 backlog ([DEPLOYMENT.md](DEPLOYMENT.md#7-what-breaks-first) works it through).
-In return I get one recorded event per booking, at-least-once delivery and a
-backlog I can query:
+A failed send or a prune run adds more. In return I get one recorded event per
+booking, at-least-once delivery and a backlog I can query:
 `SELECT count(*) FROM outbox_events WHERE published_at IS NULL` is both a lag
 metric and an alert.
 
@@ -525,7 +529,7 @@ erDiagram
 | `V7__outbox_next_attempt_at.sql` | `next_attempt_at` | A failed send waits before it is retried. Without it, the ten-attempt ceiling was used up in ten seconds at a one-second poll |
 | `V8__drop_unused_active_booking_index.sql` | Drops `idx_bookings_active` | The planner only uses a partial index when the query repeats its predicate, and no query here filters on `cancelled_at`. It was write cost with no reader |
 | `V9__flights_version_not_null.sql` | `version` NOT NULL DEFAULT 0 | Hibernate cannot increment a null version, so a flight inserted by plain SQL without one could never be booked, cancelled or changed again |
-| `V10__flight_status_check.sql` | `ck_flights_status`, listing the `FlightStatus` constants | V2 left `status` out. H2's schema already refused any other value, while PostgreSQL stored it and every read of that flight then failed |
+| `V10__flight_status_check.sql` | `ck_flights_status`, listing the `FlightStatus` constants | V2 left `status` out. H2's schema already held only the constants: its ENUM refuses `CANCELED` and stores `cancelled` as `CANCELLED`. PostgreSQL stored either as written, and every read of that flight then failed |
 | `V11__flights_departure_time_index.sql` | `idx_flights_departure_time` on `(departure_time, id)` | The default flight list's order, which no index gave. `CREATE INDEX CONCURRENTLY` cannot run in a transaction, so it is alone in its file |
 
 `version` on `flights` is JPA's optimistic-locking column, and it does real
@@ -829,7 +833,7 @@ costs:
 | `Clock` (`TimeConfig.java`) | A fixed clock in a test | Already used everywhere |
 | The OTLP tracing endpoint | An OTLP collector | Set `management.opentelemetry.tracing.export.otlp.endpoint`, for example as the environment variable `MANAGEMENT_OPENTELEMETRY_TRACING_EXPORT_OTLP_ENDPOINT`. Trace and span ids are already generated and already on the service's request log lines |
 | The outbox poller | Debezium reading the WAL | A replication slot, a connector to operate, and a disk that fills if the consumer stops. I considered it and rejected it at this size |
-| The database | Oracle | Two native outbox queries rewritten, the session-wide lock-wait bound narrowed to per-query hints, and a second set of migrations. [ADR 0016](../adr/0016-oracle-port.md) sets this out from documentation, as a proposal; none of it has been built or run |
+| The database | Oracle | Two native outbox queries rewritten, the session-wide lock-wait bound narrowed to per-query hints, `FlightService.java#updateStatus` and `FlightService.java#cancel` moved onto the locking query so their lock waits stay bounded, and a second set of migrations. [ADR 0016](../adr/0016-oracle-port.md) sets this out from Oracle's and Hibernate's documentation, as a proposal; none of it has been built or run |
 
 ---
 
@@ -868,9 +872,10 @@ The README keeps a short version of this list under
   A poll every second (`app.outbox.poll-interval` defaults to 1000 ms) costs at
   most one indexed query per replica per second, and adds up to a poll interval
   plus the sends ahead of an event, and another interval for each full batch
-  ahead of it ([The outbox](#the-outbox)). CDC removes both and adds Kafka
-  Connect, a connector to operate and a replication slot that fills the disk if
-  the consumer stops.
+  ahead of it; a failed send or a prune run adds more
+  ([The outbox](#the-outbox)). CDC removes both and adds Kafka Connect, a
+  connector to operate and a replication slot that fills the disk if the
+  consumer stops.
 
 - **Retention is a batched `DELETE` on a schedule.** Production would be a
   partitioned table, dropping old partitions. Detaching and dropping an old

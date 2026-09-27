@@ -50,8 +50,9 @@ a bad value and a login:
   and `argon2`, the last three with or without `@SpringSecurity_v5_8`. It
   refuses every other id, so a deployment's passwords are hashes. That
   includes `{noop}`, and `{ldap}`, which compares a value with no `{SHA}` or
-  `{SSHA}` prefix as plain text. Without BouncyCastle, only the bcrypt and
-  pbkdf2 ids get past the self-check. The default profile keeps
+  `{SSHA}` prefix as plain text. Without BouncyCastle, `{scrypt}` and
+  `{argon2}` fail the self-check, so under `prod` only a bcrypt or pbkdf2
+  hash passes all three checks. The default profile keeps
   `{noop}dev-secret`.
 
 No check prints the value. For an unknown id, the self-check's message names

@@ -180,10 +180,11 @@ says not yet.
   exhaust the heap and end the JVM. Spring's `FormContentFilter` also read a
   form-encoded `PUT`, `PATCH` or `DELETE` body in full before the credentials
   were checked. A body over `app.http.max-body-bytes` (`HTTP_MAX_BODY_BYTES`),
-  16384 bytes by default, now gets `413 PAYLOAD_TOO_LARGE` before anything
-  parses more than the limit. `RequestBodyLimitFilter` refuses a declared
-  `Content-Length` over the limit unread, ahead of Spring Security, and counts
-  a chunked body as it is read. `GlobalExceptionHandler#handleMalformed`
+  16384 bytes by default, now gets `413 PAYLOAD_TOO_LARGE` when its declared
+  length or a read shows it, and nothing parses more than the limit.
+  `RequestBodyLimitFilter` refuses a declared `Content-Length` over the limit
+  unread, ahead of Spring Security, and counts a chunked body as it is read, so
+  a body nothing reads is not counted. `GlobalExceptionHandler#handleMalformed`
   answers a chunked JSON body over the limit with the same 413, not
   `400 MALFORMED_REQUEST`. The OpenAPI document declares the 413 on the three
   writes, and `doc/api.md` lists the code. The filter's own 413 carries
@@ -290,7 +291,7 @@ says not yet.
   appended `DATABASE_UNAVAILABLE` sentence does, so none of them mixes a dash
   and a colon.
 
-- **Two response schemas disagreed with the JSON.** An active booking is sent
+- **Two response schemas did not describe the JSON.** An active booking is sent
   with `"cancelledAt": null`, and the schema's plain `string` type refused the
   null; it is now `string` or `null`. `FlightDto.status` was an unconstrained
   string, and it now refers to a `FlightStatus` enum component, the one
@@ -436,26 +437,6 @@ says not yet.
   rewrapped where they can break, except in `README.md` and the released
   sections here.
 
-- **The image is built from pinned base images.** Both `FROM` lines in the
-  `Dockerfile` named only a tag, so every build took whatever the tag pointed
-  to that day, and the deploy job's own build could push a base other than the
-  one the `image` job had built and started. Each line now names the tag and a
-  sha256 digest. The docker entry in `.github/dependabot.yml` moves the digest
-  when upstream rebuilds the tag, and it now runs weekly, because OS and JRE
-  fixes reach a pinned base only that way. The `# syntax=docker/dockerfile:1`
-  frontend line still floats.
-
-- **The database connection verifies the server.**
-  `deploy/aws/data.yaml#JdbcUrl` had no `sslmode`, so the driver used
-  `prefer`: it checked neither the certificate nor the host name and fell back
-  to plaintext when the server declined TLS, so anything on the path could
-  stand in for RDS. The URL now sets `sslmode=verify-full`, with `sslrootcert`
-  naming the RDS global CA bundle, committed as `certs/rds-global-bundle.pem`
-  and copied into the image. `doc/DEPLOYMENT.md` gives its source, checksum
-  and refresh steps, and `SECURITY.md` covers the database leg under
-  Transport. A `DB_URL` repository variable copied from the old output must be
-  replaced by hand. Local runs, compose and CI keep their own URLs.
-
 - **Runbooks that promised more than the code delivers.** `doc/OPERATIONS.md`
   and `doc/DEPLOYMENT.md` put the outbox drain at about 100 events a second
   per replica, but `OutboxPublisher#drainOutbox` sends one row at a time and
@@ -486,6 +467,29 @@ says not yet.
   edit cuts off the roles it maps rather than everyone; ADR 0009 gains a dated
   correction. The defect log, ADR 0013 and `OutboxPublisher` agree that a shift
   of the 2s base turns negative at attempt 54, not 64.
+
+- **Claims a closer reading of the code did not bear out.** Several documents
+  said every request body over the limit gets 413. A declared `Content-Length`
+  over it does, unread; a chunked body does at the read that passes the limit,
+  and a body nothing reads is never counted, as `doc/api.md` already said.
+  `doc/ARCHITECTURE.md` put that chunked 413 ahead of authentication, but it
+  comes at binding from `GlobalExceptionHandler#handleMalformed`. `SECURITY.md`
+  now says how far the load balancer controller's vendored policy reaches, that
+  `RequestIdFilter` logs each answer of 400 or above, 5xx included, and that a
+  `JwtDecoder` bean built in code escapes the startup check only while no
+  decoder property is set. `.github/dependabot.yml`, the `Dockerfile`,
+  `SECURITY.md` and `CONTRIBUTING.md` said Dependabot moves both base images'
+  digests; it has only ever offered the build stage a tag that changes the JDK,
+  so that digest moves by hand. H2's ENUM upper-cases a lower-case `cancelled`
+  rather than refusing it, so the H2 schema's tests and documents no longer
+  claim it refuses every row PostgreSQL refuses. The HTTPS recipe now suggests
+  pinning `server.forward-headers-strategy: native` rather than setting
+  `framework`, which would trust forwarded headers from any caller, and the
+  outbox playbook tells a dead row from a deferred one. The image size is now a
+  measurement on the pinned bases with the CA bundle, the JaCoCo comment in
+  `pom.xml` gives the current coverage, and the root certificate troubleshooting
+  row, the Oracle port's cost and the claim that the image is scanned once are
+  corrected.
 
 - **A full pool made callers wait 30 s for their 503.** The `postgres` and
   `prod` profiles kept Hikari's default 30 s `connection-timeout`, longer than
@@ -568,7 +572,7 @@ says not yet.
 
 - **PostgreSQL stored any flight status.** V2 gave four flight invariants a
   check and left `status` out, while the H2 schema Hibernate generates already
-  refused anything but a `FlightStatus` constant. A status written by hand as
+  stored nothing but a `FlightStatus` constant. A status written by hand as
   `CANCELED` or `cancelled` was stored, and every read of that flight then
   failed with a 500. `V10__flight_status_check.sql` adds `ck_flights_status`
   as `NOT VALID` and then runs `VALIDATE CONSTRAINT`, the two statements V2's
@@ -579,9 +583,11 @@ says not yet.
   migration of its own on a large one. A new constant now needs a migration
   that replaces the check, as the `FlightStatus` Javadoc says.
   `SchemaConstraintsPostgresTest` shows PostgreSQL refusing a bad status and a
-  NULL version and booking a flight inserted without one,
-  `FlightRepositoryTest` shows H2 refusing the same rows, and the CI step "The
-  PostgreSQL tests ran" now requires the new class.
+  NULL version and booking a flight inserted without one.
+  `FlightRepositoryTest` shows H2 refusing `CANCELED` and a NULL version; H2's
+  ENUM upper-cases a lower-case `cancelled` and stores `CANCELLED`, so it never
+  holds a value outside `FlightStatus` but does not refuse every row PostgreSQL
+  refuses. The CI step "The PostgreSQL tests ran" now requires the new class.
 
 - **The default flight list sorted the whole table.** `GET /api/v1/flights`
   with no filter orders by `departure_time, id`, and no index gave that order,
@@ -815,7 +821,7 @@ says not yet.
   profile keeps `{noop}dev-secret` and `{noop}dev-ops`.
 
 - **Local compose listens on loopback only.** `compose.yaml` published
-  `8080:8080`, which listens on every interface, and on Linux Docker's own
+  `8080:8080`, which listens on every interface, and on Linux, Docker's own
   firewall rules bypass a host firewall such as ufw. Anyone on the same network
   could then log in with the demo passwords the README prints. It now
   publishes `127.0.0.1:8080:8080`, and the commented database mapping is
@@ -884,6 +890,28 @@ says not yet.
   `X-Powered-By`; nothing checked them before, and the comment in
   `web/next.config.ts` said the API's own security headers pass through, which
   the proxy never allowed.
+
+- **The image is built from pinned base images.** Both `FROM` lines in the
+  `Dockerfile` named only a tag, so every build took whatever the tag pointed
+  to that day, and the deploy job's own build could push a base other than the
+  one the `image` job had built and started. Each line now names the tag and a
+  sha256 digest. The docker entry in `.github/dependabot.yml` moves the runtime
+  base's digest when upstream rebuilds the tag, and it now runs weekly, because
+  OS and JRE fixes reach the pinned runtime base only that way. The build
+  stage's digest moves by hand: for that image Dependabot has offered only
+  `maven` tags that change the JDK, which the enforcer fails. The
+  `# syntax=docker/dockerfile:1` frontend line still floats.
+
+- **The database connection verifies the server.**
+  `deploy/aws/data.yaml#JdbcUrl` had no `sslmode`, so the driver used
+  `prefer`: it checked neither the certificate nor the host name and fell back
+  to plaintext when the server declined TLS, so anything on the path could
+  stand in for RDS. The URL now sets `sslmode=verify-full`, with `sslrootcert`
+  naming the RDS global CA bundle, committed as `certs/rds-global-bundle.pem`
+  and copied into the image. `doc/DEPLOYMENT.md` gives its source, checksum
+  and refresh steps, and `SECURITY.md` covers the database leg under
+  Transport. A `DB_URL` repository variable copied from the old output must be
+  replaced by hand. Local runs, compose and CI keep their own URLs.
 
 ## 1.2.0 — 2026-09-26
 

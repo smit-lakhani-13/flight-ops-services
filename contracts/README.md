@@ -28,7 +28,7 @@ somewhere else, and this directory is where.
 
 ## How it is enforced
 
-Two tests, one on each side, both reading this same file:
+Two test classes, one on each side, both reading this same file:
 
 | Side     | Test                                                      | What it proves |
 |----------|-----------------------------------------------------------|----------------|
@@ -47,9 +47,10 @@ attributes ride alongside it. `eventType` lets a consumer route or filter
 without parsing the payload. `traceparent` is the W3C trace context of the
 HTTP request that made the booking, captured by `OutboxWriter` at booking
 time and carried on the outbox row until `SqsEventPublisher` sends it.
-`BookingEventHandler` logs the traceparent it receives, so an engineer
-holding a trace id from an API response can find that booking's projection
-in a different process on the far side of a queue.
+`BookingEventHandler` logs the traceparent it receives. A response carries
+no trace id, only the request id in `X-Request-Id`. The service's log lines
+for that request id carry the trace id, so an engineer can follow the
+booking to its projection in a different process on the far side of a queue.
 
 I kept both attributes out of the contract file. The body is what the
 consumer's correctness depends on, so it is pinned field by field on both

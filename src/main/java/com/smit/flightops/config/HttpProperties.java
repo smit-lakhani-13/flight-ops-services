@@ -6,9 +6,11 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
 /**
  * Limits on what an HTTP request may carry, bound from {@code app.http.*}.
  *
- * @param maxBodyBytes the largest request body read, in bytes (16384). A larger one gets
- *                     413 {@code PAYLOAD_TOO_LARGE} before anything parses more than
- *                     the limit; see {@code RequestBodyLimitFilter}. A booking with
+ * @param maxBodyBytes the largest request body read, in bytes (16384). A declared
+ *                     {@code Content-Length} over it gets 413 {@code PAYLOAD_TOO_LARGE}
+ *                     unread, and a body without one gets it once a read passes the
+ *                     limit, so nothing parses more; a body nothing reads is never
+ *                     counted. See {@code RequestBodyLimitFilter}. A booking with
  *                     every field at its longest and every character escaped is under
  *                     4 KB.
  */

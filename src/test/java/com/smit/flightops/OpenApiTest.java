@@ -323,8 +323,8 @@ class OpenApiTest {
         assertThat(schemes.get("basicAuth").get("scheme").asString()).isEqualTo("basic");
 
         // Declared once for the document, so a new endpoint is documented as
-        // needing credentials. Bearer is absent: it works only when an issuer
-        // is configured, and this instance would reject it.
+        // needing credentials. Bearer is absent: it works only when a JWT
+        // decoder is configured, and this instance would reject it.
         assertThat(document.get("security").get(0).propertyNames()).containsExactly("basicAuth");
         assertThat(schemes.propertyNames()).doesNotContain("bearerAuth");
     }

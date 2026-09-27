@@ -126,9 +126,9 @@ that follow through to the outcome.
 
 Both `Location` headers are now built from the returned DTO. `FlightService`
 normalises flight numbers (trim and upper-case), so `POST /api/v1/flights` with
-`{"flightNumber":" ua999 "}` answers `Location: /api/v1/flights/UA999`. That is
-the only form that resolves. I followed both headers with `curl` and got 200
-from each.
+`{"flightNumber":" ua999 "}` answers `Location: /api/v1/flights/UA999`, the
+stored form. A lookup normalises too, so `GET /api/v1/flights/ua999` finds the
+same flight. I followed both headers with `curl` and got 200 from each.
 
 `BookingControllerTest.locationHeaderResolves` and
 `FlightControllerTest.createReturns201WithAResolvableLocation` pin it. Both
@@ -516,7 +516,10 @@ balancer no target, and a busy flight that filled each pod's pool would do the
 same. I found this by reading the configuration; no cluster has run it. Each
 pod now answers `503 DATABASE_UNAVAILABLE` with `Retry-After` itself, and the
 `db` component of `/actuator/health` carries the alert.
-`HealthGroupsTest#readinessLeavesTheDatabaseOut` pins it.
+`HealthGroupsTest#readinessLeavesTheDatabaseOut` pins readiness,
+`HealthGroupsTest#rootHealthReportsTheDatabase` the alert, and
+`HealthGroupsTest#livenessLeavesTheDatabaseOut` now pins liveness, which had no
+test.
 
 ### No lock timeout
 
