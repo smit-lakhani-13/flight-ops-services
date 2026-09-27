@@ -724,7 +724,7 @@ summary.
 
 ```bash
 NEW=$(openssl rand -base64 18 | tr -d '/+= ')
-HASH="{bcrypt}$(htpasswd -bnBC 10 "" "$NEW" | tr -d ':\n')"
+HASH="{bcrypt}$(printf '%s' "$NEW" | htpasswd -niBC 10 "" | tr -d ':\n')"
 kubectl patch secret flight-ops-secret -n flight-ops \
   -p "{\"stringData\":{\"API_PASSWORD\":\"$HASH\"}}"
 kubectl rollout restart deployment/flight-ops -n flight-ops
@@ -768,8 +768,9 @@ the property at startup either way.
   (`lambda/template.yaml#BookingEventDLQAlarm`,
   `lambda/template.yaml#BookingEventBacklogAlarm`), linted in CI and never
   deployed, with no notification target: an alarm would change state in the
-  console and tell no one. Rows 1 to 3 are Prometheus conditions, and nothing
-  scrapes `/actuator/prometheus`. Row 6 would need a Kubernetes monitor and
+  console and tell no one. Rows 1 to 3 and the pool half of row 6 are
+  Prometheus conditions, and nothing scrapes `/actuator/prometheus`. The `db`
+  half of row 6 would need an authenticated poll of `/actuator/health`, and
   row 7 an RDS alarm, and neither exists.
 
 That is fine for a two-week demo on a $7.72/day cluster, and not for

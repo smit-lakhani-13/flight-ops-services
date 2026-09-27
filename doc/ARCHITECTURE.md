@@ -633,6 +633,7 @@ flowchart TD
     config --> repository
     config --> entity
     config --> security
+    config --> observability
     observability --> config
     observability --> repository
     observability --> security
@@ -742,7 +743,7 @@ receive.
   count, towards the DLQ. The value must be 2 to 1000, and it limits only the
   poller, so an account pool that runs dry can still throttle.
 
-- The deployment package carries one HTTP client. At SDK 2.55.2,
+- The deployment package carries one HTTP client. At SDK 2.55.3,
   `software.amazon.awssdk:dynamodb` pulls in `apache5-client` and
   `netty-nio-client` transitively. `lambda/pom.xml` excludes both, and also
   excludes `apache-client`, so an SDK bump that brings it back cannot slip in.

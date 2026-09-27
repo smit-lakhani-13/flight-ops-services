@@ -44,22 +44,26 @@ fails.
 
 ### Skipped tests without Docker are correct
 
-Thirteen tests are in five classes annotated
-`@Testcontainers(disabledWithoutDocker = true)`. Nine run on PostgreSQL: five
-in `BookingIntegrationTest`, three in `service/OutboxPrunePostgresTest` and
-one in `LockTimeoutPostgresTest`. Four run the AWS SDK code against an
-emulator: one in `service/SqsEventPublisherElasticMqTest`, against ElasticMQ,
-and three in the Lambda's `BookingEventHandlerDynamoDbLocalTest`, against
-DynamoDB Local. Without a container runtime they skip, and a local build is
-still green and still correct.
+Nineteen tests are in six classes annotated
+`@Testcontainers(disabledWithoutDocker = true)`. Fifteen run on PostgreSQL: six
+in `BookingIntegrationTest`, five in `SchemaConstraintsPostgresTest`, three in
+`service/OutboxPrunePostgresTest` and one in `LockTimeoutPostgresTest`. Four run
+the AWS SDK code against an emulator: one in
+`service/SqsEventPublisherElasticMqTest`, against ElasticMQ, and three in the
+Lambda's `BookingEventHandlerDynamoDbLocalTest`, against DynamoDB Local. Without
+a container runtime they skip, and a local build is still green and still
+correct.
 
 CI runs them on runners with Docker, so every CI run covers the PostgreSQL
 paths that a laptop without Docker skips: Flyway with `ddl-auto=validate`,
 `SELECT FOR UPDATE` under 20-way contention, a 20-thread key race, the native
 `DELETE … FOR UPDATE SKIP LOCKED` under two pruners, the outbox claim under
-two competing pollers, and PostgreSQL's own `lock_timeout` firing on a held
-flight row. The build job's step "The PostgreSQL tests ran" fails CI if any of
-the three classes skips a test or has no report.
+two competing pollers, PostgreSQL's own `lock_timeout` firing on a held flight
+row, the version default, the status check and the index that V9 to V11 add,
+none of which `ddl-auto=validate` compares, and nulls last on a sort by
+`cancelledAt` in both directions, where PostgreSQL left to itself puts them
+first on a descending sort. The build job's step "The PostgreSQL tests ran"
+fails CI if any of the four classes skips a test or has no report.
 
 The emulator tests check what a mocked client cannot: that ElasticMQ accepts
 the message `SqsEventPublisher` sends and hands back its body and attributes
@@ -69,9 +73,9 @@ tests ran" fails CI if either class skips a test or has no report. An
 emulator is not AWS, and neither class talks to AWS.
 
 So in CI the Surefire summary reads
-`Tests run: 279, Failures: 0, Errors: 0, Skipped: 0` for the service and
+`Tests run: 393, Failures: 0, Errors: 0, Skipped: 0` for the service and
 `Tests run: 28, Failures: 0, Errors: 0, Skipped: 0` for the Lambda. On a laptop
-without Docker the service line ends `Skipped: 10`, and 269 of its tests run.
+without Docker the service line ends `Skipped: 16`, and 377 of its tests run.
 The Lambda line ends `Skipped: 3`, and 25 run.
 
 A new migration is not accepted until CI has gone green on it. The local H2
@@ -125,22 +129,22 @@ scripts/numbers.sh          # recomputes every count the docs claim
 
 | Layer | Tests | Tooling |
 |---|---|---|
-| Domain entity | 13 | plain JUnit, with no Spring and no database |
-| Service | 36 | `@ExtendWith(MockitoExtension.class)`, `@Mock`, `@InjectMocks`, `@Captor`, split across `BookingServiceTest` (orchestration, including a failed insert with no winning booking to recover), `BookingWriterTest` (the write path), `FlightServiceTest` and `SqsEventPublisherTest` (what goes on the wire) |
-| Web slice | 75 | `@WebMvcTest` + `@MockitoBean` in the two controller tests: status codes, `Location` headers, error JSON, `Allow` on a 405 and `Accept` on a 415, the 503 for a database that cannot be reached, a YAML body or a missing `Content-Type` refused on each `POST` and `PATCH`, and the rules for flight numbers, airport codes, passenger names, seat counts, status values and departure times. The other 4 have no Spring context. 2 are `exception/ApiErrorControllerTest`: one calls `ApiErrorController` directly and one drives it through a standalone MockMvc, because a full MockMvc never forwards to `/error`. 2 are `security/JsonAccessDeniedHandlerTest`, which builds its request directly so that the path can carry a raw CR and LF |
-| Repository slice | 10 | `@DataJpaTest` + `TestEntityManager`: derived queries, JPQL, `JOIN FETCH`, constraints |
-| Full context (H2) | 89 | `@SpringBootTest`. The idempotency guarantee end to end, with four 10-caller races on one key: same request, different payloads, the last seat, and one key across two flights. The authorisation rules against the real filter chain, with the Basic and Bearer challenges and who sees health components. The outbox with its trace capture, the attempt ceiling and the retention pruner against an embedded database. The OpenAPI document's status codes per operation and its comparison with a real response. The lock timeout, the error contract with the 406 and `ignorecase` on a sort property that is not text, the page overflow and multipart parsing turned off, and a lazy-loading regression with no mocking anywhere in the chain |
+| Domain entity | 14 | plain JUnit, with no Spring and no database |
+| Service | 43 | `@ExtendWith(MockitoExtension.class)`, `@Mock`, `@InjectMocks`, `@Captor`, split across `BookingServiceTest` (orchestration, including a failed insert with no winning booking to recover), `BookingWriterTest` (the write path), `FlightServiceTest` and `SqsEventPublisherTest` (what goes on the wire) |
+| Web slice | 104 | `@WebMvcTest` + `@MockitoBean` in the two controller tests: status codes, `Location` headers, error JSON, `Allow` on a 405 and `Accept` on a 415, the 503 for a database that cannot be reached, a YAML body or a missing `Content-Type` refused on each `POST` and `PATCH`, and the rules for flight numbers, airport codes, passenger names, seat counts, status values and departure times. The other 26 have no Spring context. 17 are `controller/QueryParamsTest`, the filter check on its own, and 5 are `controller/SortPolicyTest`, which pins the `Sort` both list endpoints build, null order included. 2 are `exception/ApiErrorControllerTest`: one calls `ApiErrorController` directly and one drives it through a standalone MockMvc, because a full MockMvc never forwards to `/error`. 2 are `security/JsonAccessDeniedHandlerTest`, which builds its request directly so that the path can carry a raw CR and LF |
+| Repository slice | 13 | `@DataJpaTest` + `TestEntityManager`: derived queries, JPQL, `JOIN FETCH`, constraints |
+| Full context (H2) | 107 | `@SpringBootTest`. The idempotency guarantee end to end, with four 10-caller races on one key: same request, different payloads, the last seat, and one key across two flights. The authorisation rules against the real filter chain, with the Basic and Bearer challenges and who sees health components. The outbox with its trace capture, the attempt ceiling and the retention pruner against an embedded database. The OpenAPI document's status codes per operation and its comparison with a real response. The lock timeout, the error contract with the 406 and `ignorecase` on a sort property that is not text, the page overflow and multipart parsing turned off, and a lazy-loading regression with no mocking anywhere in the chain. The request body limit and an exception that escapes the filter chain, each through a running Tomcat, and which health probe a database failure reaches |
 | Event contract | 11 | the producer's and the consumer's `BookingEventContractTest`, both against `contracts/booking-created-v1.json`, as [Writing tests](#writing-tests) describes |
 | Lambda handler | 19 | separate module: batch parsing, partial batch failure and the conditional write. `seats` is refused with no coercion when it is missing, below 1, a string or fractional. Body values are logged on one line and capped at 1,000 characters, and the producer's trace context survives the queue |
-| Configuration and startup checks | 24 | Boot's `Binder` over plain maps: an unresolved `${...}` placeholder is rejected at startup, every outbox bound is enforced and every default is wired. `EventPropertiesTest` also starts the whole application to see a bad `app.events.publisher` named, and `PasswordVerifiabilityTest` runs `SecurityConfig` in a `WebApplicationContextRunner` to see an unverifiable password stop startup. `ValidationClockTest` checks that `@Future` reads the `Clock` bean, and `AwsConfigTest` that the `sts` module, which the credential chain needs for IRSA, is on the classpath |
+| Configuration and startup checks | 61 | Boot's `Binder` over plain maps: an unresolved `${...}` placeholder is rejected at startup, every outbox bound is enforced and every default is wired. `EventPropertiesTest` also starts the whole application to see a bad `app.events.publisher` named, and `PasswordVerifiabilityTest` runs `SecurityConfig` in a `WebApplicationContextRunner` to see an unverifiable password stop startup, and under `prod` any password that is not an adaptive hash. `ValidationClockTest` checks that `@Future` reads the `Clock` bean, and `AwsConfigTest` that the `sts` module, which the credential chain needs for IRSA, is on the classpath. Four more each start one piece of Boot in a context runner: `DataSourceSettingsTest` reads the pool each profile builds, `config/EmbeddedDatabaseGuardTest` sees in-memory H2 refused when `DB_URL` names a real database, `config/OutboxEnabledConditionTest` checks that the drain and its properties read `app.outbox.enabled` the same way, and `config/SecurityConfigJwtTest` that a JWT key with no audiences, or a JWK set URI with no issuer, stops startup |
 | Architecture | 9 | ArchUnit over `target/classes`, one test per rule in [Architecture rules](#architecture-rules). Each rule was seen to fail on a planted violation before it was committed |
-| Observability | 8 | the request-id filter against a hostile inbound header, and the booking meters scraped through a real `PrometheusMeterRegistry`, since a `SimpleMeterRegistry` would accept any name |
-| Run | 294 | 0 failures without Docker (13 + 36 + 75 + 10 + 89 + 11 + 19 + 24 + 9 + 8) |
-| PostgreSQL integration | 9 | `@Testcontainers(disabledWithoutDocker = true)`, skipped without a container runtime; [Skipped tests without Docker are correct](#skipped-tests-without-docker-are-correct) names the classes and what they cover |
+| Observability | 21 | the request-id filter against a hostile inbound header, and the booking meters scraped through a real `PrometheusMeterRegistry`, since a `SimpleMeterRegistry` would accept any name. The outbox gauges read a cache that only the refresher fills, and the drain's log lines carry each booking's trace and leak none to the next |
+| Run | 402 | 0 failures without Docker (14 + 43 + 104 + 13 + 107 + 11 + 19 + 61 + 9 + 21) |
+| PostgreSQL integration | 15 | `@Testcontainers(disabledWithoutDocker = true)`, skipped without a container runtime; [Skipped tests without Docker are correct](#skipped-tests-without-docker-are-correct) names the classes and what they cover |
 | Emulators | 4 | `@Testcontainers(disabledWithoutDocker = true)` as well: `SqsEventPublisherElasticMqTest` sends through `SqsEventPublisher` to ElasticMQ and reads the message back, and the Lambda's `BookingEventHandlerDynamoDbLocalTest` runs the handler against DynamoDB Local. Emulators, not AWS |
 
-So 307 tests exist across the two modules. 294 run without Docker and 13
-skip, and CI runs all 307.
+So 421 tests exist across the two modules. 402 run without Docker and 19
+skip, and CI runs all 421.
 
 ## What CI enforces
 

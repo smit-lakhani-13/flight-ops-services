@@ -26,7 +26,7 @@ import org.springframework.context.annotation.Configuration;
  * description, the licence and the security scheme. The scheme is declared once for the
  * whole document, so a new operation is documented as needing credentials unless
  * someone writes an exception. It is HTTP Basic only, because the JWT half of
- * {@link SecurityConfig} is off unless an issuer is configured. The 503 and the
+ * {@link SecurityConfig} is off unless a JWT decoder is configured. The 503 and the
  * headers that every operation shares are declared once too, by
  * {@link #sharedResponses()}.
  *

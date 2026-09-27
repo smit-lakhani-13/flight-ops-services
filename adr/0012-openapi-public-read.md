@@ -31,8 +31,8 @@ the licence, and one `basicAuth` security scheme applied globally. The
 security requirement is declared once, on the document. Per-operation
 annotations repeat on every method, and the one someone forgets is the
 endpoint documented as public. `bearerAuth` is absent, because the JWT half of
-`SecurityConfig` only activates when an issuer is configured. Advertising a
-method the running instance rejects is worse than advertising none.
+`SecurityConfig` only activates when a JWT decoder is configured. Advertising
+a method the running instance rejects is worse than advertising none.
 `src/test/java/com/smit/flightops/OpenApiTest.java#theSecurityRequirementIsDocumentedOnceAndAppliesToEverything`
 pins both.
 

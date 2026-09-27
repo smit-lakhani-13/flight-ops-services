@@ -274,7 +274,8 @@ against a list each endpoint publishes, and it appends `id` as a tie-breaker
 when the caller did not sort on it. The list leaves out `idempotencyKey`,
 because sorting on it would hand back other people's keys one bit at a time.
 `ErrorContractTest.idempotencyKeyIsNotSortable` pins the list. `SortPolicy`
-landed in `50e8871`. No test pins the tie-breaker yet.
+landed in `50e8871`. `controller/SortPolicyTest` now pins the tie-breaker:
+`defaultFlightOrderMatchesTheIndex` and `callersIdOrderIsTheTiebreaker`.
 
 ## The outbox and a slow queue
 
