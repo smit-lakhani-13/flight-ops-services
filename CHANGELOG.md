@@ -39,6 +39,22 @@ says not yet.
   from `main` no longer reports itself as 1.3.0 in `/actuator/info` and the
   OpenAPI document.
 
+- **The README says more of what is built.** Its opening sentence names Java
+  21 and Spring Boot 4.1. It links the latest release, says a release is a
+  version and a tag and that each GitHub release since v1.2.0 carries an SBOM
+  for each module, and counts the tests in both modules and the console. It
+  adds a contents line, the lock order with `@Version`, what the API will read,
+  how a booking's `traceparent` crosses the queue, what the SAM and
+  CloudFormation templates hold, what the gated deploy job would do, how
+  actions, downloads and images are pinned, and which merges the ruleset on
+  `main` accepts.
+
+### Fixed
+
+- **Maven version in the README.** The `build` row said the enforcer requires
+  Maven 3.9; both poms accept 3.9 or later (`requireMavenVersion` is
+  `[3.9.0,)`).
+
 ## 1.3.0 — 2026-09-28
 
 A browser console for every operation, in `web/`, built and tested in CI and
