@@ -31,110 +31,151 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
 [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md) records that in a dated line that still
 says not yet.
 
-## Unreleased
+## 1.3.0 — 2026-09-28
+
+A browser console for every operation, in `web/`, built and tested in CI and
+never hosted, and a round of fixes to the service, its `postgres` and `prod`
+settings, the deploy scripts and the documents. The AWS SDK code now also runs
+in CI against ElasticMQ and DynamoDB Local, and neither test talks to AWS; 193
+new tests pin behaviour that nothing checked. The deploy job is still gated off
+and has never run.
+
+Some changes refuse a request the contract accepted, which the versioning rule
+above calls a major, and this release treats each as a fix. Cancelling an active
+booking on a `DEPARTED` or `ARRIVED` flight gets `409 BOOKING_NOT_CANCELLABLE`
+where it got 200, because that 200 rewrote the record of a flight that had
+already flown, and relying on it meant relying on the defect. A field the API
+does not have, which Jackson ignored, gets `400 MALFORMED_REQUEST` on the three
+writes that take a body: it was never read, so a 201 told the client that a
+request had succeeded when part of it had been thrown away. A `passengerName`
+with a text-direction control or a line separator gets
+`must not contain text-direction controls or line separators`. The published
+pattern allowed these characters, and refusing them is treated as a fix, like
+the unpaired-surrogate rule below, because they change only how a name is
+displayed, not what it is, and a name that carries them can mislead whoever
+reads the record. Readiness is treated as outside the rule: it answers 200
+during a database outage where it answered 503, because the probe endpoints
+answer the kubelet and the load balancer, not API clients, and no answer under
+`/api/**` changes.
+
+The other refusals are of input that 1.2.0 mishandled. A key sent twice in one
+object gets the same `400 MALFORMED_REQUEST`, since the last value won while a
+proxy or a log that kept the first would have shown a different request. A
+status name with padding or controls around it, which Jackson trimmed and
+applied, is `400 MALFORMED_REQUEST`, as an unknown name was. A `passengerName`
+with an unpaired UTF-16 surrogate gets `must not contain unpaired surrogates`,
+because the request fingerprint turned it into `?` and a name that differed only
+there, on the same key, was answered as a replay instead of a 409; a name made
+only of no-break or zero-width spaces, which passed `@NotBlank`, gets
+`must not be blank`. A query filter holding a control character once trimmed,
+such as `?origin=J%00K`, is `400 MALFORMED_REQUEST` before any query, where
+PostgreSQL's refusal came back as `409 DUPLICATE_REQUEST`, telling the client to
+retry a read that fails every time, and H2 answered an empty page. A body over
+`app.http.max-body-bytes`, 16384 bytes by default, gets `413 PAYLOAD_TOO_LARGE`
+once its declared length or a read shows it: with no limit, Jackson built a
+whole string field before `@Size` checked it, and a few requests with a name of
+millions of characters could exhaust the heap and end the JVM. And `/logout`, a
+204 for any caller, a wrong password included, is denied like any path no rule
+names, since the API keeps no session and the rules end in `denyAll()`. The
+status name was never one the contract lists and `/logout` never a path the
+rules allowed; the rest got a wrong answer or put the heap at risk. Each is a
+fix.
+
+Other fixes replace an answer that 1.2.0 got wrong. A badly encoded query value,
+such as `?origin=%FF`, or a query name with a control character is
+`400 MALFORMED_REQUEST` where it was `500 INTERNAL_ERROR`, on the public
+`/actuator/health` too, and a form-encoded `PUT`, `PATCH` or `DELETE` body with
+a bad percent escape and no credentials gets 401 where it got a 500.
+`?origin=%00` lists every flight, as `?origin=` and `?origin=%20` do, where it
+answered an empty page. `?sort=cancelledAt` lists the active bookings last in
+both directions on both databases, which changes `,desc` on PostgreSQL; the
+contract had never said where they went. A field that breaks two rules always
+gets the most basic message, not whichever violation came first. With bearer
+tokens on, the metadata at `GET /.well-known/oauth-protected-resource` no longer
+claims certificate-bound tokens, which nothing checks. Under `postgres` and
+`prod`, a request waits 5 s for a connection, not 30 s, before its
+`503 DATABASE_UNAVAILABLE`, and a statement the database stopped answering ends
+in the same 503 after 30 s, where it could hold its thread for about 15 minutes.
+Bookings, cancellations and status changes on a flight inserted without a
+version, each a 500, now go through, and a server whose
+`default_transaction_isolation` is REPEATABLE READ no longer turns queued
+bookings, cancellations and replays into `503 LOCK_TIMEOUT`. Each replaces an
+unplanned 500 or a wrong, unstable or late answer, or settles one the contract
+never specified, so each is a fix. With the majors treated as fixes and
+readiness outside the rule, this release is 1.3.0 and not 2.0.0.
 
 ### Added
 
-- **The AWS SDK code runs against emulators in CI.**
-  `SqsEventPublisherElasticMqTest` publishes through `SqsEventPublisher` to
-  ElasticMQ and reads the message back, body and attributes unchanged, with
-  the SDK checking both MD5 digests. The Lambda's
-  `BookingEventHandlerDynamoDbLocalTest` runs the handler against DynamoDB
-  Local on a table keyed as `lambda/template.yaml` keys it: the fixture lands
-  as one item per booking, a redelivered batch is refused by the condition
-  and is not a failure, and a malformed body fails only its own message.
-  Before, both halves were tested only against mocked clients, which cannot
-  see a request the server would refuse. Both classes skip without Docker,
-  and the step "The emulator tests ran" fails CI if either skipped. Neither
-  talks to AWS. `scripts/numbers.sh` now counts the Lambda's skipped tests.
-  Dependabot leaves the Lambda's Testcontainers version alone, as it does
-  JUnit, because `lambda/pom.xml` copies the one Boot manages for the service.
+- **AWS SDK code on emulators in CI.** `SqsEventPublisherElasticMqTest` reads
+  back unchanged what `SqsEventPublisher` sent to ElasticMQ. The Lambda's
+  `BookingEventHandlerDynamoDbLocalTest` runs on DynamoDB Local keyed as in
+  `lambda/template.yaml`: one item per booking, a redelivered batch refused
+  without failing, a malformed body failing only its own message. Both skip
+  without Docker, and the step "The emulator tests ran" fails CI if either
+  skipped; neither talks to AWS. `scripts/numbers.sh` counts the Lambda's
+  skipped tests. Dependabot skips the Lambda's Testcontainers version, as it
+  does JUnit, since `lambda/pom.xml` copies Boot's.
 
-- **What the database login can do, and what would replace it.** The service
-  and Flyway both log in as the RDS master user, a member of `rds_superuser`
-  that owns every table. `doc/OPERATIONS.md` now traces where that login comes
-  from and what it allows, and `doc/ARCHITECTURE.md` lists the fix, a
-  migration user and a least-privilege runtime user, as still open. No code
-  changes.
+- **Database login documented.** `doc/OPERATIONS.md` traces the RDS master login
+  the service and Flyway share, an `rds_superuser` member owning every table,
+  and what it allows; `doc/ARCHITECTURE.md` lists the fix, a migration user and
+  a least-privilege runtime user, as open. No code changes.
 
-- **An error answer now leaves a line in the log.** Most 4xx answers, a 401
-  or a 404 among them, logged nothing, so the `X-Request-Id` a caller quoted
-  from one would have found no line on any pod.
-  `src/main/java/com/smit/flightops/observability/RequestIdFilter.java` now
-  logs one INFO line for each answer of 400 or above, under the request id:
-  the method, the path made printable by the rule the 403 handler's line
-  uses, and the status. It never logs the query string, a header or the
-  principal, and it skips `/actuator/`, so a failing readiness probe does not
-  log a line every period. ADR 0011 notes it. A request whose chain throws
-  gets no line, although Spring's `ServerHttpObservationFilter` has set 500
-  on the response by then, because `ApiErrorController` logs that failure at
-  ERROR under the same id. `EscapedFailureLogTest` checks this in a running
-  server.
+- **Error answers logged.** Most 4xx answers logged nothing, so a quoted
+  `X-Request-Id` found no line. `RequestIdFilter` now logs one INFO line per
+  answer of 400 or above under the request id: method, path made printable by
+  the 403 handler's rule, and status, never the query string, a header or the
+  principal (ADR 0011). It skips `/actuator/`, so a failing readiness probe does
+  not log every period, and a request whose chain throws, which
+  `ApiErrorController` logs at ERROR under that id (`EscapedFailureLogTest`).
 
-- **A browser console for every operation, in `web/`.** A Next.js 16 and
-  TypeScript application. It signs in with one of the service's accounts,
-  searches, creates and moves flights, books with an idempotency key, replays
-  a booking, changes the body on the same key to show the 409, sends ten
-  identical bookings at once from its own server, cancels, and reads health
-  and the meters as `ops`. The browser talks only to the console's origin, and
-  `web/lib/proxy.ts#forward` passes an allow-listed set of calls on to the API
-  with the caller's credentials, which it neither logs nor keeps. The API is
-  unchanged: no CORS policy and no cookie, so ADR 0006 holds, and a dated note
-  there says so. [ADR 0017](adr/0017-web-console.md) records the design and
-  `web/README.md` maps each page to the calls it makes. The pages are laid out
-  for phones, tablets and desktops, with touch-sized controls and 16 px field
-  text below 1280 px or when touch is the main pointer, and a Playwright spec
-  checks every page at twelve Chromium viewports and the keyboard's outline on
-  every stop of the sign-in page. Built and tested in CI, never hosted.
+- **Browser console in `web/`.** A Next.js 16 TypeScript app that signs in as
+  one of the service's accounts and runs every operation, including the 409 for
+  a changed body on one idempotency key, ten identical bookings at once from its
+  own server, and health and meters as `ops`. The browser talks only to the
+  console, whose `web/lib/proxy.ts#forward` passes allow-listed calls to the API
+  with the caller's credentials, neither logged nor kept. The API is unchanged,
+  no CORS policy or cookie, so ADR 0006 holds, as a dated note there says.
+  [ADR 0017](adr/0017-web-console.md) records the design, `web/README.md` each
+  page's calls. Below 1280 px or when touch is the main pointer, controls are
+  touch-sized and field text 16 px; Playwright checks every page at twelve
+  Chromium viewports and each sign-in stop's keyboard outline. Never hosted.
 
-- **CI checks the console on every push or pull request to `main`.** A new
-  `web` job lints, type-checks, unit-tests and builds it, then packages the
-  service's jar, starts it on the default H2 profile and runs the Playwright
-  suite in Chromium against both. The deploy job needs `web` too. CodeQL
-  analyses the console's TypeScript beside the Java, as a second matrix entry,
-  `analyze (javascript-typescript)`; the Java check keeps its name. Dependabot
-  gains a fifth entry, for `web/`, with one grouped pull request for the
-  runtime dependencies and one for the tooling.
+- **CI checks the console.** On each push or pull request to `main`, a new `web`
+  job lints, type-checks, unit-tests and builds it, then starts the service's
+  jar on the default H2 profile and runs Playwright in Chromium against both;
+  the deploy job needs it. CodeQL analyses the TypeScript as a second matrix
+  entry, `analyze (javascript-typescript)`; the Java check keeps its name.
+  Dependabot's fifth entry, `web/`, groups runtime dependencies and tooling into
+  one pull request each.
 
-- **Tests for behaviour that nothing pinned.** 193 new tests pin what the
-  service already did and no test checked, so a change to any of it now fails
-  the build. They cover the seat limits on a booking and on a flight, the
-  idempotency fingerprint and what a replay returns, the flight status machine
-  over HTTP, a stale flight write that loses to a booking, both outbox jobs on
-  their schedule, the gauge refresher starting and stopping with the context,
-  how malformed bodies and path ids are refused, the length limit on every
-  text field, the one message a field gets when it breaks several rules, the
-  departure time formats accepted, the default paging and sort order, the 503
-  for a lost database on every booking endpoint, the booking counters on every
-  outcome, the lock timeout on flight writes, and the JSON envelope on the
-  container's own 405 for `TRACE` and the firewall's 400.
-  `FlightStatusContractTest`, `MalformedRequestTest` and
-  `ContainerErrorDispatchTest` are among the new classes. No production code
-  changes.
+- **193 tests for behaviour nothing pinned.** Any change to it now fails the
+  build; no production code changed. Covered: seat limits per booking and per
+  flight, idempotency fingerprints and replays, the flight status machine over
+  HTTP, a stale flight write losing to a booking, both outbox job schedules, the
+  gauge refresher's start and stop with the context, malformed bodies and path
+  ids, every text field's length limit, one message for a field breaking several
+  rules, departure time formats, default paging and sort, the 503 for a lost
+  database on every booking endpoint, booking counters on every outcome, the
+  flight write lock timeout, and the JSON envelope on the container's `TRACE`
+  405 and firewall 400. Classes include `FlightStatusContractTest`,
+  `MalformedRequestTest` and `ContainerErrorDispatchTest`.
 
-- **Tests for four claims that nothing checked.** `FlightTest` now walks every
-  move the status graph allows, and checks that the allowed and refused lists
-  name each of the 30 moves between distinct statuses once; before, a `BOARDING`
-  that could no longer go to `DELAYED` or `DEPARTED` passed the build.
-  `SecurityRulesTest#aCrossSitePreflightIsNotApproved` sends an anonymous
-  cross-site preflight and expects no CORS headers back, which ADR 0006's CSRF
-  decision rests on: Spring Security switches CORS on by itself once a
+- **Tests for claims nothing checked.** `FlightTest` walks every allowed move
+  and checks each of the 30 moves between distinct statuses is listed once,
+  allowed or refused. `SecurityRulesTest#aCrossSitePreflightIsNotApproved`
+  expects no CORS headers on an anonymous cross-site preflight, which ADR 0006's
+  CSRF decision rests on; Spring Security switches CORS on once a
   `CorsConfigurationSource` bean exists. `AwsConfigTest` checks the SQS client's
-  call and attempt caps, and the Lambda's `TimeoutBudgetTest` reads
-  `lambda/template.yaml` and checks that a batch whose DynamoDB calls all time
-  out still ends inside the function's `Timeout`. `FixedErrorMessagesTest` now
-  asserts that an unhandled exception's stack trace is logged, not only its
-  text. The Lambda's client settings moved to a constant that the test reads; no
-  behaviour changes.
-
-- **A test for the documented bearer token setup.**
-  `config/SecurityConfigJwtTest.java#anIssuerUriWithAudiencesStarts` starts
-  the service with `issuer-uri` and `audiences` alone, the setup
-  `application.yml` and `SECURITY.md` give, and checks that the bearer filter
-  is on and that the startup log names both checks. Before, a rule that
-  required `jwk-set-uri` beside `issuer-uri` still passed the build. The
-  public key case now also checks that the log names where the key came from.
-  No production code changes.
+  call and attempt caps, and the Lambda's `TimeoutBudgetTest` that a batch whose
+  DynamoDB calls all time out ends inside the function's `Timeout` in
+  `lambda/template.yaml`; the Lambda's client settings moved to a constant, no
+  behaviour change. `FixedErrorMessagesTest` asserts an unhandled exception's
+  stack trace is logged, not only its text.
+  `config/SecurityConfigJwtTest.java#anIssuerUriWithAudiencesStarts` starts the
+  service on `issuer-uri` and `audiences` alone, as `application.yml` and
+  `SECURITY.md` give, checking the bearer filter is on and the startup log names
+  both checks and, for a public key, its source.
 
 ### Changed
 
@@ -142,852 +183,586 @@ says not yet.
   citations of TypeScript, JavaScript module and CSS files, and
   `scripts/numbers.sh` prints the console's file, line, page and test counts.
 
-- **Version.** Both poms say `1.3.0-SNAPSHOT` until the next tag, so a build
-  from `main` no longer reports itself as 1.2.0 in `/actuator/info` and the
-  OpenAPI document.
+- **Readiness no longer checks the database.** Its `db` indicator borrowed from
+  the requests' pool of ten, so a dead shared database, or a hot flight's lock
+  waiters filling the pools, would fail the probe on every pod at once, and
+  withdrawing them all would make a busy flight an outage for every flight.
+  `src/main/resources/application.yml` now makes the group `readinessState`
+  alone: in a database outage readiness answers 200, each pod answers
+  `503 DATABASE_UNAVAILABLE` with `Retry-After`, and `/actuator/health` still
+  reports `db` and answers 503 (`HealthGroupsTest#rootHealthReportsTheDatabase`,
+  `HealthGroupsTest#readinessLeavesTheDatabaseOut`). `doc/OPERATIONS.md` points
+  the database alert at `db` and `hikaricp_connections_pending`, not readiness.
+  Readiness used to answer 503 in a database outage; this release treats that
+  as outside the versioning rule above, as the probes answer the kubelet and the
+  load balancer, not API clients, and no answer under `/api/**` changes.
 
-- **Readiness no longer checks the database.** The readiness group included
-  `db`, whose indicator borrows from the same pool of ten as requests. Every
-  replica shares the database, so a dead one, or one hot flight's lock
-  waiters filling each pod's pool, would fail the probe on every pod at once.
-  The kubelet and the load balancer would then withdraw them all, a busy
-  flight would become an outage for every flight, and it would repeat as the
-  pools drained. The group in `src/main/resources/application.yml` is now
-  `readinessState` alone, so during a database outage readiness answers 200
-  and each pod answers `503 DATABASE_UNAVAILABLE` with `Retry-After`.
-  `/actuator/health` still reports `db` and answers 503.
-  `HealthGroupsTest#readinessLeavesTheDatabaseOut` and
-  `HealthGroupsTest#rootHealthReportsTheDatabase` pin both halves.
-  `doc/OPERATIONS.md` points the database alert at the `db` component and
-  `hikaricp_connections_pending` instead of at readiness. Readiness used to
-  answer 503 in a database outage, and this release treats that change as
-  outside the versioning rule above, because the probe endpoints answer the
-  kubelet and the load balancer, not API clients, and no answer under
-  `/api/**` changes.
-
-- **Java lines fit in 120 columns, and CI keeps them there.** `.editorconfig`
-  sets `max_line_length = 120`, but only an editor read it, and longer lines
-  had built up in the controllers, the exception handler and the tests. They
-  are wrapped, with every compiled string, the OpenAPI descriptions included,
-  left exactly as it was, and the build job's step "Java lines fit in 120
-  columns" now fails on a longer line in either module.
+- **Java lines fit in 120 columns, and CI keeps them there.** Only an editor
+  read `.editorconfig`'s `max_line_length = 120`; now the build job's step "Java
+  lines fit in 120 columns" fails on a longer line in either module. Longer
+  lines in the controllers, exception handler and tests are wrapped, with every
+  compiled string, OpenAPI descriptions included, left exactly as it was.
 
 ### Fixed
 
-- **A request body had no size limit.** Jackson builds a whole string field
-  before Bean Validation checks its `@Size`, so a `passengerName` of millions
-  of characters held tens of MB of heap, and a few such requests at once could
-  exhaust the heap and end the JVM. Spring's `FormContentFilter` also read a
-  form-encoded `PUT`, `PATCH` or `DELETE` body in full before the credentials
-  were checked. A body over `app.http.max-body-bytes` (`HTTP_MAX_BODY_BYTES`),
-  16384 bytes by default, now gets `413 PAYLOAD_TOO_LARGE` when its declared
-  length or a read shows it, and nothing parses more than the limit.
-  `RequestBodyLimitFilter` refuses a declared `Content-Length` over the limit
-  unread, ahead of Spring Security, and counts a chunked body as it is read, so
-  a body nothing reads is not counted. `GlobalExceptionHandler#handleMalformed`
-  answers a chunked JSON body over the limit with the same 413, not
-  `400 MALFORMED_REQUEST`. The OpenAPI document declares the 413 on the three
-  writes, and `doc/api.md` lists the code. The filter's own 413 carries
-  Spring Security's default headers, as a 401, a 403 and the chunked 413 do:
-  `X-Content-Type-Options: nosniff`, `Cache-Control` with `no-store` and
-  `X-Frame-Options: DENY` among them.
+- **Request bodies are capped.** A body over `app.http.max-body-bytes`
+  (`HTTP_MAX_BODY_BYTES`, 16384 bytes by default) gets `413 PAYLOAD_TOO_LARGE`
+  once its declared length or a read shows it, and nothing parses more. Before,
+  huge `passengerName` values could exhaust the heap, and `FormContentFilter`
+  read a form-encoded `PUT`, `PATCH` or `DELETE` body in full before the
+  credentials were checked. `RequestBodyLimitFilter` refuses an oversized
+  `Content-Length` unread, ahead of Spring Security, and counts a chunked body
+  only as it is read; `GlobalExceptionHandler#handleMalformed` gives a chunked
+  JSON body over it that 413, not `400 MALFORMED_REQUEST`. The OpenAPI document
+  (three writes) and `doc/api.md` list the 413. Both 413s, like a 401 or 403,
+  carry Spring Security's default headers, `X-Content-Type-Options: nosniff`,
+  `Cache-Control` with `no-store` and `X-Frame-Options: DENY` among them.
 
-- **A booking on a flight that had flown could still be cancelled.**
-  `DELETE /api/v1/bookings/{bookingId}` never read the flight's status, so on
-  a `DEPARTED` or `ARRIVED` flight it answered 200, marked the booking
-  cancelled and put its seats back, rewriting the record of a flight that had
-  already flown. `BookingWriter#cancelBooking` now refuses an active booking
-  on such a flight with `409 BOOKING_NOT_CANCELLABLE` and changes nothing,
-  using the new `FlightStatus#acceptsCancellations`. A booking cancelled
-  before departure still answers 200 with its original `cancelledAt`, and one
-  on a `CANCELLED` flight can still be cancelled. The new 409 changes what the
-  contract returns for a request it accepted, which the versioning rule above
-  calls a major. This release treats it as a fix, because the 200 it replaces
-  rewrote the record of a flight that had already flown, and relying on
-  that 200 meant relying on the defect.
+- **A booking on a flown flight could be cancelled.** On a `DEPARTED` or
+  `ARRIVED` flight, `DELETE /api/v1/bookings/{bookingId}` answered 200 and
+  freed the seats; `BookingWriter#cancelBooking` now refuses an active booking
+  with `409 BOOKING_NOT_CANCELLABLE` and changes nothing
+  (`FlightStatus#acceptsCancellations`). One cancelled before departure still
+  gets 200 with its original `cancelledAt`; one on a `CANCELLED` flight can
+  still be cancelled. The 409 changes what the contract returns for a request
+  it accepted, a major under the versioning rule above, but is treated as a
+  fix: the 200 rewrote the record of a flight that had already flown, and
+  relying on it meant relying on the defect.
 
-- **A field the API does not have was dropped without a word.** Jackson ignored
-  an unknown field, so a create that sent `"status": "DELAYED"` got 201 and a
-  `SCHEDULED` flight, and a booking that asked for a cabin class got a 201 that
-  read as if it had been honoured.
-  `spring.jackson.deserialization.fail-on-unknown-properties` now answers such a
-  field with `400 MALFORMED_REQUEST` on the three writes that take a body, and
-  the OpenAPI document closes `BookingRequest`, `CreateFlightRequest` and
-  `StatusUpdate` with `additionalProperties: false`. A key sent twice in one
-  object, such as `"seats": 3, "seats": 1`, gets the same 400
-  (`spring.jackson.read.strict-duplicate-detection`), and each write's 400
-  description in the OpenAPI document names both. Before, the last value won,
-  while a proxy or a log that kept the first would have shown a different
-  request from the one that ran. The open schemas let a request carry an extra
-  field, so refusing one changes the answer to a request the contract accepted,
-  which the versioning rule above calls a major. This release treats it as a
-  fix, as it does the cancel 409 above: the field was never read, so the 201
-  told the client that a request had succeeded when part of it had been thrown
-  away. The console sends only the fields each schema lists, and
-  `BookingControllerTest` and `FlightControllerTest` cover both rules on each of
-  the three.
+- **Unknown and duplicate fields are refused.** An ignored unknown field let
+  `"status": "DELAYED"` create a `SCHEDULED` flight with 201, and a key sent
+  twice kept its last value. Both now get `400 MALFORMED_REQUEST` on the three
+  writes with a body (`BookingControllerTest`, `FlightControllerTest`) through
+  `spring.jackson.deserialization.fail-on-unknown-properties` and
+  `spring.jackson.read.strict-duplicate-detection`, and the OpenAPI document
+  names both in each 400 description and closes `BookingRequest`,
+  `CreateFlightRequest` and `StatusUpdate` with `additionalProperties: false`.
+  The open schemas let a request carry an extra field, so refusing one changes
+  the answer to a request the contract accepted, a major under the versioning
+  rule above, but like the 409 it is treated as a fix: the field was never
+  read, so the 201 reported success when part of the request had been thrown
+  away. The console sends only the listed fields.
 
-- **Tests that proved less than their names said.**
-  `BearerTokenChallengeTest#aSignedTokensScopeMapsOntoTheRules` signs an RS256
-  token with the `flights:read` scope and checks that it can read a flight but
-  cannot book or read metrics. Before, no test decoded a valid token, so a
-  change to how the resource server turns scopes into authorities still passed
-  the build. The no-session test now asserts that the request has no session:
-  MockMvc never writes the session cookie, so the old `Set-Cookie` check could
-  not catch a session. The PostgreSQL replay race checks that every caller
-  gets the same booking back, as its name says.
-  `ErrorContractTest.java#cancellationRepeatedAfterDepartureIsStillANoOp`
-  cancelled the only booking on its flight, so a second credit on the retry
-  would have been clamped at `totalSeats` and the seat check could not fail;
-  another booking now keeps one seat sold. A `SortPolicyTest` case named for
-  the flight list's default order ran only the test's own sets, and is renamed
-  `controller/SortPolicyTest.java#plainOrderGetsAPlainIdTiebreaker`;
+- **Tests that proved less than their names said.** The first test to decode
+  a valid token, `BearerTokenChallengeTest#aSignedTokensScopeMapsOntoTheRules`,
+  checks that an RS256 `flights:read` token reads a flight but cannot book or
+  read metrics. The no-session test asserts no session, not a `Set-Cookie`
+  MockMvc never writes; the PostgreSQL replay race checks every caller gets
+  the same booking; another booking keeps a seat sold in
+  `ErrorContractTest.java#cancellationRepeatedAfterDepartureIsStillANoOp`.
+  A default-order case that ran only its own sets is now named
+  `controller/SortPolicyTest.java#plainOrderGetsAPlainIdTiebreaker`, and
   `FlightControllerTest.java#searchAcceptsPagingParameters` pins the real
-  default.
+  default. `ErrorContractTest` flights departing in 2030 and 2031 against the
+  real clock would have failed six of its tests then; they now depart in 2099.
 
-- **Tests with an expiry date.** `ErrorContractTest` created flights departing
-  in 2030 and 2031 against the real clock, so six of its tests would have
-  started failing then. They now depart in 2099, like the suite's other fixed
-  departure dates.
+- **Validation messages.** `GlobalExceptionHandler#handleValidation` keeps a
+  field's most basic violation (null, then blank, then size or range, then
+  pattern), not whichever Hibernate Validator returned first, so an empty
+  idempotency key or airport code gets one message every call; the key's
+  pattern, like the others, accepts an empty string, so an empty key is only
+  blank. A `passengerName` with an unpaired UTF-16 surrogate, which the
+  fingerprint turned into `?`, let a name differing only there replay on the
+  same key instead of getting a 409; it now gets
+  `must not contain unpaired surrogates`. One of only no-break or zero-width
+  spaces now gets `must not be blank`.
 
-- **A field that broke two rules got a different message from call to call.**
-  Hibernate Validator returns violations in no fixed order, and the handler
-  kept whichever came first, so an empty idempotency key or airport code got
-  `must not be blank` on one call and a size or character message on the next.
-  `GlobalExceptionHandler#handleValidation` now keeps the most basic one: null,
-  then blank, then size or range, then pattern. The idempotency key's pattern
-  accepts an empty string, like the others, so an empty key is only blank.
+- **OpenAPI document corrections.** Paging is `page`, `size` and `sort` with
+  their defaults (`@ParameterObject` on `FlightController#search` and
+  `BookingController#byFlight`), not one required `pageable` whose Swagger UI
+  sample `sort=string` got `400 UNKNOWN_SORT_PROPERTY`; the cap of 100 is not
+  shown. `cancelledAt` is `string` or `null` and `FlightDto.status` refers to
+  the `FlightStatus` enum component that `StatusUpdate` reads, with no change
+  to the Java types or JSON. Both writes' 400 descriptions name the seat count
+  and a text field sent as an array or object, not any wrong JSON type, as
+  Jackson turns a number or `true` sent for a text field into text.
 
-- **Names that broke the idempotency check.** A `passengerName` with an
-  unpaired UTF-16 surrogate, such as U+D800, was stored, and the request
-  fingerprint turned it into `?`, so a name that differed only there, sent on
-  the same key, was answered as a replay instead of a 409. It now gets
-  `must not contain unpaired surrogates`. A name made only of no-break or
-  zero-width spaces passed `@NotBlank` and now gets `must not be blank`.
+- **The 503 every operation can return.** The OpenAPI document gave five
+  operations no 503 and four only `LOCK_TIMEOUT`, though
+  `GlobalExceptionHandler#handleDatabaseUnavailable` gives any operation
+  without a database connection, reads included, `503 DATABASE_UNAVAILABLE`.
+  `OpenApiConfig#sharedResponses` now adds it to every operation under
+  `/api/`, `Retry-After` to every 503 and `X-Request-Id` to every documented
+  response, as `RequestIdFilter` sets it on every response the application
+  handles; `LOCK_TIMEOUT` descriptions put a colon after the code, not a dash.
 
-- **The 400 descriptions in the OpenAPI document.** Both writes said a field
-  with the wrong JSON type got `MALFORMED_REQUEST`, but Jackson turns a
-  number or `true` sent for a text field into text, which then goes through
-  the same validation as any other. The descriptions now name the seat count,
-  and a text field sent as an array or an object, which Jackson still refuses.
+- **Control characters in query filters.** A NUL in `?origin=J%00K`,
+  `?destination=J%00K` or `?flightNumber=A%00B` hit PostgreSQL SQLState 22021
+  and got `409 DUPLICATE_REQUEST`, and H2 answered an empty page.
+  `QueryParams#withoutControlCharacters` now answers a control character left
+  after trimming with `400 MALFORMED_REQUEST` before any query and checks
+  nothing else, so `?origin=J-K` is still an empty page; as a backstop,
+  `GlobalExceptionHandler#handleDataIntegrity` gives any SQLState class 22 data
+  error that 400. `FlightService#normalise` trims first, so `?origin=%00` lists
+  every flight like `?origin=` and `?origin=%20` instead of an empty page
+  (`FlightServiceTest`), and `doc/api.md` says a filter empty once trimmed
+  counts as absent. A path flight number of controls alone that reaches the
+  service, such as `/api/v1/flights/%01`, is still `404 FLIGHT_NOT_FOUND`.
 
-- **The OpenAPI document asked for paging as one required object.** Neither
-  `Pageable` parameter carried `@ParameterObject`, so springdoc published one
-  required query parameter named `pageable` with none of the defaults, and
-  Swagger UI's "Try it out" offered a sample with `sort=string`, which is
-  `400 UNKNOWN_SORT_PROPERTY`. `FlightController#search` and
-  `BookingController#byFlight` now carry it, and the document lists `page`,
-  `size` and `sort` with their defaults. It does not show the cap of 100.
+- **SBOMs typed as applications.** Both `target/bom.json` files say
+  `application`, not CycloneDX's default `library`, and the service module no
+  longer attaches its SBOM over the one the Spring Boot parent embeds in the
+  jar, which logged a replace warning on every build.
 
-- **The OpenAPI document left out the 503 every operation can return.**
-  `GlobalExceptionHandler#handleDatabaseUnavailable` answers any operation
-  that cannot get a database connection, reads included, with
-  `503 DATABASE_UNAVAILABLE`. Five operations declared no 503, and the other
-  four named only `LOCK_TIMEOUT`. `OpenApiConfig#sharedResponses` now adds the
-  code to every operation under `/api/`, `Retry-After` as a header on every
-  503, and `X-Request-Id` as a header on every documented response, since
-  `RequestIdFilter` sets it on every response the application handles. The
-  four `LOCK_TIMEOUT` descriptions now put a colon after the code, as the
-  appended `DATABASE_UNAVAILABLE` sentence does, so none of them mixes a dash
-  and a colon.
+- **infra-lint pins the SAM CLI at 1.166.2.** setup-sam installed the latest
+  release on every run, so its bundled cfn-lint (`sam validate --lint`) could
+  turn a required check red with no template changed.
 
-- **Two response schemas did not describe the JSON.** An active booking is sent
-  with `"cancelledAt": null`, and the schema's plain `string` type refused the
-  null; it is now `string` or `null`. `FlightDto.status` was an unconstrained
-  string, and it now refers to a `FlightStatus` enum component, the one
-  `StatusUpdate` reads. Neither the Java types nor the JSON changed.
+- **Dependency gates.** `trivy-fs` now sets `TRIVY_INCLUDE_DEV_DEPS` and
+  dependency-review fails on `runtime, development`, so a fixable HIGH in the
+  development packages that fill most of `web/package-lock.json` no longer
+  passes both; `npm audit` reports nothing in either scope today. The
+  dependency-graph probe keeps the answer's body, and a 403 naming a spent rate
+  limit or a missing token permission fails the job, as CONTRIBUTING.md said a
+  token problem would, rather than passing with a warning.
 
-- **A NUL inside a query filter was a 409 on PostgreSQL.** `?origin=J%00K`,
-  `?destination=J%00K` and `?flightNumber=A%00B` reached the query, PostgreSQL
-  refused the NUL with SQLState 22021, and the client got
-  `409 DUPLICATE_REQUEST` telling it to retry a read that fails every time.
-  H2 answered an empty page. `QueryParams#withoutControlCharacters` now
-  answers a filter that holds a control character once trimmed with
-  `400 MALFORMED_REQUEST`, before any query. Nothing else is checked, so
-  `?origin=J-K` is still an empty page. As a backstop,
-  `GlobalExceptionHandler#handleDataIntegrity` answers any SQLState class 22
-  data error with `400 MALFORMED_REQUEST` rather than `DUPLICATE_REQUEST`.
+- **Dependabot.** Every group in `.github/dependabot.yml` now takes minors and
+  patches only, as CONTRIBUTING.md gives a major its own pull request. It, the
+  `Dockerfile`, `SECURITY.md` and `CONTRIBUTING.md` no longer say Dependabot
+  moves both base images' digests: it has only ever offered the build stage a
+  tag that changes the JDK, so that digest moves by hand. A CI comment says
+  Dependabot can move that JDK within Maven 3 and the enforcer stops such a
+  bump by failing the image job; `CONTRIBUTING.md`, ADR 0007 and both poms say
+  the enforcer's upper bound keeps builds on the 21 that CI, the image and the
+  Lambda runtime use.
 
-- **A filter of control characters alone ran a query for an empty code.**
-  `FlightService#normalise` asked `isBlank` before it trimmed, and `trim` also
-  strips the C0 controls that `isBlank` keeps. So `?origin=%00` was not blank,
-  trimmed to an empty string and answered an empty page, where `?origin=` and
-  `?origin=%20` list every flight. It now trims first and treats a blank result
-  as absent, so all three list every flight. A path flight number of controls
-  alone that reaches the service, such as `/api/v1/flights/%01`, is still
-  `404 FLIGHT_NOT_FOUND`. `doc/api.md` says that a filter which is empty once
-  trimmed counts as absent, and `FlightServiceTest` checks that a filter of
-  controls alone runs no filtered query.
-
-- **The SBOMs described two applications as libraries.** The CycloneDX plugin
-  types a module `library` unless told otherwise, and neither pom told it, so
-  both `target/bom.json` files did. Both are typed `application` now. The
-  service module also stops attaching its SBOM over the one the Spring Boot
-  parent embeds in the jar, which logged a replace warning on every build.
-
-- **infra-lint no longer floats with the SAM CLI.** `sam validate --lint` runs
-  the cfn-lint bundled with the SAM CLI, and setup-sam installed the latest
-  release on every run, so a new release could turn a required check red with
-  no template changed. The workflow pins it at 1.166.2.
-
-- **Two CI comments that misstated behaviour.** The CodeQL category never kept
-  Trivy's results apart, because code scanning keeps each tool's results
-  separately. Dependabot can move the build stage's JDK within Maven 3, and it
-  is the enforcer that stops such a bump, by failing the image job.
-
-- **The vulnerability gates skipped the console's development packages.**
-  Most of `web/package-lock.json` is development packages, the bundler, the
-  test runners, the linter and the type-checker, which the `web` job installs
-  and runs. Trivy leaves them out unless told otherwise, and dependency-review
-  fails only on runtime ones by default, so a fixable HIGH in any of them
-  passed both gates. `trivy-fs` now sets `TRIVY_INCLUDE_DEV_DEPS`, and
-  dependency-review fails on `runtime, development`. `npm audit` reports
-  nothing in either scope today.
-
-- **The dependency-graph probe took every 403 for a switched-off graph.**
-  dependency-review then passed with a warning to switch on a graph that was
-  on. GitHub also answers 403 for a spent rate limit and for a token that
-  lacks a permission. The probe now keeps the answer's body, and a 403 that
-  names either fails the job, as CONTRIBUTING.md already said a token problem
-  would.
-
-- **Dependabot's groups carried majors.** No group set `update-types`, so a
-  major went into the month's grouped pull request beside the patches, though
-  CONTRIBUTING.md says a major gets a pull request of its own and a check by
-  hand. Every group in `.github/dependabot.yml` now takes minors and patches
-  only.
-
-- **The memory budget gave half of what the JVM uses outside the heap.** The
-  deployment's comment allowed 128Mi for everything outside the heap. Native
-  memory tracking on a laptop JDK 21, default profile, measured about 260 MiB
-  committed there before thread stacks. At `MaxRAMPercentage=75.0` a heap near
-  its 576Mi ceiling would push the container past its 768Mi limit, and the
-  kernel would kill it with no `OutOfMemoryError` to log. The `Dockerfile` now
-  gives the heap half the limit, and the comment shows the measurement. Its
-  check was wrong too: native memory tracking is off in the image, so the
-  comment now points at `kubectl top pod` and the actuator's non-heap figure.
-
-- **The teardown's stack sweep missed a stack still deleting.** When the
-  waiter gave up, `down.sh` said step 9 would list the stack, but the sweep
-  asked only for five finished states. It now lists every state but
-  `DELETE_COMPLETE`, and `deploy/aws/selftest.sh` has a case for it.
-
-- **The up.sh hand-off, and the connection limit the documents gave.** The
-  `up.sh` hand-off now says to rename the deploy job before `DEPLOY_ENABLED`
-  is set, as the runbooks do. `deploy/k8s/base/hpa.yaml`, `doc/DEPLOYMENT.md`
-  and `doc/OPERATIONS.md` said db.t4g.micro allows about 112 connections.
-  It allows fewer than that, because `DBInstanceClassMemory` leaves out what
-  the OS and RDS reserve, and they now say to read the limit with
-  `SHOW max_connections`.
-
-- **The SAM recipe in `lambda/template.yaml` is corrected.** It sets the
-  region to `ap-south-1`, the one its teardown names, before the deploy. Its
-  `sam local invoke` sets `DDB_TABLE=flight-status-events`, because SAM resolves
-  `!Ref FlightEventsTable` to the logical ID locally, and it says to run the
-  invoke after a deploy, since no table exists before one, as ADR 0009 now
-  notes. The template, `up.sh` and `doc/DEPLOYMENT.md` said `sam deploy` reads
-  `.aws-sam`; with `--template-file` it never does. The template drops its step
-  that deleted it, and `up.sh` and `doc/DEPLOYMENT.md` keep the removal only so
-  that a later bare `sam deploy` cannot pick up a stale build. The recipe has
-  still never been run.
-
-- **The booking queue kept an event for only 4 days.**
-  `lambda/template.yaml#BookingEventQueue` set no `MessageRetentionPeriod`, so
-  SQS's 4-day default applied. Redrive counts receives, so if the Lambda
-  stopped receiving, for example with its event source mapping left disabled,
-  the backlog would never reach the dead-letter queue: SQS would delete it on
-  day 4, neither alarm would notify anyone, and the outbox would already count
-  those rows as published. The queue now keeps 10 days. The dead-letter queue
-  keeps 14, counted from the original enqueue time, so a message dead-lettered
-  after a long wait still has at least 4 days there. `doc/OPERATIONS.md` and
-  `doc/DEPLOYMENT.md` now say that a message still on the main queue 10 days
-  after it was sent is deleted, and `doc/OPERATIONS.md` that by then the
-  default `OUTBOX_RETENTION` of 7 days has pruned its outbox row, so it cannot
-  be re-sent from there.
-
-- **The Lambda's logs expired before its dead-letter queue did.**
-  `lambda/template.yaml#BookingEventFunctionLogGroup` kept 7 days against the
-  dead-letter queue's 14, and when the handler fails on a message, only its
-  `FAILED <messageId>` line records why. From day 7 a message still on the
-  dead-letter queue could not be diagnosed without reproducing the failure.
-  The log group now keeps 14 days. The dead-letter queue playbook in
-  `doc/OPERATIONS.md` now points at that line, and says a message expires 14
-  days after it was first sent, not 14 days after it reached the dead-letter
-  queue.
-
-- **Documents that said more than the code does.** `SECURITY.md` called the
-  idempotency key a client's private token, but the service logs it on a
-  replay; it is now a client-chosen key that must hold nothing private. The
-  enforcer's upper JDK bound had no stated reason, and `CONTRIBUTING.md`,
-  ADR 0007 and both poms now say it keeps builds on the 21 that CI, the image
-  and the Lambda runtime use. The outbox drain and the pruner share one
-  scheduler thread, and `application.yml` now says so and why that is
-  acceptable. The ADR index now marks 0016, the Oracle port, as a proposal
-  from documentation, never built or run.
-
-- **Wrong counts and stale references in the documents.** `doc/OPERATIONS.md`
-  promised one `grep` and showed two searches. The defect log gave the poisoned
-  sort key as 29 characters, the length of its timestamp half, and said CI's UTC
-  zone lets a zone bug ship green without noting that both Surefire runs now pin
-  `Asia/Kolkata`. `scripts/demo.sh` cited defect numbers the log does not have,
-  and now names its entries; its Act 8 now counts `/error` among the anonymous
-  paths. The ADR index gives the dates its records were written in one sentence
-  instead of timing each one, and the binding row in `doc/ARCHITECTURE.md` names
-  the passenger name checks above. Markdown prose lines over 80 columns are
-  rewrapped where they can break, except in `README.md` and the released
-  sections here.
-
-- **Runbooks that promised more than the code delivers.** `doc/OPERATIONS.md`
-  and `doc/DEPLOYMENT.md` put the outbox drain at about 100 events a second
-  per replica, but `OutboxPublisher#drainOutbox` sends one row at a time and
-  waits the poll interval after each drain, so a replica drains
-  `batch / (poll interval + batch × send latency)` events a second, and never
-  more than `1 / send latency`. Both now show that arithmetic. Below that cap
-  the throughput playbook prefers a shorter interval to a bigger batch, which
-  holds its row locks longer, and at the cap it adds replicas, up to the HPA's
-  four. The command in "Events stop arriving" read only the last 10 lines of
-  each pod, kubectl's default with a label selector, and now passes
-  `--tail=-1` and `--prefix`. Where the poll interval is set and described,
-  an event's latency now counts the sends ahead of it, and says that a
-  backlog, a failed send or a prune run adds more.
-
-- **Claims a second read of the documents did not bear out.** Two runbooks
-  checked a crash-looping pod's Secret with `kubectl get secret -o
-  jsonpath='{.data}'`, which prints every value in base64, the database password
-  included; `doc/OPERATIONS.md` and `deploy/aws/README.md` now use `kubectl
-  describe secret`, which lists each key and its size. `doc/ARCHITECTURE.md` now
-  shows the console as one more API client. The README and the defect log no
-  longer say that most defects were reproduced against a running instance, and
-  the log no longer says that every entry names its commit. `doc/api.md` puts
-  Tomcat's limit at Spring Boot's 8 KB default for the request line and headers
-  together, and states the whole transition rule. `doc/DEPLOYMENT.md`, ADR 0009,
-  `deploy/aws/README.md` and the comments in `down.sh`, `up.sh` and
-  `cluster.yaml` now give the reason the Ingress goes first, say that an `up.sh`
-  step either checks first or is safe to repeat, and say that a bad `aws-auth`
-  edit cuts off the roles it maps rather than everyone; ADR 0009 gains a dated
-  correction. The defect log, ADR 0013 and `OutboxPublisher` agree that a shift
-  of the 2s base turns negative at attempt 54, not 64.
-
-- **Claims a closer reading of the code did not bear out.** Several documents
-  said every request body over the limit gets 413. A declared `Content-Length`
-  over it does, unread; a chunked body does at the read that passes the limit,
-  and a body nothing reads is never counted, as `doc/api.md` already said.
-  `doc/ARCHITECTURE.md` put that chunked 413 ahead of authentication, but it
-  comes at binding from `GlobalExceptionHandler#handleMalformed`. `SECURITY.md`
-  now says how far the load balancer controller's vendored policy reaches, that
-  `RequestIdFilter` logs each answer of 400 or above, 5xx included, and that a
-  `JwtDecoder` bean built in code escapes the startup check only while no
-  decoder property is set. `.github/dependabot.yml`, the `Dockerfile`,
-  `SECURITY.md` and `CONTRIBUTING.md` said Dependabot moves both base images'
-  digests; it has only ever offered the build stage a tag that changes the JDK,
-  so that digest moves by hand. H2's ENUM upper-cases a lower-case `cancelled`
-  rather than refusing it, so the H2 schema's tests and documents no longer
-  claim it refuses every row PostgreSQL refuses. The HTTPS recipe now suggests
-  pinning `server.forward-headers-strategy: native` rather than setting
-  `framework`, which would trust forwarded headers from any caller, and the
-  outbox playbook tells a dead row from a deferred one. The image size is now a
-  measurement on the pinned bases with the CA bundle, the JaCoCo comment in
-  `pom.xml` gives the current coverage, and the root certificate troubleshooting
-  row, the Oracle port's cost and the claim that the image is scanned once are
-  corrected.
+- **The memory budget was half the off-heap need.** The deployment's comment
+  allowed 128Mi outside the heap; native memory tracking on a laptop JDK 21,
+  default profile, measured about 260 MiB committed before thread stacks. At
+  `MaxRAMPercentage=75.0` a heap near its 576Mi ceiling would push the
+  container past its 768Mi limit, to be killed with no `OutOfMemoryError`
+  logged. The `Dockerfile` now gives the heap half the limit; the comment shows
+  the measurement and, as native memory tracking is off in the image, points
+  at `kubectl top pod` and the actuator's non-heap figure.
 
 - **A full pool made callers wait 30 s for their 503.** The `postgres` and
-  `prod` profiles kept Hikari's default 30 s `connection-timeout`, longer than
-  callers usually wait. A client that gave up and retried would leave its
-  abandoned request queued to run later, and would never see the
-  `503 DATABASE_UNAVAILABLE` with `Retry-After` that
-  `GlobalExceptionHandler#handleDatabaseUnavailable` answers. Both profiles now
-  wait 5 s: longer than the 3 s `lock_timeout`, and well inside the timeouts
-  callers usually set. The default H2 profile keeps 30 s for its concurrency
-  tests. `DataSourceSettingsTest` checks the value each profile resolves to.
+  `prod` profiles kept Hikari's default 30 s `connection-timeout`, so a caller
+  that gave up and retried would leave its request queued and never see the
+  `503 DATABASE_UNAVAILABLE` with `Retry-After` from
+  `GlobalExceptionHandler#handleDatabaseUnavailable`. Both now wait 5 s, longer
+  than the 3 s `lock_timeout` and well inside callers' usual timeouts; the
+  default H2 profile keeps 30 s for its concurrency tests.
+  `DataSourceSettingsTest` checks the value each profile resolves to.
 
-- **A statement the database stopped answering had no time limit.** The
-  `postgres` and `prod` profiles bounded a lock wait and the wait for a
-  connection, but not a statement already sent. A database host that failed,
-  or a network path that dropped packets mid-statement, held the connection
-  and its thread until the kernel gave up on TCP, about 15 minutes, and the
-  outbox drain stopped for as long. Both profiles now give pgJDBC a 30 s
-  `socketTimeout`, after which the driver closes the connection and the
-  caller gets `503 DATABASE_UNAVAILABLE`. Flyway shares the pool, so a
-  migration statement that needs longer takes its own connection through
-  `spring.flyway.url`. `DataSourceSettingsTest` checks that both profiles set
-  it and the H2 default does not, and alert 6 in `doc/OPERATIONS.md` says so.
+- **Scripts and the connection limit.** The `down.sh` stack sweep asked only
+  for five finished states; it now lists every state but `DELETE_COMPLETE`, so
+  it finds a stack still deleting (`deploy/aws/selftest.sh` has a case). The
+  `up.sh` hand-off says to rename the deploy job before `DEPLOY_ENABLED` is
+  set. `scripts/demo.sh` names defect log entries, not numbers the log lacks,
+  and its Act 8 counts `/error` among the anonymous paths.
+  `deploy/k8s/base/hpa.yaml`, `doc/DEPLOYMENT.md` and `doc/OPERATIONS.md` no
+  longer say db.t4g.micro allows about 112 connections; it allows fewer, as
+  `DBInstanceClassMemory` leaves out what the OS and RDS reserve, and they say
+  to read the limit with `SHOW max_connections`.
 
-- **Tomcat could close a connection the load balancer was about to reuse.**
-  Tomcat kept an idle connection for its default 60 s, the same as the ALB's
-  default idle timeout, which the Ingress leaves as it is. A request sent as
-  both ran out could meet a closing socket and come back as a 502 with no line
-  in the service's log. `server.tomcat.keep-alive-timeout` is now 75 s, so the
-  load balancer closes an idle connection first. `TomcatKeepAliveTest` reads
-  the value from the running connector.
+- **The SAM recipe in `lambda/template.yaml`.** It sets `ap-south-1`, the
+  region its teardown names, before the deploy. Its `sam local invoke` sets
+  `DDB_TABLE=flight-status-events` and says to run after a deploy, since no
+  table exists before one, as ADR 0009 now notes. The template, `up.sh` and
+  `doc/DEPLOYMENT.md` said `sam deploy` reads `.aws-sam`; with
+  `--template-file` it never does. The template drops its step that deleted
+  it; the other two keep the removal only so a later bare `sam deploy` cannot
+  pick up a stale build. The recipe has still never been run.
 
-- **The booking path's isolation level was left to the server.**
-  `BookingWriter#insertNewBooking` re-reads the idempotency key once it holds
-  the flight row lock, and that read sees a competing booking only under READ
-  COMMITTED. Nothing set the level, so a server whose
-  `default_transaction_isolation` was REPEATABLE READ would abort every queued
-  booking, cancellation and replay with SQLSTATE `40001`, reported as
-  `503 LOCK_TIMEOUT`. The pool now sets
+- **Queue and log retention.** `lambda/template.yaml#BookingEventQueue` set no
+  `MessageRetentionPeriod`, so a backlog the Lambda stopped receiving would be
+  deleted on day 4, never dead-lettered, with neither alarm notifying anyone
+  and its outbox rows already counted as published. It now keeps 10 days; the
+  dead-letter queue's 14 count from the original enqueue, leaving a message
+  dead-lettered late at least 4 days.
+  `lambda/template.yaml#BookingEventFunctionLogGroup` keeps 14 days, not 7, as
+  a failed message's `FAILED <messageId>` line is the only record of why.
+  `doc/OPERATIONS.md` and `doc/DEPLOYMENT.md` say a message still queued 10
+  days after it was sent is deleted; `doc/OPERATIONS.md` adds that the default
+  7-day `OUTBOX_RETENTION` has pruned its row by then, so it cannot be re-sent
+  from the outbox, and its dead-letter queue playbook points at that line and
+  counts 14 days from a message's first send.
+
+- **H2's ENUM.** It upper-cases a lower-case `cancelled` rather than refusing
+  it, so the H2 schema's tests and documents no longer claim it refuses every
+  row PostgreSQL refuses.
+
+- **Runbook claims corrected.** `doc/OPERATIONS.md` and `deploy/aws/README.md`
+  check a Secret with `kubectl describe secret`, which lists each key and its
+  size, not `kubectl get secret -o jsonpath='{.data}'`, which prints every
+  value in base64, the database password included. `doc/OPERATIONS.md` and
+  `doc/DEPLOYMENT.md` no longer put a replica's drain at about 100 events a
+  second: `OutboxPublisher#drainOutbox` sends one row at a time and waits the
+  poll interval after each drain, so both give
+  `batch / (poll interval + batch × send latency)`, at most `1 / send latency`.
+  Below that cap the playbook prefers a shorter interval to a bigger batch,
+  which holds row locks longer, and at it adds replicas, up to the HPA's four.
+  An event's latency counts the sends ahead of it, and a backlog, failed send
+  or prune run adds more. The "Events stop arriving" command, which read only
+  each pod's last 10 lines, passes `--tail=-1` and `--prefix`; the outbox
+  playbook tells a dead row from a deferred one. `doc/DEPLOYMENT.md`, ADR 0009
+  (with a dated correction), `deploy/aws/README.md` and the `down.sh`, `up.sh`
+  and `cluster.yaml` comments say why the Ingress goes first, that an `up.sh`
+  step checks first or is safe to repeat, and that a bad `aws-auth` edit cuts
+  off only the roles it maps.
+
+- **Doc claims corrected.** Not every body over the limit gets 413: a declared
+  `Content-Length` over it does, unread; a chunked body does at the read that
+  passes it, at binding (`GlobalExceptionHandler#handleMalformed`), not before
+  authentication as `doc/ARCHITECTURE.md` had it; a body nothing reads is never
+  counted. `doc/api.md` puts Tomcat's limit at Spring Boot's 8 KB default for
+  the request line and headers together, and states the whole transition rule.
+  `SECURITY.md` says the idempotency key, logged on a replay, is client-chosen
+  and must hold nothing private, how far the load balancer controller's
+  vendored policy reaches, that `RequestIdFilter` logs each answer of 400 or
+  above, 5xx included, and that a `JwtDecoder` bean built in code escapes the
+  startup check only while no decoder property is set. The HTTPS recipe
+  suggests pinning `server.forward-headers-strategy: native`, not `framework`,
+  which would trust forwarded headers from any caller.
+
+- **Counts and references corrected.** `doc/OPERATIONS.md` no longer promises
+  one `grep` for two searches. The defect log no longer gives the poisoned sort
+  key as 29 characters, its timestamp half's length, and notes that both
+  Surefire runs pin `Asia/Kolkata` where it says CI's UTC zone lets a zone bug
+  ship green. It and the README no longer say most defects were reproduced
+  against a running instance, nor the log that every entry names its commit.
+  The ADR index dates its records in one sentence and marks 0016, the Oracle
+  port, as a proposal from documentation, never built or run.
+  `doc/ARCHITECTURE.md` shows the console as one more API client, and its
+  binding row names the passenger name checks. The image size is measured on
+  the pinned bases with the CA bundle; the root certificate troubleshooting
+  row, the Oracle port's cost and the claim that the image is scanned once are
+  corrected. Markdown prose over 80 columns is rewrapped where it can break,
+  except in `README.md` and this changelog's released sections.
+
+- **Comments corrected.** Code scanning, not the CodeQL category, keeps
+  Trivy's results apart. `application.yml` says the outbox drain and the pruner
+  share one scheduler thread and why that is acceptable, the JaCoCo comment in
+  `pom.xml` gives the current coverage, and `OutboxPublisher`, ADR 0013 and the
+  defect log agree a shift of the 2s base turns negative at attempt 54, not 64.
+
+- **No statement timeout.** Under `postgres` and `prod`, a statement the
+  database stopped answering could hold its connection for about 15 minutes and
+  stop the outbox drain. Both profiles now give pgJDBC a 30 s `socketTimeout`,
+  then the caller gets `503 DATABASE_UNAVAILABLE`; a longer migration statement
+  takes its own connection through `spring.flyway.url`. `DataSourceSettingsTest`
+  checks both set it and H2 does not; alert 6 in `doc/OPERATIONS.md` says so.
+
+- **Tomcat and the ALB timed out together.** Tomcat's default 60 s idle timeout
+  equalled the ALB's, risking a 502 with no line in the service's log.
+  `server.tomcat.keep-alive-timeout` is now 75 s, so the load balancer closes an
+  idle connection first (`TomcatKeepAliveTest`).
+
+- **Isolation level left to the server.** The pool now sets
   `spring.datasource.hikari.transaction-isolation` to
-  `TRANSACTION_READ_COMMITTED`, ADR 0002 records the dependency, and
-  `DataSourceSettingsTest` checks that both PostgreSQL profiles resolve it.
+  `TRANSACTION_READ_COMMITTED`, which `BookingWriter#insertNewBooking` needs;
+  under a REPEATABLE READ `default_transaction_isolation`, every queued booking,
+  cancellation and replay would abort with SQLSTATE `40001` as
+  `503 LOCK_TIMEOUT` (ADR 0002, `DataSourceSettingsTest`).
 
-- **A database outage would have taken every metric with it.** The
-  `outbox_pending` and `outbox_dead` gauges counted rows on the scrape
-  thread, so with the database unreachable each count would wait out the
-  pool's connection timeout (5 s under `postgres` and `prod`, 30 s on H2). A
-  scrape would take at least twice that, and Prometheus's default 10 s
-  timeout would drop every series the pod exports, not only the two gauges.
-  `src/main/java/com/smit/flightops/observability/OutboxMetrics.java#refresh`
-  now runs both counts every 15 s on a daemon thread of its own, and the
-  gauges read the cached values. A gauge reads `NaN` until its first count
-  and again once its last good count is more than 45 s old.
-  `doc/OPERATIONS.md` said the rest of the response was unaffected by a
-  failed count, and now describes the cache.
+- **Outbox gauges counted on the scrape thread.** With no database, a scrape
+  would outlast Prometheus's default 10 s timeout and lose every series.
+  `observability/OutboxMetrics.java#refresh` now counts `outbox_pending` and
+  `outbox_dead` every 15 s on its own daemon thread; the gauges read the cache,
+  `NaN` until the first count and once the last good one is over 45 s old.
+  `doc/OPERATIONS.md` now describes the cache, where it said a failed count left
+  the rest of the response unaffected.
 
-- **The SQS send line could not be tied to its booking.** The `sqs`
-  transport logs `Published BookingCreated to SQS (messageId=…)` under the
-  drain's own trace, and no line of the send named the booking's trace.
-  `src/main/java/com/smit/flightops/service/OutboxPublisher.java#drainOutbox`
-  now puts each event's stored `traceparent` in the MDC while it sends that
-  event, and removes it afterwards, so in the ECS JSON log the send line and
-  the drain's warnings for that event carry it as a field. The log messages
-  are unchanged.
+- **SQS send lines lacked the booking's trace.**
+  `service/OutboxPublisher.java#drainOutbox` now puts each event's stored
+  `traceparent` in the MDC while it sends that event, then removes it, so in the
+  ECS JSON log the send line and the drain's warnings for that event carry it as
+  a field. Log messages are unchanged.
 
-- **The flight log could record a change the database refused.**
-  `src/main/java/com/smit/flightops/service/FlightService.java#updateStatus`
-  and `#cancel` logged the change and left the UPDATE to the commit, so the
-  loser of a race would log a status change and then get a 409, or a 503
-  after a lock timeout. Both now flush before the log line, so a refused
-  write fails the call before the change line is written.
+- **The flight log ran ahead of the write.**
+  `service/FlightService.java#updateStatus` and `#cancel` left the UPDATE to the
+  commit, so a race's loser logged the change and then got a 409, or a 503 after
+  a lock timeout. Both now flush before the log line, so a refused write fails
+  the call first.
 
-- **A flight inserted without a version could never be written again.**
-  `flights.version` was a nullable `BIGINT` with no default, so a flight
-  written by plain SQL, as the `DataSeeder` Javadoc suggests for reference
-  data, got NULL. Hibernate cannot increment a null version, so every booking,
-  cancellation and status change on that flight failed at flush with a 500.
+- **Unusable flight rows.** A flight inserted by plain SQL got a NULL
+  `flights.version`, and every booking, cancellation and status change on it
+  failed at flush with a 500.
   `src/main/resources/db/migration/V9__flights_version_not_null.sql` sets any
-  NULL to 0 and makes the column `NOT NULL DEFAULT 0`, and `Flight#version`
-  says the same, so the H2 schema matches.
+  NULL to 0 and makes the column `NOT NULL DEFAULT 0`, as `Flight#version` does
+  for H2. On PostgreSQL a hand-written `CANCELED` or `cancelled` status was
+  stored and made every read of its flight a 500. `V10__flight_status_check.sql`
+  adds `ck_flights_status` as `NOT VALID` and validates it in the same
+  transaction, harmless at this size; its header says to move the `VALIDATE` to
+  its own migration on a large table. A new `FlightStatus` constant needs a
+  migration replacing the check, as its Javadoc says.
+  `SchemaConstraintsPostgresTest`, now required by the CI step "The PostgreSQL
+  tests ran", shows PostgreSQL refusing a bad status and a NULL version and
+  booking a flight inserted without one. `FlightRepositoryTest` shows H2
+  refusing `CANCELED` and a NULL version; H2 stores `cancelled` as `CANCELLED`
+  rather than refusing it.
 
-- **PostgreSQL stored any flight status.** V2 gave four flight invariants a
-  check and left `status` out, while the H2 schema Hibernate generates already
-  stored nothing but a `FlightStatus` constant. A status written by hand as
-  `CANCELED` or `cancelled` was stored, and every read of that flight then
-  failed with a 500. `V10__flight_status_check.sql` adds `ck_flights_status`
-  as `NOT VALID` and then runs `VALIDATE CONSTRAINT`, the two statements V2's
-  header describes for a large table. Here both run in one migration and one
-  transaction, so the `ACCESS EXCLUSIVE` lock the first takes is held through
-  the scan and none of the large-table benefit is obtained; on a table this
-  size that costs nothing, and V10's header says to move the `VALIDATE` to a
-  migration of its own on a large one. A new constant now needs a migration
-  that replaces the check, as the `FlightStatus` Javadoc says.
-  `SchemaConstraintsPostgresTest` shows PostgreSQL refusing a bad status and a
-  NULL version and booking a flight inserted without one.
-  `FlightRepositoryTest` shows H2 refusing `CANCELED` and a NULL version; H2's
-  ENUM upper-cases a lower-case `cancelled` and stores `CANCELLED`, so it never
-  holds a value outside `FlightStatus` but does not refuse every row PostgreSQL
-  refuses. The CI step "The PostgreSQL tests ran" now requires the new class.
+- **The default flight list sorted the whole table.** No index gave the
+  `departure_time, id` order of an unfiltered `GET /api/v1/flights`.
+  `V11__flights_departure_time_index.sql` builds `idx_flights_departure_time` on
+  `(departure_time, id)` with `CREATE INDEX CONCURRENTLY`, alone so Flyway runs
+  it outside a transaction, and `Flight` declares it for H2. With
+  `spring.flyway.postgresql.transactional-lock: false` in the base document of
+  `application.yml`, Flyway holds no transaction open on a second connection
+  while the index builds. The page's `count(*)` still reads every row.
+  `scripts/numbers.sh` now lists migrations by version, where the byte order of
+  `git ls-files` would put `V10` and `V11` before `V2`.
 
-- **The default flight list sorted the whole table.** `GET /api/v1/flights`
-  with no filter orders by `departure_time, id`, and no index gave that order,
-  so every call read and sorted every flight ever created, even for a page of
-  one. `V11__flights_departure_time_index.sql` builds
-  `idx_flights_departure_time` on `(departure_time, id)` with
-  `CREATE INDEX CONCURRENTLY`, alone in its file so that Flyway runs it
-  outside a transaction, and `Flight` declares it for H2. The base document of
-  `application.yml` sets `spring.flyway.postgresql.transactional-lock: false`,
-  so Flyway no longer holds a transaction open on a second connection while
-  the index builds. The page's `count(*)` still reads every row.
+- **Null order differed by database.** `SortPolicy#stable` now puts nulls last
+  in both directions on the properties in a controller's `NULLABLE`, today only
+  the booking's `cancelledAt`, so active bookings come last on both databases,
+  as `doc/api.md` says. On PostgreSQL that changes `,desc`, which listed them
+  first; the contract had never said where they went. `NOT NULL` properties and
+  the `id` tiebreaker get no null handling, which on PostgreSQL would cost
+  `?sort=id,desc` its primary key scan.
 
-- **Null values sorted at opposite ends on H2 and PostgreSQL.** The `sort`
-  parameter cannot say where nulls go, so `?sort=cancelledAt,asc` listed the
-  active bookings first on H2 and last on PostgreSQL, and `,desc` the other
-  way round. `SortPolicy#stable` now puts nulls last, in both directions, on
-  the properties each controller lists in `NULLABLE`, today only the
-  booking's `cancelledAt`. So the active bookings come last in both
-  directions on both databases, and `doc/api.md` says so. On PostgreSQL that
-  changes `,desc`, which used to list them first; the contract had never said
-  where they went. Every other sortable property is a `NOT NULL` column, and
-  its order, like the `id` tiebreaker, carries no null handling: PostgreSQL
-  cannot read `DESC NULLS LAST` backwards off an ascending index, so
-  `?sort=id,desc` would lose its scan of the primary key.
+- **A misspelt profile ran on in-memory H2.** Profile names are case-sensitive,
+  so under `SPRING_PROFILES_ACTIVE=Prod` each pod would run its own H2 with the
+  demo flights, pass readiness and publish to the real queue.
+  `config/EmbeddedDatabaseGuard.java#refuseInMemoryH2WithDbUrl` now stops
+  startup when `DB_URL` is set and the datasource is in-memory H2, naming the
+  active profiles and asking for `prod` in the cluster or `postgres` for compose
+  or a local PostgreSQL, never `postgres` in the cluster, which seeds the demo
+  flights and accepts an unhashed password. It refuses default-profile runs and
+  H2 tests with `DB_URL` exported too, saying to unset it. `doc/OPERATIONS.md`
+  describes the guard under Profiles.
 
-- **`scripts/numbers.sh` lists the migrations by version number.**
-  `git ls-files` sorts by bytes, which would have put `V10` and `V11` before
-  `V2` once they were committed.
-
-- **A misspelt profile left the service on in-memory H2.** The base document's
-  H2 datasource applies under every profile, and only `postgres` and `prod`
-  replace it. Profile names are case-sensitive, so
-  `SPRING_PROFILES_ACTIVE=Prod` matched no document, and each pod would start
-  on its own H2, seed the demo flights, pass readiness and publish to the real
-  queue. `config/EmbeddedDatabaseGuard.java#refuseInMemoryH2WithDbUrl` now
-  stops startup when `DB_URL` is set and the datasource is still in-memory H2,
-  naming the active profiles and saying `SPRING_PROFILES_ACTIVE` must include
-  `prod` for the cluster or `postgres` for compose or a local PostgreSQL, and
-  never `postgres` in the cluster, which seeds the demo flights and accepts an
-  unhashed password. It keys on `DB_URL`, which the ConfigMap and
-  `compose.yaml` set, so a developer with `DB_URL` exported has default-profile
-  runs and the H2 tests refused too, and the message says to unset it.
-  `doc/OPERATIONS.md` describes the guard under Profiles.
-
-- **`OUTBOX_ENABLED=yes` bound true and stopped the drain.**
-  `OutboxPublisher` and `OutboxPruner` were switched by
-  `@ConditionalOnProperty(havingValue = "true")`, which compares the string,
-  while `OutboxProperties` binds `on`, `yes` and `1` as true. Any of those
-  created neither bean, and outbox rows piled up unsent and unpruned with no
-  error. Both classes are now switched by
+- **`OUTBOX_ENABLED=yes` stopped the drain.** `OutboxProperties` binds `on`,
+  `yes` and `1` as true, but `OutboxPublisher` and `OutboxPruner` compared the
+  string, so neither bean was created and outbox rows piled up unsent and
+  unpruned with no error. Both now use
   `config/OutboxEnabledCondition.java#getMatchOutcome`, which binds
-  `app.outbox.enabled` as the record does, with the same default of true, so
-  the two cannot disagree. A value that is not a boolean stops startup, naming
-  the property. So does an empty `OUTBOX_ENABLED=`, which Spring converts to
-  null: the condition binds a primitive `boolean`, like the record, so it
-  refuses the null where a `Boolean` would read it as unset and match.
-  `OutboxEnabledConditionTest` checks the condition on both classes. The
-  record's `enabled`, which no code reads, now defaults to true as well;
-  before, a missing property bound false while the beans ran.
+  `app.outbox.enabled` as the record does, default true; a non-boolean value or
+  an empty `OUTBOX_ENABLED=` stops startup, naming the property
+  (`OutboxEnabledConditionTest`). The record's unread `enabled` now defaults to
+  true too; before, a missing property bound false while the beans ran.
 
-- **The deploy smoke test could check the old release.** It port-forwarded to
-  `deployment/flight-ops`, and kubectl picks the pod that has been Ready
-  longest, which right after a rollout is the last old pod in its `preStop`
-  sleep. The test could pass on the old image, or fail when that pod exited.
-  The step in `.github/workflows/build-and-deploy.yml` now finds the
-  ReplicaSet at the Deployment's current revision and forwards to a Running,
-  Ready pod with its `pod-template-hash` whose container runs this commit's
-  image. It prints the pod and the image, fails if there is no such pod, and
-  also checks that the root `/actuator/health` is `UP`.
+- **The smoke test could check the old release.** Its port-forward to
+  `deployment/flight-ops` could reach the last old pod in its `preStop` sleep,
+  so the test could pass on the old image or fail when that pod exited. The step
+  in `.github/workflows/build-and-deploy.yml` now forwards to a Running, Ready
+  pod of the Deployment's current revision whose container runs this commit's
+  image, prints the pod and the image, fails without one, and checks the root
+  `/actuator/health` is `UP`.
 
-- **Re-running an old run on `main` would roll the cluster back.** A re-run
-  keeps its commit, and nothing compared that commit with `main`, so "Re-run
-  failed jobs" on an older run would apply it over a newer release and go green.
-  A new deploy job step after the checkout, "Is this commit still the head of
-  main?", compares `git ls-remote origin refs/heads/main` with the run's commit,
-  taking the line whose ref is exactly `refs/heads/main`. A superseded commit
-  pushes and applies nothing and passes, with a notice and a job summary line
-  that point at a manual run on `main` for a deliberate redeploy. Runs of
-  earlier commits have no such step, and `doc/OPERATIONS.md` says not to
-  re-run them while GitHub still allows it.
+- **Re-running an old run could roll the cluster back.** A new deploy job step,
+  "Is this commit still the head of main?", compares the run's commit with the
+  line of `git ls-remote origin refs/heads/main` whose ref is exactly
+  `refs/heads/main`. A superseded commit pushes and applies nothing and passes,
+  with a notice and a job summary line pointing at a manual run on `main`.
+  `doc/OPERATIONS.md` says not to re-run earlier commits' runs, which lack the
+  step, while GitHub still allows it.
 
-- **The ECR lifecycle policy could expire the image the cluster runs.** Every
-  deploy pushes its image before the rollout, and the policy kept the last
-  five tagged images, so five failed deploys in a row would expire the image
-  the old pods still ran, and a pod on a new node or a `kubectl rollout undo`
-  could not pull it. The deploy job now tags an image `deployed-<sha>` once
-  its smoke test passes, and a new first rule in
-  `deploy/aws/foundation.yaml#EcrRepository` keeps the last ten images tagged
-  that way. The CI role already had the permissions the tag needs. A release
-  whose rollout completes and whose smoke test then fails is serving and gets
-  no such tag, so the rollback playbook says to roll it back.
+- **The ECR lifecycle policy could expire a running image.** It kept the last
+  five tagged images, so five failed deploys in a row would expire the old pods'
+  image. The deploy job now tags an image `deployed-<sha>` once its smoke test
+  passes, with permissions the CI role already had, and a new first rule in
+  `deploy/aws/foundation.yaml#EcrRepository` keeps the last ten such images. A
+  release failing its smoke test after its rollout completes is serving
+  untagged, so the rollback playbook says to roll it back.
 
-- **The rollback note left out the schema.** The workflow's rollback comment
-  and a new rollback playbook in `doc/OPERATIONS.md` now say that
-  `kubectl rollout undo` does not undo migrations, so every migration must
-  keep the previous release working (expand now, contract in a later release).
-  They also say how to find the revision to go back to after more than one
-  failed deploy: the newest whose image has a `deployed-<sha>` tag.
+- **Rollback and the schema.** The workflow's rollback comment and a new
+  playbook in `doc/OPERATIONS.md` say `kubectl rollout undo` does not undo
+  migrations, so each must keep the previous release working (expand now,
+  contract in a later release); after more than one failed deploy, go back to
+  the newest revision with a `deployed-<sha>` image tag.
 
-- **Rollouts wait for the load balancer.** A pod counted as available once its
-  own readiness probe passed, so `maxUnavailable: 0` and the PodDisruptionBudget
-  could retire an old pod while the ALB was still health-checking the new one,
-  and the 5s preStop sleep could end before the old target was deregistered.
-  `deploy/k8s/namespace.yaml` now labels the namespace
-  `elbv2.k8s.aws/pod-readiness-gate-inject: enabled`, so a pod created while the
-  Ingress exists is Ready only once the ALB reports its target healthy. In
-  `deploy/k8s/base/deployment.yaml` the preStop sleep is 15s and
-  `terminationGracePeriodSeconds` is 55, and the arithmetic in
-  `src/main/resources/application.yml` follows. Pods already running have no
-  gate until the next rollout replaces them, and a pod in the namespace is now
-  created only while the controller's webhook answers. An existing namespace
-  takes the label only when `up.sh` or an operator re-applies
-  `namespace.yaml`, because CI's role cannot.
+- **Rollouts wait for the load balancer.** `deploy/k8s/namespace.yaml` labels
+  the namespace `elbv2.k8s.aws/pod-readiness-gate-inject: enabled`, so a pod
+  created while the Ingress exists is Ready only once the ALB reports its target
+  healthy. `deploy/k8s/base/deployment.yaml` sets a 15s preStop sleep (was 5s)
+  and `terminationGracePeriodSeconds` to 55, and
+  `src/main/resources/application.yml` follows. Running pods get the gate at the
+  next rollout, pods in the namespace are created only while the controller's
+  webhook answers, and an existing namespace takes the label only when `up.sh`
+  or an operator re-applies `namespace.yaml`, as CI's role cannot.
 
-- **up.sh and down.sh keep their kubeconfig to themselves.** eksctl and
-  `aws eks update-kubeconfig` wrote the operator's `~/.kube/config` and
-  switched its current context, and every later `kubectl` and `helm` call in
-  `up.sh` followed whatever context the shell then had.
-  `deploy/aws/lib.sh#use_private_kubeconfig` now exports `KUBECONFIG` as
-  `deploy/aws/.state/kubeconfig`, mode 0600, at the start of step 4, after its
-  banner and before eksctl runs, and `down.sh` uses the same file in place of
-  a temporary one. The closing summary prints the
-  `export` line, and the hints in error messages include it.
-  `deploy/aws/selftest.sh` checks the mode, the order and that no call uses the
-  caller's file.
+- **The scripts keep their own kubeconfig.**
+  `deploy/aws/lib.sh#use_private_kubeconfig` exports `KUBECONFIG` as
+  `deploy/aws/.state/kubeconfig`, mode 0600, at the start of step 4, before
+  eksctl, so eksctl and `aws eks update-kubeconfig` no longer write the
+  operator's `~/.kube/config` or switch its context. `down.sh` uses that file in
+  place of a temporary one and deletes it only after a clean run; the summary
+  and error hints print the `export` line. `deploy/aws/selftest.sh` checks the
+  mode, the order and that no call uses the caller's file.
 
-- **A new database behind an old Secret.** With the data stack deleted and the
-  cluster kept, a re-run of `up.sh` created a database with a new password and
-  left `flight-ops-secret` holding the old one, so every pod would fail at
-  Flyway's first connection. Step 6 now records the new database in
-  `deploy/aws/.state/flight-ops.env` before it starts, and at step 9
+- **A new database behind an old Secret.** A re-run of `up.sh` that made a new
+  database left the old password in `flight-ops-secret`, so every pod would fail
+  at Flyway's first connection. Step 6 now records the new database in
+  `deploy/aws/.state/flight-ops.env` before it starts; at step 9
   `deploy/aws/lib.sh#reconcile_secret_db_password` patches only `DB_PASSWORD`,
-  on stdin and never as an argument or in a file, then restarts the deployment
-  if it exists. A run that stops before step 9 leaves the record, so the next
-  one stops there and says how to set a new password instead of keeping the old
-  Secret, and a stop between the patch and the restart is finished by the
-  re-run's restart. If the next run's shell exports `DB_PASSWORD`, step 9 writes
-  that in, into this Secret or a new one, after
-  `deploy/aws/lib.sh#warn_db_password_from_shell`: only a password step 6
-  generated in the same run is known to be the new database's, and the warning
-  says what a stale one does and how to give the database the password the
-  Secret then holds. A deployment lookup that fails for any reason but "not
-  found" stops the run. The API and ops hashes stay, and a re-run with nothing
-  recorded leaves the Secret alone. `deploy/aws/selftest.sh` covers each path.
+  on stdin, never in an argument or a file, and restarts the deployment if it
+  exists. A run stopped before step 9 makes the next stop there and say how to
+  set a new password; the re-run's restart finishes a stop between patch and
+  restart. A shell's exported `DB_PASSWORD` is written in, to this Secret or a
+  new one, after `deploy/aws/lib.sh#warn_db_password_from_shell` says what a
+  stale one does and how to give the database the Secret's password. A
+  deployment lookup failing for any reason but "not found" stops the run; the
+  API and ops hashes stay; a re-run with nothing recorded leaves the Secret
+  alone (`deploy/aws/selftest.sh` covers each path).
 
-- **down.sh says what it leaves to you.** A clean teardown left `DEPLOY_ENABLED`
-  set, so the next push to `main` would run the deploy job against a cluster
-  that no longer exists, with `SQS_QUEUE_URL` and `DB_URL` naming resources
-  that are gone. The plan at step 0 now says to set it to `false` before the
-  teardown, and the closing message repeats that and says to rename the job
-  back to `deploy (gated off)`, with `CONTRIBUTING.md` in the same commit. A
-  clean run also deletes the kubeconfig the scripts keep; a failed one keeps it
-  for the re-run.
+- **What down.sh leaves to you.** A clean teardown left `DEPLOY_ENABLED` set, so
+  the next `main` push would target a deleted cluster. The step 0 plan says to
+  set it to `false` first; the closing message repeats it and says to rename the
+  job back to `deploy (gated off)`, with `CONTRIBUTING.md` in the same commit.
 
 - **Script hints and a header that misled.** When `/actuator/health` never
-  answered through the load balancer, step 11 of `deploy/aws/up.sh` said that
-  the pods passing step 10 left only the load balancer to blame, and pointed at
-  security groups. Readiness leaves the database out and `/actuator/health`
-  does not, so a database that is down stops the run there too; the message
-  now says so and gives the call, as the ops user, that shows which component
-  is not `UP`. The commands the AWS scripts print to be pasted, such as the
-  kubeconfig `export` line, the calls to `down.sh` and `cost-check.sh` and the
-  re-run of `up.sh`, now quote their paths for a shell, so they still work from
-  a checkout whose path holds a space; a new `deploy/aws/selftest.sh` check
-  reads the paths back from such a checkout.
-  The header of `scripts/sweeps.sh` said that a missing `SWEEP_PATTERNS` is a
-  skip only where no secret can exist; it now says it is a skip on every pull
-  request, this repository's own included, as the code does.
+  answered, step 11 of `deploy/aws/up.sh` blamed only the load balancer; it now
+  says a down database, which readiness leaves out, stops the run there too, and
+  gives the ops user's call that shows which component is not `UP`. Printed
+  commands such as the `export` line quote their paths, so they work from a
+  checkout whose path holds a space, as a new `deploy/aws/selftest.sh` check
+  confirms. The `scripts/sweeps.sh` header now says a missing `SWEEP_PATTERNS`
+  is a skip on every pull request, this repository's own included.
 
-- **A badly encoded query value, or a query name with a control character, was a
-  500.** Tomcat decodes the query string when a parameter is first read, and a
-  value that is not valid percent-encoded UTF-8, such as `?origin=%FF`, threw an
-  exception no handler named. Spring Security's firewall refuses a name with a
-  control character, such as `?%0D%0AFORGED=1`, at the same point, with an
-  exception of its own. Each was `500 INTERNAL_ERROR` and an ERROR stack trace,
-  on the public `/actuator/health` too, and the stack trace quoted the decoded
-  value or name, so a `%0D%0A` in it started a forged line on the plain-text
-  log. `exception/GlobalExceptionHandler.java#handleMalformed` now answers both
-  with `400 MALFORMED_REQUEST` and one WARN line through
-  `GlobalExceptionHandler.java#printable`, and
-  `ContainerErrorDispatchTest.java#aBadlyEncodedQueryValueIsA400` covers both
-  endpoints and the name.
+- **Malformed query strings were a 500.** A query value not valid as
+  percent-encoded UTF-8 (`?origin=%FF`) or a name with a control character
+  (`?%0D%0AFORGED=1`) was `500 INTERNAL_ERROR`, on the public `/actuator/health`
+  too, with an ERROR stack trace that could forge a log line.
+  `exception/GlobalExceptionHandler.java#handleMalformed` now gives both
+  `400 MALFORMED_REQUEST` and one WARN line through
+  `GlobalExceptionHandler.java#printable`
+  (`ContainerErrorDispatchTest.java#aBadlyEncodedQueryValueIsA400`).
 
-- **A form-encoded body was parsed before the credentials.** Spring's
-  `FormContentFilter` read a form-encoded `PUT`, `PATCH` or `DELETE` body ahead
-  of Spring Security, and a bad percent escape in it, such as `a=%zz`, was a 500
-  and an ERROR stack trace on any path, for a caller with no credentials. The
-  writes read JSON only, so form parsing is off
-  (`spring.mvc.formcontent.filter.enabled` in
-  `src/main/resources/application.yml`), and such a request without credentials
-  gets 401 like any other
-  (`RequestBodyLimitTest.java#aFormBodyIsNotReadBeforeTheCredentials`).
-  `SECURITY.md` no longer says that an oversized form body gets 413 before the
-  credentials are checked.
+- **A form-encoded body was parsed before the credentials.** A bad escape
+  (`a=%zz`) in a form-encoded `PUT`, `PATCH` or `DELETE` body was a 500 with an
+  ERROR stack trace on any path, even unauthenticated. The writes read JSON
+  only, so with form parsing off (`spring.mvc.formcontent.filter.enabled`) such
+  a request without credentials gets 401
+  (`RequestBodyLimitTest.java#aFormBodyIsNotReadBeforeTheCredentials`);
+  `SECURITY.md` no longer says an oversized form body gets 413 before the
+  credential check.
 
-- **`/logout` answered 204 to anyone.** Spring Security's logout filter runs
-  ahead of the rules and, with CSRF off, matched `GET`, `POST`, `PUT` and
-  `DELETE`, so `/logout` was a 204 for any caller, a wrong password included,
-  although the rules end in `denyAll()`. The API keeps no session, so
-  `config/SecurityConfig.java#apiSecurityFilterChain` turns the filter off, and
-  the path is denied like any other that no rule names
+- **`/logout` answered 204 to anyone.** With CSRF off, the logout filter matched
+  `GET`, `POST`, `PUT` and `DELETE` ahead of the rules and their closing
+  `denyAll()`, for any caller, a wrong password included. As the API keeps no
+  session, `config/SecurityConfig.java#apiSecurityFilterChain` turns it off, and
+  the path is denied like any other no rule names
   (`SecurityRulesTest.java#logoutIsDenied`).
 
 - **The bearer-token metadata was open and claimed certificate-bound tokens.**
-  With bearer tokens on, Spring Security's resource server serves its RFC 9728
-  metadata at `GET /.well-known/oauth-protected-resource`, and under it, to any
-  caller, ahead of the rules. `SECURITY.md` and `config/SecurityConfig.java`
-  said that `denyAll()` closes the list and did not name the path. The document
-  also said tokens are bound to a client certificate, which nothing here checks.
-  `config/SecurityConfig.java#apiSecurityFilterChain` turns that claim off, both
-  files now name the path, and
-  `BearerTokenChallengeTest.java#theProtectedResourceMetadataIsPublic` checks
-  the document.
+  With bearer tokens on, RFC 9728 metadata is served to any caller, ahead of the
+  rules, at `GET /.well-known/oauth-protected-resource` and under it;
+  `SECURITY.md` and `config/SecurityConfig.java` said `denyAll()` closes the
+  list, and now name the path.
+  `config/SecurityConfig.java#apiSecurityFilterChain` turns off the metadata's
+  claim that tokens are bound to a client certificate, which nothing here checks
+  (`BearerTokenChallengeTest.java#theProtectedResourceMetadataIsPublic`).
 
-- **A padded status name was applied.** Jackson's enum reader retries a name
-  it does not know with the value trimmed, so a `PATCH` with `" DELAYED"`, or
-  with `CANCELLED` between a NUL and a tab, changed the flight's status.
-  `dto/StatusUpdate.java#ExactName` reads the exact name only, and anything
-  else is `400 MALFORMED_REQUEST`, as an unknown name was
+- **A padded status name was applied.** Jackson's enum reader retries an unknown
+  name trimmed, so a `PATCH` with `" DELAYED"`, or `CANCELLED` between a NUL and
+  a tab, changed the status. `dto/StatusUpdate.java#ExactName` reads the exact
+  name only; anything else is `400 MALFORMED_REQUEST`, as an unknown name was
   (`MalformedRequestTest.java#unreadableStatusBodiesGetTheFixedMessage`).
 
-- **A header line Tomcat refused was logged in full.** Tomcat logs a request
-  it cannot parse at INFO and quotes the refused header line, so an
-  `Authorization` header with one stray control character wrote the credential
-  to the log, with no request id. `org.apache.coyote.http11.Http11Processor`
-  now logs at WARN (`src/main/resources/application.yml`), and the caller still
-  gets the 400
+- **A header line Tomcat refused was logged in full.** Tomcat quoted it at INFO,
+  so a stray control character in `Authorization` logged the credential, with no
+  request id. `org.apache.coyote.http11.Http11Processor` now logs at WARN
+  (`src/main/resources/application.yml`); the caller still gets the 400
   (`ContainerErrorDispatchTest.java#aRefusedHeaderLineIsNotLogged`).
 
-- **Two claims about headers.** `doc/api.md` said that `HEAD` follows the same
-  rule as `GET`. On `/actuator` itself Boot's matcher covers `GET` only, so a
-  `HEAD` there is 403, from `ops` too, and the page now says so. `SECURITY.md`
-  said that every answer from the console's server carries the three hygiene
-  headers. The two answers Next writes itself, the 500 for a malformed percent
-  escape and the 308 for a trailing or doubled slash, do not, and it now names
-  them.
-
-- **A placeholder scrypt value was said to stop startup.** `doc/api.md` said
-  that without BouncyCastle only a bcrypt or pbkdf2 value passes the three
-  startup checks. A malformed value behind `{scrypt}` or `{argon2}`, such as
-  `{scrypt}REPLACE_ME`, passes all three, as `{bcrypt}REPLACE_ME` does, and the
-  scrypt encoder logs nothing. The page, the playbook in `doc/OPERATIONS.md`
-  and the known limitation in `SECURITY.md` now say so.
+- **Doc claims corrected.** `doc/api.md` says a `HEAD` on `/actuator` itself is
+  403, from `ops` too, as Boot's matcher there covers `GET` only. `SECURITY.md`
+  names the two console answers Next writes itself without the three hygiene
+  headers: the 500 for a malformed percent escape and the 308 for a trailing or
+  doubled slash. `doc/api.md`, which said only bcrypt or pbkdf2 passes the three
+  startup checks without BouncyCastle, the playbook in `doc/OPERATIONS.md` and
+  the known limitation in `SECURITY.md` now say a malformed `{scrypt}` or
+  `{argon2}` value, such as `{scrypt}REPLACE_ME`, passes all three, as
+  `{bcrypt}REPLACE_ME` does, and the scrypt encoder logs nothing.
 
 ### Security
 
-- **The deploy job pushes the image CI scanned, and runs no scanner.** It
-  built its own copy of the image and scanned it with Trivy after assuming
-  the deploy role. The action downloads the Trivy CLI when it runs, and its
-  SHA pin does not cover those bytes, so a replaced release asset would have
-  run beside the AWS session keys, the ECR login and the OIDC request token.
-  The `image` job, which holds no AWS credentials, is now the only image
-  build and scan. On a run that can deploy it saves the image, records the
-  archive's sha256 before the scan, and uploads it for one day once the scan
-  passes. The deploy job checks the sha256, loads the image, tags it and
-  pushes those bytes. The one tool it still downloads is kubectl, by version
-  and with no checksum held in this repository. It is installed before the
-  AWS keys are exported, but every kubectl step after that runs with them:
-  apply, rollout, smoke test and the failure diagnostics. `id-token: write` is
-  job-level, so the OIDC request variables are still in every step
-  (`.github/workflows/build-and-deploy.yml`).
-  The job is gated off and has never run.
+- **The deploy job pushes the image CI scanned, and runs no scanner.** It built
+  and scanned its own copy under the deploy role, using a Trivy CLI outside the
+  action's SHA pin. The `image` job in `.github/workflows/build-and-deploy.yml`,
+  with no AWS credentials, alone builds and scans: on a run that can deploy it
+  records the saved image's sha256 before the scan and uploads it for a day once
+  the scan passes, and the deploy job checks the sha256 and pushes those bytes.
+  kubectl is still downloaded with no checksum held here and runs with the AWS
+  keys; job-level `id-token: write` puts the OIDC request variables in every
+  step. The job is gated off and has never run.
 
-- **The load balancer controller's IAM policy is no longer downloaded.**
-  Step 8 of `up.sh` fetched it by Git tag from the controller's repository
-  and created the policy with no check. A tag can be moved, so the
-  controller's role would have got whatever the tag pointed at that day. The
-  v3.5.0 document is now committed byte for byte beside the scripts, as the
-  file `deploy/aws/up.sh#LBC_POLICY_FILE` names. Step 1 checks its sha256
-  against `deploy/aws/up.sh#LBC_POLICY_SHA256` with
-  `deploy/aws/lib.sh#require_sha256` before anything bills, step 8 checks it
-  again just before it creates the policy, and `deploy/aws/selftest.sh` makes
-  the same check in CI. `doc/DEPLOYMENT.md` records the source and says how
-  to move to a new release.
+- **The controller's IAM policy is pinned and renamed.** Step 8 of `up.sh`
+  fetched it unchecked by a movable Git tag. The v3.5.0 document is committed
+  (`deploy/aws/up.sh#LBC_POLICY_FILE`) and checked against
+  `deploy/aws/up.sh#LBC_POLICY_SHA256` with `deploy/aws/lib.sh#require_sha256`
+  at step 1, before anything bills, and step 8, as `deploy/aws/selftest.sh` does
+  in CI; `doc/DEPLOYMENT.md` gives its source and how to move to a new release.
+  The old name, `AWSLoadBalancerControllerIAMPolicy`, let `up.sh` attach, and
+  `down.sh` delete, another cluster's copy. It is now `flight-ops-lbc-v3.5.0`
+  (`deploy/aws/lib.sh#LBC_POLICY_PREFIX` and the tag), tagged
+  `Project=flight-ops`; `down.sh` deletes only that prefix, and the self-test
+  checks it never names the generic one.
 
-- **The controller's policy has a name this project owns.** It was
-  `AWSLoadBalancerControllerIAMPolicy`, the name AWS's install guide uses. In
-  an account where another cluster had created it, `up.sh` would have
-  attached that copy whatever its release, and `down.sh` would have deleted
-  its versions and, if nothing was attached, the policy. `up.sh` now creates
-  `flight-ops-lbc-v3.5.0`, from `deploy/aws/lib.sh#LBC_POLICY_PREFIX` and the
-  tag, tagged `Project=flight-ops`. `down.sh` deletes only policies with that
-  prefix, and `deploy/aws/selftest.sh` checks that it never names the generic
-  one.
+- **Bearer tokens need an audience.** Boot checks `aud` only with `audiences`
+  and `iss` only with `issuer-uri`, so `issuer-uri` alone accepted another
+  tenant client's token, and `jwk-set-uri` alone one from any key in the set.
+  `config/SecurityConfig.java#requireIssuerAndAudience` now stops startup,
+  naming the property and the reason, when `issuer-uri`, `jwk-set-uri` or
+  `public-key-location` lacks `audiences`, or `jwk-set-uri` lacks `issuer-uri`,
+  and logs what the decoder checks (`SecurityConfigJwtTest`).
 
-- **Bearer tokens need an audience, and a key set needs an issuer.** Boot
-  builds a `JwtDecoder` from `issuer-uri`, `jwk-set-uri` or
-  `public-key-location`, but checks the `aud` claim only when `audiences` is
-  set, and the `iss` claim only when `issuer-uri` is. Setting `issuer-uri`
-  alone accepted a token the issuer signed for any other client in the tenant,
-  and `jwk-set-uri` alone accepted a token signed by any key in the set.
-  `config/SecurityConfig.java#requireIssuerAndAudience` now stops startup
-  without `audiences` when any of the three is set, and without `issuer-uri`
-  beside `jwk-set-uri`, naming the property and the reason. The startup log
-  names what the decoder checks. `SecurityConfigJwtTest` covers each case.
-
-- **Only hashed passwords under `prod`.** A `{noop}` value is the password
-  itself, and `{ldap}` compares a value with no `{SHA}` or `{SSHA}` prefix as
-  plain text, so anyone who could read the Secret or the pod's environment
-  could log in with it. `config/SecurityConfig.java#refuseUnhashed` now stops a
-  `prod` start on any id but `bcrypt`, `pbkdf2`, `scrypt` and `argon2`, the
-  last three with or without `@SpringSecurity_v5_8`, naming
+- **Only hashed passwords under `prod`.** `{noop}` and `{ldap}` can hold plain
+  text, so `config/SecurityConfig.java#refuseUnhashed` stops a `prod` start on
+  any id but `bcrypt`, `pbkdf2`, `scrypt` and `argon2` (the last three with or
+  without `@SpringSecurity_v5_8`), naming
   `app.security.api-password (API_PASSWORD)` or
-  `app.security.ops-password (OPS_PASSWORD)` and never the value. It runs after
-  the self-check, so a misspelt id still gets the encoder's reason. The default
+  `app.security.ops-password (OPS_PASSWORD)`, never the value. It runs after the
+  self-check, so a misspelt id still gets the encoder's reason. The default
   profile keeps `{noop}dev-secret` and `{noop}dev-ops`.
 
 - **Local compose listens on loopback only.** `compose.yaml` published
-  `8080:8080`, which listens on every interface, and on Linux, Docker's own
-  firewall rules bypass a host firewall such as ufw. Anyone on the same network
-  could then log in with the demo passwords the README prints. It now
-  publishes `127.0.0.1:8080:8080`, and the commented database mapping is
-  `127.0.0.1:5432:5432`, as is the `docker run` recipe for PostgreSQL in
-  `doc/DEPLOYMENT.md` and in the `postgres` profile's comment in
-  `application.yml`. `doc/DEPLOYMENT.md` says what a public single-instance
-  setup needs instead.
+  `8080:8080` on every interface, where on Linux Docker's rules bypass ufw. It
+  publishes `127.0.0.1:8080:8080`; the commented database mapping, the
+  `docker run` recipe in `doc/DEPLOYMENT.md` and the `postgres` comment in
+  `application.yml` use `127.0.0.1:5432:5432`. `doc/DEPLOYMENT.md` says what a
+  public single-instance setup needs.
 
-- **No Kubernetes API token in the pod.** `automountServiceAccountToken` is
-  false on the ServiceAccount and on the pod, in
-  `deploy/k8s/base/serviceaccount.yaml` and `deploy/k8s/base/deployment.yaml`.
-  The application never calls the API server, and a mounted token handed code in
-  the container a credential for it. IRSA is unaffected: the EKS pod identity
-  webhook mounts a projected token of its own.
+- **Pods hold no API token and cannot reach the node role.** The application
+  never calls the API server, so `automountServiceAccountToken` is false in
+  `deploy/k8s/base/serviceaccount.yaml` and `deploy/k8s/base/deployment.yaml`;
+  IRSA is unaffected. For new node groups, `deploy/aws/cluster.yaml` sets
+  `disablePodIMDS` on `ng-1` and drops the unused `cloudWatch` add-on policy;
+  `up.sh` passes the controller the `region` and `vpcId` it once read from IMDS.
 
-- **Pods cannot reach the node role.** `deploy/aws/cluster.yaml` sets
-  `disablePodIMDS` on `ng-1`, so pods can no longer read the node role's
-  credentials from the instance metadata service, and drops the `cloudWatch`
-  add-on policy, which nothing used, from the node role. `up.sh` now passes the
-  load balancer controller the `region` and `vpcId` it read from the metadata
-  service before. The two node group changes apply when a node group is
-  created; an existing one keeps its settings until it is replaced.
-
-- **No password on a command line at step 9.** `up.sh` passed the database
-  password and the two bcrypt hashes to `kubectl create secret` as
-  `--from-literal` arguments, and the API and ops passwords to `htpasswd -b`, so
-  another local user could read them in the process list while each command ran.
-  `htpasswd -i` now reads each password on stdin, and
+- **No password on a command line.** Step 9 of `up.sh` passed the database
+  password and bcrypt hashes as `--from-literal` arguments and the passwords to
+  `htpasswd -b`, visible in the process list. Now `htpasswd -i` reads stdin, and
   `deploy/aws/lib.sh#create_secret` pipes `kubectl create -f -` the same Secret,
-  with the same name and keys and no labels, each value base64-encoded by
-  `openssl` from its stdin. The `DB_PASSWORD` patch above is encoded the same
-  way, so an exported password holding a quote or a backslash arrives unchanged.
-  `deploy/aws/selftest.sh` checks, with a stubbed `kubectl`, that no value,
-  plain or encoded, is among its arguments. The database password is still an
-  argument of `aws cloudformation deploy` at step 6.
+  each value base64-encoded by `openssl`, as is the `DB_PASSWORD` patch, so a
+  quote or backslash survives. `deploy/aws/selftest.sh` checks that no value,
+  plain or encoded, is an argument; step 6 still passes the password to
+  `aws cloudformation deploy`. The example Secret's `htpasswd -b` comment and
+  the `doc/OPERATIONS.md` rotation recipe's `kubectl patch -p` use stdin too.
 
-- **No password on a command line in the manual recipes.** The example
-  Secret's comment hashed the password with `htpasswd -b`, which puts it in the
-  process list and the shell history, and the rotation recipe in
-  `doc/OPERATIONS.md` passed the new hash to `kubectl patch -p`. Both now use
-  stdin, as `up.sh` does.
-
-- **A passenger name could turn the text around it.** The right-to-left
-  override, U+202E, reorders the characters after it wherever the name is shown:
-  in the console's booking table and detail page, or in any client that reads it
-  from `GET /api/v1/bookings`. So a stored name could read as something else.
-  The name rule refused controls and unpaired surrogates, and these are neither.
-  The message `must not contain text-direction controls or line separators` now
-  answers a `passengerName` holding a text-direction control, U+202A to U+202E,
-  U+2066 to U+2069, U+200E, U+200F or U+061C, or U+2028 or U+2029, which some
-  viewers break a line on. The zero-width non-joiner and joiner, U+200C and
-  U+200D, still pass, because some scripts and emoji need them. The published
-  pattern allowed these characters, so this refuses a request the contract
-  accepted. It is treated as a fix, like the unpaired-surrogate rule under
-  Fixed, because the refused characters change only how a name is displayed, not
-  what it is, and a name that carries them can mislead whoever reads the record.
+- **Passenger names refuse text-direction controls.** A `passengerName` holding
+  U+202A to U+202E, U+2066 to U+2069, U+200E, U+200F, U+061C, U+2028 or U+2029
+  gets `must not contain text-direction controls or line separators`; U+200C and
+  U+200D pass, as some scripts and emoji need them. The published pattern
+  accepted these; refusing them is treated as a fix, like the unpaired-surrogate
+  rule under Fixed, because these change only how a name is displayed, not what
+  it is, and can mislead readers in the console or `GET /api/v1/bookings`.
 
 - **The console's race route takes only a JSON body.** `web/lib/race.ts#runRace`
-  parsed any body and sent it on as ten `application/json` bookings, so a
-  `text/plain` or form body, which a page on another site can send without a
-  preflight, became ten JSON writes. Every other write through the console
-  reaches the API, which answers such a body with 415. The race now answers it
-  with `415 CONSOLE_UNSUPPORTED_MEDIA_TYPE` before reading it, and a unit test
-  and an end-to-end test check that. A new end-to-end test also checks that
-  pages and proxied answers carry the console's three security headers and no
-  `X-Powered-By`; nothing checked them before, and the comment in
-  `web/next.config.ts` said the API's own security headers pass through, which
-  the proxy never allowed.
+  made ten JSON bookings of a `text/plain` or form body, which another site can
+  send without a preflight; it now answers `415 CONSOLE_UNSUPPORTED_MEDIA_TYPE`
+  before reading it (unit and end-to-end tests). A new end-to-end test checks
+  pages and proxied answers for the console's three security headers and no
+  `X-Powered-By`; `web/next.config.ts` wrongly said the API's own security
+  headers pass through.
 
 - **The image is built from pinned base images.** Both `FROM` lines in the
-  `Dockerfile` named only a tag, so every build took whatever the tag pointed
-  to that day, and the deploy job's own build could push a base other than the
-  one the `image` job had built and started. Each line now names the tag and a
-  sha256 digest. The docker entry in `.github/dependabot.yml` moves the runtime
-  base's digest when upstream rebuilds the tag, and it now runs weekly, because
-  OS and JRE fixes reach the pinned runtime base only that way. The build
-  stage's digest moves by hand: for that image Dependabot has offered only
-  `maven` tags that change the JDK, which the enforcer fails. The
-  `# syntax=docker/dockerfile:1` frontend line still floats.
+  `Dockerfile` named only a tag, taking whatever it pointed to that day; each
+  now adds a sha256 digest. The docker entry in `.github/dependabot.yml` moves
+  the runtime digest when upstream rebuilds the tag, the only way OS and JRE
+  fixes reach it, and now runs weekly. The build stage's digest moves by hand:
+  for it Dependabot has offered only `maven` tags that change the JDK, which the
+  enforcer fails. `# syntax=docker/dockerfile:1` still floats.
 
-- **The database connection verifies the server.**
-  `deploy/aws/data.yaml#JdbcUrl` had no `sslmode`, so the driver used
-  `prefer`: it checked neither the certificate nor the host name and fell back
-  to plaintext when the server declined TLS, so anything on the path could
-  stand in for RDS. The URL now sets `sslmode=verify-full`, with `sslrootcert`
-  naming the RDS global CA bundle, committed as `certs/rds-global-bundle.pem`
-  and copied into the image. `doc/DEPLOYMENT.md` gives its source, checksum
-  and refresh steps, and `SECURITY.md` covers the database leg under
-  Transport. A `DB_URL` repository variable copied from the old output must be
-  replaced by hand. Local runs, compose and CI keep their own URLs.
-
+- **The database connection verifies the server.** With no `sslmode`,
+  `deploy/aws/data.yaml#JdbcUrl` got the driver's `prefer`: no certificate or
+  host name check, and plaintext on a TLS refusal. It now sets
+  `sslmode=verify-full`, with `sslrootcert` naming the RDS global CA bundle,
+  `certs/rds-global-bundle.pem`, in the image. `doc/DEPLOYMENT.md` gives its
+  source, checksum and refresh steps; `SECURITY.md` covers the database leg
+  under Transport. A `DB_URL` repository variable copied from the old output
+  must be replaced by hand; local runs, compose and CI keep their own URLs.
 ## 1.2.0 — 2026-09-26
 
 The [fourth review pass](doc/DEFECT-LOG.md#fourth-review-pass), a full audit
