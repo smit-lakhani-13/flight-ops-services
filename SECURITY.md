@@ -45,6 +45,14 @@ to authorities prefixed `SCOPE_`. A token carrying
 `JwtDecoder` bean exists. See
 [adr/0005](adr/0005-one-rule-set-for-basic-and-jwt.md).
 
+Cognito needs code as well as the two properties, and none of it is built.
+It names a custom scope after its resource server, as
+`<identifier>/flights:read`, so the default converter would give an authority
+no rule matches, and a `JwtAuthenticationConverter` would have to strip the
+identifier. Its access tokens carry `aud` only when a signed-in user's request
+names a `resource`. A client-credentials token, the kind a calling system gets,
+has no `aud`, so the audience check would have to read `client_id` instead.
+
 **Warning:** if you enable JWT, set the audience too. `issuer-uri` alone
 validates the signature, the issuer and the lifetime, and that is not enough.
 An issuer mints tokens for every application registered with it, so a token

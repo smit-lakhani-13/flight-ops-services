@@ -55,6 +55,23 @@ says not yet.
   Maven 3.9; both poms accept 3.9 or later (`requireMavenVersion` is
   `[3.9.0,)`).
 
+- **Moving to Cognito is not configuration alone.** The README,
+  `doc/ARCHITECTURE.md` and SECURITY.md said the bearer-token swap is two
+  properties. That holds for an issuer whose tokens carry `aud` and the scopes
+  `flights:read` and `flights:write`. Cognito prefixes each custom scope with
+  its resource server's identifier, and its client-credentials tokens carry no
+  `aud`, so it also needs a scope converter and an audience check on
+  `client_id`. The documents now say so; neither is built.
+
+- **Smaller claims that had drifted.** ADR 0014 now says both SBOMs are
+  uploaded by CI and attached to every release since v1.2.0, and ADR 0009
+  counts `cluster.yaml` right (88 lines, half of them comments). The
+  workflow's header names the eight checks the ruleset requires, the pom's
+  build-info comment says the OpenAPI version falls back to `unknown`, the
+  data stack's description no longer points at a production section that
+  `doc/DEPLOYMENT.md` does not have, and the defect log's superseded readiness
+  entry says no test pinned it at the time.
+
 ## 1.3.0 — 2026-09-28
 
 A browser console for every operation, in `web/`, built and tested in CI and

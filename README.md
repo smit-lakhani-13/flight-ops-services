@@ -125,7 +125,7 @@ The rest are in [the defect log](doc/DEFECT-LOG.md), and [CHANGELOG.md](CHANGELO
 
 | Here | Production would be | Why |
 |---|---|---|
-| Two in-memory users | An identity provider behind `issuer-uri` and `audiences` | The rules are real and tested; the resource-server half is wired, so the swap is configuration: set both properties ([SECURITY.md](SECURITY.md#authentication-and-authorisation)). |
+| Two in-memory users | An identity provider behind `issuer-uri` and `audiences` | The rules are real and tested; the resource-server half is wired, so for an issuer whose tokens carry `aud` and the scopes `flights:read` and `flights:write` the swap is configuration: set both properties. Cognito also needs a scope converter and an audience check on `client_id` ([SECURITY.md](SECURITY.md#authentication-and-authorisation)). |
 | A replay answers 201 | 200, arguably | It returns the original status and booking, Stripe-style. |
 | Idempotency keys never expire | Keys valid for a stated window | A window bounds the unique index, but a replay after it would book again: a contract change clients must be told about. |
 | A poller drains the outbox | Change data capture from the WAL | Polling costs one indexed query per replica per second; change data capture would mean running Kafka Connect and a replication slot that fills the disk if its consumer stops. |
