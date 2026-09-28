@@ -20,9 +20,10 @@ name: build-and-deploy
 # any other branch runs six. dependency-review diffs a pull request against its
 # base, and a push has no base to diff against.
 #
-# Branch protection is meant to require the six that run on every trigger (a
-# repository setting, outside this file). dependency-review stays advisory: it
-# is the one gate that can pass on a repository setting instead of the code.
+# The ruleset on main requires the six that run on every trigger, plus the two
+# analyze jobs in codeql.yml (a repository setting, outside this file).
+# dependency-review stays advisory: it is the one gate that can pass on a
+# repository setting instead of the code.
 #
 # Separate jobs run in parallel, name what broke without anyone opening a log,
 # and can be required one by one in branch protection. The file keeps its name

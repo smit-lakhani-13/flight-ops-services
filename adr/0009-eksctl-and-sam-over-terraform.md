@@ -42,8 +42,8 @@ Controller, which is published as a chart. The application has no chart.
   one file. The Terraform equivalent is the `terraform-aws-eks` module: roughly
   4,000 lines of someone else's HCL, plus a provider version matrix. The other
   route is a hand-written VPC, subnets, route tables, NAT gateway, node group,
-  launch template and OIDC provider. `cluster.yaml` is about 80 lines, and
-  fewer than half of them are comments.
+  launch template and OIDC provider. `cluster.yaml` is under 90 lines, and
+  half of them are comments.
 
 * **SAM understands Lambda's wiring.** Maven builds the shaded jar, and
   `CodeUri` in `lambda/template.yaml` points at it.

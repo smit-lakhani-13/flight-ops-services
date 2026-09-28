@@ -19,7 +19,7 @@ build emits:
 |---|---|
 | maven-enforcer | Java outside `[21,22)`, Maven below 3.9, duplicate dependency declarations, and `requireUpperBoundDeps` (a transitive dependency resolved *lower* than something else needs) |
 | JaCoCo `check` | Bundle line coverage below 0.80 or branch coverage below 0.50 |
-| CycloneDX | (Not a gate; emits `target/bom.json` as a build artefact) |
+| CycloneDX | (Not a gate; emits `target/bom.json`, and `lambda/target/bom.json` for the Lambda, as build artefacts) |
 | ArchUnit | Any of nine layering and hygiene rules, in `src/test/java/com/smit/flightops/ArchitectureTest.java` |
 
 ## Consequences
@@ -47,9 +47,10 @@ build emits:
 * I checked each ArchUnit rule against a planted violation before committing
   it. A rule that has never failed is a rule no one has shown to work.
 
-* The SBOM is generated, and nothing consumes it yet. It is one command from
-  being scanned, and generating it now means the first scan has history to
-  compare against.
+* Both SBOMs are generated, CI checks that both exist and uploads them, and
+  every release since v1.2.0 attaches them. Nothing scans them yet. A scan is
+  one command away, and generating them now means the first scan has history
+  to compare against.
 
 ## Alternatives considered
 

@@ -274,7 +274,7 @@
         <plugins>
             <!--
               build-info writes META-INF/build-info.properties. Without it /actuator/info
-              returns {} and the OpenAPI document falls back to a hard-coded version.
+              returns {} and the OpenAPI version falls back to "unknown".
             -->
             <plugin>
                 <groupId>org.springframework.boot</groupId>

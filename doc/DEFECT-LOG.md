@@ -507,7 +507,7 @@ clock entry names the later commits. Four of them are told above:
 every API call returned 500. A pod with a dead database reported itself ready.
 Readiness now includes the database (`readiness.include: readinessState,db`).
 Liveness stays on `livenessState` alone, because a database outage must not
-restart every pod. No test pins this. The setting is in
+restart every pod. No test pinned this at the time. The setting is in
 `src/main/resources/application.yml`.
 
 **Superseded (2026-09-26).** Readiness no longer includes the database. Every

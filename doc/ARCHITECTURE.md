@@ -829,7 +829,7 @@ costs:
 | Seam | Swap in | Cost |
 |---|---|---|
 | `EventPublisher` | A JMS broker (Solace PubSub+, TIBCO EMS), Kafka, EventBridge | `EventPublisher` itself does not change, because the payload is already serialised. A JMS broker would take a publisher behind `@ConditionalOnProperty`, a `ConnectionFactory` bean and the vendor's client library, a mode in `EventProperties.java#MODES`, a test, and a new consumer, because the Lambda reads `SQSEvent`. [ADR 0015](../adr/0015-event-transport.md) sets out each option from the vendors' documentation; none has been built or run here |
-| `issuer-uri` and `audiences` | Cognito, Okta, Entra | Configuration: set `spring.security.oauth2.resourceserver.jwt.issuer-uri` and `.audiences`. `issuer-uri` alone would accept a token the issuer minted for another client in the tenant, so `SecurityConfig.java#requireIssuerAndAudience` stops startup without `audiences`. The rules already treat a JWT scope and a Basic authority identically |
+| `issuer-uri` and `audiences` | Cognito, Okta, Entra | Configuration, for an issuer whose tokens carry `aud` and the scopes `flights:read` and `flights:write`: set `spring.security.oauth2.resourceserver.jwt.issuer-uri` and `.audiences`. `issuer-uri` alone would accept a token the issuer minted for another client in the tenant, so `SecurityConfig.java#requireIssuerAndAudience` stops startup without `audiences`. The rules already treat a JWT scope and a Basic authority identically. Cognito needs code as well: a converter for the resource-server prefix on its scopes, and an audience check on `client_id`, because its client-credentials tokens carry no `aud` ([SECURITY.md](../SECURITY.md#authentication-and-authorisation)) |
 | `Clock` (`TimeConfig.java`) | A fixed clock in a test | Already used everywhere |
 | The OTLP tracing endpoint | An OTLP collector | Set `management.opentelemetry.tracing.export.otlp.endpoint`, for example as the environment variable `MANAGEMENT_OPENTELEMETRY_TRACING_EXPORT_OTLP_ENDPOINT`. Trace and span ids are already generated and already on the service's request log lines |
 | The outbox poller | Debezium reading the WAL | A replication slot, a connector to operate, and a disk that fills if the consumer stops. I considered it and rejected it at this size |
@@ -846,9 +846,10 @@ The README keeps a short version of this list under
 - **Two users in an `InMemoryUserDetailsManager`.** Production would be Cognito,
   Okta or Entra behind `issuer-uri` and `audiences`. The rules are real and
   tested, and the user store is a stub. The resource-server half is wired and
-  activates when an issuer and an audience are configured, so the swap is
-  configuration: set both properties, as
-  [SECURITY.md](../SECURITY.md#authentication-and-authorisation) shows.
+  activates when an issuer and an audience are configured. For an issuer whose
+  tokens carry `aud` and the two scopes, the swap is configuration: set both
+  properties, as [SECURITY.md](../SECURITY.md#authentication-and-authorisation)
+  shows. Cognito needs a little code as well, which SECURITY.md describes.
 
 - **Idempotent replay returns 201.** Production would be 200, arguably. It
   answers with the original status, Stripe-style, and the booking the key
