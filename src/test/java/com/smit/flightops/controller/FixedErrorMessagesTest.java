@@ -151,6 +151,41 @@ class FixedErrorMessagesTest {
                 .andExpect(jsonPath("$.message").value("That flight is busy right now. Please retry."));
     }
 
+    /**
+     * The text PgJDBC builds for a deadlock: the server's Detail, Hint and Where
+     * each start a line, and the Detail has one line per process. One event is
+     * one log line, so a search for it finds all of it, and no line of it can
+     * pass for a log line of its own.
+     */
+    @Test
+    @ExtendWith(OutputCaptureExtension.class)
+    @DisplayName("PostgreSQL's multi-line lock message is logged on one line")
+    void aMultiLineLockMessageIsLoggedOnOneLine(CapturedOutput output) throws Exception {
+        when(bookingService.book(any())).thenThrow(new PessimisticLockingFailureException(
+                "JDBC exception executing SQL [select f1_0.id from flights f1_0 where f1_0.flight_number=? for update]",
+                new SQLException("""
+                        ERROR: deadlock detected
+                          Detail: Process 101 waits for ShareLock on transaction 7; blocked by process 102.
+                        Process 102 waits for ShareLock on transaction 8; blocked by process 101.
+                          Hint: See server log for query details.
+                          Where: while locking tuple (0,1) in relation "flights\"""", "40P01")));
+
+        mockMvc.perform(post("/api/v1/bookings")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(BOOKING_BODY))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.code").value("LOCK_TIMEOUT"));
+
+        assertThat(output.getAll().lines().filter(line -> line.contains("Lock acquisition failed:")))
+                .singleElement(STRING)
+                .endsWith("Lock acquisition failed: ERROR: deadlock detected?  Detail: Process 101 waits for "
+                        + "ShareLock on transaction 7; blocked by process 102.?Process 102 waits for ShareLock on "
+                        + "transaction 8; blocked by process 101.?  Hint: See server log for query details.?  "
+                        + "Where: while locking tuple (0,1) in relation \"flights\"");
+        assertThat(output.getAll().lines())
+                .noneMatch(line -> line.startsWith("Process 102") || line.stripLeading().startsWith("Where:"));
+    }
+
     @Test
     @DisplayName("an empty connection pool is 503 with a fixed message, not the pool's")
     void anEmptyPool() throws Exception {

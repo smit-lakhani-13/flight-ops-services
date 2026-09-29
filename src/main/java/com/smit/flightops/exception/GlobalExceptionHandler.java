@@ -109,7 +109,7 @@ public class GlobalExceptionHandler {
     /** {@code @Version} rejected a stale write. The message says to retry and leaks no JPA detail. */
     @ExceptionHandler(OptimisticLockingFailureException.class)
     public ResponseEntity<ErrorResponse> handleOptimisticLock(OptimisticLockingFailureException e) {
-        log.warn("Optimistic lock conflict: {}", e.getMessage());
+        log.warn("Optimistic lock conflict: {}", printable(e.getMessage()));
         return json(HttpStatus.CONFLICT)
                 .body(ErrorResponse.of("CONCURRENT_MODIFICATION",
                                        "The record changed while you were editing it. Please retry.",
@@ -200,7 +200,8 @@ public class GlobalExceptionHandler {
         // Counted here because the driver's exception is translated on the way
         // out of the transaction, and this is the first place that knows its type.
         metrics.lockTimedOut();
-        log.warn("Lock acquisition failed: {}", e.getMostSpecificCause().getMessage());
+        // PgJDBC puts the server's Detail, Hint and Where on lines of their own.
+        log.warn("Lock acquisition failed: {}", printable(e.getMostSpecificCause().getMessage()));
         return json(HttpStatus.SERVICE_UNAVAILABLE)
                 .header("Retry-After", "1")
                 .body(ErrorResponse.of("LOCK_TIMEOUT",
