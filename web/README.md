@@ -185,7 +185,8 @@ under its number and its departure under its route, a long passenger name is cut
 short with the whole name in its title, and the request log puts the id sent
 under the call, with the answer beside them and a long error code broken only
 after an underscore. Below 1024 px a booking's times give way to a "cancelled"
-tag.
+tag. From 640 px up the flight list wraps a departure time rather than scroll
+sideways, so the edge of its box never cuts a seat count.
 
 The request log opens as a drawer over the foot of the page and takes the
 keyboard's focus, since it comes last in the page. Escape inside it closes it
