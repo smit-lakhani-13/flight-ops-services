@@ -16,6 +16,13 @@ describe("summariseRace", () => {
     expect(summariseRace(rows)).toEqual({ statuses: { "0": 1, "201": 9 }, bookingIds: [7] });
   });
 
+  it("lists each booking id once, in numeric order", () => {
+    // A race that made two bookings is the failure the page exists to show.
+    // A default sort would put 10 before 9.
+    const rows = [row(0, 201, { bookingId: 10 }), row(1, 201, { bookingId: 9 }), row(2, 201, { bookingId: 10 })];
+    expect(summariseRace(rows).bookingIds).toEqual([9, 10]);
+  });
+
   it("copes with empty and non-object bodies", () => {
     expect(summariseRace([row(0, 503, null), row(1, 502, "down")])).toEqual({
       statuses: { "502": 1, "503": 1 },

@@ -277,4 +277,25 @@ describe("BookingForm", () => {
     await press("Race 10 callers on this key");
     expect(colour()).toContain("text-emerald-700");
   });
+
+  it("says so when a replay comes back with a different booking", async () => {
+    // An API whose idempotency is broken: every POST makes a new booking.
+    let nextBooking = 1;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.method !== "POST") return Response.json({ flightNumber: "UA1", availableSeats: 100 });
+        const bookingId = nextBooking++;
+        return Response.json(
+          { bookingId, flightNumber: "UA1", passengerName: "Test Passenger", seats: 1, createdAt: "2026-09-26T10:00:00Z", cancelledAt: null },
+          { status: 201, headers: { Location: `/api/v1/bookings/${bookingId}` } },
+        );
+      }),
+    );
+    renderForm();
+
+    await press("Book");
+    await press("Replay the same key");
+    expect(newest()).toBe("Replay on the same key201booking #2a different booking");
+  });
 });

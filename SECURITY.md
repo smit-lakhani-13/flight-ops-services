@@ -190,7 +190,10 @@ reverse, and the ADR is where to start.
 The console in `web/` is a browser UI with no cookie sessions, and it leaves
 both decisions standing. The browser talks only to the console's own origin,
 and `web/lib/proxy.ts#forward` passes an allow-listed subset on to the API, so
-the API still has no CORS policy ([adr/0017](adr/0017-web-console.md)).
+the API still has no CORS policy ([adr/0017](adr/0017-web-console.md)). Nor
+does the console: Next answers a preflight to it with `204` and no
+`Access-Control-*` header, which `web/e2e/ops.spec.ts` checks, so a page on
+another origin can neither send it a JSON write nor read what it answers.
 
 * The credential lives in React state only, never in browser storage or a
   cookie. The console's server copies it onto each upstream request, ten for a

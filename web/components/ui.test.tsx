@@ -299,8 +299,15 @@ describe("formatInstant", () => {
   });
 
   it("formats an instant with its year and a zone", () => {
-    const text = formatInstant("2026-09-26T10:00:00Z");
+    const instant = "2026-09-26T10:00:00Z";
+    const text = formatInstant(instant);
     expect(text).toContain("2026");
     expect(text).not.toContain("T10:00:00Z");
+    // The zone's short name where the test runs, such as UTC or GMT+5:30.
+    const zone = new Intl.DateTimeFormat(undefined, { timeZoneName: "short" })
+      .formatToParts(new Date(instant))
+      .find((part) => part.type === "timeZoneName")?.value;
+    expect(zone).toBeTruthy();
+    expect(text).toContain(zone);
   });
 });

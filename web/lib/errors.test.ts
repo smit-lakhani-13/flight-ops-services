@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { classify, hint } from "./errors";
 
@@ -47,5 +49,27 @@ describe("classify", () => {
     expect(hint(timeout)).toContain("may still finish the request");
     const unreachable = classify(502, { code: "CONSOLE_UPSTREAM_UNREACHABLE", message: "down" });
     expect(hint(unreachable)).not.toContain("may still finish");
+  });
+
+  it("says what to do after a refused credential, a missing authority and no answer at all", () => {
+    expect(hint(classify(401, { code: "UNAUTHENTICATED", message: "no" }))).toBe("The credentials were not accepted. Sign in again.");
+    expect(hint(classify(403, { code: "FORBIDDEN", message: "no" }))).toContain("lacks the authority for this call");
+    expect(hint(classify(0, null))).toBe("Check that the console's server is still running.");
+  });
+
+  // Read from the sources, as transitions.test.ts reads FlightStatus.java: a
+  // code the console's server starts to send without a place in CONSOLE_CODES
+  // would be shown as the API's own error, and this fails first.
+  it("sorts every code the console's own server sends as the console's, with a hint", () => {
+    const sources = ["proxy.ts", "race.ts"]
+      .map((name) => readFileSync(fileURLToPath(new URL(`./${name}`, import.meta.url)), "utf8"))
+      .join("\n");
+    const codes = [...new Set(sources.match(/\bCONSOLE_[A-Z_]+\b/g))];
+    expect(codes).toHaveLength(9);
+    for (const code of codes) {
+      const error = classify(502, { code, message: "m" });
+      expect(error.kind, code).toBe("console");
+      expect(hint(error), code).toBeTruthy();
+    }
   });
 });

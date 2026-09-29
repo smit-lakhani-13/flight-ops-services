@@ -6,8 +6,9 @@ export default defineConfig({
     alias: { "@": fileURLToPath(new URL(".", import.meta.url)) },
   },
   test: {
-    include: ["lib/**/*.test.ts", "components/**/*.test.tsx", "app/**/*.test.ts"],
-    exclude: ["e2e/**", "node_modules/**"],
+    // Every test file, whichever extension it has, so none can sit unrun.
+    include: ["**/*.test.{ts,tsx}"],
+    exclude: ["e2e/**", "node_modules/**", ".next/**"],
     environment: "node",
     restoreMocks: true,
   },

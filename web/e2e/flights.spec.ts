@@ -1,12 +1,16 @@
-import { expect, test, type Route } from "@playwright/test";
-import { API_ACCOUNT, basic, createBooking, createFlight, go, openFlight, routeOf, signIn, uniqueFlightNumber } from "./support";
-
-// What the console's own server answers while the service is down.
-const serviceDown = (route: Route) =>
-  route.fulfill({
-    status: 502,
-    json: { code: "CONSOLE_UPSTREAM_UNREACHABLE", message: "The console could not reach the API. Is the service running?" },
-  });
+import { expect, test } from "@playwright/test";
+import {
+  API_ACCOUNT,
+  basic,
+  createBooking,
+  createFlight,
+  go,
+  openFlight,
+  routeOf,
+  serviceDown,
+  signIn,
+  uniqueFlightNumber,
+} from "./support";
 
 test("search narrows the list by airport", async ({ page }) => {
   await signIn(page);
@@ -15,9 +19,11 @@ test("search narrows the list by airport", async ({ page }) => {
   await search.getByLabel("Origin").fill("ORD");
   await search.getByRole("button", { name: "Search" }).click();
 
+  // The list keeps the last answer on screen while a search is out, so wait
+  // for UA123 to go before checking what came back in its place.
   const table = page.getByTestId("flight-table");
-  await expect(table).toContainText("UA456");
   await expect(table).not.toContainText("UA123");
+  await expect(table).toContainText("UA456");
 });
 
 test("a page of the list that fails to arrive offers Try again, which reads that page again", async ({ page, request }) => {
@@ -114,6 +120,8 @@ test("Try again after an outage reads the flight and its bookings again", async 
   await expect(page.getByTestId("flight-status")).toHaveText("SCHEDULED");
   await expect(page.getByTestId("booking-table")).toContainText(`#${bookingId}`);
   await expect(page.getByTestId("error-banner")).toHaveCount(0);
+  // Try again went with the banner, so the focus is on the heading.
+  await expect(page.getByRole("heading", { level: 1 })).toBeFocused();
 });
 
 test("a Try again that fails as well is announced once, and a failed Refresh on the bookings still is", async ({ page, request }) => {
