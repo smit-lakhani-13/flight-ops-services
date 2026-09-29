@@ -85,6 +85,13 @@ says not yet.
   its three points, the proxy's `localLocation` comment says the API sends a
   path, and the 1.3.0 section of this file ends with a blank line.
 
+- **The console needs Node 24.15 or a later 24.** jsdom 30, which the
+  console's component and hook tests run in, and three of its dependencies
+  declare `^24.15.0` on the Node 24 line. `engines` in `web/package.json` said
+  `>=24 <25`, so `npm ci` on 24.0 to 24.14 installed them with only a warning.
+  It now says `>=24.15 <25`, and a new step in the `web` job fails when the
+  runner's Node is below that floor. `web/.nvmrc` still names the major.
+
 ## 1.3.0 — 2026-09-28
 
 A browser console for every operation, in `web/`, built and tested in CI and

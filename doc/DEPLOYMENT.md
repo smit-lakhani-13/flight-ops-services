@@ -33,7 +33,7 @@ or a funded AWS account, and the project has none of the three.
 
 | | Proves | Needs | Cost |
 |---|---|---|---|
-| **Localhost** | the API, the outbox, idempotency, seat locking, every test | JDK 21, optionally Docker; Node 24 and Playwright's Chromium for the console's tests | $0 |
+| **Localhost** | the API, the outbox, idempotency, seat locking, every test | JDK 21, optionally Docker; Node 24.15 or a later 24 and Playwright's Chromium for the console's tests | $0 |
 | **Async half on AWS** | outbox → SQS → Lambda → DynamoDB, on real infrastructure | an AWS account, the SAM and AWS CLIs, JDK 21 | ~$0 (free tier) |
 | **Full stack on EKS** | all of that plus rolling deploys, IRSA, HPA, a public URL | an AWS account, five CLIs, JDK 21, 50 minutes | $7.72/day |
 

@@ -109,7 +109,8 @@ docker compose up --build
 `compose.yaml` is written for this and has not been run end to end; the
 PostgreSQL tests in CI are the verified path.
 
-The console in `web/` needs Node 24 and the service running on port 8080:
+The console in `web/` needs Node 24.15 or a later 24 and the service running
+on port 8080:
 
 ```bash
 cd web && npm ci && npm run build && npm start
@@ -227,6 +228,7 @@ for a commit on `main` that got no push run.
 | `image` | Trivy, on the image | the image the job built has a CRITICAL vulnerability with a fix available. It is the only image scan: `deploy` pushes this image and runs no scan of its own |
 | `web` | "Install" (`npm ci`) | `web/package-lock.json` does not match `web/package.json` |
 | `web` | "Node is the major web/.nvmrc names" | the runner's Node is not the major `web/.nvmrc` names |
+| `web` | "Node meets the engines floor" | the runner's Node is below the floor `engines` in `web/package.json` sets |
 | `web` | ESLint | any error or warning under `web/` |
 | `web` | `next build`, `tsc --noEmit` | the console does not build, or its code, tests or configs do not type-check |
 | `web` | Vitest | a unit test fails, including `web/lib/transitions.test.ts`, which reads `FlightStatus.java` and fails if the console's copy of the transition table differs |
@@ -359,7 +361,7 @@ Documentation is part of the change and ships with it:
 | AWS SDK for Java | 2.55.5 | `<aws.sdk.version>` in both POMs |
 | JUnit | 6.0.3 | Spring Boot in the service; `<junit.version>` in `lambda/pom.xml` |
 | Maven | 3.9.16 | `.mvn/wrapper/maven-wrapper.properties` |
-| Node | 24 | `web/.nvmrc`, which CI reads, and `engines` in `web/package.json` |
+| Node | 24, from 24.15 | `web/.nvmrc` names the major, which CI reads; `engines` in `web/package.json` sets the floor jsdom needs |
 | Next.js | 16.3.6 | `web/package.json`, exact pins throughout, resolved by `web/package-lock.json` |
 | React | 19.3.0 | `web/package.json` |
 | TypeScript | 5.9.3 | `web/package.json` |
