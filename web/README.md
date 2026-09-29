@@ -161,12 +161,12 @@ coloured by what went wrong instead: violet when the console's own server
 answered in the API's place or could not be reached, and otherwise red for a
 401, a 403 or a 5xx other than a 503, orange for a 409 or a 503, grey for a 404
 and amber for any other refusal. Text keeps at least 4.5:1 contrast in both
-schemes, apart from a disabled or busy button and the flights list while a
-newer page is loading, both of which are dimmed. A field's border and the focus
-outline keep at least 3:1 against what surrounds them. The ratios
-are worked out from the colour values; no test measures them. The dark scheme
-follows the system setting, with no toggle. Every link, button and field shows
-an outline in the accent colour when the keyboard reaches it, and the only
+schemes, apart from a disabled or busy button, and the flight list or a
+flight's bookings while a newer answer is loading, which are dimmed. A field's
+border and the focus outline keep at least 3:1 against what surrounds them. The
+ratios are worked out from the colour values; no test measures them. The dark
+scheme follows the system setting, with no toggle. Every link, button and field
+shows an outline in the accent colour when the keyboard reaches it, and the only
 motion is a colour transition, left out when the system asks for less motion.
 
 Below 1280 px, and at any width where touch is the main input, such as the
@@ -194,11 +194,12 @@ scroll its end clear of the drawer. A button that is busy keeps the focus and
 ignores presses, rather than going disabled and dropping it. A press that takes
 its own button away passes the focus on: an accepted status move to the group of
 moves that follow, the pager, on reaching its first or last page, to its other
-button, and a Next or Previous whose page fails to arrive, to the list's Try
-again. Signing in, signing out and a Try again that brings back a flight's page,
-a booking's page or a page of the flight list all move the focus to the page's
-title, and a change of account is announced. `e2e/auth.spec.ts`,
-`e2e/flights.spec.ts` and `e2e/bookings.spec.ts` check each of these.
+button, and a Next or Previous whose page fails to arrive, to the flight
+list's Try again or, on a flight's page, to its bookings' Refresh. Signing in,
+signing out and a Try again that brings back a flight's page, a booking's page
+or a page of the flight list all move the focus to the page's title, and a
+change of account is announced. `e2e/auth.spec.ts`, `e2e/flights.spec.ts` and
+`e2e/bookings.spec.ts` check each of these.
 
 ![A flight's page at 390 px wide: the header wraps onto three rows and every button, nav link and field is at least 44 px tall](../doc/assets/console-phone.png)
 
