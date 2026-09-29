@@ -191,9 +191,9 @@ function relay(upstream: Response, bytes: ArrayBuffer | null, origin: string): R
 }
 
 /**
- * The API answers `Location: http://api-host/api/v1/flights/UA999`. The
- * console serves the same path on its own origin, so only the path is kept.
- * A Location on any other origin is dropped.
+ * The API answers `Location: /api/v1/flights/UA999`, a path, and it is kept:
+ * the console serves the same path on its own origin. An absolute URL on the
+ * API's origin is cut to its path, and one on any other origin is dropped.
  */
 export function localLocation(value: string, origin: string): string | null {
   try {

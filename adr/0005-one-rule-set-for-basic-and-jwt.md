@@ -39,8 +39,12 @@ Basic alone and no dead configuration.
 
 * The in-memory user store is a stub, and the documentation says so. The
   *rules* are real, and `SecurityRulesTest` tests them against the real filter
-  chain. Moving to an identity provider is a configuration change with no
-  rewrite.
+  chain. Moving to an identity provider whose tokens carry `aud` and the
+  scopes `flights:read` and `flights:write` is a configuration change with no
+  rewrite. Cognito is not one: it prefixes each custom scope with its resource
+  server's identifier, and its client-credentials tokens carry no `aud`, so it
+  also needs a scope converter and an audience check on `client_id`. Neither
+  is built. [SECURITY.md](../SECURITY.md) has the detail.
 
 * Scope naming is now a contract with the future identity provider. It must
   issue `flights:read` and `flights:write`, or the mapping breaks without any
@@ -68,6 +72,12 @@ Basic alone and no dead configuration.
 alone accepts any token the issuer signed, and left the warning to SECURITY.md.
 `config/SecurityConfig.java#requireIssuerAndAudience` now stops startup on that
 configuration, so the bullet says what it would accept and names the check.
+
+**Correction (2026-09-29).** The in-memory user store bullet used to say that
+moving to any identity provider is a configuration change with no rewrite.
+That holds only for an issuer whose tokens carry `aud` and the two scopes as
+they are named here. Cognito needs code as well, so the bullet now says which
+issuers it covers and what Cognito would need.
 
 ## Alternatives considered
 
