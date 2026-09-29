@@ -109,6 +109,13 @@ says not yet.
   and `FlightController` now uses the colon, and `OpenApiTest` fails if an em
   dash comes back into the document.
 
+- **The flight list no longer cuts a seat count at tablet widths.** Between
+  640 and 790 px a long row made the table wider than its box, which scrolled
+  with no sign that it could, so its edge cut `850/850` to `850/85`. The
+  departure time now wraps first, so the table fits its box from 640 px up. A
+  test in `web/e2e/flights.spec.ts` checks the widest row the API allows at
+  five widths.
+
 - **Version.** Both poms say `1.4.0-SNAPSHOT` until the next tag, so a build
   from `main` no longer reports itself as 1.3.0 in `/actuator/info` and the
   OpenAPI document.

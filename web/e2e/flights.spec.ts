@@ -280,3 +280,28 @@ test("cancelling a flight asks first, then marks it CANCELLED and stops sales", 
   expect(await refused.json()).toMatchObject({ code: "FLIGHT_NOT_BOOKABLE" });
   await expect(page.getByText("No: a booking gets 409 FLIGHT_NOT_BOOKABLE")).toBeVisible();
 });
+
+test("the widest flight row fits the table from 640 px up, so no seat count is cut at its edge", async ({ page, request }) => {
+  // Ten characters and 850 seats are the most the API takes. Below 640 px the
+  // departure and the status move into other cells; from there up the
+  // departure wraps before the table would scroll inside its box, where the
+  // box's edge cut 850/850 to 850/85.
+  const flightNumber = `${uniqueFlightNumber()}XYZ`.slice(0, 10);
+  const route = routeOf(flightNumber);
+  await createFlight(request, flightNumber, 850, route);
+  await signIn(page);
+  await go(page, "Flights");
+  const search = page.getByRole("form", { name: "Search flights" });
+  await search.getByLabel("Origin").fill(route.origin);
+  await search.getByLabel("Destination").fill(route.destination);
+  await search.getByRole("button", { name: "Search" }).click();
+  const table = page.getByTestId("flight-table");
+  await expect(table.getByRole("link", { name: flightNumber })).toBeVisible();
+
+  for (const width of [640, 700, 768, 800, 1024]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect
+      .poll(() => table.evaluate((t) => t.parentElement!.scrollWidth - t.parentElement!.clientWidth), { message: `at ${width} px` })
+      .toBe(0);
+  }
+});
