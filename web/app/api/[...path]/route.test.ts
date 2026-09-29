@@ -9,6 +9,9 @@ describe("the /api route", () => {
     for (const method of ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"] as const) {
       expect(route[method], method).toBe(route.GET);
     }
+    // Next answers a preflight itself, with no CORS headers, only while this
+    // module leaves OPTIONS out. ADR 0017 rests on that.
+    expect("OPTIONS" in route).toBe(false);
   });
 
   it("refuses a PUT in the envelope, with the path's Allow header", async () => {

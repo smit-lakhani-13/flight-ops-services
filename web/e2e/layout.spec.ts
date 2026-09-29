@@ -49,8 +49,10 @@ async function checkLayout(page: Page, where: string, touch: boolean, signedIn =
       }
     }
     if (touch) {
+      // The header's links are the brand and the navigation. The skip link
+      // comes before the header, one pixel square until it has the focus.
       const targets = document.querySelectorAll<HTMLElement>(
-        'nav[aria-label="Main"] a, main a:not(table a), button, input:not([type="hidden"]), select',
+        'header a, main a:not(table a), button, input:not([type="hidden"]), select',
       );
       for (const el of targets) {
         const box = el.getBoundingClientRect();

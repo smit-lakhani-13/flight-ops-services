@@ -35,6 +35,30 @@ says not yet.
 
 ### Changed
 
+- **A preflight to the console is tested.** ADR 0017 and SECURITY.md rest on
+  Next answering `OPTIONS` on the console's `/api/` paths itself, with `204`
+  and no CORS headers, and nothing checked it. `web/e2e/ops.spec.ts` now sends
+  a preflight from another origin to a forwarded path, a refused one and the
+  race, checks that no `Access-Control-*` header comes back, and checks that a
+  `GET` on the race gets Next's bare `405`. The route test fails if the `/api`
+  module exports `OPTIONS`. `web/README.md` said the preflight's `Allow` header
+  lists the methods the route exports; it lists `OPTIONS` as well.
+
+- **The console's tests check more of what its README promises.** The e2e
+  specs check that signing in, signing out and a Try again on a flight's or a
+  booking's page each move the focus to the page's title, and that a change of
+  account is announced; a booking page's Try again had no test at all. The
+  airport search waits for the unfiltered list to go before it checks the
+  result, so it can no longer pass on the old list, and the 44 px check covers
+  the header's brand link, as `web/README.md` and ADR 0017 say it does. New
+  unit tests cover a replay that comes back as a different booking, a race
+  that made two bookings, a race call that times out, the race's 500 for an
+  `API_BASE_URL` that is not an origin, the hints for 401, 403 and no answer,
+  and the zone in a formatted time, and one fails if `lib/proxy.ts` or
+  `lib/race.ts` sends a code the error classifier does not know. Vitest runs
+  every `*.test.ts` and `*.test.tsx` file in `web/`, where it took one
+  extension per directory, so a test can no longer sit unrun.
+
 - **Version.** Both poms say `1.4.0-SNAPSHOT` until the next tag, so a build
   from `main` no longer reports itself as 1.3.0 in `/actuator/info` and the
   OpenAPI document.

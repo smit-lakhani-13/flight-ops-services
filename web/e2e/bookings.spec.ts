@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { API_ACCOUNT, basic, createFlight, go, signIn, uniqueFlightNumber } from "./support";
+import { API_ACCOUNT, basic, createBooking, createFlight, go, openFlight, serviceDown, signIn, uniqueFlightNumber } from "./support";
 
 async function bookingForm(page: Page, flightNumber: string) {
   await go(page, "Book");
@@ -138,4 +138,24 @@ test("an active booking on a flight that has departed cannot be cancelled, and k
 
   await page.getByRole("link", { name: flightNumber, exact: true }).click();
   await expect(page.getByTestId("seats-left")).toContainText("19/20");
+});
+
+test("Try again after an outage reads the booking again and moves the focus to its title", async ({ page, request }) => {
+  const flightNumber = uniqueFlightNumber();
+  await createFlight(request, flightNumber);
+  const bookingId = await createBooking(request, flightNumber);
+  await signIn(page);
+  await openFlight(page, flightNumber);
+
+  // The service is down for this booking's read only.
+  await page.route((url) => url.pathname === `/api/v1/bookings/${bookingId}`, serviceDown);
+  await page.getByTestId("booking-table").getByRole("link", { name: `#${bookingId}`, exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/bookings/${bookingId}$`));
+  await expect(page.getByTestId("error-banner")).toHaveAttribute("data-code", "CONSOLE_UPSTREAM_UNREACHABLE");
+
+  await page.unrouteAll();
+  await page.getByRole("button", { name: "Try again" }).click();
+  await expect(page.getByTestId("cancelled-at")).toHaveText("—");
+  await expect(page.getByTestId("error-banner")).toHaveCount(0);
+  await expect(page.getByRole("heading", { level: 1 })).toBeFocused();
 });

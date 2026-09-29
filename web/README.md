@@ -88,8 +88,9 @@ Everything else, the other actuator endpoints, the OpenAPI document and Swagger
 UI included, answers `404 CONSOLE_PATH_REFUSED` without reaching the API. A
 write to one of the forwarded actuator paths answers `405` with an `Allow`
 header. `OPTIONS` never reaches `forward`: Next answers it on any `/api/` path,
-refused ones included, with `204`, an `Allow` header that lists every method
-the route exports, and no CORS headers. A path with a malformed percent
+refused ones included, with `204`, an `Allow` header that lists `OPTIONS` and
+the methods the route exports, and no CORS headers. `e2e/ops.spec.ts` sends one
+from another origin and checks that no `Access-Control-*` header comes back. A path with a malformed percent
 escape, such as `/api/v1/%zz`, never reaches `forward` either: Next answers it
 with a bare `500` in plain text, outside the envelope and without the headers
 set in `web/next.config.ts`.
@@ -124,7 +125,7 @@ shape, with codes that start with `CONSOLE_`:
 
 `/api/race` is a route of its own and takes only `POST`. Next answers a `GET`,
 `HEAD`, `PUT`, `PATCH` or `DELETE` there itself, with a bare `405`: no body and
-no `Allow` header.
+no `Allow` header. `e2e/ops.spec.ts` checks the `GET`.
 
 ## Where the credential lives
 
@@ -196,7 +197,8 @@ moves that follow, the pager, on reaching its first or last page, to its other
 button, and a Next or Previous whose page fails to arrive, to the list's Try
 again. Signing in, signing out and a Try again that brings back a flight's page,
 a booking's page or a page of the flight list all move the focus to the page's
-title, and a change of account is announced.
+title, and a change of account is announced. `e2e/auth.spec.ts`,
+`e2e/flights.spec.ts` and `e2e/bookings.spec.ts` check each of these.
 
 ![A flight's page at 390 px wide: the header wraps onto three rows and every button, nav link and field is at least 44 px tall](../doc/assets/console-phone.png)
 
@@ -206,8 +208,8 @@ title, and a change of account is announced.
 |---|---|
 | `npm run lint` | ESLint with Next.js's core web vitals and TypeScript rules, no warnings allowed |
 | `npx tsc --noEmit` | The type-checker, strict, with `tsconfig.json#noUncheckedIndexedAccess`, so the type of a read by index includes `undefined` |
-| `npm test` | Vitest: the proxy and the race against a stubbed `fetch`, the `/api` route's method exports and its `405` for a `PUT`, the browser's API client and the sign-in probe, the error classifier and its timeout hint, the request log, the resource hook, its pending state and a write that wins over an older read, the helpers that name a page from its address, and in jsdom the shared parts in `components/ui.tsx` (button tones and the busy state, field wiring, the seat bar, page titles, links and the Location mapping), the error banner, a meter card given the actuator's `NaN` for a gauge with no fresh count or a 404 for a name the service lacks, the booking form's replay comparison and resent body, status line and its colour after a race, and seat counts, the transition control and the pager, including where each leaves the focus, and the request log drawer's focus on Escape and on Close, its copy buttons, its shape below 640 px and its change of shape when the screen crosses that width, with a focused copy button keeping the focus, and the one line that says what was copied until 1.5 s after the last copy; and a test that reads `FlightStatus.java` and fails if the console's copy of the transition table drifts from it |
-| `npm run e2e` | Playwright on Chromium against the built console and a running service: sign-in and sign-out, flights, bookings, replays and the race, validation, the proxy's refusals and the security headers, the ops pages with a number on each of the seven meters, and the layout of every page at twelve viewports |
+| `npm test` | Vitest: the proxy and the race against a stubbed `fetch`, a race call that times out included, the `/api` route's method exports, `OPTIONS` left out, and its `405` for a `PUT`, the browser's API client and the sign-in probe, the error classifier and its hints, with a check that it knows every code `lib/proxy.ts` and `lib/race.ts` send, the request log, the resource hook, its pending state and a write that wins over an older read, the helpers that name a page from its address, and in jsdom the shared parts in `components/ui.tsx` (button tones and the busy state, field wiring, the seat bar, page titles, links and the Location mapping), the error banner, a meter card given the actuator's `NaN` for a gauge with no fresh count or a 404 for a name the service lacks, the booking form's replay comparison, a replay that comes back as a different booking, and the resent body, status line and its colour after a race, and seat counts, the transition control and the pager, including where each leaves the focus, and the request log drawer's focus on Escape and on Close, its copy buttons, its shape below 640 px and its change of shape when the screen crosses that width, with a focused copy button keeping the focus, and the one line that says what was copied until 1.5 s after the last copy; and a test that reads `FlightStatus.java` and fails if the console's copy of the transition table drifts from it |
+| `npm run e2e` | Playwright on Chromium against the built console and a running service: sign-in and sign-out, where each leaves the focus and what each announces, flights, bookings, Try again after an outage on a flight's and a booking's page, replays and the race, validation, the proxy's refusals, a preflight from another origin and the security headers, the ops pages with a number on each of the seven meters, and the layout of every page at twelve viewports |
 
 Run `npm run build` first. `npm run e2e` then serves that build with
 `next start` on port 3100 (`CONSOLE_PORT` picks another) and expects the service
