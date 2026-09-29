@@ -144,6 +144,19 @@ password, get `Basic realm="flight-ops-service"`. The body is the same
 `UNAUTHENTICATED` JSON in both cases, and it never says whether the user
 exists. `BearerTokenChallengeTest` checks both challenges in one context.
 
+A valid bearer token without the scope an operation requires gets a 403 with
+`Bearer realm="flight-ops-service", error="insufficient_scope", scope="flights:write"`,
+or `flights:read`. That is RFC 6750's signal to ask for a token that carries
+the scope. `JsonAccessDeniedHandler` reads the scope from the decision the
+refusing rule returned, so it keeps no copy of the rules. A 403 that no scope
+can lift carries no challenge: `denyAll()`, which a `PUT` meets, and the ops
+role on an actuator endpoint. A 403 to a Basic caller carries none either.
+Spring's own bearer handler, which this one replaces, sends
+`insufficient_scope` on every bearer 403.
+`BearerTokenChallengeTest#aSignedTokensScopeMapsOntoTheRules` and
+`#aRefusalNoScopeLiftsHasNoChallenge` check the challenge and its absence, and
+`SecurityRulesTest#readScopeCannotWrite` the Basic side.
+
 `security/JsonAuthenticationEntryPoint` and `security/JsonAccessDeniedHandler`
 write both, through `ErrorResponseWriter`. It shares the container's
 `ObjectMapper` and `Clock`, so the timestamp matches every other error. The

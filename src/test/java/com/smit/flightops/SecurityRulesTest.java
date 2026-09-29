@@ -244,6 +244,8 @@ class SecurityRulesTest {
                                 "idempotencyKey":"sec-denied-1"}
                                 """))
                 .andExpect(status().isForbidden())
+                // The insufficient_scope challenge is for bearer tokens only.
+                .andExpect(header().doesNotExist("WWW-Authenticate"))
                 .andExpect(jsonPath("$.code").value("FORBIDDEN"));
 
         mockMvc.perform(patch("/api/v1/flights/UA123/status")

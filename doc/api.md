@@ -111,9 +111,13 @@ The answer is 403:
 A wrong password gets the same 401 and the same message, so the body never says
 whether the user exists. Once the resource server is on, a rejected bearer token
 gets `Bearer realm="flight-ops-service", error="invalid_token"` as its
-challenge. With the resource server off, a bearer token is ignored and the
-request gets the `Basic` 401 above. [SECURITY.md](../SECURITY.md#401-and-403)
-explains why the two statuses stay apart.
+challenge. A valid token without the scope in the Requires column gets the 403
+with `Bearer realm="flight-ops-service", error="insufficient_scope", scope="flights:write"`,
+naming that scope; a 403 that no scope lifts, such as the ops endpoint above,
+has no challenge. With the resource server off, a bearer token is ignored and
+the request gets the `Basic` 401 above.
+[SECURITY.md](../SECURITY.md#401-and-403) explains why the two statuses stay
+apart.
 
 ## Operations
 
