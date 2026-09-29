@@ -26,6 +26,27 @@ test("search narrows the list by airport", async ({ page }) => {
   await expect(table).toContainText("UA456");
 });
 
+test("a new sort searches with the airports the fields show, not the last ones searched", async ({ page }) => {
+  await signIn(page);
+  await go(page, "Flights");
+  const search = page.getByRole("form", { name: "Search flights" });
+  await search.getByLabel("Origin").fill("ORD");
+  await search.getByRole("button", { name: "Search" }).click();
+  const table = page.getByTestId("flight-table");
+  await expect(table).not.toContainText("UA123");
+
+  // EWR is typed but not searched; the sort applies it.
+  await search.getByLabel("Origin").fill("EWR");
+  const sorted = page.waitForRequest((request) => {
+    const url = new URL(request.url());
+    return url.pathname === "/api/v1/flights" && url.searchParams.get("sort") === "flightNumber,asc";
+  });
+  await search.getByLabel("Sort").selectOption("flightNumber,asc");
+  expect(new URL((await sorted).url()).searchParams.get("origin")).toBe("EWR");
+  await expect(table).not.toContainText("UA456");
+  await expect(table).toContainText("UA123");
+});
+
 test("a page of the list that fails to arrive offers Try again, which reads that page again", async ({ page, request }) => {
   // Eleven flights on one route make two pages of ten.
   const first = uniqueFlightNumber();
