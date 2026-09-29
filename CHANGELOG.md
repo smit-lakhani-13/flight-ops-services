@@ -75,6 +75,17 @@ says not yet.
 
 ### Fixed
 
+- **The flight-number pattern runs in linear time.** Every constraint on a
+  field runs, so the pattern also saw values `@Size` had refused, up to the
+  16 KiB body limit. On a run of spaces that ends in a symbol,
+  `^\s*[A-Za-z0-9]*\s*$` tried every split between its two runs of padding:
+  one request with 16,000 spaces took about 750 ms of CPU in a local run, and
+  any caller with `flights:write` could send it to either write. The pattern
+  is now `^\s*(?:[A-Za-z0-9]+\s*)?$`, which accepts the same strings and
+  backs off one character at a time. `FlightNumberPatternTest` checks it
+  against the rule over every string up to seven characters, and times it on
+  100,000 spaces. The published OpenAPI schema shows the new text.
+
 - **Maven version in the README.** The `build` row said the enforcer requires
   Maven 3.9; both poms accept 3.9 or later (`requireMavenVersion` is
   `[3.9.0,)`).

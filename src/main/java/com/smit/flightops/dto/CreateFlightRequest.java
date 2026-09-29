@@ -45,6 +45,15 @@ public record CreateFlightRequest(
      * Letters and digits, with padding the service trims. The number becomes a
      * path segment in the {@code Location} header, so a space, {@code /} or
      * {@code ?} would name a URL that does not resolve to the flight.
+     *
+     * <p>Written so the two runs of padding cannot trade characters. Every
+     * constraint runs, so the pattern also sees a value {@code @Size} has
+     * already refused, up to the 16 KiB body limit. The shorter
+     * {@code ^\s*[A-Za-z0-9]*\s*$} accepts the same strings, but on a run of
+     * spaces that ends in a symbol it tries every split between its two
+     * {@code \s*} runs: 16,000 spaces took about 750 ms of CPU in a local run.
+     * This form backs off one character at a time. {@code FlightNumberPatternTest}
+     * pins both properties.
      */
-    public static final String FLIGHT_NUMBER = "^\\s*[A-Za-z0-9]*\\s*$";
+    public static final String FLIGHT_NUMBER = "^\\s*(?:[A-Za-z0-9]+\\s*)?$";
 }
