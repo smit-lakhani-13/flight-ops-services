@@ -152,6 +152,32 @@ describe("BookingForm", () => {
     expect(document.querySelector("[data-code=IDEMPOTENCY_KEY_REUSED]")).not.toBeNull();
   });
 
+  it("sends no different body on a key no Book has used, so it cannot make a booking", async () => {
+    fakeApi();
+    renderForm();
+    const posts = () => vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === "POST").length;
+
+    // On a fresh key a different body would be the key's first, and the API
+    // would book it and take the seats.
+    await press("Same key, different body");
+    expect(screen.getByRole("status").textContent).toBe(
+      "Same key, different body: not sent. Book on this key first, so there is a body to change.",
+    );
+    expect(posts()).toBe(0);
+    expect(screen.queryAllByTestId("booking-outcome")).toHaveLength(0);
+
+    // A replay's booking is not a Book's, so the key still has no body to change.
+    await press("Replay the same key");
+    await press("Same key, different body");
+    expect(posts()).toBe(1);
+
+    await press("Book");
+    await press("Same key, different body");
+    expect(screen.getByRole("status").textContent).toBe("Same key, different body: 409, IDEMPOTENCY_KEY_REUSED");
+    await press("Replay the same key");
+    expect(newest()).toBe("Replay on the same key201booking #1same booking as the first Book");
+  });
+
   it("reads the seats again only after a booking that got an answer", async () => {
     let seats = 100;
     let timeOut = true;

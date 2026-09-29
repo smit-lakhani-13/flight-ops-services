@@ -59,7 +59,7 @@ request, so the same build can point anywhere.
 | `/` | Sign-in, anonymous health, four guided demos | `GET /actuator/health`, without credentials and then with them to check the password; `GET /api/v1/flights?size=1` for an account that sees no health components, to learn whether it holds the API scopes |
 | `/flights` | Search by route, sort, page; create a flight with per-field errors | `GET /api/v1/flights`, `POST /api/v1/flights` |
 | `/flights/{flightNumber}` | The flight, the moves its status allows, any status on request, cancel, its bookings | `GET`, `PATCH .../status` and `DELETE /api/v1/flights/{flightNumber}`; `GET /api/v1/bookings?flightNumber=` |
-| `/book` | Book, replay the same key, change the body on the same key, the race | `GET /api/v1/flights/{flightNumber}`, `POST /api/v1/bookings`, and the console's own `POST /api/race` |
+| `/book` | Book, replay the same key, change the body on a key a Book has used, the race | `GET /api/v1/flights/{flightNumber}`, `POST /api/v1/bookings`, and the console's own `POST /api/race` |
 | `/bookings/{bookingId}` | One booking and its cancellation, which is idempotent, and refused with `409 BOOKING_NOT_CANCELLABLE` for an active booking once its flight has departed or arrived | `GET` and `DELETE /api/v1/bookings/{bookingId}` |
 | `/ops` | Health, liveness and readiness without credentials; health and seven meters as `ops` | `GET /actuator/health`, `.../liveness`, `.../readiness`, `/actuator/metrics/{name}` |
 

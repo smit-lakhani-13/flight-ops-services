@@ -123,6 +123,16 @@ says not yet.
   `aud`, so it also needs a scope converter and an audience check on
   `client_id`. The documents now say so; neither is built.
 
+- **The console's 409 demonstration made a booking on a fresh key.** On
+  `/book`, "Same key, different body" builds its body from the key's first
+  Book. With no Book on the key yet, it sent the form with one more seat, which
+  was the key's first body: the API made a booking, took the seats, and the
+  status line showed a green 201. A replay then got 409, because it sent the
+  form and not what the key held. The button now sends nothing on such a key
+  and says to Book first
+  (`web/components/BookingForm.test.tsx`, "sends no different body on a key no
+  Book has used").
+
 - **Smaller claims that had drifted.** ADR 0014 now says both SBOMs are
   uploaded by CI and attached to every release since v1.2.0, and ADR 0009
   counts `cluster.yaml` right (88 lines, half of them comments). The
