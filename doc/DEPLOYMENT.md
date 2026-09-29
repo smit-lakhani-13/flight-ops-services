@@ -627,7 +627,9 @@ Shutdown is a 15s `preStop` sleep plus a 30s
 load balancer controller deregisters its target and the ALB stops sending to
 it, which can take longer than a few seconds. Get that inequality backwards
 and the kubelet sends SIGKILL mid-request. I pinned the 30s in
-`application.yml`, because the manifest comment does arithmetic on it.
+`application.yml`, because the manifest comment does arithmetic on it, and
+the build fails if the sum stops fitting
+(`ShutdownBudgetTest.java#preStopAndDrainFitInTheGracePeriod`).
 
 The Dockerfile's `ENTRYPOINT` is `sh -c "exec java …"`. `exec` makes the JVM
 PID 1, so it receives SIGTERM. Without it the shell is PID 1 and forwards

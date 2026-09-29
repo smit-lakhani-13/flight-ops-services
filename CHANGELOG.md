@@ -33,6 +33,23 @@ says not yet.
 
 ## Unreleased
 
+### Added
+
+- **Tests for four guarantees the documents state.**
+  `OutboxTest#aLongFailureIsTruncatedAndTheBatchCommits` sends a 2,000-character
+  failure through the drain and reads back `last_error` cut to its 500-character
+  column, with the rest of the batch published: an over-long value would fail
+  the UPDATE and roll back the attempt counter. `LockTimeoutTest` now retries
+  after each `503 LOCK_TIMEOUT`, as `Retry-After` asks: the timed-out booking
+  left no row and took no seat, the timed-out cancellation left the booking
+  active, and each retry succeeds.
+  `ErrorContractTest#pagePastTheLastAddressableRowIsABadRequest` sends both
+  sides of the `page * size` edge at two sizes. `ShutdownBudgetTest` reads the
+  shutdown mode and drain the running context bound, the `preStop` sleep and
+  grace period in `deploy/k8s/base/deployment.yaml` and the ALB's
+  deregistration delay in the Ingress, and fails if the sleep and the drain, or
+  the delay, no longer end inside the grace period.
+
 ### Changed
 
 - **A preflight to the console is tested.** ADR 0017 and SECURITY.md rest on

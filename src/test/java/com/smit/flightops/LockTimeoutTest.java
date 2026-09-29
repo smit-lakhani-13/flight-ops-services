@@ -119,12 +119,21 @@ class LockTimeoutTest {
         return flightRepository.findByFlightNumber(flightNumber).orElseThrow().getStatus();
     }
 
+    private int seatsLeft(String flightNumber) {
+        return flightRepository.findByFlightNumber(flightNumber).orElseThrow().getAvailableSeats();
+    }
+
     @Test
-    @DisplayName("a booking that cannot get the flight row lock is 503 with Retry-After, not 500")
+    @DisplayName("a booking that cannot get the flight row lock is 503 with Retry-After, and the retry books it")
     void contendedFlightRowGives503() throws Exception {
         CountDownLatch lockHeld = new CountDownLatch(1);
         CountDownLatch releaseLock = new CountDownLatch(1);
         double timeoutsBefore = lockTimeoutCount();
+        int seatsBefore = seatsLeft("UA123");
+        String booking = """
+                {"flightNumber":"UA123","passengerName":"Ada Lovelace","seats":1,
+                 "idempotencyKey":"lock-timeout-1"}
+                """;
 
         // The inner try/finally must stay inside the try-with-resources.
         // ExecutorService.close() waits for the holder task, and the holder waits
@@ -149,10 +158,7 @@ class LockTimeoutTest {
 
                 mockMvc.perform(post("/api/v1/bookings")
                                 .contentType(MediaType.APPLICATION_JSON)
-                                .content("""
-                                        {"flightNumber":"UA123","passengerName":"Ada Lovelace","seats":1,
-                                         "idempotencyKey":"lock-timeout-1"}
-                                        """))
+                                .content(booking))
                         .andExpect(status().isServiceUnavailable())
                         .andExpect(header().string("Retry-After", "1"))
                         .andExpect(jsonPath("$.code").value("LOCK_TIMEOUT"));
@@ -166,10 +172,21 @@ class LockTimeoutTest {
                 releaseLock.countDown();
             }
         }
+
+        // Retry-After asks for the same request again once the lock is free. The
+        // timed-out attempt must have left nothing behind, its key included.
+        assertThat(bookingRepository.findByIdempotencyKey("lock-timeout-1")).isEmpty();
+        assertThat(seatsLeft("UA123")).isEqualTo(seatsBefore);
+
+        mockMvc.perform(post("/api/v1/bookings")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(booking))
+                .andExpect(status().isCreated());
+        assertThat(seatsLeft("UA123")).isEqualTo(seatsBefore - 1);
     }
 
     @Test
-    @DisplayName("a cancellation that cannot get the flight row lock is 503 with Retry-After, not 500")
+    @DisplayName("a cancellation that cannot get the flight row lock is 503 with Retry-After, and the retry cancels")
     void contendedFlightRowGives503OnCancel() throws Exception {
         String created = mockMvc.perform(post("/api/v1/bookings")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -217,6 +234,16 @@ class LockTimeoutTest {
                 releaseLock.countDown();
             }
         }
+
+        int seatsAfterTimeout = seatsLeft("UA123");
+        assertThat(bookingRepository.findById(bookingId.longValue()).orElseThrow().getCancelledAt())
+                .as("the timed-out cancellation must have rolled back")
+                .isNull();
+
+        mockMvc.perform(delete("/api/v1/bookings/{bookingId}", bookingId.longValue()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.cancelledAt").isNotEmpty());
+        assertThat(seatsLeft("UA123")).as("the retry returns the seat").isEqualTo(seatsAfterTimeout + 1);
     }
 
     @Test
