@@ -110,6 +110,15 @@ says not yet.
   actions, downloads and images are pinned, and which merges the ruleset on
   `main` accepts.
 
+- **A failed row lock is logged on one line.** The WARN lines for a lock
+  timeout or a deadlock, and for a write `@Version` rejected, now go through
+  `GlobalExceptionHandler.printable`, as the line for an unreachable database
+  already did. PgJDBC puts the server's Detail, Hint and Where on lines of
+  their own, so on the plain-text console one deadlock took five lines, and a
+  search for the WARN line missed the rest
+  (`FixedErrorMessagesTest#aMultiLineLockMessageIsLoggedOnOneLine`). The ECS
+  JSON under `prod` was already one object per line.
+
 ### Fixed
 
 - **The flight-number pattern runs in linear time.** Every constraint on a
