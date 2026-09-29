@@ -36,6 +36,16 @@ describe("classify", () => {
     expect(classify(503, null, "Wed, 21 Oct 2026 07:28:00 GMT").retryAfter).toBeNull();
   });
 
+  it("gives one hint for a 503 that fits a held row and a database that is down", () => {
+    // The API's message says which it was; the hint must not say it for it.
+    for (const code of ["LOCK_TIMEOUT", "DATABASE_UNAVAILABLE"]) {
+      expect(hint(classify(503, { code, message: "m" }, "1")), code).toBe(
+        "The service could not finish the request just now. Retry after 1 s.",
+      );
+    }
+    expect(hint(classify(503, { code: "DATABASE_UNAVAILABLE", message: "m" }))).toBe("The service is unavailable. Retry shortly.");
+  });
+
   it("marks the console's own errors, and a body with no envelope", () => {
     expect(classify(502, { code: "CONSOLE_UPSTREAM_UNREACHABLE", message: "down" }).kind).toBe("console");
     expect(classify(404, "").code).toBe("HTTP_404");
