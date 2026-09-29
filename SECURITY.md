@@ -377,10 +377,10 @@ bundle comes from and how to refresh it.
   `FormContentFilter` read a form-encoded `PUT`, `PATCH` or `DELETE` body before
   the credentials were checked, and a bad percent escape in one was a 500 and
   an ERROR stack trace for a caller with none. In JSON, a whole number sent as
-  text, a status sent as a number or with padding around its name, and a
-  departure time that is not an ISO-8601 instant are each
-  `400 MALFORMED_REQUEST`. None of them is converted into a value the client
-  did not write.
+  text, a text field sent as a number or a boolean, a status sent as a number
+  or with padding around its name, and a departure time that is not an
+  ISO-8601 instant are each `400 MALFORMED_REQUEST`. None of them is converted
+  into a value the client did not write.
 
 - A request body over the limit (16 KiB by default) gets `413 PAYLOAD_TOO_LARGE`
   when its declared length or a read shows it, and nothing parses more than the

@@ -98,6 +98,17 @@ says not yet.
   Maven 3.9; both poms accept 3.9 or later (`requireMavenVersion` is
   `[3.9.0,)`).
 
+- **Text fields take only JSON strings.** `"flightNumber": 123`,
+  `"passengerName": 42` and `"idempotencyKey": true` were read as the text
+  `"123"`, `"42"` and `"true"`, so a create or a booking got 201 for a body
+  the OpenAPI document refuses. `allow-coercion-of-scalars: false` stops a
+  string becoming a number, not a number becoming a string.
+  `config/StrictTextModule` now refuses a number or a boolean for every
+  `String` in a request body with `400 MALFORMED_REQUEST`, as it already
+  refused an array or an object
+  (`MalformedRequestTest#aNumberOrABooleanForATextFieldIsMalformed`,
+  `ErrorContractTest#aFlightNumberSentAsANumberIsRefused`).
+
 - **Moving to Cognito is not configuration alone.** The README,
   `doc/ARCHITECTURE.md` and SECURITY.md said the bearer-token swap is two
   properties. That holds for an issuer whose tokens carry `aud` and the scopes
