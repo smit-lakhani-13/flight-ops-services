@@ -29,7 +29,8 @@ Description: >
 #
 # Tear down with `sam delete --stack-name flight-ops-lambda --region ap-south-1`
 # or ./deploy/aws/down.sh. The shared bucket `--resolve-s3` creates is kept
-# unless you pass --delete-sam-bucket.
+# unless you run ./deploy/aws/down.sh --delete-sam-bucket; sam delete never
+# removes it.
 #
 # Everything here but the two alarms is pay-per-use and idles at about $0
 # (doc/DEPLOYMENT.md section 5). The alarms bill per alarm-month whether or not
@@ -52,8 +53,9 @@ Globals:
     Architectures:
       - arm64
 
-    # CPU scales with memory. For a JVM, 1024 MB can cost less than 512 MB,
-    # because halving the duration cancels doubling the rate.
+    # CPU scales with memory. For a JVM, 1024 MB can cost no more than 512 MB:
+    # if doubling the memory halves the duration, the cost is the same, and it
+    # is lower when the duration falls by more than half.
     MemorySize: 1024
 
     # A sixth of the queue's VisibilityTimeout; see BookingEventQueue.

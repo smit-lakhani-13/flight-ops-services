@@ -72,6 +72,19 @@ says not yet.
   `doc/DEPLOYMENT.md` does not have, and the defect log's superseded readiness
   entry says no test pinned it at the time.
 
+- **More claims that had drifted.** ADR 0005 said a move to any identity
+  provider is configuration alone; it now names the issuers that holds for and
+  what Cognito would need, with a dated correction note. `doc/ARCHITECTURE.md`
+  says SDK 2.55.x, as ADR 0008 does, where it named 2.55.3. The contracts
+  README now says the one queue cannot carry v1 and v2 of an event while the
+  consumer ignores `eventType`, and what has to ship first. The template's
+  teardown comment names `down.sh` as the command that takes
+  `--delete-sam-bucket`, and its memory comment says 1024 MB costs no more
+  than 512 MB when the duration halves, not less. The Lambda pom's build line
+  uses `./mvnw`, as its enforcer message asks, the Dependabot header counts
+  its three points, the proxy's `localLocation` comment says the API sends a
+  path, and the 1.3.0 section of this file ends with a blank line.
+
 ## 1.3.0 — 2026-09-28
 
 A browser console for every operation, in `web/`, built and tested in CI and
@@ -804,6 +817,7 @@ readiness outside the rule, this release is 1.3.0 and not 2.0.0.
   source, checksum and refresh steps; `SECURITY.md` covers the database leg
   under Transport. A `DB_URL` repository variable copied from the old output
   must be replaced by hand; local runs, compose and CI keep their own URLs.
+
 ## 1.2.0 — 2026-09-26
 
 The [fourth review pass](doc/DEFECT-LOG.md#fourth-review-pass), a full audit

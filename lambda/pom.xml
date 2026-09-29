@@ -15,7 +15,7 @@
       published figures put a plain SDK handler at 1-2s and Spring Boot on
       Lambda at 3-6s.
 
-          mvn -f lambda/pom.xml clean package    # -> lambda/target/booking-event-handler.jar
+          ./mvnw -f lambda/pom.xml clean package    # -> lambda/target/booking-event-handler.jar
     -->
 
     <groupId>com.smit</groupId>

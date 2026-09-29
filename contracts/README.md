@@ -84,7 +84,14 @@ keeps working untouched.
 Removals and renames are not safe in any order, because the consumer in
 production is the version deployed before the change, not the version in
 the repository. They need a new file, `booking-created-v2.json`, with
-both versions published until the old consumer is gone. That is more
-work than editing this file, and the discomfort is intended: the
-ordering of those deploys is the thing that breaks, and it should be
-hard to do by accident.
+both versions published until the old consumer is gone. Both versions
+cannot share the one queue as the consumer stands: it reads every body
+as the current event and never looks at `eventType`, so a v2 body with a
+field removed or renamed is refused as it is read and, after three
+receives, lands in the DLQ. The overlap needs one of two things first: a
+second queue with its own consumer for v2, or a consumer (or an event
+source mapping filter on the `eventType` attribute) that skips versions
+it does not know, deployed before any v2 is sent. That is more work than
+editing this file, and the discomfort is intended: the ordering of those
+deploys is the thing that breaks, and it should be hard to do by
+accident.

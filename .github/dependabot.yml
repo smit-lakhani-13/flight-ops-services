@@ -1,7 +1,7 @@
 # Dependency updates. lambda/pom.xml has no parent POM, so nothing else manages
 # its versions or reports when they go stale.
 #
-# Two things to know before editing:
+# Three things to know before editing:
 #
 # 1. Every entry sets open-pull-requests-limit. The default is 5 per entry,
 #    so the five entries could open twenty-five pull requests on the first run.
