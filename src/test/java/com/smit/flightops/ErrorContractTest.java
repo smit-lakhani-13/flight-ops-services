@@ -224,7 +224,9 @@ class ErrorContractTest {
     /**
      * Spring Data computes the row offset as an {@code int}, which a page past
      * {@code Integer.MAX_VALUE / size} overflows. At the default size of 20,
-     * page 107374182 is the last one that fits.
+     * page 107374182 is the last one that fits and 107374183 the first that does
+     * not; at a size of 100, 21474836 and 21474837. Both sides of the edge are
+     * sent, so an off-by-one in the guard fails here.
      */
     @Test
     @DisplayName("a page whose offset overflows an int is 400 MALFORMED_REQUEST on both lists")
@@ -244,6 +246,18 @@ class ErrorContractTest {
 
         mockMvc.perform(get("/api/v1/flights").param("page", "107374182"))
                 .andExpect(status().isOk());
+        mockMvc.perform(get("/api/v1/flights").param("page", "107374183"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value(containsString("page * size")));
+        mockMvc.perform(get("/api/v1/bookings")
+                        .param("flightNumber", "UA123")
+                        .param("page", "107374183"))
+                .andExpect(status().isBadRequest());
+
+        mockMvc.perform(get("/api/v1/flights").param("page", "21474836").param("size", "100"))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/v1/flights").param("page", "21474837").param("size", "100"))
+                .andExpect(status().isBadRequest());
     }
 
     // ------------------------------------------------------------------
