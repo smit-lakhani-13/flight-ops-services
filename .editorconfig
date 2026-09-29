@@ -1,5 +1,5 @@
-# https://editorconfig.org — keeps whitespace consistent across IDEs so that a
-# diff shows intent rather than someone else's formatter.
+# EditorConfig (https://editorconfig.org) keeps whitespace consistent across
+# IDEs so that a diff shows intent rather than someone else's formatter.
 root = true
 
 [*]

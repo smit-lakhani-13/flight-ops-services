@@ -48,7 +48,7 @@ cat <<PLAN
     the AWS Load Balancer Controller, its IAM role and its policy ${LBC_POLICY_PREFIX}*
     namespace $NAMESPACE, including the Secret and its passwords
     $SAM_STACK        (SQS, DLQ, DynamoDB table AND ITS DATA, the Lambda)
-    $DATA_STACK          (RDS instance AND ITS DATA — no final snapshot)
+    $DATA_STACK          (RDS instance AND ITS DATA, no final snapshot)
     $CLUSTER_NAME       (the cluster, the nodes, the VPC, the NAT gateway)
 PLAN
 if [ "$KEEP_FOUNDATION" = 1 ]; then
@@ -229,7 +229,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-step "6/9  The cluster — the ~15 minute step"
+step "6/9  The cluster: the ~15 minute step"
 # ---------------------------------------------------------------------------
 if ! command -v eksctl >/dev/null 2>&1; then
     warn "eksctl is not installed, so the cluster cannot be deleted from here"
@@ -240,14 +240,14 @@ elif eksctl get cluster --name "$CLUSTER_NAME" >/dev/null 2>&1; then
     if eksctl delete cluster --name "$CLUSTER_NAME" --wait --disable-nodegroup-eviction; then
         ok "cluster deleted"
     else
-        warn "eksctl reported a problem — the sweep below will say what is left"
+        warn "eksctl reported a problem; the sweep below will say what is left"
     fi
 else
     log "no cluster"
 fi
 
 # ---------------------------------------------------------------------------
-step "7/9  SAM's own managed bucket — SHARED, so opt-in only"
+step "7/9  SAM's own managed bucket: SHARED, so opt-in only"
 # ---------------------------------------------------------------------------
 # `sam deploy --resolve-s3` creates the aws-sam-cli-managed-default stack, a
 # versioned bucket of build artefacts. Nothing above deletes it, so it looks
@@ -261,7 +261,7 @@ SAM_MANAGED=aws-sam-cli-managed-default
 if ! stack_exists "$SAM_MANAGED"; then
     log "no $SAM_MANAGED stack"
 elif [ "$DELETE_SAM_BUCKET" = 0 ]; then
-    log "leaving $SAM_MANAGED alone — it is shared by every SAM project in this"
+    log "leaving $SAM_MANAGED alone: it is shared by every SAM project in this"
     log "account and region. Pennies per month. Remove it with --delete-sam-bucket"
     log "once you are sure nothing else deploys with SAM here."
 else
@@ -281,14 +281,14 @@ else
             esac
             aws s3api delete-objects --bucket "$bucket" --delete "$payload" >/dev/null 2>&1 || break
             emptied=$((emptied + 1))
-            [ "$emptied" -ge 100 ] && { warn "stopped after 100 pages — empty s3://$bucket by hand"; break; }
+            [ "$emptied" -ge 100 ] && { warn "stopped after 100 pages; empty s3://$bucket by hand"; break; }
         done
     fi
     aws cloudformation delete-stack --stack-name "$SAM_MANAGED"
     if aws cloudformation wait stack-delete-complete --stack-name "$SAM_MANAGED" 2>/dev/null; then
         ok "$SAM_MANAGED deleted"
     else
-        warn "$SAM_MANAGED did not finish deleting — usually a bucket that is still not empty"
+        warn "$SAM_MANAGED did not finish deleting, usually a bucket that is still not empty"
     fi
 fi
 
@@ -349,7 +349,7 @@ for arn in $lbc_policies; do
 done
 
 # ---------------------------------------------------------------------------
-step "9/9  The sweep — this is the part that actually matters"
+step "9/9  The sweep: this is the part that actually matters"
 # ---------------------------------------------------------------------------
 # Any delete above can half-succeed. This looks for the things that bill, by
 # name and by tag, and exits non-zero if any of them is still there.
@@ -512,13 +512,13 @@ DONE
     exit 0
 fi
 
-warn "$FAILURES check(s) failed — something is still billing."
+warn "$FAILURES check(s) failed: something is still billing."
 cat <<'FAILED'
 
   Re-run this script: most failures are ordering, and a second pass succeeds
   once the thing that was blocking has finished deleting. A stack still in
   DELETE_IN_PROGRESS fails the stacks check until it has gone. If a check fails
-  twice, delete it by hand in the console — the ARN is printed above — and
+  twice, delete it by hand in the console (the ARN is printed above) and
   look for a dependency: a security group referenced by another group, a
   network interface still attached, a stack in DELETE_FAILED with a reason
   in its events.

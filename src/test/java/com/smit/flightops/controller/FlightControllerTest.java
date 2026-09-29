@@ -291,7 +291,7 @@ class FlightControllerTest {
     }
 
     @Test
-    @DisplayName("an unknown enum value is 400, not 500 — it fails inside Jackson, before validation")
+    @DisplayName("an unknown enum value is 400, not 500: it fails inside Jackson, before validation")
     void unknownStatusValueReturns400() throws Exception {
         mockMvc.perform(patch("/api/v1/flights/UA123/status")
                         .contentType(MediaType.APPLICATION_JSON)
