@@ -124,6 +124,44 @@ test("Try again after an outage reads the flight and its bookings again", async 
   await expect(page.getByRole("heading", { level: 1 })).toBeFocused();
 });
 
+test("a page of a flight's bookings that fails to arrive hands the focus to Refresh, which reads that page again", async ({ page, request }) => {
+  // Eleven bookings make two pages of ten.
+  const flightNumber = uniqueFlightNumber();
+  await createFlight(request, flightNumber);
+  for (let i = 0; i < 11; i++) await createBooking(request, flightNumber);
+  await signIn(page);
+  await openFlight(page, flightNumber);
+  const card = page.locator("section").filter({ has: page.getByRole("heading", { name: "Bookings on this flight" }) });
+  const refresh = card.getByRole("button", { name: "Refresh" });
+  const busy = card.locator('div[aria-busy="true"]');
+  await expect(card.getByText("11 total · page 1 of 2")).toBeVisible();
+
+  // The second page is held until the test lets it go, and the first stays on
+  // screen meanwhile, marked busy. Then the service is down for it.
+  const secondPage = (url: URL) =>
+    url.pathname === "/api/v1/bookings" && url.searchParams.get("flightNumber") === flightNumber && url.searchParams.get("page") === "1";
+  let release = () => {};
+  const held = new Promise<void>((resolve) => (release = resolve));
+  await page.route(secondPage, async (route) => {
+    await held;
+    await serviceDown(route);
+  });
+  await card.getByRole("button", { name: "Next" }).press("Enter");
+  await expect(busy).toContainText("page 1 of 2");
+  release();
+
+  // The pager went with the table, so the focus is on Refresh, not the page.
+  await expect(card.getByTestId("error-banner")).toHaveAttribute("data-code", "CONSOLE_UPSTREAM_UNREACHABLE");
+  await expect(refresh).toBeFocused();
+
+  // Refresh reads the second page, not the first, and keeps the focus.
+  await page.unroute(secondPage);
+  await refresh.press("Enter");
+  await expect(card.getByText("11 total · page 2 of 2")).toBeVisible();
+  await expect(busy).toHaveCount(0);
+  await expect(refresh).toBeFocused();
+});
+
 test("a Try again that fails as well is announced once, and a failed Refresh on the bookings still is", async ({ page, request }) => {
   const flightNumber = uniqueFlightNumber();
   await createFlight(request, flightNumber);

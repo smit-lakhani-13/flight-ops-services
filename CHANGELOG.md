@@ -59,6 +59,14 @@ says not yet.
   every `*.test.ts` and `*.test.tsx` file in `web/`, where it took one
   extension per directory, so a test can no longer sit unrun.
 
+- **A flight's bookings keep the focus and say when they are out of date.**
+  After Next or Previous in the bookings on a flight's page, the old page stayed
+  on screen as if current until the new one came, and a page that failed to
+  arrive took the pager away with the focus on it, which fell back to the page.
+  The card now dims the last answer and marks it busy while another is out, as
+  the flight list does, and a failed page hands the focus to the card's
+  Refresh, which reads that page again. `web/e2e/flights.spec.ts` checks both.
+
 - **Version.** Both poms say `1.4.0-SNAPSHOT` until the next tag, so a build
   from `main` no longer reports itself as 1.3.0 in `/actuator/info` and the
   OpenAPI document.
