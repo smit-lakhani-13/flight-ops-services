@@ -96,6 +96,13 @@ says not yet.
   showed `ORD` flights under a field that said `EWR`. It now takes the fields
   as they stand, as Search does. `web/e2e/flights.spec.ts` checks the request.
 
+- **`doc/api.md` says three more things the service does at its edges.** A
+  `Content-Encoding` is not read, so a compressed body is never expanded. A
+  malformed `Content-Length` gets Tomcat's HTML 400, and `CONNECT` or a
+  transfer coding other than `chunked` its HTML 501, each outside the JSON
+  envelope. A filter sent twice is joined with a comma, and matches nothing.
+  Each was found by probing a running service; none is new behaviour.
+
 - **Version.** Both poms say `1.4.0-SNAPSHOT` until the next tag, so a build
   from `main` no longer reports itself as 1.3.0 in `/actuator/info` and the
   OpenAPI document.

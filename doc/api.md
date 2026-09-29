@@ -195,14 +195,23 @@ Both controllers produce and read JSON only.
   that never reads its body never counts it. A valid body is normally under
   1 KB. `HTTP_MAX_BODY_BYTES` sets the limit, through
   `app.http.max-body-bytes`.
+- A `Content-Encoding` header is not read, and nothing is decompressed: a
+  body is parsed as it arrives. A gzip body labelled `Content-Encoding: gzip`
+  is `400 MALFORMED_REQUEST`, and a plain JSON body with the same label is
+  read as plain JSON. Since no body is expanded, a small compressed one cannot
+  grow past the limit above.
 - Any `/api/**` row can also answer `503 DATABASE_UNAVAILABLE`, with
   `Retry-After`, when the service cannot reach its database. The OpenAPI
   document declares that 503 on every operation.
 
 Tomcat refuses some requests before Spring sees them: `%2F`, `%5C`, `%00` or
-`%zz` in the path, a raw `|`, or a request line and headers over 8 KB in all
-(`server.max-http-request-header-size`, left at Spring Boot's default). Those
-get Tomcat's own HTML 400 page with no `X-Request-Id`. A path that Spring
+`%zz` in the path, a raw `|`, a request line and headers over 8 KB in all
+(`server.max-http-request-header-size`, left at Spring Boot's default), or a
+`Content-Length` that is not a whole number it can hold, such as `abc`, `-1`
+or twenty digits. Those get Tomcat's own HTML 400 page with no `X-Request-Id`.
+`CONNECT`, and a `Transfer-Encoding` that names a coding other than `chunked`,
+such as `gzip` or `identity`, get its HTML 501 page the same way; one that
+puts another coding after `chunked` gets the 400. A path that Spring
 Security's firewall
 refuses, such as one with `;` or `//` in it, gets `400 BAD_REQUEST` in the
 usual JSON envelope instead, from `ApiErrorController`. An unknown metric name,
@@ -237,7 +246,7 @@ container's own error text can name an internal path or exception class.
 ## Error envelope
 
 Every error the three classes below write has one of two JSON shapes.
-Tomcat's HTML 400 page and the actuator's empty 404, described under
+Tomcat's HTML 400 and 501 pages and the actuator's empty 404, described under
 [Request rules](#request-rules), come from outside them. Most errors are
 `{code, message, timestamp}`:
 
@@ -477,7 +486,11 @@ character (`\p{Cc}`) once trimmed, such as `?origin=J%00K`, is
 (`controller/QueryParams.java#withoutControlCharacters`). PostgreSQL refuses
 a NUL in a text value, and H2 does not, so the check keeps the two databases
 giving the same answer. Nothing else about a filter is checked: `?origin=J-K`
-is an empty page, like any other code no flight has.
+is an empty page, like any other code no flight has. A filter sent twice is
+joined with a comma, as Spring binds a repeated parameter to one string, so
+`?origin=EWR&origin=EWR` asks for `EWR,EWR` and is an empty page too, and so
+is a repeated `flightNumber` on the bookings list. A repeated `page` or `size`
+takes its first value.
 
 `controller/SortPolicy.java#stable` applies the same rules to both endpoints.
 Each endpoint publishes the properties it sorts by:
