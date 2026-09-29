@@ -129,15 +129,21 @@ export function BookingForm({ initialFlight }: { initialFlight: string }) {
   }
 
   async function book(action: Action) {
+    // A replay resends, and a different body starts from, what the key's first
+    // successful Book sent, whatever the form holds now. A replay on a key with
+    // no successful Book yet sends the form. A different body is not sent at
+    // all: it would be the key's first body, so the API would make a booking
+    // and take its seats where this page promises a 409.
+    const first = action === "book" ? undefined : firstByKey.get(form.idempotencyKey);
+    if (action === "different" && !first) {
+      setAnnouncement({ text: `${TITLES.different}: not sent. Book on this key first, so there is a body to change.`, kind: "none" });
+      return;
+    }
     setPending(action);
     // Emptied first, so the same answer twice is still a change a screen
     // reader announces.
     setAnnouncement(null);
     try {
-      // A replay resends, and a different body starts from, what the key's
-      // first successful Book sent, whatever the form holds now. A key with no
-      // successful Book yet uses the form.
-      const first = action === "book" ? undefined : firstByKey.get(form.idempotencyKey);
       const sent = first ? { ...first.sent } : request();
       if (action === "different") {
         sent.seats = Number.isInteger(sent.seats) && sent.seats < 9 ? sent.seats + 1 : 1;
@@ -260,7 +266,8 @@ export function BookingForm({ initialFlight }: { initialFlight: string }) {
           <p className={`text-xs text-pretty ${MUTED}`}>
             A replay is the same request arriving twice, and gets the booking the key first made. The race sends ten
             identical requests at once from the console&apos;s server, the same experiment as act 4 of{" "}
-            <code>scripts/demo.sh</code>. A different body on a used key is a client bug, and the API answers 409.
+            <code>scripts/demo.sh</code>. A different body on a used key is a client bug, and the API answers 409, so
+            the console sends one only on a key a Book has used.
           </p>
           {/* The status line above already announced it. */}
           {last === "booking" && latest && !latest.result.ok && (

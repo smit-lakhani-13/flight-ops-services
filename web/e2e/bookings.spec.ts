@@ -35,6 +35,24 @@ test("a replay on the same key returns the first booking and debits nothing", as
   await expect(form.getByTestId("error-banner")).toHaveAttribute("data-code", "IDEMPOTENCY_KEY_REUSED");
 });
 
+test("a different body on a key no Book has used is not sent, and takes no seats", async ({ page, request }) => {
+  const flightNumber = uniqueFlightNumber();
+  await createFlight(request, flightNumber, 20);
+  await signIn(page);
+  const form = await bookingForm(page, flightNumber);
+
+  // It would be the key's first body, so the API would make a booking.
+  await form.getByRole("button", { name: "Same key, different body" }).click();
+  await expect(form.getByRole("status")).toHaveText(
+    "Same key, different body: not sent. Book on this key first, so there is a body to change.",
+  );
+  await expect(page.getByTestId("booking-outcome")).toHaveCount(0);
+
+  const flight = await request.get(`/api/v1/flights/${flightNumber}`, { headers: { Authorization: basic(API_ACCOUNT) } });
+  expect(flight.status()).toBe(200);
+  expect((await flight.json()).availableSeats).toBe(20);
+});
+
 test("ten concurrent callers on one key make one booking and one debit", async ({ page, request }) => {
   const flightNumber = uniqueFlightNumber();
   await createFlight(request, flightNumber, 20);
