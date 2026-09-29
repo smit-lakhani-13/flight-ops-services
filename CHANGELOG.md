@@ -107,6 +107,16 @@ says not yet.
   from `main` no longer reports itself as 1.3.0 in `/actuator/info` and the
   OpenAPI document.
 
+- **A bearer token short of a scope is told which one.** With the resource
+  server on, a 403 from a rule that asks for one scope carries
+  `WWW-Authenticate: Bearer realm="flight-ops-service", error="insufficient_scope", scope="flights:write"`
+  (or `flights:read`), RFC 6750's challenge for a token that lacks a scope.
+  `JsonAccessDeniedHandler` had replaced Spring's bearer handler and sent no
+  challenge at all. It reads the scope from the refusing rule's decision, so a
+  403 no scope can lift, `denyAll()` or the ops role, still carries none, and
+  so does a 403 to a Basic caller
+  (`BearerTokenChallengeTest#aRefusalNoScopeLiftsHasNoChallenge`).
+
 - **The README says more of what is built.** Its opening sentence names Java
   21 and Spring Boot 4.1. It links the latest release, says a release is a
   version and a tag and that each GitHub release since v1.2.0 carries an SBOM
