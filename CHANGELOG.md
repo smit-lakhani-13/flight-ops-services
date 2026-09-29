@@ -67,6 +67,12 @@ says not yet.
   the flight list does, and a failed page hands the focus to the card's
   Refresh, which reads that page again. `web/e2e/flights.spec.ts` checks both.
 
+- **The console's hint on a 503 fits a database outage.** It said the service
+  was busy, but `DATABASE_UNAVAILABLE` sends the same `503` and `Retry-After`
+  as `LOCK_TIMEOUT`, so while the database was down every page, and the api
+  account's sign-in, pointed at load. It now says the service could not finish
+  the request just now, and the API's message above it still says which it was.
+
 - **Version.** Both poms say `1.4.0-SNAPSHOT` until the next tag, so a build
   from `main` no longer reports itself as 1.3.0 in `/actuator/info` and the
   OpenAPI document.
