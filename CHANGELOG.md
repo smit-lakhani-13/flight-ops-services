@@ -90,6 +90,12 @@ says not yet.
   account's sign-in, pointed at load. It now says the service could not finish
   the request just now, and the API's message above it still says which it was.
 
+- **A new sort on the flight list applies the airports the fields show.** The
+  sort reads the list again at once, but it kept the airports last searched, so
+  after typing `EWR` over a searched `ORD` and changing the sort, the list
+  showed `ORD` flights under a field that said `EWR`. It now takes the fields
+  as they stand, as Search does. `web/e2e/flights.spec.ts` checks the request.
+
 - **Version.** Both poms say `1.4.0-SNAPSHOT` until the next tag, so a build
   from `main` no longer reports itself as 1.3.0 in `/actuator/info` and the
   OpenAPI document.
