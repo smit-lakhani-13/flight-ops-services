@@ -179,7 +179,7 @@ public class BookingWriter {
             log.info("Cancelled booking {} on {} ({} seat(s) released, {} now available)",
                      bookingId, flightNumber, booking.getSeats(), flight.getAvailableSeats());
         } else {
-            log.info("Booking {} was already cancelled at {} — no seats released",
+            log.info("Booking {} was already cancelled at {}; no seats released",
                      bookingId, booking.getCancelledAt());
         }
         return new Cancellation(BookingDto.from(booking), released);

@@ -86,7 +86,7 @@ class BookingControllerTest {
     }
 
     @Test
-    @DisplayName("a replay is also 201 — a retry is not a client error")
+    @DisplayName("a replay is also 201: a retry is not a client error")
     void replayIsAlso201() throws Exception {
         when(bookingService.book(any())).thenReturn(dto());
 
@@ -443,7 +443,7 @@ class BookingControllerTest {
 
     /** Follows the header rather than asserting its text, which is what shows it resolves. */
     @Test
-    @DisplayName("the Location header from a POST actually resolves — followed, not just asserted")
+    @DisplayName("the Location header from a POST actually resolves, followed and not just asserted")
     void locationHeaderResolves() throws Exception {
         when(bookingService.book(any())).thenReturn(dto());
         when(bookingService.findById(1L)).thenReturn(dto());
@@ -474,7 +474,7 @@ class BookingControllerTest {
     }
 
     @Test
-    @DisplayName("a non-numeric booking id is 400, not 500 — it fails in path-variable conversion")
+    @DisplayName("a non-numeric booking id is 400, not 500: it fails in path-variable conversion")
     void nonNumericBookingIdReturns400() throws Exception {
         mockMvc.perform(get("/api/v1/bookings/not-a-number"))
                 .andExpect(status().isBadRequest())
@@ -482,7 +482,7 @@ class BookingControllerTest {
     }
 
     @Test
-    @DisplayName("the list is a page, not a bare array — content plus page metadata")
+    @DisplayName("the list is a page, not a bare array: content plus page metadata")
     void listByFlightReturnsAPageOfBookings() throws Exception {
         when(bookingService.findByFlightNumber(eq("UA123"), any()))
                 .thenReturn(new PageImpl<>(List.of(dto()), Pageable.ofSize(20), 1));
@@ -601,7 +601,7 @@ class BookingControllerTest {
     }
 
     @Test
-    @DisplayName("a missing required query parameter is 400 — Spring's own error, mapped not swallowed")
+    @DisplayName("a missing required query parameter is 400: Spring's own error, mapped not swallowed")
     void missingQueryParameterReturns400() throws Exception {
         mockMvc.perform(get("/api/v1/bookings"))
                 .andExpect(status().isBadRequest())

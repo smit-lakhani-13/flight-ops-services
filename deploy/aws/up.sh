@@ -60,7 +60,7 @@ ok "account $ACCOUNT_ID, region $AWS_REGION"
 profile_region=$(aws configure get region 2>/dev/null || true)
 if [ -n "$profile_region" ] && [ "$profile_region" != "$AWS_REGION" ]; then
     warn "your AWS profile defaults to '$profile_region'; these scripts pin '$AWS_REGION'."
-    warn "That is intentional — but remember it when you go looking in the console."
+    warn "That is intentional, but remember it when you go looking in the console."
 fi
 
 cat <<COST
@@ -72,7 +72,7 @@ cat <<COST
     NAT gateway              \$0.056/hr + data  \$1.43/day at 1.5 GB/day
     Application Load Balancer \$0.0239/hr + LCU \$0.62/day
     RDS db.t4g.micro         \$0.021/hr         \$0.50/day
-    EBS + public IPv4        —                  \$0.62/day
+    EBS + public IPv4        -                  \$0.62/day
     Lambda, SQS, DynamoDB    free tier at this volume
                                                 ---------
                                                 \$7.72/day
@@ -94,7 +94,7 @@ COST
 confirm "This will start billing. The only other prompts are the two hand-offs at steps 9 and 10."
 
 # ---------------------------------------------------------------------------
-step "2/12  Foundation stack — ECR, OIDC trust, deploy role, budgets"
+step "2/12  Foundation stack: ECR, OIDC trust, deploy role, budgets"
 # ---------------------------------------------------------------------------
 # An account holds at most one OIDC provider per URL, so creating a second
 # fails. Detect an existing one and hand it to the template instead.
@@ -126,11 +126,11 @@ if aws ce update-cost-allocation-tags-status \
         --cost-allocation-tags-status TagKey=Project,Status=Active >/dev/null 2>&1; then
     ok "cost allocation tag 'Project' activated (visible in Cost Explorer within 24h)"
 else
-    warn "could not activate the 'Project' cost allocation tag yet — harmless, retry tomorrow"
+    warn "could not activate the 'Project' cost allocation tag yet; harmless, retry tomorrow"
 fi
 
 # ---------------------------------------------------------------------------
-step "3/12  Lambda stack — SQS, DLQ, DynamoDB, the consumer"
+step "3/12  Lambda stack: SQS, DLQ, DynamoDB, the consumer"
 # ---------------------------------------------------------------------------
 # Before the cluster: it is the cheap half, it does not depend on EKS, and the
 # cluster needs its queue URL.
@@ -161,7 +161,7 @@ state_set SQS_QUEUE_URL "$SQS_QUEUE_URL"
 ok "queue $SQS_QUEUE_URL"
 
 # ---------------------------------------------------------------------------
-step "4/12  EKS cluster — this is the ~20 minute step"
+step "4/12  EKS cluster: this is the ~20 minute step"
 # ---------------------------------------------------------------------------
 # Before eksctl, which writes a kubeconfig and switches its context when it
 # creates the cluster. From here on that file is the scripts' own, so every
@@ -170,7 +170,7 @@ step "4/12  EKS cluster — this is the ~20 minute step"
 use_private_kubeconfig
 
 if eksctl get cluster --name "$CLUSTER_NAME" >/dev/null 2>&1; then
-    ok "cluster already exists — checking its addons, OIDC provider and node group"
+    ok "cluster already exists; checking its addons, OIDC provider and node group"
     complete_cluster "$here/cluster.yaml"
 else
     eksctl create cluster -f "$here/cluster.yaml"
@@ -192,7 +192,7 @@ support_type=$(aws eks describe-cluster --name "$CLUSTER_NAME" \
     --query 'cluster.upgradePolicy.supportType' --output text 2>/dev/null || true)
 case "$support_type" in
     STANDARD)
-        ok "upgrade policy is STANDARD — the cluster cannot enter extended support"
+        ok "upgrade policy is STANDARD: the cluster cannot enter extended support"
         ;;
     EXTENDED)
         warn "upgrade policy is EXTENDED. The control plane bills \$0.60/hour"
@@ -228,7 +228,7 @@ grant_namespace_access "arn:aws:iam::${ACCOUNT_ID}:role/github-actions-deploy" \
 ok "github-actions-deploy may edit namespace/$NAMESPACE and nothing else"
 
 # ---------------------------------------------------------------------------
-step "6/12  Database — the ~10 minute step"
+step "6/12  Database: the ~10 minute step"
 # ---------------------------------------------------------------------------
 VPC_ID=$(eksctl_stack_output VPC)
 PRIVATE_SUBNETS=$(eksctl_stack_output SubnetsPrivate)
@@ -244,7 +244,7 @@ fi
 # another database.
 db_password_origin=environment
 if stack_ready "$DATA_STACK"; then
-    ok "data stack already exists — not touching the password"
+    ok "data stack already exists; not touching the password"
 else
     # Generated here, used twice (the RDS parameter and the Kubernetes
     # Secret), and never written to disk. A run that loses it before step 9
@@ -277,7 +277,7 @@ state_set DB_URL "$DB_URL"
 ok "$DB_URL"
 
 # ---------------------------------------------------------------------------
-step "7/12  IRSA — the pods' AWS identity, with no access keys"
+step "7/12  IRSA: the pods' AWS identity, with no access keys"
 # ---------------------------------------------------------------------------
 # --role-only: the ServiceAccount itself is part of the application manifests
 # (deploy/k8s/base/serviceaccount.yaml), so eksctl must create the IAM role and
@@ -363,7 +363,7 @@ if kubectl get secret flight-ops-secret -n "$NAMESPACE" >/dev/null 2>&1; then
     # before this step, created a new database: then only DB_PASSWORD changes.
     # One this run did not generate goes in with a warning.
     reconcile_secret_db_password "${DB_PASSWORD:-}" "$db_password_origin"
-    API_PASSWORD_PLAIN='(unchanged — see your earlier run)'
+    API_PASSWORD_PLAIN='(unchanged: see your earlier run)'
     OPS_PASSWORD_PLAIN='(unchanged)'
 else
     # An exported DB_PASSWORD gets here on a re-run: step 6 sets it only when
@@ -410,7 +410,7 @@ else
     # would then mean replacing the Secret and restarting every pod.
     cat <<CREDS
 
-  ${C_BOLD}Credentials — written down now, before anything else can fail.${C_RESET}
+  ${C_BOLD}Credentials: written down now, before anything else can fail.${C_RESET}
   ${C_BOLD}These are not stored anywhere outside this terminal.${C_RESET}
 
     api user     api / $API_PASSWORD_PLAIN      (flights:read, flights:write)
@@ -511,8 +511,8 @@ ok "health check passes through the load balancer"
 # ---------------------------------------------------------------------------
 step "12/12  Proving it works, over the internet"
 # ---------------------------------------------------------------------------
-if [ "$API_PASSWORD_PLAIN" = '(unchanged — see your earlier run)' ]; then
-    warn "skipping scripts/demo.sh — the API password is from an earlier run and is not known here"
+if [ "$API_PASSWORD_PLAIN" = '(unchanged: see your earlier run)' ]; then
+    warn "skipping scripts/demo.sh: the API password is from an earlier run and is not known here"
 else
     # `|| warn`: the deployment has already succeeded, so a failing act must
     # not fail the run or stop the summary below from printing. A command
