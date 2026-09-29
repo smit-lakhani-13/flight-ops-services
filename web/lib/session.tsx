@@ -4,7 +4,7 @@ import { createContext, useCallback, useContext, useMemo, useState, type ReactNo
 import { apiRequest, type ApiResponse, type Query } from "./api";
 import { basicAuthorization } from "./base64";
 import type { ClassifiedError } from "./errors";
-import { useRequestLog } from "./request-log";
+import { useRequestLogActions } from "./request-log";
 import type { Health } from "./types";
 
 // Credentials live in this React state and nowhere else: not in a cookie, not
@@ -40,7 +40,7 @@ function hasComponents(body: unknown): boolean {
 
 export function SessionProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
-  const { record } = useRequestLog();
+  const { record } = useRequestLogActions();
 
   const signIn = useCallback(
     async (user: string, password: string): Promise<ClassifiedError | null> => {
@@ -104,7 +104,7 @@ export interface Api {
 
 export function useApi(): Api {
   const { session } = useSession();
-  const { record } = useRequestLog();
+  const { record } = useRequestLogActions();
   const authorization = session?.authorization ?? null;
 
   return useMemo<Api>(() => {
