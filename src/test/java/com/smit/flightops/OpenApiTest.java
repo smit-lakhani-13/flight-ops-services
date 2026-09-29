@@ -10,6 +10,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -327,5 +328,20 @@ class OpenApiTest {
         // decoder is configured, and this instance would reject it.
         assertThat(document.get("security").get(0).propertyNames()).containsExactly("basicAuth");
         assertThat(schemes.propertyNames()).doesNotContain("bearerAuth");
+    }
+
+    /**
+     * The 503s put a colon after the code, and so does every other response:
+     * {@code `CODE`: text}. The body is decoded as UTF-8, so an em dash in a
+     * new description cannot pass as some other character.
+     */
+    @Test
+    @DisplayName("every description writes a code as `CODE`: text, and the document holds no em dash")
+    void theDocumentWritesEachCodeOneWay() throws Exception {
+        String body = mockMvc.perform(get("/v3/api-docs"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString(StandardCharsets.UTF_8);
+
+        assertThat(body).contains("`FORBIDDEN`: ").doesNotContain("\u2014");
     }
 }

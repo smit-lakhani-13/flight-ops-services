@@ -103,6 +103,12 @@ says not yet.
   envelope. A filter sent twice is joined with a comma, and matches nothing.
   Each was found by probing a running service; none is new behaviour.
 
+- **The OpenAPI document writes every error code one way.** Its 503
+  descriptions put a colon after the code and the others a dash, often both in
+  one operation's list of responses. Every description in `BookingController`
+  and `FlightController` now uses the colon, and `OpenApiTest` fails if an em
+  dash comes back into the document.
+
 - **Version.** Both poms say `1.4.0-SNAPSHOT` until the next tag, so a build
   from `main` no longer reports itself as 1.3.0 in `/actuator/info` and the
   OpenAPI document.
