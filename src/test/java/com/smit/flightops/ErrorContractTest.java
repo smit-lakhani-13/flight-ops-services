@@ -297,6 +297,27 @@ class ErrorContractTest {
     }
 
     /**
+     * Read as text, 917 is a valid flight number and the create succeeds.
+     * {@code MalformedRequestTest} covers every text field in a slice; this
+     * shows the rule is registered in the application itself.
+     */
+    @Test
+    @DisplayName("a flight number sent as a JSON number is 400 MALFORMED_REQUEST, and no flight is created")
+    void aFlightNumberSentAsANumberIsRefused() throws Exception {
+        mockMvc.perform(post("/api/v1/flights")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"flightNumber":917,"origin":"EWR","destination":"SFO",
+                                 "totalSeats":100,"departureTime":"2099-01-01T10:00:00Z"}
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("MALFORMED_REQUEST"));
+
+        mockMvc.perform(get("/api/v1/flights/917"))
+                .andExpect(status().isNotFound());
+    }
+
+    /**
      * The empty airport code breaks {@code @NotBlank} and {@code @Size(min = 3)},
      * "1" breaks {@code @Size} and {@code @Pattern}, and the spaces break
      * {@code @NotBlank} and {@code @Pattern}. Hibernate Validator reports them in
