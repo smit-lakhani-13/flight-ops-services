@@ -144,6 +144,19 @@ password, get `Basic realm="flight-ops-service"`. The body is the same
 `UNAUTHENTICATED` JSON in both cases, and it never says whether the user
 exists. `BearerTokenChallengeTest` checks both challenges in one context.
 
+A valid bearer token without the scope an operation requires gets a 403 with
+`Bearer realm="flight-ops-service", error="insufficient_scope", scope="flights:write"`,
+or `flights:read`. That is RFC 6750's signal to ask for a token that carries
+the scope. `JsonAccessDeniedHandler` reads the scope from the decision the
+refusing rule returned, so it keeps no copy of the rules. A 403 that no scope
+can lift carries no challenge: `denyAll()`, which a `PUT` meets, and the ops
+role on an actuator endpoint. A 403 to a Basic caller carries none either.
+Spring's own bearer handler, which this one replaces, sends
+`insufficient_scope` on every bearer 403.
+`BearerTokenChallengeTest#aSignedTokensScopeMapsOntoTheRules` and
+`#aRefusalNoScopeLiftsHasNoChallenge` check the challenge and its absence, and
+`SecurityRulesTest#readScopeCannotWrite` the Basic side.
+
 `security/JsonAuthenticationEntryPoint` and `security/JsonAccessDeniedHandler`
 write both, through `ErrorResponseWriter`. It shares the container's
 `ObjectMapper` and `Clock`, so the timestamp matches every other error. The
@@ -190,7 +203,10 @@ reverse, and the ADR is where to start.
 The console in `web/` is a browser UI with no cookie sessions, and it leaves
 both decisions standing. The browser talks only to the console's own origin,
 and `web/lib/proxy.ts#forward` passes an allow-listed subset on to the API, so
-the API still has no CORS policy ([adr/0017](adr/0017-web-console.md)).
+the API still has no CORS policy ([adr/0017](adr/0017-web-console.md)). Nor
+does the console: Next answers a preflight to it with `204` and no
+`Access-Control-*` header, which `web/e2e/ops.spec.ts` checks, so a page on
+another origin can neither send it a JSON write nor read what it answers.
 
 * The credential lives in React state only, never in browser storage or a
   cookie. The console's server copies it onto each upstream request, ten for a
@@ -374,10 +390,10 @@ bundle comes from and how to refresh it.
   `FormContentFilter` read a form-encoded `PUT`, `PATCH` or `DELETE` body before
   the credentials were checked, and a bad percent escape in one was a 500 and
   an ERROR stack trace for a caller with none. In JSON, a whole number sent as
-  text, a status sent as a number or with padding around its name, and a
-  departure time that is not an ISO-8601 instant are each
-  `400 MALFORMED_REQUEST`. None of them is converted into a value the client
-  did not write.
+  text, a text field sent as a number or a boolean, a status sent as a number
+  or with padding around its name, and a departure time that is not an
+  ISO-8601 instant are each `400 MALFORMED_REQUEST`. None of them is converted
+  into a value the client did not write.
 
 - A request body over the limit (16 KiB by default) gets `413 PAYLOAD_TOO_LARGE`
   when its declared length or a read shows it, and nothing parses more than the

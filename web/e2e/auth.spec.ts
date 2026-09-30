@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { go, OPS_ACCOUNT, signIn } from "./support";
+import { API_ACCOUNT, go, OPS_ACCOUNT, signIn } from "./support";
 
 test("a wrong password gets the API's 401 and clears the field", async ({ page }) => {
   await page.goto("/");
@@ -14,8 +14,14 @@ test("a wrong password gets the API's 401 and clears the field", async ({ page }
 });
 
 test("signing in opens the flight pages, and signing out closes them", async ({ page }) => {
+  // The form and the Sign out button each go away with the press, so both
+  // hand the focus to the page's heading, and the change of account is said
+  // in a status region a screen reader hears.
+  const title = page.getByRole("heading", { level: 1 });
   await signIn(page);
   await expect(page.getByText("Pick a demo to start.")).toBeVisible();
+  await expect(title).toBeFocused();
+  await expect(page.getByRole("status").filter({ hasText: `Signed in as ${API_ACCOUNT.user}` })).toBeAttached();
   await go(page, "Flights");
   await expect(page.getByTestId("flight-table")).toContainText("UA123");
 
@@ -23,6 +29,8 @@ test("signing in opens the flight pages, and signing out closes them", async ({ 
   await expect(page.getByText("Not signed in")).toBeVisible();
   await expect(page.getByTestId("flight-table")).toHaveCount(0);
   await expect(page.getByRole("form", { name: "Sign in" })).toBeVisible();
+  await expect(title).toBeFocused();
+  await expect(page.getByRole("status").filter({ hasText: "Signed out" })).toBeAttached();
 });
 
 test("a reload forgets the credential, because nothing stores it", async ({ page }) => {

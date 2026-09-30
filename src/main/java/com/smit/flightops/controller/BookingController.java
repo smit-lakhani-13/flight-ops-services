@@ -75,7 +75,7 @@ public class BookingController {
                     **A replay answers 201, not 200.** The body is the booking the key \
                     created, and matches the first response until the booking is \
                     cancelled, when `cancelledAt` is set. A client that retried after a \
-                    timeout cannot tell whether it or its earlier attempt did the work — \
+                    timeout cannot tell whether it or its earlier attempt did the work, \
                     which is the property idempotency exists to provide. Re-using a key \
                     with a *different* body is a client bug rather than a retry, and is \
                     refused with `IDEMPOTENCY_KEY_REUSED`.
@@ -89,8 +89,8 @@ public class BookingController {
                     headers = @Header(name = "Location", description = "`/api/v1/bookings/{bookingId}`",
                             schema = @Schema(type = "string"))),
             @ApiResponse(responseCode = "400", description = """
-                    `VALIDATION_FAILED` — a field is blank, out of range or has the wrong characters; \
-                    `fieldErrors` names each one. `MALFORMED_REQUEST` — the body is empty, not valid \
+                    `VALIDATION_FAILED`: a field is blank, out of range or has the wrong characters; \
+                    `fieldErrors` names each one. `MALFORMED_REQUEST`: the body is empty, not valid \
                     JSON or not a JSON object, has a field the schema does not list or a key twice in \
                     one object, a text field is an array or an object, or `seats` has \
                     the wrong JSON type, is too large for its type, or is missing, null, a string, or \
@@ -100,7 +100,7 @@ public class BookingController {
             @ApiResponse(responseCode = "401", description = "`UNAUTHENTICATED`",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "403", description =
-                    "`FORBIDDEN` — authenticated, but without `flights:write`.",
+                    "`FORBIDDEN`: authenticated, but without `flights:write`.",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "404", description = "`FLIGHT_NOT_FOUND`",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
@@ -109,14 +109,14 @@ public class BookingController {
                     and is refused without being read in full.""",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "415", description = """
-                    `UNSUPPORTED_MEDIA_TYPE` — the `Content-Type` is missing or is not `application/json`. \
+                    `UNSUPPORTED_MEDIA_TYPE`: the `Content-Type` is missing or is not `application/json`. \
                     YAML is refused too.""",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "409", description = """
-                    `INSUFFICIENT_SEATS` — fewer seats remain than requested, and a \
-                    smaller request can succeed. `FLIGHT_NOT_BOOKABLE` — the flight is \
+                    `INSUFFICIENT_SEATS`: fewer seats remain than requested, and a \
+                    smaller request can succeed. `FLIGHT_NOT_BOOKABLE`: the flight is \
                     cancelled, departed or arrived, and no retry will ever succeed. \
-                    `IDEMPOTENCY_KEY_REUSED` — the key is known and was used for a \
+                    `IDEMPOTENCY_KEY_REUSED`: the key is known and was used for a \
                     different request.""",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "503", description =
@@ -135,11 +135,11 @@ public class BookingController {
     @Operation(summary = "Get a booking")
     @ApiResponses({
             @ApiResponse(responseCode = "200", description = "The booking, cancelled or not."),
-            @ApiResponse(responseCode = "400", description = "`MALFORMED_REQUEST` — the id is not a number.",
+            @ApiResponse(responseCode = "400", description = "`MALFORMED_REQUEST`: the id is not a number.",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "401", description = "`UNAUTHENTICATED`",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
-            @ApiResponse(responseCode = "403", description = "`FORBIDDEN` — `flights:read` is required.",
+            @ApiResponse(responseCode = "403", description = "`FORBIDDEN`: `flights:read` is required.",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "404", description = "`BOOKING_NOT_FOUND`",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
@@ -169,7 +169,7 @@ public class BookingController {
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "401", description = "`UNAUTHENTICATED`",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
-            @ApiResponse(responseCode = "403", description = "`FORBIDDEN` — `flights:read` is required.",
+            @ApiResponse(responseCode = "403", description = "`FORBIDDEN`: `flights:read` is required.",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class)))
     })
     @GetMapping
@@ -193,7 +193,7 @@ public class BookingController {
 
                     Cancelling an already-cancelled booking is a 200 no-op rather than an \
                     error: the caller asked for a state the system is already in, and the \
-                    seats are released only once. Nothing is deleted — the row keeps \
+                    seats are released only once. Nothing is deleted: the row keeps \
                     its `cancelledAt`, so the history survives.
 
                     An active booking on a `DEPARTED` or `ARRIVED` flight is refused \
@@ -203,14 +203,14 @@ public class BookingController {
     @ApiResponses({
             @ApiResponse(responseCode = "200", description =
                     "Cancelled, or already cancelled. The body is the booking either way."),
-            @ApiResponse(responseCode = "400", description = "`MALFORMED_REQUEST` — the id is not a number.",
+            @ApiResponse(responseCode = "400", description = "`MALFORMED_REQUEST`: the id is not a number.",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "401", description = "`UNAUTHENTICATED`",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
-            @ApiResponse(responseCode = "403", description = "`FORBIDDEN` — `flights:write` is required.",
+            @ApiResponse(responseCode = "403", description = "`FORBIDDEN`: `flights:write` is required.",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "404", description =
-                    "`BOOKING_NOT_FOUND` — its own code, so a 404 here never claims the flight is missing.",
+                    "`BOOKING_NOT_FOUND`: its own code, so a 404 here never claims the flight is missing.",
                     content = @Content(schema = @Schema(implementation = ErrorResponse.class))),
             @ApiResponse(responseCode = "409", description = """
                     `BOOKING_NOT_CANCELLABLE`: the booking is active and its flight has \

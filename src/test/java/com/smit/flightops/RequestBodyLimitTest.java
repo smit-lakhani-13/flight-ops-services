@@ -82,8 +82,7 @@ class RequestBodyLimitTest {
 
     private static void assertPayloadTooLarge(HttpResponse<String> response) {
         assertThat(response.statusCode()).isEqualTo(413);
-        assertThat(response.headers().firstValue("Content-Type")).hasValueSatisfying(
-                type -> assertThat(type).startsWith("application/json"));
+        assertThat(response.headers().firstValue("Content-Type")).hasValue("application/json");
         assertThat(response.headers().firstValue("X-Request-Id")).isPresent();
         assertThat(response.headers().firstValue("X-Content-Type-Options")).hasValue("nosniff");
         assertThat(response.headers().firstValue("Cache-Control")).hasValueSatisfying(

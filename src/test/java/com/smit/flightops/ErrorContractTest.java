@@ -224,7 +224,9 @@ class ErrorContractTest {
     /**
      * Spring Data computes the row offset as an {@code int}, which a page past
      * {@code Integer.MAX_VALUE / size} overflows. At the default size of 20,
-     * page 107374182 is the last one that fits.
+     * page 107374182 is the last one that fits and 107374183 the first that does
+     * not; at a size of 100, 21474836 and 21474837. Both sides of the edge are
+     * sent, so an off-by-one in the guard fails here.
      */
     @Test
     @DisplayName("a page whose offset overflows an int is 400 MALFORMED_REQUEST on both lists")
@@ -244,6 +246,18 @@ class ErrorContractTest {
 
         mockMvc.perform(get("/api/v1/flights").param("page", "107374182"))
                 .andExpect(status().isOk());
+        mockMvc.perform(get("/api/v1/flights").param("page", "107374183"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value(containsString("page * size")));
+        mockMvc.perform(get("/api/v1/bookings")
+                        .param("flightNumber", "UA123")
+                        .param("page", "107374183"))
+                .andExpect(status().isBadRequest());
+
+        mockMvc.perform(get("/api/v1/flights").param("page", "21474836").param("size", "100"))
+                .andExpect(status().isOk());
+        mockMvc.perform(get("/api/v1/flights").param("page", "21474837").param("size", "100"))
+                .andExpect(status().isBadRequest());
     }
 
     // ------------------------------------------------------------------
@@ -294,6 +308,27 @@ class ErrorContractTest {
                 .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
                 .andExpect(jsonPath("$.fieldErrors.idempotencyKey")
                         .value("must contain only letters, digits and . _ : -"));
+    }
+
+    /**
+     * Read as text, 917 is a valid flight number and the create succeeds.
+     * {@code MalformedRequestTest} covers every text field in a slice; this
+     * shows the rule is registered in the application itself.
+     */
+    @Test
+    @DisplayName("a flight number sent as a JSON number is 400 MALFORMED_REQUEST, and no flight is created")
+    void aFlightNumberSentAsANumberIsRefused() throws Exception {
+        mockMvc.perform(post("/api/v1/flights")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"flightNumber":917,"origin":"EWR","destination":"SFO",
+                                 "totalSeats":100,"departureTime":"2099-01-01T10:00:00Z"}
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("MALFORMED_REQUEST"));
+
+        mockMvc.perform(get("/api/v1/flights/917"))
+                .andExpect(status().isNotFound());
     }
 
     /**

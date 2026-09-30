@@ -522,7 +522,7 @@ jobs:
               fi
               ;;
             *)
-              echo "::error title=dependency-review probe failed::the dependency graph API answered $code, which does not mean the feature is disabled — re-run the job"
+              echo "::error title=dependency-review probe failed::the dependency graph API answered $code, which does not mean the feature is disabled; re-run the job"
               exit 1
               ;;
           esac
@@ -538,7 +538,7 @@ jobs:
             echo 'this job passes without checking anything, and every run says so here and'
             echo 'in a warning.'
           } >> "$GITHUB_STEP_SUMMARY"
-          echo "::warning title=dependency-review skipped::the dependency graph is disabled for this repository (API returned $code) — enable it at Settings → Code security"
+          echo "::warning title=dependency-review skipped::the dependency graph is disabled for this repository (API returned $code); enable it at Settings → Code security"
 
       - name: Review what this pull request adds
         if: steps.graph.outputs.available == 'true'
@@ -564,8 +564,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # scripts/sweeps.sh walks `git log --all`, and a shallow clone would
-          # hand it one commit.
+          # scripts/sweeps.sh walks `git log --all` and every tag's message,
+          # and a shallow clone would hand it one commit and no tags.
           fetch-depth: 0
 
       - name: Every cited file and symbol resolves
@@ -579,6 +579,11 @@ jobs:
       # request.
       - name: The README's ADR count matches the tree
         run: scripts/numbers.sh --check-readme
+
+      # Plants each kind of finding in scratch repositories, on this runner's
+      # GNU grep, and fails if the sweep passes one. It never sees the secret.
+      - name: The sweeps fail on what they look for
+        run: scripts/sweeps-selftest.sh
 
       - name: Attribution and privacy sweeps
         # Extra patterns come from a repository secret; see the script header.

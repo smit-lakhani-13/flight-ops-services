@@ -134,7 +134,7 @@ use_private_kubeconfig() {
 confirm() {
     local prompt=$1 expected=${2:-yes} answer
     if [ -n "${ASSUME_YES:-}" ]; then
-        warn "ASSUME_YES set — continuing without asking: $prompt"
+        warn "ASSUME_YES set, continuing without asking: $prompt"
         return 0
     fi
     printf '\n%s%s%s\n' "$C_BOLD" "$prompt" "$C_RESET"

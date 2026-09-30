@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useId, useRef, useState, type MouseEvent } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { BookingTable } from "@/components/BookingTable";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { RefreshIcon } from "@/components/icons";
@@ -85,6 +85,15 @@ function FlightDetail({ flightNumber }: { flightNumber: string }) {
     setConfirming(open);
   }
 
+  // Escape inside the question answers it as Keep it does, so the focus goes
+  // back to Cancel flight. While the DELETE is out, Keep it is disabled and
+  // Escape does nothing either.
+  function onQuestionKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key !== "Escape" || event.defaultPrevented || event.nativeEvent.isComposing || cancelling) return;
+    event.preventDefault();
+    ask(false);
+  }
+
   const loadFlight = useCallback(() => api.get<Flight>(`v1/flights/${encodeURIComponent(flightNumber)}`), [api, flightNumber]);
   const loadBookings = useCallback(
     () => api.get<Page<Booking>>("v1/bookings", { flightNumber, page: bookingPage, size: 10, sort: "createdAt,desc" }),
@@ -92,6 +101,23 @@ function FlightDetail({ flightNumber }: { flightNumber: string }) {
   );
   const { value: flight, pending: flightPending, reload: reloadFlight, set: setFlight } = useResource(loadFlight);
   const { value: bookings, pending: bookingsPending, reload: reloadBookings } = useResource(loadBookings);
+  const bookingsFailed = bookings !== null && !(bookings.ok && bookings.data);
+  const bookingsStale = bookingsPending && bookings !== null && !bookingsFailed;
+
+  // A page of bookings that fails to arrive replaces the table and the pager,
+  // so the Next or Previous that asked for it is gone; the focus goes to the
+  // card's Refresh, which reads the same page again.
+  const refresh = useRef<HTMLButtonElement>(null);
+  const paged = useRef(false);
+  useEffect(() => {
+    if (!paged.current || bookingsPending) return;
+    paged.current = false;
+    if (focusIsInOrLost(null)) refresh.current?.focus();
+  }, [bookingsPending]);
+  function turnBookingPage(page: number) {
+    paged.current = true;
+    setBookingPage(page);
+  }
 
   // The last flight the service returned. A read that fails after it keeps
   // it on screen under the error, so the page and the focus stay put.
@@ -229,7 +255,12 @@ function FlightDetail({ flightNumber }: { flightNumber: string }) {
           )}
         </div>
         {confirming && (
-          <div role="group" aria-labelledby={questionId} className="mt-3 flex flex-wrap items-center gap-2">
+          <div
+            role="group"
+            aria-labelledby={questionId}
+            onKeyDown={onQuestionKeyDown}
+            className="mt-3 flex flex-wrap items-center gap-2"
+          >
             <span id={questionId} className="text-sm font-medium">
               Cancel {f.flightNumber}? It cannot be undone.
             </span>
@@ -249,22 +280,26 @@ function FlightDetail({ flightNumber }: { flightNumber: string }) {
       <Card
         title="Bookings on this flight"
         actions={
-          <Button tone="ghost" icon={<RefreshIcon />} busy={bookingsPending} onClick={reloadBookings}>
+          <Button ref={refresh} tone="ghost" icon={<RefreshIcon />} busy={bookingsPending} onClick={reloadBookings}>
             Refresh
           </Button>
         }
       >
-        {bookings === null ? (
-          <Skeleton rows={2} label="Loading the bookings" />
-        ) : bookings.ok && bookings.data ? (
-          <>
-            <BookingTable bookings={bookings.data.content} />
-            {bookings.data.page.totalPages > 1 && <Pager page={bookings.data.page} onPage={setBookingPage} />}
-          </>
-        ) : (
-          // When the flight's own read failed too, its banner has said so.
-          <ErrorBanner error={bookings.error} announce={readError === null} />
-        )}
+        {/* While another page or a Refresh is out, the last answer stays on
+            screen, dimmed and marked busy, so it does not pass for the new one. */}
+        <div aria-busy={bookingsStale} className={bookingsStale ? "opacity-60" : undefined}>
+          {bookings === null ? (
+            <Skeleton rows={2} label="Loading the bookings" />
+          ) : bookings.ok && bookings.data ? (
+            <>
+              <BookingTable bookings={bookings.data.content} />
+              {bookings.data.page.totalPages > 1 && <Pager page={bookings.data.page} onPage={turnBookingPage} />}
+            </>
+          ) : (
+            // When the flight's own read failed too, its banner has said so.
+            <ErrorBanner error={bookings.error} announce={readError === null} />
+          )}
+        </div>
       </Card>
     </div>
   );

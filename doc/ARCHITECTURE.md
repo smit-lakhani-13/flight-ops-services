@@ -591,9 +591,9 @@ and restore the seats the booking had just debited.
 │                               console screenshots
 ├── adr/                        the decision records and their index
 ├── scripts/                    refcheck.py, linkcheck.py, numbers.sh
-│                               --check-readme and sweeps.sh run in CI;
-│                               numbers.sh recomputes the counts; demo.sh is
-│                               the tour over HTTP
+│                               --check-readme, sweeps.sh and its self-test
+│                               run in CI; numbers.sh recomputes the counts;
+│                               demo.sh is the tour over HTTP
 ├── deploy/
 │   ├── aws/                    up.sh, down.sh, cost-check.sh and render-aws.sh;
 │   │                           the helpers lib.sh and ecr-image-exists.sh;

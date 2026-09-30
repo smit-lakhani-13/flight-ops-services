@@ -14,7 +14,7 @@ HELP.md
 # mvnw, mvnw.cmd and .mvn/wrapper/maven-wrapper.properties ARE committed on
 # purpose: `./mvnw` pins the Maven version and its SHA-256, so a clone builds with
 # the same Maven this was built with. The wrapper is distributionType=only-script,
-# so there is no maven-wrapper.jar to ignore or to justify — the rules below
+# so there is no maven-wrapper.jar to ignore or to justify. The rules below
 # exclude build output only.
 *.jar
 *.war
@@ -56,7 +56,7 @@ Desktop.ini
 *.rej
 
 # ------------------------------------------------------------------------------
-#  Secrets — the real ones never go in Git
+#  Secrets: the real ones never go in Git
 #
 #  A credential in Git history is a credential you have to rotate: `git rm`
 #  removes it from HEAD, not from history, and GitHub keeps unreachable objects

@@ -93,8 +93,10 @@ export function hint(error: ClassifiedError): string | null {
     case "forbidden":
       return "You are signed in, but this account lacks the authority for this call. The API and the actuator use different accounts.";
     case "unavailable":
+      // LOCK_TIMEOUT and DATABASE_UNAVAILABLE both send 503 and Retry-After,
+      // and the API's message above the hint says which it was.
       return error.retryAfter !== null
-        ? `The request was valid and the service was busy. Retry after ${error.retryAfter} s.`
+        ? `The service could not finish the request just now. Retry after ${error.retryAfter} s.`
         : "The service is unavailable. Retry shortly.";
     case "console":
       // The proxy stopped waiting, not the API: a change may still be applied

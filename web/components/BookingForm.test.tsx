@@ -152,6 +152,32 @@ describe("BookingForm", () => {
     expect(document.querySelector("[data-code=IDEMPOTENCY_KEY_REUSED]")).not.toBeNull();
   });
 
+  it("sends no different body on a key no Book has used, so it cannot make a booking", async () => {
+    fakeApi();
+    renderForm();
+    const posts = () => vi.mocked(fetch).mock.calls.filter(([, init]) => init?.method === "POST").length;
+
+    // On a fresh key a different body would be the key's first, and the API
+    // would book it and take the seats.
+    await press("Same key, different body");
+    expect(screen.getByRole("status").textContent).toBe(
+      "Same key, different body: not sent. Book on this key first, so there is a body to change.",
+    );
+    expect(posts()).toBe(0);
+    expect(screen.queryAllByTestId("booking-outcome")).toHaveLength(0);
+
+    // A replay's booking is not a Book's, so the key still has no body to change.
+    await press("Replay the same key");
+    await press("Same key, different body");
+    expect(posts()).toBe(1);
+
+    await press("Book");
+    await press("Same key, different body");
+    expect(screen.getByRole("status").textContent).toBe("Same key, different body: 409, IDEMPOTENCY_KEY_REUSED");
+    await press("Replay the same key");
+    expect(newest()).toBe("Replay on the same key201booking #1same booking as the first Book");
+  });
+
   it("reads the seats again only after a booking that got an answer", async () => {
     let seats = 100;
     let timeOut = true;
@@ -276,5 +302,26 @@ describe("BookingForm", () => {
     statuses = Array.from({ length: 10 }, () => 201);
     await press("Race 10 callers on this key");
     expect(colour()).toContain("text-emerald-700");
+  });
+
+  it("says so when a replay comes back with a different booking", async () => {
+    // An API whose idempotency is broken: every POST makes a new booking.
+    let nextBooking = 1;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        if (init?.method !== "POST") return Response.json({ flightNumber: "UA1", availableSeats: 100 });
+        const bookingId = nextBooking++;
+        return Response.json(
+          { bookingId, flightNumber: "UA1", passengerName: "Test Passenger", seats: 1, createdAt: "2026-09-26T10:00:00Z", cancelledAt: null },
+          { status: 201, headers: { Location: `/api/v1/bookings/${bookingId}` } },
+        );
+      }),
+    );
+    renderForm();
+
+    await press("Book");
+    await press("Replay the same key");
+    expect(newest()).toBe("Replay on the same key201booking #2a different booking");
   });
 });

@@ -76,9 +76,9 @@ tests ran" fails CI if either class skips a test or has no report. An
 emulator is not AWS, and neither class talks to AWS.
 
 So in CI the Surefire summary reads
-`Tests run: 635, Failures: 0, Errors: 0, Skipped: 0` for the service and
+`Tests run: 654, Failures: 0, Errors: 0, Skipped: 0` for the service and
 `Tests run: 29, Failures: 0, Errors: 0, Skipped: 0` for the Lambda. On a laptop
-without Docker the service line ends `Skipped: 16`, and 619 of its tests run.
+without Docker the service line ends `Skipped: 16`, and 638 of its tests run.
 The Lambda line ends `Skipped: 3`, and 26 run.
 
 A new migration is not accepted until CI has gone green on it. The local H2
@@ -154,25 +154,25 @@ scripts/numbers.sh
 
 | Layer | Tests | Tooling |
 |---|---|---|
-| Domain model | 59 | plain JUnit, with no Spring and no database. `entity/FlightTest` covers the seat arithmetic and every status move the graph allows or refuses, with a check that the two lists name every move once, and `dto/BookingFingerprintTest` pins the idempotency fingerprint against fixed values |
+| Domain model | 62 | plain JUnit, with no Spring and no database. `entity/FlightTest` covers the seat arithmetic and every status move the graph allows or refuses, with a check that the two lists name every move once. `dto/BookingFingerprintTest` pins the idempotency fingerprint against fixed values, and `dto/FlightNumberPatternTest` checks that the flight-number pattern stays linear on long padding |
 | Service | 53 | `@ExtendWith(MockitoExtension.class)`, `@Mock`, `@InjectMocks`, `@Captor`, split across `BookingServiceTest` (orchestration, including a failed insert with no winning booking to recover), `BookingWriterTest` (the write path), `BookingBookabilityTest` (the flight's status decides bookability before any seat is counted), `FlightServiceTest` and `SqsEventPublisherTest` (what goes on the wire) |
-| Web slice | 245 | `@WebMvcTest` + `@MockitoBean` in the two controller tests and nine narrower classes under `controller/`: status codes, `Location` headers, error JSON, `Allow` on a 405 and `Accept` on a 415, the 503 for a database that cannot be reached, a YAML body or a missing `Content-Type` refused on each `POST` and `PATCH`, and the rules for flight numbers, airport codes, passenger names, seat counts, status values and departure times. The narrower classes pin the seat and length limits, the one message a field gets when it breaks several rules, malformed bodies and path ids, the departure time formats accepted, the paging defaults, a lost database on every booking endpoint and a booking for an unknown flight, the fixed error messages and the error timestamp. The other 38 have no Spring context. 17 are `controller/QueryParamsTest`, the filter check on its own, and 5 are `controller/SortPolicyTest`, which pins the `Sort` both list endpoints build, null order included. 12 are `exception/ApiErrorControllerTest`, which calls `ApiErrorController` directly or drives it through a standalone MockMvc, because a full MockMvc never forwards to `/error`. 4 are `security/JsonAccessDeniedHandlerTest`, which builds its requests directly so that a path can carry a raw CR and LF |
+| Web slice | 254 | `@WebMvcTest` + `@MockitoBean` in the two controller tests and nine narrower classes under `controller/`: status codes, `Location` headers, error JSON, `Allow` on a 405 and `Accept` on a 415, the 503 for a database that cannot be reached, a YAML body or a missing `Content-Type` refused on each `POST` and `PATCH`, and the rules for flight numbers, airport codes, passenger names, seat counts, status values and departure times. The narrower classes pin the seat and length limits, the one message a field gets when it breaks several rules, malformed bodies and path ids, a number or a boolean sent for a text field, the departure time formats accepted, the paging defaults, a lost database on every booking endpoint and a booking for an unknown flight, the fixed error messages and the error timestamp. The other 38 have no Spring context. 17 are `controller/QueryParamsTest`, the filter check on its own, and 5 are `controller/SortPolicyTest`, which pins the `Sort` both list endpoints build, null order included. 12 are `exception/ApiErrorControllerTest`, which calls `ApiErrorController` directly or drives it through a standalone MockMvc, because a full MockMvc never forwards to `/error`. 4 are `security/JsonAccessDeniedHandlerTest`, which builds its requests directly so that a path can carry a raw CR and LF |
 | Repository slice | 13 | `@DataJpaTest` + `TestEntityManager`: derived queries, JPQL, `JOIN FETCH`, constraints |
-| Full context (H2) | 150 | `@SpringBootTest`. The idempotency guarantee end to end, with four 10-caller races on one key: same request, different payloads, the last seat, and one key across two flights. The authorisation rules against the real filter chain, with the Basic and Bearer challenges and who sees health components. The outbox with its trace capture, the attempt ceiling and the retention pruner against an embedded database. The OpenAPI document's status codes per operation and its comparison with a real response. The lock timeout, the error contract with the 406 and `ignorecase` on a sort property that is not text, the page overflow and multipart parsing turned off, and a lazy-loading regression with no mocking anywhere in the chain. The request body limit and an exception that escapes the filter chain, each through a running Tomcat, and which health probe a database failure reaches. The flight status machine and a flight's bookings around cancellation over HTTP, a stale flight write that loses to a booking, both outbox jobs on their schedule, and the container's own 405 for `TRACE` and the firewall's 400 in the JSON envelope through a running Tomcat, whose keep-alive timeout is read from its connector |
+| Full context (H2) | 157 | `@SpringBootTest`. The idempotency guarantee end to end, with four 10-caller races on one key: same request, different payloads, the last seat, and one key across two flights. The authorisation rules against the real filter chain, with the Basic and Bearer challenges and who sees health components. The outbox with its trace capture, the attempt ceiling, an error cut to fit its column and the retention pruner against an embedded database. The OpenAPI document's status codes per operation, the one way it writes an error code, and its comparison with a real response. The lock timeout, the error contract with the 406 and `ignorecase` on a sort property that is not text, the page overflow and multipart parsing turned off, and a lazy-loading regression with no mocking anywhere in the chain. The request body limit and an exception that escapes the filter chain, each through a running Tomcat, and which health probe a database failure reaches. The flight status machine and a flight's bookings around cancellation over HTTP, a stale flight write that loses to a booking, both outbox jobs on their schedule, and the container's own 405 for `TRACE` and the firewall's 400 in the JSON envelope through a running Tomcat, whose keep-alive timeout is read from its connector and whose shutdown drain is checked against the manifests' grace period |
 | Event contract | 11 | the producer's and the consumer's `BookingEventContractTest`, both against `contracts/booking-created-v1.json`, as [Writing tests](#writing-tests) describes |
 | Lambda handler | 20 | separate module: batch parsing, partial batch failure and the conditional write. `seats` is refused with no coercion when it is missing, below 1, a string or fractional. Body values are logged on one line and capped at 1,000 characters, and the producer's trace context survives the queue. `TimeoutBudgetTest` reads `lambda/template.yaml` and checks that a batch whose DynamoDB calls all time out still ends inside the function's `Timeout` |
 | Configuration and startup checks | 63 | Boot's `Binder` over plain maps: an unresolved `${...}` placeholder is rejected at startup, every outbox bound is enforced and every default is wired. `EventPropertiesTest` also starts the whole application to see a bad `app.events.publisher` named, and `PasswordVerifiabilityTest` runs `SecurityConfig` in a `WebApplicationContextRunner` to see an unverifiable password stop startup, and under `prod` a `{noop}` or `{ldap}` one. `ValidationClockTest` checks that `@Future` reads the `Clock` bean, and `AwsConfigTest` that the `sts` module, which the credential chain needs for IRSA, is on the classpath and that the SQS client bounds each attempt and the whole call. Four more each start one piece of Boot in a context runner: `DataSourceSettingsTest` reads the pool each profile builds, `config/EmbeddedDatabaseGuardTest` sees in-memory H2 refused when `DB_URL` names a real database, `config/OutboxEnabledConditionTest` checks that the drain and its properties read `app.outbox.enabled` the same way, and `config/SecurityConfigJwtTest` that a JWT key with no audiences, or a JWK set URI with no issuer, stops startup, and that an issuer URI with audiences starts |
 | Architecture | 9 | ArchUnit over `target/classes`, one test per rule in [Architecture rules](#architecture-rules). Each rule was seen to fail on a planted violation before it was committed |
 | Observability | 22 | the request-id filter against a hostile inbound header, and the booking meters scraped through a real `PrometheusMeterRegistry`, since a `SimpleMeterRegistry` would accept any name. The outbox gauges read a cache that only the refresher fills, which starts and stops with the Spring context, and the drain's log lines carry each booking's trace and leak none to the next |
-| Run | 645 | 0 failures without Docker (59 + 53 + 245 + 13 + 150 + 11 + 20 + 63 + 9 + 22) |
+| Run | 664 | 0 failures without Docker (62 + 53 + 254 + 13 + 157 + 11 + 20 + 63 + 9 + 22) |
 | PostgreSQL integration | 15 | `@Testcontainers(disabledWithoutDocker = true)`, skipped without a container runtime; [Skipped tests without Docker are correct](#skipped-tests-without-docker-are-correct) names the classes and what they cover |
 | Emulators | 4 | `@Testcontainers(disabledWithoutDocker = true)` as well: `SqsEventPublisherElasticMqTest` sends through `SqsEventPublisher` to ElasticMQ and reads the message back, and the Lambda's `BookingEventHandlerDynamoDbLocalTest` runs the handler against DynamoDB Local. Emulators, not AWS |
 
-So 664 tests exist across the two modules. 645 run without Docker and 19
-skip, and CI runs all 664.
+So 683 tests exist across the two modules. 664 run without Docker and 19
+skip, and CI runs all 683.
 
-The console has two suites of its own, outside those counts: 139 Vitest unit
-tests and 30 Playwright end-to-end tests, three of them at twelve viewports.
+The console has two suites of its own, outside those counts: 148 Vitest unit
+tests and 37 Playwright end-to-end tests, three of them at twelve viewports.
 `scripts/numbers.sh` lists both counts after an `npm ci` in `web/`, and
 [web/README.md](web/README.md#tests) says what each suite covers.
 
@@ -221,7 +221,8 @@ for a commit on `main` that got no push run.
 | `docs-check` | `scripts/refcheck.py` | a backticked `path` or `path#symbol` in any Markdown file does not resolve |
 | `docs-check` | `scripts/linkcheck.py` | a relative link or heading anchor is broken |
 | `docs-check` | `scripts/numbers.sh --check-readme` | a README line that names `adr/` gives a count of records other than the number of ADR files in `adr/` (or no such line exists, or two disagree), or the index in `adr/README.md` does not link each ADR file exactly once (a missing, extra or repeated row) |
-| `docs-check` | `scripts/sweeps.sh` | a co-author trailer line or an appended "Generated with" signature appears in a tracked file or in a commit message on any ref, an absolute home-directory path appears in a tracked file, a pattern from the `SWEEP_PATTERNS` secret matches a tracked file path, a file's contents or a commit message, or `SWEEP_PATTERNS` is empty on a push or a manual run |
+| `docs-check` | `scripts/sweeps-selftest.sh` | `scripts/sweeps.sh`, run on scratch repositories with each kind of finding planted, passes one of them, or passes a pattern grep cannot compile or one that matches an empty line |
+| `docs-check` | `scripts/sweeps.sh` | a co-author trailer line or an appended "Generated with" signature appears in a tracked file, or in a commit message on any ref or an annotated tag's message, an absolute home-directory path appears in a tracked file (a binary one included), a pattern from the `SWEEP_PATTERNS` secret matches a tracked file path, a file's contents (a binary file's included), a commit message or an annotated tag's message, or `SWEEP_PATTERNS` is empty on a push or a manual run, or is a pattern grep cannot compile or one that matches an empty line |
 | `image` | `docker build` | the `Dockerfile` does not build |
 | `image` | "The image will not start without a database" | the image, run with no environment, does not stop with `'url' must start with` |
 | `image` | Trivy, on the image | the image the job built has a CRITICAL vulnerability with a fix available. It is the only image scan: `deploy` pushes this image and runs no scan of its own |
@@ -249,7 +250,8 @@ Run the doc gates before you push. They are fast, and they catch real mistakes:
 
 ```bash
 python3 scripts/refcheck.py && python3 scripts/linkcheck.py \
-  && scripts/numbers.sh --check-readme && scripts/sweeps.sh
+  && scripts/numbers.sh --check-readme && scripts/sweeps-selftest.sh \
+  && scripts/sweeps.sh
 ```
 
 If the console changed, run its checks from `web/` as well:
@@ -262,14 +264,21 @@ The doc gates have already caught errors in this repository's own
 documentation: a method name that did not exist, and a README count that was
 wrong. That is why they fail CI and are more than warnings.
 
-`scripts/sweeps.sh --tree-only` skips the history walk. The home-directory
-check ignores the path part of a URL. The script also reads case-insensitive
-extended regular expressions from the `SWEEP_PATTERNS` environment variable,
-and CI passes a repository secret of that name. When the variable is empty, a
-push or a manual run fails, so a deleted secret cannot turn the check
-into a silent pass. A local run or a pull request with the variable empty
-prints `skip` for that part and passes, because forks and Dependabot pull
-requests get no secrets.
+`scripts/sweeps.sh --tree-only` skips the history walk, which reads every commit
+message on every ref and each annotated tag's message. On a line of text, the
+home-directory and supplied-pattern checks ignore the path part of a URL. The
+script also reads case-insensitive extended regular expressions from the
+`SWEEP_PATTERNS` environment variable, and CI passes a repository secret of that
+name. When the variable is empty, a push or a manual run fails, so a deleted
+secret cannot turn the check into a silent pass. A local run or a pull request
+with the variable empty prints `skip` for that part and passes, because forks
+and Dependabot pull requests get no secrets. A pattern grep cannot compile, or
+one that matches an empty line, fails every run without printing the pattern; a
+secret cannot be read back, so this is the only sign of a typo in an edit.
+Binary files, the screenshots in `doc/assets/`, are read byte by byte too, and a
+finding in one names only the file. `scripts/sweeps-selftest.sh` plants each
+kind of finding in scratch repositories and checks that the script fails on it;
+CI runs it on GNU grep before the real sweep.
 
 Run the shell gate locally too, and mind the version. 0.10 and 0.11 disagree
 about `cmd && log … || true`, so CI pins v0.11.0 instead of using whatever the
@@ -404,15 +413,17 @@ manages its versions.
   the default is 5 per entry. The five entries at the default can open
   twenty-five pull requests the first time Dependabot runs.
 
-- The `ignore` rules cover eight artifacts and no more, because an `ignore`
+- The `ignore` rules cover nine artifacts and no more, because an `ignore`
   also suppresses Dependabot's security updates for that dependency. That is
   accepted only where a bump would contradict a pin the project documents:
   `eclipse-temurin` and `maven` in the two base images (majors),
   `org.springframework.boot:spring-boot-starter-parent` (majors),
   `org.junit:junit-bom` and `org.testcontainers:*` under `/lambda`, and in
-  `web/` the majors of `next`, `eslint-config-next` and `eslint`. The React,
-  JSX accessibility and import plugins that `eslint-config-next` loads declare
-  peer ranges that stop at ESLint 9.
+  `web/` the majors of `next`, `eslint-config-next`, `eslint` and
+  `@types/node`. The React, JSX accessibility and import plugins that
+  `eslint-config-next` loads declare peer ranges that stop at ESLint 9. The
+  major of `@types/node` is the Node release it describes, so it moves by hand
+  with `web/.nvmrc`.
 
 - The console's entry groups its updates into two pull requests, one for the
   runtime dependencies and one for the tooling, and allows two open at once.

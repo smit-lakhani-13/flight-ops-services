@@ -382,6 +382,40 @@ class OutboxTest {
                 .isNotNull();
     }
 
+    /**
+     * The drain stores {@code e.toString()}, and a real transport error can run past
+     * the 500-character column: an SDK credential-chain failure lists every provider
+     * it tried. Stored whole, it would fail the UPDATE at commit and roll back the
+     * batch, so the row sent beside it would be sent again on every tick and the
+     * failing row's attempts would never rise towards {@code max-attempts}.
+     */
+    @Test
+    @DisplayName("a failure longer than its column is cut to 500 characters, and the batch still commits")
+    void aLongFailureIsTruncatedAndTheBatchCommits() {
+        flightService.create(new CreateFlightRequest("OB014", "EWR", "LHR", 20,
+                Instant.now().plus(Duration.ofHours(6))));
+        BookingDto failing = bookingService.book(
+                new BookingRequest("OB014", "Jane Doe", 1, "outbox-long-error"));
+        BookingDto healthy = bookingService.book(
+                new BookingRequest("OB014", "Jane Doe", 1, "outbox-long-error-healthy"));
+
+        String failingPayload = eventsFor(String.valueOf(failing.bookingId())).getFirst().getPayload();
+        doThrow(new IllegalStateException("x".repeat(2_000)))
+                .when(eventPublisher).publish(anyString(), eq(failingPayload), anyMap());
+
+        outboxPublisher.drainOutbox();
+
+        OutboxEvent failed = eventsFor(String.valueOf(failing.bookingId())).getFirst();
+        assertThat(failed.getAttempts()).as("the attempt was committed").isEqualTo(1);
+        assertThat(failed.getLastError())
+                .hasSize(500)
+                .startsWith("java.lang.IllegalStateException: xxx")
+                .endsWith("x...");
+        assertThat(eventsFor(String.valueOf(healthy.bookingId())).getFirst().getPublishedAt())
+                .as("sent in the same batch, and the commit kept it")
+                .isNotNull();
+    }
+
     // -----------------------------------------------------------------
     // The guard.
     // -----------------------------------------------------------------
