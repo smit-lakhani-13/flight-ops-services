@@ -564,8 +564,8 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          # scripts/sweeps.sh walks `git log --all`, and a shallow clone would
-          # hand it one commit.
+          # scripts/sweeps.sh walks `git log --all` and every tag's message,
+          # and a shallow clone would hand it one commit and no tags.
           fetch-depth: 0
 
       - name: Every cited file and symbol resolves
@@ -579,6 +579,11 @@ jobs:
       # request.
       - name: The README's ADR count matches the tree
         run: scripts/numbers.sh --check-readme
+
+      # Plants each kind of finding in scratch repositories, on this runner's
+      # GNU grep, and fails if the sweep passes one. It never sees the secret.
+      - name: The sweeps fail on what they look for
+        run: scripts/sweeps-selftest.sh
 
       - name: Attribution and privacy sweeps
         # Extra patterns come from a repository secret; see the script header.

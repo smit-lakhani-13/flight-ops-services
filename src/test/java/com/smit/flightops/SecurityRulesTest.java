@@ -16,7 +16,6 @@ import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
-import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -30,7 +29,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -159,21 +157,20 @@ class SecurityRulesTest {
 
     /**
      * jsonPath reads the body whatever the header says, so the header is asserted on its
-     * own. The charset is read from the header because the mock response reports UTF-8
-     * for any JSON type, set or not.
+     * own, as the exact string: every other error envelope is sent as
+     * {@code application/json} with no charset parameter, and these two are written outside
+     * Spring MVC.
      */
     @Test
-    @DisplayName("the 401 and the 403 are sent as UTF-8 JSON")
-    void challengesAndRefusalsAreUtf8Json() throws Exception {
-        MediaType utf8Json = new MediaType(MediaType.APPLICATION_JSON, StandardCharsets.UTF_8);
-
+    @DisplayName("the 401 and the 403 are sent as application/json, like every other error envelope")
+    void challengesAndRefusalsAreJson() throws Exception {
         mockMvc.perform(get("/api/v1/flights/UA123"))
                 .andExpect(status().isUnauthorized())
-                .andExpect(content().contentType(utf8Json));
+                .andExpect(header().string("Content-Type", MediaType.APPLICATION_JSON_VALUE));
 
         mockMvc.perform(get("/api/v1/flights/UA123").with(httpBasic(OPS_USER, OPS_PASSWORD)))
                 .andExpect(status().isForbidden())
-                .andExpect(content().contentType(utf8Json));
+                .andExpect(header().string("Content-Type", MediaType.APPLICATION_JSON_VALUE));
     }
 
     /**

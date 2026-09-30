@@ -170,6 +170,25 @@ says not yet.
   against the rule over every string up to seven characters, and times it on
   100,000 spaces. The published OpenAPI schema shows the new text.
 
+- **A typo in the sweep patterns fails instead of passing.** `scripts/sweeps.sh`
+  guarded against a missing `SWEEP_PATTERNS` secret but not a corrupt one. grep
+  reports a pattern it cannot compile as an error and matches nothing, and each
+  supplied-pattern check read no match as a pass, so one unbalanced parenthesis
+  in an edit turned all three into a silent pass. A pattern that starts with `-`
+  was read as an option, with the same result, and so was a tracked file whose
+  name starts with `-`. The script now checks the pattern once, fails every run
+  if grep cannot compile it, in the caller's locale or in C, or if it matches an
+  empty line, and never prints it. Each grep takes the pattern after `-e` and
+  the file names after `--`. The sweeps also read what they skipped: the
+  screenshots in `doc/assets/`, read byte by byte with only a matching file's
+  name printed, and each annotated tag's message, which GitHub shows with the
+  release. On GNU grep, which CI runs, a line with a byte that is not UTF-8 is
+  no longer dropped: grep reported a match on such a line only as "binary file
+  matches" on standard error, and every grep now reads its input as text.
+  `scripts/sweeps-selftest.sh` plants each kind of finding in scratch
+  repositories and fails if the script passes one; the `docs-check` job runs it
+  before the real sweep.
+
 - **Maven version in the README.** The `build` row said the enforcer requires
   Maven 3.9; both poms accept 3.9 or later (`requireMavenVersion` is
   `[3.9.0,)`).
@@ -184,6 +203,19 @@ says not yet.
   refused an array or an object
   (`MalformedRequestTest#aNumberOrABooleanForATextFieldIsMalformed`,
   `ErrorContractTest#aFlightNumberSentAsANumberIsRefused`).
+
+- **Every error envelope has one Content-Type.** The 401, the 403 and the
+  413, which `security/ErrorResponseWriter` writes before Spring MVC runs, were
+  sent as `application/json;charset=UTF-8`, while `GlobalExceptionHandler` and
+  `ApiErrorController` send `application/json`, the value `doc/api.md` gives
+  for all three. The writer no longer sets a character encoding, so all three
+  send `application/json`. JSON on the wire is UTF-8 and its media type has no
+  charset parameter (RFC 8259), and the body is the same UTF-8 bytes as before.
+  Responses these three do not write are unchanged: Tomcat's HTML 400 and 501
+  pages, the actuator's empty 404, and the health 503, which the actuator
+  sends with the media type it negotiates. `SecurityRulesTest`,
+  `JsonAccessDeniedHandlerTest` and the real-server tests for the 413 and for
+  `/error` now compare the whole header.
 
 - **Moving to Cognito is not configuration alone.** The README,
   `doc/ARCHITECTURE.md` and SECURITY.md said the bearer-token swap is two
@@ -202,6 +234,15 @@ says not yet.
   and says to Book first
   (`web/components/BookingForm.test.tsx`, "sends no different body on a key no
   Book has used").
+
+- **Escape did not close the console's cancel question.** On a flight's page,
+  Cancel flight opens an inline question, Keep it or Yes, cancel it, and moves
+  the focus to Keep it. Escape did nothing there, while it closes the Requests
+  drawer. It now answers the question as Keep it does: nothing is sent, and the
+  focus goes back to Cancel flight. While the cancel is out, Escape does
+  nothing, as Keep it is disabled then (`web/e2e/flights.spec.ts`, "Escape
+  inside the cancel question keeps the flight and hands the focus back to
+  Cancel flight").
 
 - **Smaller claims that had drifted.** ADR 0014 now says both SBOMs are
   uploaded by CI and attached to every release since v1.2.0, and ADR 0009

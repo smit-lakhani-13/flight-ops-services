@@ -172,7 +172,7 @@ So 683 tests exist across the two modules. 664 run without Docker and 19
 skip, and CI runs all 683.
 
 The console has two suites of its own, outside those counts: 147 Vitest unit
-tests and 36 Playwright end-to-end tests, three of them at twelve viewports.
+tests and 37 Playwright end-to-end tests, three of them at twelve viewports.
 `scripts/numbers.sh` lists both counts after an `npm ci` in `web/`, and
 [web/README.md](web/README.md#tests) says what each suite covers.
 
@@ -221,7 +221,8 @@ for a commit on `main` that got no push run.
 | `docs-check` | `scripts/refcheck.py` | a backticked `path` or `path#symbol` in any Markdown file does not resolve |
 | `docs-check` | `scripts/linkcheck.py` | a relative link or heading anchor is broken |
 | `docs-check` | `scripts/numbers.sh --check-readme` | a README line that names `adr/` gives a count of records other than the number of ADR files in `adr/` (or no such line exists, or two disagree), or the index in `adr/README.md` does not link each ADR file exactly once (a missing, extra or repeated row) |
-| `docs-check` | `scripts/sweeps.sh` | a co-author trailer line or an appended "Generated with" signature appears in a tracked file or in a commit message on any ref, an absolute home-directory path appears in a tracked file, a pattern from the `SWEEP_PATTERNS` secret matches a tracked file path, a file's contents or a commit message, or `SWEEP_PATTERNS` is empty on a push or a manual run |
+| `docs-check` | `scripts/sweeps-selftest.sh` | `scripts/sweeps.sh`, run on scratch repositories with each kind of finding planted, passes one of them, or passes a pattern grep cannot compile or one that matches an empty line |
+| `docs-check` | `scripts/sweeps.sh` | a co-author trailer line or an appended "Generated with" signature appears in a tracked file, or in a commit message on any ref or an annotated tag's message, an absolute home-directory path appears in a tracked file (a binary one included), a pattern from the `SWEEP_PATTERNS` secret matches a tracked file path, a file's contents (a binary file's included), a commit message or an annotated tag's message, or `SWEEP_PATTERNS` is empty on a push or a manual run, or is a pattern grep cannot compile or one that matches an empty line |
 | `image` | `docker build` | the `Dockerfile` does not build |
 | `image` | "The image will not start without a database" | the image, run with no environment, does not stop with `'url' must start with` |
 | `image` | Trivy, on the image | the image the job built has a CRITICAL vulnerability with a fix available. It is the only image scan: `deploy` pushes this image and runs no scan of its own |
@@ -249,7 +250,8 @@ Run the doc gates before you push. They are fast, and they catch real mistakes:
 
 ```bash
 python3 scripts/refcheck.py && python3 scripts/linkcheck.py \
-  && scripts/numbers.sh --check-readme && scripts/sweeps.sh
+  && scripts/numbers.sh --check-readme && scripts/sweeps-selftest.sh \
+  && scripts/sweeps.sh
 ```
 
 If the console changed, run its checks from `web/` as well:
@@ -262,14 +264,21 @@ The doc gates have already caught errors in this repository's own
 documentation: a method name that did not exist, and a README count that was
 wrong. That is why they fail CI and are more than warnings.
 
-`scripts/sweeps.sh --tree-only` skips the history walk. The home-directory
-check ignores the path part of a URL. The script also reads case-insensitive
-extended regular expressions from the `SWEEP_PATTERNS` environment variable,
-and CI passes a repository secret of that name. When the variable is empty, a
-push or a manual run fails, so a deleted secret cannot turn the check
-into a silent pass. A local run or a pull request with the variable empty
-prints `skip` for that part and passes, because forks and Dependabot pull
-requests get no secrets.
+`scripts/sweeps.sh --tree-only` skips the history walk, which reads every commit
+message on every ref and each annotated tag's message. On a line of text, the
+home-directory and supplied-pattern checks ignore the path part of a URL. The
+script also reads case-insensitive extended regular expressions from the
+`SWEEP_PATTERNS` environment variable, and CI passes a repository secret of that
+name. When the variable is empty, a push or a manual run fails, so a deleted
+secret cannot turn the check into a silent pass. A local run or a pull request
+with the variable empty prints `skip` for that part and passes, because forks
+and Dependabot pull requests get no secrets. A pattern grep cannot compile, or
+one that matches an empty line, fails every run without printing the pattern; a
+secret cannot be read back, so this is the only sign of a typo in an edit.
+Binary files, the screenshots in `doc/assets/`, are read byte by byte too, and a
+finding in one names only the file. `scripts/sweeps-selftest.sh` plants each
+kind of finding in scratch repositories and checks that the script fails on it;
+CI runs it on GNU grep before the real sweep.
 
 Run the shell gate locally too, and mind the version. 0.10 and 0.11 disagree
 about `cmd && log … || true`, so CI pins v0.11.0 instead of using whatever the

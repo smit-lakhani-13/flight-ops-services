@@ -65,8 +65,7 @@ class ContainerErrorDispatchTest {
         HttpResponse<String> response = send("TRACE", "/api/v1/flights");
 
         assertThat(response.statusCode()).isEqualTo(405);
-        assertThat(response.headers().firstValue("Content-Type")).hasValueSatisfying(
-                type -> assertThat(type).startsWith("application/json"));
+        assertThat(response.headers().firstValue("Content-Type")).hasValue("application/json");
         assertThat(JsonPath.<String>read(response.body(), "$.code")).isEqualTo("METHOD_NOT_ALLOWED");
         assertThat(JsonPath.<String>read(response.body(), "$.message")).isEqualTo(CLIENT_ERROR);
         assertThat(response.headers().firstValue("Allow")).hasValueSatisfying(
@@ -83,8 +82,7 @@ class ContainerErrorDispatchTest {
         HttpResponse<String> response = send("GET", "/api/v1/flights;x", "X-Request-Id", "refused-path-1");
 
         assertThat(response.statusCode()).isEqualTo(400);
-        assertThat(response.headers().firstValue("Content-Type")).hasValueSatisfying(
-                type -> assertThat(type).startsWith("application/json"));
+        assertThat(response.headers().firstValue("Content-Type")).hasValue("application/json");
         assertThat(JsonPath.<String>read(response.body(), "$.code")).isEqualTo("BAD_REQUEST");
         assertThat(JsonPath.<String>read(response.body(), "$.message")).isEqualTo(CLIENT_ERROR);
         assertThat(response.headers().firstValue("X-Request-Id")).hasValue("refused-path-1");

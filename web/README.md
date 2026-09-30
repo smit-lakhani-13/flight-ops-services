@@ -191,7 +191,9 @@ sideways, so the edge of its box never cuts a seat count.
 The request log opens as a drawer over the foot of the page and takes the
 keyboard's focus, since it comes last in the page. Escape inside it closes it
 and hands the focus back to the Requests button, and the page gains room to
-scroll its end clear of the drawer. A button that is busy keeps the focus and
+scroll its end clear of the drawer. On a flight's page, Escape inside the
+"Cancel flight?" question answers it as Keep it does: the flight is kept and
+the focus goes back to Cancel flight. A button that is busy keeps the focus and
 ignores presses, rather than going disabled and dropping it. A press that takes
 its own button away passes the focus on: an accepted status move to the group of
 moves that follow, the pager, on reaching its first or last page, to its other

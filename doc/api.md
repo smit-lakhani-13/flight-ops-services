@@ -273,11 +273,11 @@ Three classes write them:
 | `security/ErrorResponseWriter.java` | the 401 and 403, for `JsonAuthenticationEntryPoint` and `JsonAccessDeniedHandler`, and the 413 that `RequestBodyLimitFilter` decides itself. Those are decided before the `DispatcherServlet` runs, so the handler above never sees them |
 | `exception/ApiErrorController.java` | `/error`, where the container forwards a failure raised outside Spring MVC, such as a path the firewall refuses or a `TRACE` |
 
-Each sets `Content-Type: application/json` itself, whatever the `Accept`
-header asked for. No controller contains a `try`/`catch`. All three take the
-timestamp from the one injected `Clock`. `RequestIdFilter` returns
-`X-Request-Id` on every response the application handles, 401, 403 and 413
-included.
+Each sets `Content-Type: application/json` itself, with no `charset`
+parameter (JSON is UTF-8), whatever the `Accept` header asked for. No
+controller contains a `try`/`catch`. All three take the timestamp from the
+one injected `Clock`. `RequestIdFilter` returns `X-Request-Id` on every
+response the application handles, 401, 403 and 413 included.
 
 ## Error codes
 
