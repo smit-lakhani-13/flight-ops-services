@@ -434,4 +434,13 @@ class SecurityRulesTest {
                 .andExpect(header().doesNotExist("Access-Control-Allow-Credentials"))
                 .andExpect(header().doesNotExist("Access-Control-Allow-Methods"));
     }
+
+    /** The ops pair, for {@code BearerTokenChallengeTest}, which signs in as ops too. */
+    static String opsUser() {
+        return OPS_USER;
+    }
+
+    static String opsPassword() {
+        return OPS_PASSWORD;
+    }
 }

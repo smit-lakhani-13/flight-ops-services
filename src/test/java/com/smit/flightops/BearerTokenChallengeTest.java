@@ -141,6 +141,22 @@ class BearerTokenChallengeTest {
     }
 
     /**
+     * Both mechanisms are live in this mode, and {@code insufficient_scope} would tell the
+     * caller to fetch a token with more scope. One that signed in by password has no token
+     * to swap, so its 403 carries no challenge even from a rule that asks for a scope: ops
+     * holds no {@code flights:read}.
+     */
+    @Test
+    @DisplayName("a 403 to a caller signed in by password carries no challenge, even from a scope rule")
+    void aPasswordCallersRefusalHasNoChallenge() throws Exception {
+        mockMvc.perform(get("/api/v1/flights/UA123")
+                        .with(httpBasic(SecurityRulesTest.opsUser(), SecurityRulesTest.opsPassword())))
+                .andExpect(status().isForbidden())
+                .andExpect(header().doesNotExist(HttpHeaders.WWW_AUTHENTICATE))
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+    }
+
+    /**
      * Spring Security's resource server serves RFC 9728 metadata here to any caller,
      * ahead of the rules, so this path answers 200 where {@code denyAll()} would answer
      * 401. Its default claims that tokens are bound to a client certificate; nothing here
