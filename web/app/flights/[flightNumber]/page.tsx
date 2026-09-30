@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useId, useRef, useState, type MouseEvent } from "react";
+import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { BookingTable } from "@/components/BookingTable";
 import { ErrorBanner } from "@/components/ErrorBanner";
 import { RefreshIcon } from "@/components/icons";
@@ -83,6 +83,15 @@ function FlightDetail({ flightNumber }: { flightNumber: string }) {
   function ask(open: boolean) {
     questionUsed.current = true;
     setConfirming(open);
+  }
+
+  // Escape inside the question answers it as Keep it does, so the focus goes
+  // back to Cancel flight. While the DELETE is out, Keep it is disabled and
+  // Escape does nothing either.
+  function onQuestionKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key !== "Escape" || event.defaultPrevented || event.nativeEvent.isComposing || cancelling) return;
+    event.preventDefault();
+    ask(false);
   }
 
   const loadFlight = useCallback(() => api.get<Flight>(`v1/flights/${encodeURIComponent(flightNumber)}`), [api, flightNumber]);
@@ -246,7 +255,12 @@ function FlightDetail({ flightNumber }: { flightNumber: string }) {
           )}
         </div>
         {confirming && (
-          <div role="group" aria-labelledby={questionId} className="mt-3 flex flex-wrap items-center gap-2">
+          <div
+            role="group"
+            aria-labelledby={questionId}
+            onKeyDown={onQuestionKeyDown}
+            className="mt-3 flex flex-wrap items-center gap-2"
+          >
             <span id={questionId} className="text-sm font-medium">
               Cancel {f.flightNumber}? It cannot be undone.
             </span>

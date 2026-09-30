@@ -16,7 +16,6 @@ import org.springframework.security.access.AccessDeniedException;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
-import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneOffset;
@@ -83,20 +82,19 @@ class JsonAccessDeniedHandlerTest {
 
     /**
      * A client that branches on the Content-Type reads the code only with the header.
-     * The charset is read from the header, because the mock response reports UTF-8
-     * for any JSON type whether or not the handler set it.
+     * The header is read as the exact string, because GlobalExceptionHandler and
+     * ApiErrorController send {@code application/json} with no charset parameter, and
+     * this writer must match them.
      */
     @Test
-    @DisplayName("the 403 is sent as UTF-8 JSON")
-    void theRefusalIsUtf8Json() throws Exception {
+    @DisplayName("the 403 is sent as application/json, with no charset parameter")
+    void theRefusalIsJson() throws Exception {
         MockHttpServletResponse response = new MockHttpServletResponse();
 
         handler.handle(new MockHttpServletRequest("DELETE", "/api/v1/flights/UA123"), response,
                 new AccessDeniedException("denied"));
 
-        assertThat(response.getContentType()).isNotNull();
-        assertThat(MediaType.parseMediaType(response.getContentType()))
-                .isEqualTo(new MediaType(MediaType.APPLICATION_JSON, StandardCharsets.UTF_8));
+        assertThat(response.getHeader("Content-Type")).isEqualTo(MediaType.APPLICATION_JSON_VALUE);
     }
 
     /**
