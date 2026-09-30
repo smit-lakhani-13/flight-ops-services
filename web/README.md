@@ -202,8 +202,12 @@ button, and a Next or Previous whose page fails to arrive, to the flight
 list's Try again or, on a flight's page, to its bookings' Refresh. Signing in,
 signing out and a Try again that brings back a flight's page, a booking's page
 or a page of the flight list all move the focus to the page's title, and a
-change of account is announced. `e2e/auth.spec.ts`, `e2e/flights.spec.ts` and
-`e2e/bookings.spec.ts` check each of these.
+change of account is announced. `e2e/auth.spec.ts`, `e2e/flights.spec.ts`,
+`e2e/bookings.spec.ts` and, for the request log, `e2e/ops.spec.ts` check in a
+browser where each of these leaves the focus, and the announcement. Only
+`components/ui.test.tsx` checks that a busy button ignores presses, in jsdom.
+The race's answers sit in a box that takes the focus, so a keyboard can scroll
+them sideways when no row holds a link.
 
 ![A flight's page at 390 px wide: the header wraps onto three rows and every button, nav link and field is at least 44 px tall](../doc/assets/console-phone.png)
 
@@ -213,8 +217,8 @@ change of account is announced. `e2e/auth.spec.ts`, `e2e/flights.spec.ts` and
 |---|---|
 | `npm run lint` | ESLint with Next.js's core web vitals and TypeScript rules, no warnings allowed |
 | `npx tsc --noEmit` | The type-checker, strict, with `tsconfig.json#noUncheckedIndexedAccess`, so the type of a read by index includes `undefined` |
-| `npm test` | Vitest: the proxy and the race against a stubbed `fetch`, a race call that times out included, the `/api` route's method exports, `OPTIONS` left out, and its `405` for a `PUT`, the browser's API client and the sign-in probe, a component that calls the API not rendered again when its call is logged, the error classifier and its hints, with a check that it knows every code `lib/proxy.ts` and `lib/race.ts` send, the request log, the resource hook, its pending state and a write that wins over an older read, the helpers that name a page from its address, and in jsdom the shared parts in `components/ui.tsx` (button tones and the busy state, field wiring, the seat bar, page titles, links and the Location mapping), the error banner, a meter card given the actuator's `NaN` for a gauge with no fresh count or a 404 for a name the service lacks, the booking form's replay comparison, a replay that comes back as a different booking, and the resent body, status line and its colour after a race, and seat counts, the transition control and the pager, including where each leaves the focus, and the request log drawer's focus on Escape and on Close, its copy buttons, its shape below 640 px and its change of shape when the screen crosses that width, with a focused copy button keeping the focus, and the one line that says what was copied until 1.5 s after the last copy; and a test that reads `FlightStatus.java` and fails if the console's copy of the transition table drifts from it |
-| `npm run e2e` | Playwright on Chromium against the built console and a running service: sign-in and sign-out, where each leaves the focus and what each announces, flights, bookings, Try again after an outage on a flight's and a booking's page, replays and the race, validation, the proxy's refusals, a preflight from another origin and the security headers, the ops pages with a number on each of the seven meters, and the layout of every page at twelve viewports |
+| `npm test` | Vitest: the proxy and the race against a stubbed `fetch`, a race call that times out included, the `/api` route's method exports, `OPTIONS` left out, and its `405` for a `PUT`, the browser's API client and the sign-in probe, a component that calls the API not rendered again when its call is logged, the error classifier and its hints, with a check that it knows every code `lib/proxy.ts` and `lib/race.ts` send, the request log, the resource hook, its pending state and a write that wins over an older read, the helpers that name a page from its address, and in jsdom the shared parts in `components/ui.tsx` (button tones and the busy state, field wiring, the seat bar, page titles, links and the Location mapping), the error banner, a meter card given the actuator's `NaN` for a gauge with no fresh count or a 404 for a name the service lacks, the booking form's replay comparison, a replay that comes back as a different booking, and the resent body, status line and its colour after a race, and seat counts, the race's answers, whose box is a named region with a tab stop, checked with ten refusals that hold no link, the transition control and the pager, including where each leaves the focus, and the request log drawer's focus on Escape and on Close, its copy buttons, its shape below 640 px and its change of shape when the screen crosses that width, with a focused copy button keeping the focus, and the one line that says what was copied until 1.5 s after the last copy; and a test that reads `FlightStatus.java` and fails if the console's copy of the transition table drifts from it |
+| `npm run e2e` | Playwright on Chromium against the built console and a running service: sign-in and sign-out, where each leaves the focus and what each announces, flights, the pager and where it leaves the focus, bookings, Try again after an outage on a flight's and a booking's page, replays and the race, validation, the proxy's refusals, a preflight from another origin and the security headers, the request log's echoed ids, its focus and the room it leaves at the page's end, the ops pages with a number on each of the seven meters, and the layout of every page at twelve viewports |
 
 Run `npm run build` first. `npm run e2e` then serves that build with
 `next start` on port 3100 (`CONSOLE_PORT` picks another) and expects the service
@@ -233,8 +237,9 @@ four phones (320, 375, 390 and 430 px wide) and five tablets (768, 820, 1024,
 (1440 and 1920 px). The 1366 px tablet is wider than 1280 px, where a mouse gets
 the denser layout, so it checks that a touch screen keeps the tall controls
 there. The layout spec walks every page through its links and fails if a page
-scrolls sideways, a table is not in its own scroll box, a tap near the edge of a
-table link's cell misses the link, or the header loses its navigation, Sign out
+scrolls sideways, a table is not in its own scroll box or scrolls sideways with
+no tab stop in or on its box, a tap near the edge of a table link's cell misses
+the link, or the header loses its navigation, Sign out
 or Requests, and, on the touch projects, if a control or a link outside a table
 is under 44 px tall or a field's text is under 16 px. A second test checks the
 signed-out overview and a missing page the same way. A third tabs through every

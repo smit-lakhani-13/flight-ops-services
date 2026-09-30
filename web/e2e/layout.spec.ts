@@ -27,6 +27,19 @@ async function checkLayout(page: Page, where: string, touch: boolean, signedIn =
       if (!parent || getComputedStyle(parent).overflowX !== "auto") {
         found.push(`table ${table.dataset.testid ?? ""} does not scroll inside its own box`);
       }
+      // A keyboard scrolls a box through what has the focus, so a table wider
+      // than its box needs a link or a control in it, or a tab stop on the box.
+      // Tab passes over a disabled control and a tabindex of -1.
+      const tabStop = (el: HTMLElement) => el.tabIndex >= 0 && !el.matches(":disabled") && el.getClientRects().length > 0;
+      const candidates = "a[href], button, input:not([type=hidden]), select, textarea, [tabindex]";
+      if (
+        parent &&
+        parent.scrollWidth > parent.clientWidth &&
+        !tabStop(parent) &&
+        ![...parent.querySelectorAll<HTMLElement>(candidates)].some(tabStop)
+      ) {
+        found.push(`table ${table.dataset.testid ?? ""} scrolls sideways with nothing a keyboard can focus`);
+      }
     }
     // A link in a table row keeps the row short, so its hit area is the whole
     // cell instead: a tap anywhere in the cell must land on the link.

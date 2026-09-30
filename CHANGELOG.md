@@ -288,6 +288,24 @@ says not yet.
   It now says `>=24.15 <25`, and a new step in the `web` job fails when the
   runner's Node is below that floor. `web/.nvmrc` still names the major.
 
+- **A keyboard can scroll the race's answers, and the console README names the
+  specs that check its focus hand-offs.** Ten refusals leave the race's answers
+  table with no link, and on a phone it is wider than its box (644 px in 254 at
+  320 px wide), so where a browser gives a scroller no tab stop of its own
+  (Safari) most of the X-Request-Id column, and the Echoed and ms columns, were
+  out of a keyboard's reach. The box is now a named region with a tab stop and
+  the focus outline. `web/components/RaceResult.test.tsx` checks it, and
+  `web/e2e/layout.spec.ts` fails a table that scrolls sideways when neither its
+  box nor anything in it is focusable by its markup: a link, an enabled control
+  or a `tabindex` of 0 or more. `web/README.md` said three e2e specs check every
+  focus hand-off it lists. That was wrong on three counts: none of them pressed
+  the pager to its last page and back, the request log's focus is checked in
+  `web/e2e/ops.spec.ts`, a fourth spec, and a busy button's ignored presses are
+  checked only in jsdom. A test in `web/e2e/flights.spec.ts` now checks the
+  pager in Chromium, `web/e2e/ops.spec.ts` checks the room the request log
+  leaves at the page's end, which the README states and nothing checked, and the
+  sentence names the four specs and what only jsdom checks.
+
 ## 1.3.0 — 2026-09-28
 
 A browser console for every operation, in `web/`, built and tested in CI and

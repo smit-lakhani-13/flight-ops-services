@@ -1,6 +1,6 @@
 import { summariseRace } from "@/lib/race-summary";
 import { isErrorBody, type RaceReport } from "@/lib/types";
-import { HttpStatus, LINK_CELL, MUTED, NONE, Stat, STATUS_EDGE, statusClass, TextLink } from "./ui";
+import { FOCUS, HttpStatus, LINK_CELL, MUTED, NONE, Stat, STATUS_EDGE, statusClass, TextLink } from "./ui";
 
 export function RaceResult({ report, before, after }: { report: RaceReport; before: number | null; after: number | null }) {
   const { statuses, bookingIds } = summariseRace(report.rows);
@@ -28,7 +28,11 @@ export function RaceResult({ report, before, after }: { report: RaceReport; befo
           note={debited !== null ? `${debited} debited` : undefined}
         />
       </dl>
-      <div className="relative overflow-x-auto">
+      {/* Ten refusals hold no link, and a browser that gives a scroller no tab
+          stop of its own (Safari) would then leave most of the X-Request-Id
+          column, and the Echoed and ms columns, past a phone's edge out of a
+          keyboard's reach. */}
+      <div className={`relative overflow-x-auto ${FOCUS}`} tabIndex={0} role="region" aria-label="Race answers">
         <table className="w-full text-left text-xs" aria-label="Race answers">
           <thead className={MUTED}>
             <tr>
