@@ -65,7 +65,8 @@
           service serialises with Jackson 3 on Boot's version. The Lambda reads the event
           with Jackson 2 (<jackson.version> in lambda/pom.xml), so the two sides do not
           share a serialiser, which is why contracts/booking-created-v1.json is tested
-          from both. Keep the two pins in step; 2.22.1 is the floor.
+          from both. Keep the two pins in step, and at or past Boot's own, or
+          scripts/pincheck.py fails CI; 2.22.1 is the floor.
         -->
         <jackson-2-bom.version>2.22.2</jackson-2-bom.version>
 
@@ -76,7 +77,7 @@
           and FORM authenticators, which the service does not use (Spring Security
           authenticates), but the image scan refuses any critical that has a fix. The
           current patch release, 11.0.26, fixes twelve more. Drop this pin when Boot's
-          own version reaches 11.0.26.
+          own version reaches 11.0.26; scripts/pincheck.py fails CI from then on.
         -->
         <tomcat.version>11.0.26</tomcat.version>
 

@@ -122,7 +122,20 @@ jobs:
       # `./mvnw`, not the runner's Maven: the wrapper pins the version and its
       # SHA-256.
       - name: Build and test
+        id: build
         run: ./mvnw -B clean verify
+
+      # Boot's parent is the only reader of <tomcat.version> and
+      # <jackson-2-bom.version>, so Dependabot never moves them, and
+      # lambda/pom.xml copies four versions the service runs.
+      # scripts/pincheck.py fails the Tomcat pin once Boot reaches it, the
+      # Jackson 2 pin once Boot passes it, and a Lambda pin that has split from
+      # the service. It reads Boot's BOM from the ~/.m2 the step above filled,
+      # and runs even when that step failed: a Boot bump past the Tomcat pin
+      # fails the enforcer there, and this names the fix.
+      - name: The version pins still hold
+        if: ${{ !cancelled() && steps.build.outcome != 'skipped' }}
+        run: python3 scripts/pincheck.py --selftest && python3 scripts/pincheck.py
 
       # Docker is available on the runner, so the Testcontainers classes run
       # here, and CI is the only place the real PostgreSQL path runs: Flyway

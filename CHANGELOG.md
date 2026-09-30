@@ -50,6 +50,18 @@ says not yet.
   deregistration delay in the Ingress, and fails if the sleep and the drain, or
   the delay, no longer end inside the grace period.
 
+- **CI checks the version pins that follow Boot.** Dependabot never proposes
+  `<tomcat.version>` or `<jackson-2-bom.version>`, which only Boot's parent
+  reads, and the enforcer stays green when Boot reaches the Tomcat pin exactly
+  or passes the Jackson 2 one within its minor line, as 2.22.3 would. The two
+  modules build separately, so a lone `/lambda` pull request could also split
+  Jackson 2 or the AWS SDK with every check green. `scripts/pincheck.py`, the
+  `build` job's new step "The version pins still hold", reads Boot's BOM from
+  the local Maven repository and fails in each of those cases, and when
+  `lambda/pom.xml`'s JUnit or Testcontainers differs from what Boot gives the
+  service. Its self-test runs first, and CONTRIBUTING.md's Dependabot section
+  says what to do when it fails.
+
 ### Changed
 
 - **A preflight to the console is tested.** ADR 0017 and SECURITY.md rest on
@@ -173,6 +185,21 @@ says not yet.
   JSON under `prod` was already one object per line.
 
 ### Fixed
+
+- **`scripts/demo.sh` stops on a blank credential with its own message.** An
+  `AUTH` of only spaces or tabs splits into no curl arguments, and under
+  `set -u` the bash 3.2 that macOS ships aborts on the empty array with
+  `AUTH_ARGS[@]: unbound variable`. The credential check before the first act
+  failed that way unnoticed, and the demo ended on "Could not ensure flight
+  UA123 exists (HTTP )." A blank `OPS_AUTH` ran every act. Act 7's ops call
+  went out with no credentials and showed 401 under the line that says 403.
+  Act 8's metrics call aborted the same way and counted 0 lines, and its
+  health call as ops went out with no credentials and showed status only. The
+  script still said "Demo complete." The comment above the arrays said a
+  guard avoided that abort, but the guard covered only the copy into them.
+  The script now refuses a blank value of either before its first request and
+  says how to set one. An empty value still takes the default. Act 7 already
+  shows what the API answers a caller with no credentials.
 
 - **The flight-number pattern runs in linear time.** Every constraint on a
   field runs, so the pattern also saw values `@Size` had refused, up to the
