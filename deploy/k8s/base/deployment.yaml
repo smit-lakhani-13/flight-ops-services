@@ -82,7 +82,7 @@ spec:
         - name: flight-ops
           # A version, never `:latest`. The overlay's `images` transformer
           # points it at ECR with the commit SHA as the tag.
-          image: flight-ops-service:1.3.0
+          image: flight-ops-service:1.4.0
           imagePullPolicy: IfNotPresent
 
           ports:
