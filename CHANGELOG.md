@@ -208,6 +208,15 @@ says not yet.
   (`web/components/BookingForm.test.tsx`, "sends no different body on a key no
   Book has used").
 
+- **Escape did not close the console's cancel question.** On a flight's page,
+  Cancel flight opens an inline question, Keep it or Yes, cancel it, and moves
+  the focus to Keep it. Escape did nothing there, while it closes the Requests
+  drawer. It now answers the question as Keep it does: nothing is sent, and the
+  focus goes back to Cancel flight. While the cancel is out, Escape does
+  nothing, as Keep it is disabled then (`web/e2e/flights.spec.ts`, "Escape
+  inside the cancel question keeps the flight and hands the focus back to
+  Cancel flight").
+
 - **Smaller claims that had drifted.** ADR 0014 now says both SBOMs are
   uploaded by CI and attached to every release since v1.2.0, and ADR 0009
   counts `cluster.yaml` right (88 lines, half of them comments). The

@@ -281,6 +281,39 @@ test("cancelling a flight asks first, then marks it CANCELLED and stops sales", 
   await expect(page.getByText("No: a booking gets 409 FLIGHT_NOT_BOOKABLE")).toBeVisible();
 });
 
+test("Escape inside the cancel question keeps the flight and hands the focus back to Cancel flight", async ({ page, request }) => {
+  const flightNumber = uniqueFlightNumber();
+  await createFlight(request, flightNumber);
+  await signIn(page);
+  await openFlight(page, flightNumber);
+
+  const deletes: string[] = [];
+  page.on("request", (sent) => {
+    if (sent.method() === "DELETE") deletes.push(sent.url());
+  });
+  const cancelFlight = page.getByRole("button", { name: "Cancel flight" });
+  const question = page.getByRole("group", { name: `Cancel ${flightNumber}? It cannot be undone.` });
+
+  // From Keep it, where opening the question puts the focus.
+  await cancelFlight.click();
+  await expect(page.getByRole("button", { name: "Keep it" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(question).toHaveCount(0);
+  await expect(cancelFlight).toBeEnabled();
+  await expect(cancelFlight).toBeFocused();
+
+  // From the other answer: Escape never means yes.
+  await cancelFlight.click();
+  await page.getByRole("button", { name: "Yes, cancel it" }).focus();
+  await page.keyboard.press("Escape");
+  await expect(question).toHaveCount(0);
+  await expect(cancelFlight).toBeFocused();
+
+  const kept = await request.get(`/api/v1/flights/${flightNumber}`, { headers: { Authorization: basic(API_ACCOUNT) } });
+  expect(await kept.json()).toMatchObject({ status: "SCHEDULED" });
+  expect(deletes).toEqual([]);
+});
+
 test("the widest flight row fits the table from 640 px up, so no seat count is cut at its edge", async ({ page, request }) => {
   // Ten characters and 850 seats are the most the API takes. Below 640 px the
   // departure and the status move into other cells; from there up the
