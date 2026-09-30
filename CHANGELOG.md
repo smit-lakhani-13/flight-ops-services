@@ -140,6 +140,14 @@ says not yet.
   actions, downloads and images are pinned, and which merges the ruleset on
   `main` accepts.
 
+- **Dependabot keeps `@types/node` on the console's Node.** The major of
+  `@types/node` is the Node release it describes, and `web/.nvmrc` and
+  `engines` pin Node 24, so Dependabot's offer of 26.x would have let the type
+  check accept a call to an API that Node 24 does not have. The npm entry now
+  ignores its majors, as it does for `next`, `eslint-config-next` and `eslint`.
+  Its minors and patches still arrive in the tooling group, and its major moves
+  by hand with `web/.nvmrc`. The ignore rules now name nine artifacts.
+
 - **A failed row lock is logged on one line.** The WARN lines for a lock
   timeout or a deadlock, and for a write `@Version` rejected, now go through
   `GlobalExceptionHandler.printable`, as the line for an unreachable database

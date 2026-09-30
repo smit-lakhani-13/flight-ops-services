@@ -413,15 +413,17 @@ manages its versions.
   the default is 5 per entry. The five entries at the default can open
   twenty-five pull requests the first time Dependabot runs.
 
-- The `ignore` rules cover eight artifacts and no more, because an `ignore`
+- The `ignore` rules cover nine artifacts and no more, because an `ignore`
   also suppresses Dependabot's security updates for that dependency. That is
   accepted only where a bump would contradict a pin the project documents:
   `eclipse-temurin` and `maven` in the two base images (majors),
   `org.springframework.boot:spring-boot-starter-parent` (majors),
   `org.junit:junit-bom` and `org.testcontainers:*` under `/lambda`, and in
-  `web/` the majors of `next`, `eslint-config-next` and `eslint`. The React,
-  JSX accessibility and import plugins that `eslint-config-next` loads declare
-  peer ranges that stop at ESLint 9.
+  `web/` the majors of `next`, `eslint-config-next`, `eslint` and
+  `@types/node`. The React, JSX accessibility and import plugins that
+  `eslint-config-next` loads declare peer ranges that stop at ESLint 9. The
+  major of `@types/node` is the Node release it describes, so it moves by hand
+  with `web/.nvmrc`.
 
 - The console's entry groups its updates into two pull requests, one for the
   runtime dependencies and one for the tooling, and allows two open at once.
