@@ -80,6 +80,35 @@ test("a page of the list that fails to arrive offers Try again, which reads that
   await expect(page.getByRole("heading", { level: 1 })).toBeFocused();
 });
 
+test("the pager hands the focus to its other button on reaching the last or the first page", async ({ page, request }) => {
+  // Eleven flights on one route make two pages of ten.
+  const first = uniqueFlightNumber();
+  const route = routeOf(first);
+  await createFlight(request, first);
+  for (let i = 0; i < 10; i++) await createFlight(request, uniqueFlightNumber(), 20, route);
+  await signIn(page);
+  await go(page, "Flights");
+  const search = page.getByRole("form", { name: "Search flights" });
+  await search.getByLabel("Origin").fill(route.origin);
+  await search.getByLabel("Destination").fill(route.destination);
+  await search.getByRole("button", { name: "Search" }).click();
+  await expect(page.getByText("11 total · page 1 of 2")).toBeVisible();
+
+  // Each press, from the keyboard, disables the button that made it, so the
+  // focus moves to the other one rather than dropping to the page.
+  const next = page.getByRole("button", { name: "Next" });
+  const previous = page.getByRole("button", { name: "Previous" });
+  await next.press("Enter");
+  await expect(page.getByText("11 total · page 2 of 2")).toBeVisible();
+  await expect(next).toBeDisabled();
+  await expect(previous).toBeFocused();
+
+  await previous.press("Enter");
+  await expect(page.getByText("11 total · page 1 of 2")).toBeVisible();
+  await expect(previous).toBeDisabled();
+  await expect(next).toBeFocused();
+});
+
 test("creating a flight shows the API's message per field, then opens the new flight", async ({ page }) => {
   await signIn(page);
   await go(page, "Flights");

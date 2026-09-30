@@ -50,8 +50,6 @@ says not yet.
   deregistration delay in the Ingress, and fails if the sleep and the drain, or
   the delay, no longer end inside the grace period.
 
-### Changed
-
 - **A preflight to the console is tested.** ADR 0017 and SECURITY.md rest on
   Next answering `OPTIONS` on the console's `/api/` paths itself, with `204`
   and no CORS headers, and nothing checked it. `web/e2e/ops.spec.ts` now sends
@@ -76,25 +74,19 @@ says not yet.
   every `*.test.ts` and `*.test.tsx` file in `web/`, where it took one
   extension per directory, so a test can no longer sit unrun.
 
-- **A flight's bookings keep the focus and say when they are out of date.**
-  After Next or Previous in the bookings on a flight's page, the old page stayed
-  on screen as if current until the new one came, and a page that failed to
-  arrive took the pager away with the focus on it, which fell back to the page.
-  The card now dims the last answer and marks it busy while another is out, as
-  the flight list does, and a failed page hands the focus to the card's
-  Refresh, which reads that page again. `web/e2e/flights.spec.ts` checks both.
+- **CI checks the version pins that follow Boot.** Dependabot never proposes
+  `<tomcat.version>` or `<jackson-2-bom.version>`, which only Boot's parent
+  reads, and the enforcer stays green when Boot reaches the Tomcat pin exactly
+  or passes the Jackson 2 one within its minor line, as 2.22.3 would. The two
+  modules build separately, so a lone `/lambda` pull request could also split
+  Jackson 2 or the AWS SDK with every check green. `scripts/pincheck.py`, the
+  `build` job's new step "The version pins still hold", reads Boot's BOM from
+  the local Maven repository and fails in each of those cases, and when
+  `lambda/pom.xml`'s JUnit or Testcontainers differs from what Boot gives the
+  service. Its self-test runs first, and CONTRIBUTING.md's Dependabot section
+  says what to do when it fails.
 
-- **The console's hint on a 503 fits a database outage.** It said the service
-  was busy, but `DATABASE_UNAVAILABLE` sends the same `503` and `Retry-After`
-  as `LOCK_TIMEOUT`, so while the database was down every page, and the api
-  account's sign-in, pointed at load. It now says the service could not finish
-  the request just now, and the API's message above it still says which it was.
-
-- **A new sort on the flight list applies the airports the fields show.** The
-  sort reads the list again at once, but it kept the airports last searched, so
-  after typing `EWR` over a searched `ORD` and changing the sort, the list
-  showed `ORD` flights under a field that said `EWR`. It now takes the fields
-  as they stand, as Search does. `web/e2e/flights.spec.ts` checks the request.
+### Changed
 
 - **`doc/api.md` says three more things the service does at its edges.** A
   `Content-Encoding` is not read, so a compressed body is never expanded. A
@@ -108,13 +100,6 @@ says not yet.
   one operation's list of responses. Every description in `BookingController`
   and `FlightController` now uses the colon, and `OpenApiTest` fails if an em
   dash comes back into the document.
-
-- **The flight list no longer cuts a seat count at tablet widths.** Between
-  640 and 790 px a long row made the table wider than its box, which scrolled
-  with no sign that it could, so its edge cut `850/850` to `850/85`. The
-  departure time now wraps first, so the table fits its box from 640 px up. A
-  test in `web/e2e/flights.spec.ts` checks the widest row the API allows at
-  five widths.
 
 - **Version.** Both poms say `1.4.0-SNAPSHOT` until the next tag, so a build
   from `main` no longer reports itself as 1.3.0 in `/actuator/info` and the
@@ -141,9 +126,11 @@ says not yet.
   (or `flights:read`), RFC 6750's challenge for a token that lacks a scope.
   `JsonAccessDeniedHandler` had replaced Spring's bearer handler and sent no
   challenge at all. It reads the scope from the refusing rule's decision, so a
-  403 no scope can lift, `denyAll()` or the ops role, still carries none, and
-  so does a 403 to a Basic caller
-  (`BearerTokenChallengeTest#aRefusalNoScopeLiftsHasNoChallenge`).
+  403 no scope can lift, `denyAll()` or the ops role, still carries none
+  (`BearerTokenChallengeTest#aRefusalNoScopeLiftsHasNoChallenge`). It sends the
+  challenge only to a bearer token, so a 403 to a caller signed in by password
+  carries none either, even from a rule that asks for a scope
+  (`BearerTokenChallengeTest#aPasswordCallersRefusalHasNoChallenge`).
 
 - **The README says more of what is built.** Its opening sentence names Java
   21 and Spring Boot 4.1. It links the latest release, says a release is a
@@ -163,16 +150,31 @@ says not yet.
   Its minors and patches still arrive in the tooling group, and its major moves
   by hand with `web/.nvmrc`. The ignore rules now name nine artifacts.
 
-- **A failed row lock is logged on one line.** The WARN lines for a lock
-  timeout or a deadlock, and for a write `@Version` rejected, now go through
-  `GlobalExceptionHandler.printable`, as the line for an unreachable database
-  already did. PgJDBC puts the server's Detail, Hint and Where on lines of
-  their own, so on the plain-text console one deadlock took five lines, and a
-  search for the WARN line missed the rest
-  (`FixedErrorMessagesTest#aMultiLineLockMessageIsLoggedOnOneLine`). The ECS
-  JSON under `prod` was already one object per line.
+- **The console needs Node 24.15 or a later 24.** jsdom, which the console's
+  component and hook tests run in, moves from 29.1.1 to 30.1.1. jsdom 30 and
+  three of its dependencies declare `^24.15.0` on the Node 24 line, where
+  29.1.1 and its dependencies took any 24, and `npm ci` on 24.0 to 24.14
+  installs them with only a warning. So `engines` in `web/package.json` now
+  says `>=24.15 <25`, where it said `>=24 <25`, and a new step in the `web`
+  job fails when the runner's Node is below that floor. `web/.nvmrc` still
+  names the major.
 
 ### Fixed
+
+- **`scripts/demo.sh` stops on a blank credential with its own message.** An
+  `AUTH` of only spaces or tabs splits into no curl arguments, and under
+  `set -u` the bash 3.2 that macOS ships aborts on the empty array with
+  `AUTH_ARGS[@]: unbound variable`. The credential check before the first act
+  failed that way unnoticed, and the demo ended on "Could not ensure flight
+  UA123 exists (HTTP )." A blank `OPS_AUTH` ran every act. Act 7's ops call
+  went out with no credentials and showed 401 under the line that says 403.
+  Act 8's metrics call aborted the same way and counted 0 lines, and its
+  health call as ops went out with no credentials and showed status only. The
+  script still said "Demo complete." The comment above the arrays said a
+  guard avoided that abort, but the guard covered only the copy into them.
+  The script now refuses a blank value of either before its first request and
+  says how to set one. An empty value still takes the default. Act 7 already
+  shows what the API answers a caller with no credentials.
 
 - **The flight-number pattern runs in linear time.** Every constraint on a
   field runs, so the pattern also saw values `@Size` had refused, up to the
@@ -259,6 +261,42 @@ says not yet.
   inside the cancel question keeps the flight and hands the focus back to
   Cancel flight").
 
+- **A flight's bookings keep the focus and say when they are out of date.**
+  After Next or Previous in the bookings on a flight's page, the old page stayed
+  on screen as if current until the new one came, and a page that failed to
+  arrive took the pager away with the focus on it, which fell back to the page.
+  The card now dims the last answer and marks it busy while another is out, as
+  the flight list does, and a failed page hands the focus to the card's
+  Refresh, which reads that page again. `web/e2e/flights.spec.ts` checks both.
+
+- **The console's hint on a 503 fits a database outage.** It said the service
+  was busy, but `DATABASE_UNAVAILABLE` sends the same `503` and `Retry-After`
+  as `LOCK_TIMEOUT`, so while the database was down every page, and the api
+  account's sign-in, pointed at load. It now says the service could not finish
+  the request just now, and the API's message above it still says which it was.
+
+- **A new sort on the flight list applies the airports the fields show.** The
+  sort reads the list again at once, but it kept the airports last searched, so
+  after typing `EWR` over a searched `ORD` and changing the sort, the list
+  showed `ORD` flights under a field that said `EWR`. It now takes the fields
+  as they stand, as Search does. `web/e2e/flights.spec.ts` checks the request.
+
+- **The flight list no longer cuts a seat count at tablet widths.** Between
+  640 and 790 px a long row made the table wider than its box, which scrolled
+  with no sign that it could, so its edge cut `850/850` to `850/85`. The
+  departure time now wraps first, so the table fits its box from 640 px up. A
+  test in `web/e2e/flights.spec.ts` checks the widest row the API allows at
+  five widths.
+
+- **A failed row lock is logged on one line.** The WARN lines for a lock
+  timeout or a deadlock, and for a write `@Version` rejected, now go through
+  `GlobalExceptionHandler.printable`, as the line for an unreachable database
+  already did. PgJDBC puts the server's Detail, Hint and Where on lines of
+  their own, so on the plain-text console one deadlock took five lines, and a
+  search for the WARN line missed the rest
+  (`FixedErrorMessagesTest#aMultiLineLockMessageIsLoggedOnOneLine`). The ECS
+  JSON under `prod` was already one object per line.
+
 - **Smaller claims that had drifted.** ADR 0014 now says both SBOMs are
   uploaded by CI and attached to every release since v1.2.0, and ADR 0009
   counts `cluster.yaml` right (88 lines, half of them comments). The
@@ -281,12 +319,30 @@ says not yet.
   its three points, the proxy's `localLocation` comment says the API sends a
   path, and the 1.3.0 section of this file ends with a blank line.
 
-- **The console needs Node 24.15 or a later 24.** jsdom 30, which the
-  console's component and hook tests run in, and three of its dependencies
-  declare `^24.15.0` on the Node 24 line. `engines` in `web/package.json` said
-  `>=24 <25`, so `npm ci` on 24.0 to 24.14 installed them with only a warning.
-  It now says `>=24.15 <25`, and a new step in the `web` job fails when the
-  runner's Node is below that floor. `web/.nvmrc` still names the major.
+- **A keyboard can scroll the race's answers, and the console README names the
+  specs that check its focus hand-offs.** Ten refusals leave the race's answers
+  table with no link, and on a phone it is wider than its box (644 px in 254 at
+  320 px wide), so where a browser gives a scroller no tab stop of its own
+  (Safari) most of the X-Request-Id column, and the Echoed and ms columns, were
+  out of a keyboard's reach. The box is now a named region with a tab stop and
+  the focus outline. `web/components/RaceResult.test.tsx` checks it, and
+  `web/e2e/layout.spec.ts` fails a table that scrolls sideways when neither its
+  box nor anything in it is focusable by its markup: a link, an enabled control
+  or a `tabindex` of 0 or more. `web/README.md` said three e2e specs check every
+  focus hand-off it lists. That was wrong on three counts: none of them pressed
+  the pager to its last page and back, the request log's focus is checked in
+  `web/e2e/ops.spec.ts`, a fourth spec, and a busy button's ignored presses are
+  checked only in jsdom. A test in `web/e2e/flights.spec.ts` now checks the
+  pager in Chromium, `web/e2e/ops.spec.ts` checks the room the request log
+  leaves at the page's end, which the README states and nothing checked, and the
+  sentence names the four specs and what only jsdom checks.
+
+- **`doc/OPERATIONS.md` says which build wrote its ECS sample.** The ECS
+  booking line it shows says `"version":"1.1.0"`, and nothing said which build
+  wrote it. The lead-in now says it came from a jar whose pom said 1.1.0.
+  `service.version` comes from the jar's manifest, so a jar built from `main`
+  writes the same fields with its own version, and `./mvnw spring-boot:run`,
+  which has no manifest, leaves `version` out.
 
 ## 1.3.0 — 2026-09-28
 

@@ -76,9 +76,9 @@ tests ran" fails CI if either class skips a test or has no report. An
 emulator is not AWS, and neither class talks to AWS.
 
 So in CI the Surefire summary reads
-`Tests run: 654, Failures: 0, Errors: 0, Skipped: 0` for the service and
+`Tests run: 655, Failures: 0, Errors: 0, Skipped: 0` for the service and
 `Tests run: 29, Failures: 0, Errors: 0, Skipped: 0` for the Lambda. On a laptop
-without Docker the service line ends `Skipped: 16`, and 638 of its tests run.
+without Docker the service line ends `Skipped: 16`, and 639 of its tests run.
 The Lambda line ends `Skipped: 3`, and 26 run.
 
 A new migration is not accepted until CI has gone green on it. The local H2
@@ -159,21 +159,21 @@ scripts/numbers.sh
 | Service | 53 | `@ExtendWith(MockitoExtension.class)`, `@Mock`, `@InjectMocks`, `@Captor`, split across `BookingServiceTest` (orchestration, including a failed insert with no winning booking to recover), `BookingWriterTest` (the write path), `BookingBookabilityTest` (the flight's status decides bookability before any seat is counted), `FlightServiceTest` and `SqsEventPublisherTest` (what goes on the wire) |
 | Web slice | 254 | `@WebMvcTest` + `@MockitoBean` in the two controller tests and nine narrower classes under `controller/`: status codes, `Location` headers, error JSON, `Allow` on a 405 and `Accept` on a 415, the 503 for a database that cannot be reached, a YAML body or a missing `Content-Type` refused on each `POST` and `PATCH`, and the rules for flight numbers, airport codes, passenger names, seat counts, status values and departure times. The narrower classes pin the seat and length limits, the one message a field gets when it breaks several rules, malformed bodies and path ids, a number or a boolean sent for a text field, the departure time formats accepted, the paging defaults, a lost database on every booking endpoint and a booking for an unknown flight, the fixed error messages and the error timestamp. The other 38 have no Spring context. 17 are `controller/QueryParamsTest`, the filter check on its own, and 5 are `controller/SortPolicyTest`, which pins the `Sort` both list endpoints build, null order included. 12 are `exception/ApiErrorControllerTest`, which calls `ApiErrorController` directly or drives it through a standalone MockMvc, because a full MockMvc never forwards to `/error`. 4 are `security/JsonAccessDeniedHandlerTest`, which builds its requests directly so that a path can carry a raw CR and LF |
 | Repository slice | 13 | `@DataJpaTest` + `TestEntityManager`: derived queries, JPQL, `JOIN FETCH`, constraints |
-| Full context (H2) | 157 | `@SpringBootTest`. The idempotency guarantee end to end, with four 10-caller races on one key: same request, different payloads, the last seat, and one key across two flights. The authorisation rules against the real filter chain, with the Basic and Bearer challenges and who sees health components. The outbox with its trace capture, the attempt ceiling, an error cut to fit its column and the retention pruner against an embedded database. The OpenAPI document's status codes per operation, the one way it writes an error code, and its comparison with a real response. The lock timeout, the error contract with the 406 and `ignorecase` on a sort property that is not text, the page overflow and multipart parsing turned off, and a lazy-loading regression with no mocking anywhere in the chain. The request body limit and an exception that escapes the filter chain, each through a running Tomcat, and which health probe a database failure reaches. The flight status machine and a flight's bookings around cancellation over HTTP, a stale flight write that loses to a booking, both outbox jobs on their schedule, and the container's own 405 for `TRACE` and the firewall's 400 in the JSON envelope through a running Tomcat, whose keep-alive timeout is read from its connector and whose shutdown drain is checked against the manifests' grace period |
+| Full context (H2) | 158 | `@SpringBootTest`. The idempotency guarantee end to end, with four 10-caller races on one key: same request, different payloads, the last seat, and one key across two flights. The authorisation rules against the real filter chain, with the Basic and Bearer challenges and who sees health components. The outbox with its trace capture, the attempt ceiling, an error cut to fit its column and the retention pruner against an embedded database. The OpenAPI document's status codes per operation, the one way it writes an error code, and its comparison with a real response. The lock timeout, the error contract with the 406 and `ignorecase` on a sort property that is not text, the page overflow and multipart parsing turned off, and a lazy-loading regression with no mocking anywhere in the chain. The request body limit and an exception that escapes the filter chain, each through a running Tomcat, and which health probe a database failure reaches. The flight status machine and a flight's bookings around cancellation over HTTP, a stale flight write that loses to a booking, both outbox jobs on their schedule, and the container's own 405 for `TRACE` and the firewall's 400 in the JSON envelope through a running Tomcat, whose keep-alive timeout is read from its connector and whose shutdown drain is checked against the manifests' grace period |
 | Event contract | 11 | the producer's and the consumer's `BookingEventContractTest`, both against `contracts/booking-created-v1.json`, as [Writing tests](#writing-tests) describes |
 | Lambda handler | 20 | separate module: batch parsing, partial batch failure and the conditional write. `seats` is refused with no coercion when it is missing, below 1, a string or fractional. Body values are logged on one line and capped at 1,000 characters, and the producer's trace context survives the queue. `TimeoutBudgetTest` reads `lambda/template.yaml` and checks that a batch whose DynamoDB calls all time out still ends inside the function's `Timeout` |
 | Configuration and startup checks | 63 | Boot's `Binder` over plain maps: an unresolved `${...}` placeholder is rejected at startup, every outbox bound is enforced and every default is wired. `EventPropertiesTest` also starts the whole application to see a bad `app.events.publisher` named, and `PasswordVerifiabilityTest` runs `SecurityConfig` in a `WebApplicationContextRunner` to see an unverifiable password stop startup, and under `prod` a `{noop}` or `{ldap}` one. `ValidationClockTest` checks that `@Future` reads the `Clock` bean, and `AwsConfigTest` that the `sts` module, which the credential chain needs for IRSA, is on the classpath and that the SQS client bounds each attempt and the whole call. Four more each start one piece of Boot in a context runner: `DataSourceSettingsTest` reads the pool each profile builds, `config/EmbeddedDatabaseGuardTest` sees in-memory H2 refused when `DB_URL` names a real database, `config/OutboxEnabledConditionTest` checks that the drain and its properties read `app.outbox.enabled` the same way, and `config/SecurityConfigJwtTest` that a JWT key with no audiences, or a JWK set URI with no issuer, stops startup, and that an issuer URI with audiences starts |
 | Architecture | 9 | ArchUnit over `target/classes`, one test per rule in [Architecture rules](#architecture-rules). Each rule was seen to fail on a planted violation before it was committed |
 | Observability | 22 | the request-id filter against a hostile inbound header, and the booking meters scraped through a real `PrometheusMeterRegistry`, since a `SimpleMeterRegistry` would accept any name. The outbox gauges read a cache that only the refresher fills, which starts and stops with the Spring context, and the drain's log lines carry each booking's trace and leak none to the next |
-| Run | 664 | 0 failures without Docker (62 + 53 + 254 + 13 + 157 + 11 + 20 + 63 + 9 + 22) |
+| Run | 665 | 0 failures without Docker (62 + 53 + 254 + 13 + 158 + 11 + 20 + 63 + 9 + 22) |
 | PostgreSQL integration | 15 | `@Testcontainers(disabledWithoutDocker = true)`, skipped without a container runtime; [Skipped tests without Docker are correct](#skipped-tests-without-docker-are-correct) names the classes and what they cover |
 | Emulators | 4 | `@Testcontainers(disabledWithoutDocker = true)` as well: `SqsEventPublisherElasticMqTest` sends through `SqsEventPublisher` to ElasticMQ and reads the message back, and the Lambda's `BookingEventHandlerDynamoDbLocalTest` runs the handler against DynamoDB Local. Emulators, not AWS |
 
-So 683 tests exist across the two modules. 664 run without Docker and 19
-skip, and CI runs all 683.
+So 684 tests exist across the two modules. 665 run without Docker and 19
+skip, and CI runs all 684.
 
-The console has two suites of its own, outside those counts: 148 Vitest unit
-tests and 37 Playwright end-to-end tests, three of them at twelve viewports.
+The console has two suites of its own, outside those counts: 149 Vitest unit
+tests and 38 Playwright end-to-end tests, three of them at twelve viewports.
 `scripts/numbers.sh` lists both counts after an `npm ci` in `web/`, and
 [web/README.md](web/README.md#tests) says what each suite covers.
 
@@ -206,6 +206,7 @@ for a commit on `main` that got no push run.
 |---|---|---|
 | `build` | "Build and test", "Build and test the Lambda consumer" | a module does not compile, or a test in it fails |
 | `build` | `maven-enforcer` | wrong JDK, wrong Maven, duplicate dependency versions, or a transitive downgrade (`requireUpperBoundDeps`) |
+| `build` | "The version pins still hold" (`scripts/pincheck.py`) | Boot manages the Tomcat that `<tomcat.version>` pins or a later one, or a later Jackson 2 than `<jackson-2-bom.version>`, or `lambda/pom.xml`'s Jackson 2, AWS SDK, JUnit or Testcontainers differs from the service's. Its self-test runs first, and it runs even when "Build and test" failed |
 | `build` | JaCoCo | bundle coverage below 80% line or 50% branch |
 | `build` | ArchUnit | any of the 9 rules in `ArchitectureTest` is broken; [Architecture rules](#architecture-rules) lists them |
 | `build` | "Java lines fit in 120 columns" | a tracked Java file in either module has a line longer than the 120 columns `.editorconfig` sets |
@@ -384,9 +385,11 @@ least 2.22.1. Boot's dependency management would have handed it the older
 Jackson 2 with no error, and the enforcer's `requireUpperBoundDeps` rule
 refused the build instead. Setting Boot's own property moves the whole
 Jackson 2 line together, and `lambda/pom.xml` keeps the same version, so the
-repository has one Jackson 2 to patch. The enforcer and CycloneDX plugin pins
-in `pom.xml` match the versions Boot manages today; they are there so that a
-Boot upgrade does not move them.
+repository has one Jackson 2 to patch. `scripts/pincheck.py` fails CI once
+Boot manages Tomcat 11.0.26 or later, or a later Jackson 2 than the pin, or
+once `lambda/pom.xml` disagrees with the service.
+The enforcer and CycloneDX plugin pins in `pom.xml` match the versions Boot
+manages today; they are there so that a Boot upgrade does not move them.
 
 `./mvnw` pins Maven 3.9.16 and its SHA-256, so CI needs no Maven install step
 and a substituted archive fails the build. The wrapper is
@@ -436,12 +439,25 @@ manages its versions.
 - The `junit-bom` and Testcontainers ignores cover majors, minors and patches.
   `<junit.version>` and `<testcontainers.version>` in `lambda/pom.xml` copy
   what Boot's BOM gives the service module, and whichever side moves first
-  splits the repository across two versions.
+  splits the repository across two versions. `scripts/pincheck.py` fails CI
+  while they differ, so a Boot bump that moves either one also moves the
+  Lambda's copy, in the same pull request.
+
+- Dependabot never proposes `<tomcat.version>` or `<jackson-2-bom.version>`
+  in `pom.xml`, because only Boot's parent reads them. A Boot bump that
+  reaches the Tomcat pin fails `scripts/pincheck.py` until the same pull
+  request drops the pin. A Boot bump that manages a later Jackson 2 than
+  `<jackson-2-bom.version>` fails it until the same pull request raises the
+  pin, and `<jackson.version>` in `lambda/pom.xml`, to at least Boot's
+  version. A `/lambda` pull request that moves Jackson 2 fails it until the
+  same pull request raises `<jackson-2-bom.version>` to match.
 
 - Patch and minor updates: merge once CI is green.
 
-- The AWS SDK BOM appears twice, in the root and in `/lambda`. **Merge both
-  together**, or the two modules disagree about the SDK version.
+- The AWS SDK BOM appears twice, in the root and in `/lambda`, and Dependabot
+  opens a pull request for each. `scripts/pincheck.py` fails each one alone,
+  so the two modules never disagree about the SDK version on `main`: push the
+  other module's bump onto one of them, merge that one, and close the other.
 
 - Major updates get their own PR and a note in the description about what was
   checked.

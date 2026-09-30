@@ -301,7 +301,10 @@ is a term query in place of a substring search. Both forms carry the same data.
 The other profiles keep the readable format for a laptop, and
 `LOGGING_STRUCTURED_FORMAT_CONSOLE=ecs ./mvnw spring-boot:run` turns ECS on
 anywhere. The booking line in ECS, wrapped here and one line in the real
-output:
+output, is from a jar whose pom said 1.1.0. `service.version` comes from the
+jar's manifest, so a jar built from `main` writes the same fields with its own
+version, and `./mvnw spring-boot:run`, which has no manifest, leaves `version`
+out:
 
 ```json
 {"@timestamp":"2026-09-22T23:48:23.969318Z","log":{"level":"INFO","logger":"com.smit.flightops.service.BookingWriter"},

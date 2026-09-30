@@ -441,7 +441,9 @@ The script needs bash, curl and python3. It pretty-prints JSON with `jq` when
 `jq` is installed and with `python3 -m json.tool` when it is not, and acts 4
 and 5 call python3 either way. Before the first act it checks that the app
 answers and that the credentials work. `AUTH` and `OPS_AUTH` override the
-credentials, as in `AUTH='-u someone:something' scripts/demo.sh`. The flights
+credentials, as in `AUTH='-u someone:something' scripts/demo.sh`. An empty one
+takes the default, and one of only spaces or tabs stops the script with a
+message. The flights
 a run creates carry a suffix taken from the clock, so a second run does not
 collide with the first. Restart the app to reset its in-memory state.
 
