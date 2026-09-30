@@ -18,6 +18,13 @@ import java.time.Clock;
  * them. It uses the container's {@link ObjectMapper} and {@link Clock}, so the
  * timestamp is formatted and taken the same way as in every other error body.
  *
+ * <p>The {@code Content-Type} is {@code application/json} with no {@code charset},
+ * the value {@code GlobalExceptionHandler} and {@code ApiErrorController} send, so a
+ * client sees one spelling on every error envelope. The media type defines no charset
+ * parameter (RFC 8259, section 11): JSON on the wire is UTF-8, and Jackson writes
+ * these bytes as UTF-8 to the output stream. Setting the response's character
+ * encoding would only make Tomcat append {@code ;charset=UTF-8}.
+ *
  * @see JsonAuthenticationEntryPoint
  * @see JsonAccessDeniedHandler
  * @see RequestBodyLimitFilter
@@ -50,7 +57,6 @@ public class ErrorResponseWriter {
         }
         response.setStatus(status.value());
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
-        response.setCharacterEncoding("UTF-8");
         objectMapper.writeValue(response.getOutputStream(), ErrorResponse.of(code, message, clock.instant()));
     }
 }

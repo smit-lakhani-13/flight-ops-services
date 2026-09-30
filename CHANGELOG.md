@@ -177,6 +177,19 @@ says not yet.
   (`MalformedRequestTest#aNumberOrABooleanForATextFieldIsMalformed`,
   `ErrorContractTest#aFlightNumberSentAsANumberIsRefused`).
 
+- **Every error envelope has one Content-Type.** The 401, the 403 and the
+  413, which `security/ErrorResponseWriter` writes before Spring MVC runs, were
+  sent as `application/json;charset=UTF-8`, while `GlobalExceptionHandler` and
+  `ApiErrorController` send `application/json`, the value `doc/api.md` gives
+  for all three. The writer no longer sets a character encoding, so all three
+  send `application/json`. JSON on the wire is UTF-8 and its media type has no
+  charset parameter (RFC 8259), and the body is the same UTF-8 bytes as before.
+  Responses these three do not write are unchanged: Tomcat's HTML 400 and 501
+  pages, the actuator's empty 404, and the health 503, which the actuator
+  sends with the media type it negotiates. `SecurityRulesTest`,
+  `JsonAccessDeniedHandlerTest` and the real-server tests for the 413 and for
+  `/error` now compare the whole header.
+
 - **Moving to Cognito is not configuration alone.** The README,
   `doc/ARCHITECTURE.md` and SECURITY.md said the bearer-token swap is two
   properties. That holds for an issuer whose tokens carry `aud` and the scopes
