@@ -92,6 +92,12 @@ test("the request log shows each X-Request-Id the API echoed back", async ({ pag
   expect(new Set(ids).size).toBe(ids.length);
   await expect(log).not.toContainText("Basic ");
 
+  // The page gains room to scroll its end clear of the drawer.
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  const footer = await page.locator("footer").boundingBox();
+  const drawer = await page.getByRole("complementary", { name: "Request log" }).boundingBox();
+  expect(footer!.y + footer!.height).toBeLessThanOrEqual(drawer!.y + 1);
+
   await page.keyboard.press("Escape");
   await expect(log).toBeHidden();
   await expect(requests).toBeFocused();
