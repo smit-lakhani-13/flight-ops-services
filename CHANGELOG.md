@@ -31,7 +31,27 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
 [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md) records that in a dated line that still
 says not yet.
 
-## Unreleased
+## 1.4.0 — 2026-09-30
+
+Fixes to the service, the console, the scripts and the documents, and tests
+for what the documents promise. Four guarantees the documents state now have
+tests, the console's preflight answer is tested, and CI checks the version
+pins that follow Boot and fails on a sweep pattern it cannot compile. The
+service reads text fields strictly, sends every error envelope with one
+Content-Type, tells a bearer token which scope it lacks, and matches a flight
+number in linear time. The deploy job is still gated off and has never run.
+
+Two changes touch what a client gets, and each is a fix under the rule above.
+A text field sent as a number or a boolean, such as `"flightNumber": 123`,
+gets `400 MALFORMED_REQUEST` where it got 201: the OpenAPI document never
+admitted it, so it was input the contract never allowed. The 401, the 403 and
+the 413 send `application/json`, the value `doc/api.md` gives for every error,
+where they sent `application/json;charset=UTF-8`; the bytes are the same. The
+403 to a bearer token that lacks a scope gains a `WWW-Authenticate` challenge
+that names it, an addition, and the flight-number pattern accepts the same
+strings as before. No other answer from the API changes, so this release is
+1.4.0 and not 2.0.0, and a minor rather than a patch for what it adds: the
+challenge, the tests, the pin check and the Node floor the console declares.
 
 ### Added
 
@@ -100,10 +120,6 @@ says not yet.
   one operation's list of responses. Every description in `BookingController`
   and `FlightController` now uses the colon, and `OpenApiTest` fails if an em
   dash comes back into the document.
-
-- **Version.** Both poms say `1.4.0-SNAPSHOT` until the next tag, so a build
-  from `main` no longer reports itself as 1.3.0 in `/actuator/info` and the
-  OpenAPI document.
 
 - **Logging a call no longer renders every card again.** `useApi` read the
   whole request log to get its `record` function, so each logged call rendered

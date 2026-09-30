@@ -13,7 +13,7 @@
 
     <groupId>com.smit</groupId>
     <artifactId>flight-ops-service</artifactId>
-    <version>1.4.0-SNAPSHOT</version>
+    <version>1.4.0</version>
     <packaging>jar</packaging>
 
     <name>flight-ops-service</name>
