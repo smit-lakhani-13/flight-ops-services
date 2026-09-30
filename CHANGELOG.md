@@ -50,6 +50,18 @@ says not yet.
   deregistration delay in the Ingress, and fails if the sleep and the drain, or
   the delay, no longer end inside the grace period.
 
+- **CI checks the version pins that follow Boot.** Dependabot never proposes
+  `<tomcat.version>` or `<jackson-2-bom.version>`, which only Boot's parent
+  reads, and the enforcer stays green when Boot reaches the Tomcat pin exactly
+  or passes the Jackson 2 one within its minor line, as 2.22.3 would. The two
+  modules build separately, so a lone `/lambda` pull request could also split
+  Jackson 2 or the AWS SDK with every check green. `scripts/pincheck.py`, the
+  `build` job's new step "The version pins still hold", reads Boot's BOM from
+  the local Maven repository and fails in each of those cases, and when
+  `lambda/pom.xml`'s JUnit or Testcontainers differs from what Boot gives the
+  service. Its self-test runs first, and CONTRIBUTING.md's Dependabot section
+  says what to do when it fails.
+
 ### Changed
 
 - **A preflight to the console is tested.** ADR 0017 and SECURITY.md rest on
