@@ -206,6 +206,7 @@ for a commit on `main` that got no push run.
 |---|---|---|
 | `build` | "Build and test", "Build and test the Lambda consumer" | a module does not compile, or a test in it fails |
 | `build` | `maven-enforcer` | wrong JDK, wrong Maven, duplicate dependency versions, or a transitive downgrade (`requireUpperBoundDeps`) |
+| `build` | "The version pins still hold" (`scripts/pincheck.py`) | Boot manages the Tomcat that `<tomcat.version>` pins or a later one, or a later Jackson 2 than `<jackson-2-bom.version>`, or `lambda/pom.xml`'s Jackson 2, AWS SDK, JUnit or Testcontainers differs from the service's. Its self-test runs first, and it runs even when "Build and test" failed |
 | `build` | JaCoCo | bundle coverage below 80% line or 50% branch |
 | `build` | ArchUnit | any of the 9 rules in `ArchitectureTest` is broken; [Architecture rules](#architecture-rules) lists them |
 | `build` | "Java lines fit in 120 columns" | a tracked Java file in either module has a line longer than the 120 columns `.editorconfig` sets |
@@ -384,9 +385,11 @@ least 2.22.1. Boot's dependency management would have handed it the older
 Jackson 2 with no error, and the enforcer's `requireUpperBoundDeps` rule
 refused the build instead. Setting Boot's own property moves the whole
 Jackson 2 line together, and `lambda/pom.xml` keeps the same version, so the
-repository has one Jackson 2 to patch. The enforcer and CycloneDX plugin pins
-in `pom.xml` match the versions Boot manages today; they are there so that a
-Boot upgrade does not move them.
+repository has one Jackson 2 to patch. `scripts/pincheck.py` fails CI once
+Boot manages Tomcat 11.0.26 or later, or a later Jackson 2 than the pin, or
+once `lambda/pom.xml` disagrees with the service.
+The enforcer and CycloneDX plugin pins in `pom.xml` match the versions Boot
+manages today; they are there so that a Boot upgrade does not move them.
 
 `./mvnw` pins Maven 3.9.16 and its SHA-256, so CI needs no Maven install step
 and a substituted archive fails the build. The wrapper is
@@ -436,12 +439,25 @@ manages its versions.
 - The `junit-bom` and Testcontainers ignores cover majors, minors and patches.
   `<junit.version>` and `<testcontainers.version>` in `lambda/pom.xml` copy
   what Boot's BOM gives the service module, and whichever side moves first
-  splits the repository across two versions.
+  splits the repository across two versions. `scripts/pincheck.py` fails CI
+  while they differ, so a Boot bump that moves either one also moves the
+  Lambda's copy, in the same pull request.
+
+- Dependabot never proposes `<tomcat.version>` or `<jackson-2-bom.version>`
+  in `pom.xml`, because only Boot's parent reads them. A Boot bump that
+  reaches the Tomcat pin fails `scripts/pincheck.py` until the same pull
+  request drops the pin. A Boot bump that manages a later Jackson 2 than
+  `<jackson-2-bom.version>` fails it until the same pull request raises the
+  pin, and `<jackson.version>` in `lambda/pom.xml`, to at least Boot's
+  version. A `/lambda` pull request that moves Jackson 2 fails it until the
+  same pull request raises `<jackson-2-bom.version>` to match.
 
 - Patch and minor updates: merge once CI is green.
 
-- The AWS SDK BOM appears twice, in the root and in `/lambda`. **Merge both
-  together**, or the two modules disagree about the SDK version.
+- The AWS SDK BOM appears twice, in the root and in `/lambda`, and Dependabot
+  opens a pull request for each. `scripts/pincheck.py` fails each one alone,
+  so the two modules never disagree about the SDK version on `main`: push the
+  other module's bump onto one of them, merge that one, and close the other.
 
 - Major updates get their own PR and a note in the description about what was
   checked.
