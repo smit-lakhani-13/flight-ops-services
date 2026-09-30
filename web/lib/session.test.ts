@@ -2,8 +2,8 @@
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { createElement, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { RequestLogProvider } from "./request-log";
-import { SessionProvider, useSession } from "./session";
+import { RequestLogProvider, useRequestLog } from "./request-log";
+import { SessionProvider, useApi, useSession } from "./session";
 
 afterEach(() => {
   cleanup();
@@ -111,5 +111,37 @@ describe("SessionProvider.signIn", () => {
     expect(error).toMatchObject({ kind: "unauthenticated", code: "UNAUTHENTICATED" });
     expect(result.current.session).toBeNull();
     expect(sent.map(pathOf)).toEqual(["/api/actuator/health"]);
+  });
+});
+
+describe("useApi", () => {
+  it("does not render its component again when a call is logged", async () => {
+    probesAnswer(200, { status: "UP" });
+    let logged = 0;
+    function LogCount() {
+      logged = useRequestLog().entries.length;
+      return null;
+    }
+    // A reader of the log sits outside the hook's component, as the header's count sits outside the page.
+    function withLog({ children }: { children: ReactNode }) {
+      return createElement(RequestLogProvider, null, createElement(SessionProvider, null, createElement(LogCount), children));
+    }
+    let renders = 0;
+    const { result } = renderHook(
+      () => {
+        renders += 1;
+        return useApi();
+      },
+      { wrapper: withLog },
+    );
+    const before = renders;
+
+    await act(async () => {
+      await result.current.get("v1/flights");
+      await result.current.get("v1/flights", { page: 1 });
+    });
+
+    expect(logged).toBe(2);
+    expect(renders).toBe(before);
   });
 });

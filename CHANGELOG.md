@@ -120,6 +120,21 @@ says not yet.
   from `main` no longer reports itself as 1.3.0 in `/actuator/info` and the
   OpenAPI document.
 
+- **Logging a call no longer renders every card again.** `useApi` read the
+  whole request log to get its `record` function, so each logged call rendered
+  every component that calls the API. On `/ops`, one Refresh logs a call for
+  each health card, meter and tag split, and each of those calls rendered all
+  eleven cards. `web/lib/request-log.tsx` now keeps the entries and the actions
+  in two contexts. `useApi` and the session read only the actions, which never
+  change, so logging a call renders only what reads the entries: the frame
+  around the page (`Frame` in `web/components/Shell.tsx`, whose header holds
+  the Requests count) and the drawer, not the page inside it. `/ops` still
+  renders its cards each time one answers, since Refresh counts the reads still
+  out, so there the change spares the calls before a card's last one, such as
+  a meter's whole read before its tag splits. A test in
+  `web/lib/session.test.ts` fails if a logged call renders the component that
+  made it again.
+
 - **A bearer token short of a scope is told which one.** With the resource
   server on, a 403 from a rule that asks for one scope carries
   `WWW-Authenticate: Bearer realm="flight-ops-service", error="insufficient_scope", scope="flights:write"`
