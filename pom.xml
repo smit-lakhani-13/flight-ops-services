@@ -93,7 +93,7 @@
           archunit-junit6, not archunit-junit5: the junit5 artifact binds to JUnit
           Platform 1.x and fails at discovery with a NoSuchMethodError on Boot 4.1's Platform 6.
         -->
-        <archunit.version>1.5.0</archunit.version>
+        <archunit.version>1.5.1</archunit.version>
     </properties>
 
     <dependencyManagement>
