@@ -30,7 +30,8 @@ What is worth reading here:
 
 ## Run it
 
-Node 24 (`.nvmrc`), a JDK 21 for the service
+Node 24.15 or a later 24 (`.nvmrc` names the major, `engines` in
+`package.json` the floor), a JDK 21 for the service
 ([CONTRIBUTING.md](../CONTRIBUTING.md#use-jdk-21)), and the service on port
 8080. From the repository root, in one terminal:
 

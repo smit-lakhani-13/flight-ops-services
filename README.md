@@ -159,7 +159,7 @@ scripts/demo.sh
 
 Swagger UI is at <http://localhost:8080/swagger-ui.html>. The two accounts, `api` / `dev-secret` and `ops` / `dev-ops`, are the defaults in every profile except `prod`, which has none, and `compose.yaml` sets bcrypt hashes of the same two passwords; [doc/api.md](doc/api.md#authentication) explains them and what the `prod` profile checks at startup.
 
-For the console instead of curl, keep the service running and, with Node 24:
+For the console instead of curl, keep the service running and, with Node 24.15 or a later 24:
 
 ```bash
 cd web && npm ci && npm run build && npm start

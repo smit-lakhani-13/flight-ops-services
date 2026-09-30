@@ -742,14 +742,27 @@ jobs:
           cache: npm
           cache-dependency-path: web/package-lock.json
 
-      # package.json says `>=24 <25` without engine-strict, so npm would only
-      # warn. A wrong major fails here, by name, instead of somewhere later.
+      # package.json says `>=24.15 <25` without engine-strict, so npm would
+      # only warn. A wrong major fails here, by name, instead of somewhere
+      # later.
       - name: Node is the major web/.nvmrc names
         run: |
           want=$(tr -d '[:space:]' < .nvmrc)
           have=$(node -p 'process.versions.node.split(".")[0]')
           if [ "$have" != "$want" ]; then
             echo "::error::Node $have is running and web/.nvmrc says $want"
+            exit 1
+          fi
+
+      # setup-node takes a 24 the runner already has cached before it
+      # downloads one, so the 24.15 floor that jsdom sets is checked here,
+      # read from engines in package.json, not assumed.
+      - name: Node meets the engines floor
+        run: |
+          floor=$(node -p 'require("./package.json").engines.node.match(/>=\s*([0-9.]+)/)[1]')
+          have=$(node -p 'process.versions.node')
+          if [ "$(printf '%s\n%s\n' "$floor" "$have" | sort -V | head -n 1)" != "$floor" ]; then
+            echo "::error::Node $have is running and engines in web/package.json needs $floor or later"
             exit 1
           fi
 
