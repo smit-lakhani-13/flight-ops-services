@@ -1,4 +1,4 @@
-import { expect, type APIRequestContext, type Page } from "@playwright/test";
+import { expect, type APIRequestContext, type Page, type Route } from "@playwright/test";
 
 // The default profile's two accounts, from application.yml. CI runs the jar
 // with that profile, so nothing here is a secret.
@@ -7,6 +7,13 @@ export const OPS_ACCOUNT = { user: process.env.E2E_OPS_USER ?? "ops", password: 
 
 type Account = typeof API_ACCOUNT;
 type NavLabel = "Overview" | "Flights" | "Book" | "Ops";
+
+// What the console's own server answers while the service is down.
+export const serviceDown = (route: Route) =>
+  route.fulfill({
+    status: 502,
+    json: { code: "CONSOLE_UPSTREAM_UNREACHABLE", message: "The console could not reach the API. Is the service running?" },
+  });
 
 export function basic(account: Account): string {
   return `Basic ${Buffer.from(`${account.user}:${account.password}`).toString("base64")}`;

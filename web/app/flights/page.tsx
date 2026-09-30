@@ -145,7 +145,13 @@ function Flights() {
             />
           </Field>
           <Field label="Sort">
-            <Select name="sort" value={filters.sort} onChange={(e) => setFilters({ ...filters, sort: e.target.value, page: 0 })}>
+            {/* A new sort reads the list again at once, so it takes the
+                airports as the fields show them, as Search would. */}
+            <Select
+              name="sort"
+              value={filters.sort}
+              onChange={(e) => setFilters({ origin: draft.origin, destination: draft.destination, sort: e.target.value, page: 0 })}
+            >
               {SORTS.map((s) => (
                 <option key={s.value} value={s.value}>
                   {s.label}

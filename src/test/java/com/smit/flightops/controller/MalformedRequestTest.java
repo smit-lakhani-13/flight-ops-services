@@ -43,7 +43,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * Requests that fail before binding finishes: a body Jackson cannot read, an
  * empty or null body, a structured value where the record declares a scalar,
- * and a booking id that is not a {@code Long}. Each is 400 MALFORMED_REQUEST
+ * a number or a boolean where it declares text, and a booking id that is not a
+ * {@code Long}. Each is 400 MALFORMED_REQUEST
  * with the one fixed message doc/api.md promises, because Jackson's text names
  * internal classes and quotes the payload, and Spring's names the handler
  * method. Filters are off, and {@code TimeConfig} imported, for the reasons
@@ -174,6 +175,30 @@ class MalformedRequestTest {
                 arguments(HttpMethod.POST, FLIGHTS, FLIGHT.replace("\"EWR\"", "[\"EWR\"]")),
                 arguments(HttpMethod.PATCH, STATUS, "{\"status\":[\"BOARDING\"]}"),
                 arguments(HttpMethod.PATCH, STATUS, "{\"status\":{}}"));
+    }
+
+    /**
+     * Jackson's own reader takes each of these as text: 123 as a valid flight
+     * number, 42 as a passenger name, true as an idempotency key. The OpenAPI
+     * document types every one of these fields as a string.
+     */
+    @ParameterizedTest(name = "{0} {1} {2}")
+    @MethodSource("numbersAndBooleansForTextFields")
+    @DisplayName("a number or a boolean where a field takes text is 400 with the fixed message")
+    void aNumberOrABooleanForATextFieldIsMalformed(HttpMethod method, String path, String body) throws Exception {
+        assertMalformed(json(method, path, body));
+    }
+
+    static Stream<Arguments> numbersAndBooleansForTextFields() {
+        return Stream.of(
+                arguments(HttpMethod.POST, BOOKINGS, BOOKING.replace("\"UA123\"", "123")),
+                arguments(HttpMethod.POST, BOOKINGS, BOOKING.replace("\"Test Passenger\"", "42")),
+                arguments(HttpMethod.POST, BOOKINGS, BOOKING.replace("\"Test Passenger\"", "false")),
+                arguments(HttpMethod.POST, BOOKINGS, BOOKING.replace("\"malformed-1\"", "true")),
+                arguments(HttpMethod.POST, BOOKINGS, BOOKING.replace("\"malformed-1\"", "1.5")),
+                arguments(HttpMethod.POST, FLIGHTS, FLIGHT.replace("\"UA999\"", "999")),
+                arguments(HttpMethod.POST, FLIGHTS, FLIGHT.replace("\"EWR\"", "-1e3")),
+                arguments(HttpMethod.POST, FLIGHTS, FLIGHT.replace("\"SFO\"", "true")));
     }
 
     /** Without this, a typo in the shared bodies would make every refusal above pass for the wrong reason. */

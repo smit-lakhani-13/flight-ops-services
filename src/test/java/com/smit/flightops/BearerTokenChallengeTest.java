@@ -31,6 +31,7 @@ import java.util.Date;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.httpBasic;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -109,11 +110,34 @@ class BearerTokenChallengeTest {
                                 "idempotencyKey":"jwt-denied-1"}
                                 """))
                 .andExpect(status().isForbidden())
+                .andExpect(header().string(HttpHeaders.WWW_AUTHENTICATE,
+                        "Bearer realm=\"flight-ops-service\", error=\"insufficient_scope\", scope=\"flights:write\""))
                 .andExpect(jsonPath("$.code").value("FORBIDDEN"));
 
         mockMvc.perform(get("/actuator/metrics").header(HttpHeaders.AUTHORIZATION, bearer))
                 .andExpect(status().isForbidden())
+                .andExpect(header().doesNotExist(HttpHeaders.WWW_AUTHENTICATE))
                 .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+    }
+
+    /**
+     * RFC 6750's {@code insufficient_scope} tells a client to get a token with more
+     * scope. No scope lifts {@code denyAll()} or the ops role, so a 403 from either
+     * carries no challenge, which keeps a client from asking for a token that cannot help.
+     */
+    @Test
+    @DisplayName("a 403 that no scope can lift carries no insufficient_scope challenge")
+    void aRefusalNoScopeLiftsHasNoChallenge() throws Exception {
+        String bearer = "Bearer " + signedToken("flights:read flights:write");
+
+        mockMvc.perform(put("/api/v1/flights/UA123").header(HttpHeaders.AUTHORIZATION, bearer))
+                .andExpect(status().isForbidden())
+                .andExpect(header().doesNotExist(HttpHeaders.WWW_AUTHENTICATE))
+                .andExpect(jsonPath("$.code").value("FORBIDDEN"));
+
+        mockMvc.perform(get("/actuator/metrics").header(HttpHeaders.AUTHORIZATION, bearer))
+                .andExpect(status().isForbidden())
+                .andExpect(header().doesNotExist(HttpHeaders.WWW_AUTHENTICATE));
     }
 
     /**

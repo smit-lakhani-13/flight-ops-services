@@ -30,7 +30,7 @@ public enum FlightStatus {
     /** Landed. Terminal state. */
     ARRIVED,
 
-    /** Soft-cancelled — the row survives because bookings reference it. */
+    /** Soft-cancelled: the row survives because bookings reference it. */
     CANCELLED,
 
     /** Late, but still going. Delays do not stop ticket sales. */

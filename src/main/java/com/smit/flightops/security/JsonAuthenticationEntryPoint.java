@@ -24,7 +24,8 @@ import java.io.IOException;
 @Component
 public class JsonAuthenticationEntryPoint implements AuthenticationEntryPoint {
 
-    private static final String REALM = "realm=\"flight-ops-service\"";
+    /** Shared with {@link JsonAccessDeniedHandler}, whose bearer 403 names the same realm. */
+    static final String REALM = "realm=\"flight-ops-service\"";
 
     private final ErrorResponseWriter writer;
 

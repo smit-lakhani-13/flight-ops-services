@@ -106,7 +106,7 @@ aws ce get-cost-and-usage \
     --filter '{"Tags":{"Key":"Project","Values":["flight-ops"]}}' \
     --query 'ResultsByTime[].{Date: TimePeriod.Start, Cost: Total.UnblendedCost.Amount}' \
     --output text 2>/dev/null | awk '{printf "  %s  $%.2f\n", $2, $1}' \
-    || warn "no tagged data — cost allocation tags take up to 24h to activate after up.sh"
+    || warn "no tagged data: cost allocation tags take up to 24h to activate after up.sh"
 
 step "Forecast to the end of this month"
 MONTH_START=$(month_start)
@@ -130,7 +130,7 @@ if [ "$TODAY" != "$MONTH_START" ]; then
         printf '  %sprojected month total  $%.2f%s\n' "$C_BOLD" \
             "$(echo "$mtd $forecast" | awk '{print $1 + $2}')" "$C_RESET"
     else
-        log "no forecast yet — AWS needs a few days of history"
+        log "no forecast yet: AWS needs a few days of history"
     fi
 fi
 
@@ -146,7 +146,7 @@ cat <<NOTE
 
   Materially higher usually means one of three things:
     - a second NAT gateway (one per AZ if cluster.yaml's nat.gateway is not Single)
-    - a load balancer left behind by a deleted Ingress — down.sh checks for this
+    - a load balancer left behind by a deleted Ingress (down.sh checks for this)
     - an idle Elastic IP or unattached EBS volume from a failed teardown
 
   Stop all of it:  $SCRIPTS_DIR_Q/down.sh

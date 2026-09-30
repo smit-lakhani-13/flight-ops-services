@@ -111,9 +111,13 @@ The answer is 403:
 A wrong password gets the same 401 and the same message, so the body never says
 whether the user exists. Once the resource server is on, a rejected bearer token
 gets `Bearer realm="flight-ops-service", error="invalid_token"` as its
-challenge. With the resource server off, a bearer token is ignored and the
-request gets the `Basic` 401 above. [SECURITY.md](../SECURITY.md#401-and-403)
-explains why the two statuses stay apart.
+challenge. A valid token without the scope in the Requires column gets the 403
+with `Bearer realm="flight-ops-service", error="insufficient_scope", scope="flights:write"`,
+naming that scope; a 403 that no scope lifts, such as the ops endpoint above,
+has no challenge. With the resource server off, a bearer token is ignored and
+the request gets the `Basic` 401 above.
+[SECURITY.md](../SECURITY.md#401-and-403) explains why the two statuses stay
+apart.
 
 ## Operations
 
@@ -184,6 +188,10 @@ Both controllers produce and read JSON only.
   answered as if it had been honoured: a create with `"status": "DELAYED"`
   would get 201 and a `SCHEDULED` flight. The OpenAPI document closes each
   request schema with `additionalProperties: false`.
+- A text field sent as a JSON number or a boolean, such as
+  `"flightNumber": 123`, is `400 MALFORMED_REQUEST`, as an array or an object
+  in its place is. Jackson would read it as the text `"123"`, and the create
+  would get 201 for a body the OpenAPI document refuses.
 - A declared `Content-Length` over 16384 bytes gets `413 PAYLOAD_TOO_LARGE`
   on any path, without reading the body and before the credentials are
   checked. A body without one, such as a chunked body, gets the same 413 once
@@ -191,14 +199,23 @@ Both controllers produce and read JSON only.
   that never reads its body never counts it. A valid body is normally under
   1 KB. `HTTP_MAX_BODY_BYTES` sets the limit, through
   `app.http.max-body-bytes`.
+- A `Content-Encoding` header is not read, and nothing is decompressed: a
+  body is parsed as it arrives. A gzip body labelled `Content-Encoding: gzip`
+  is `400 MALFORMED_REQUEST`, and a plain JSON body with the same label is
+  read as plain JSON. Since no body is expanded, a small compressed one cannot
+  grow past the limit above.
 - Any `/api/**` row can also answer `503 DATABASE_UNAVAILABLE`, with
   `Retry-After`, when the service cannot reach its database. The OpenAPI
   document declares that 503 on every operation.
 
 Tomcat refuses some requests before Spring sees them: `%2F`, `%5C`, `%00` or
-`%zz` in the path, a raw `|`, or a request line and headers over 8 KB in all
-(`server.max-http-request-header-size`, left at Spring Boot's default). Those
-get Tomcat's own HTML 400 page with no `X-Request-Id`. A path that Spring
+`%zz` in the path, a raw `|`, a request line and headers over 8 KB in all
+(`server.max-http-request-header-size`, left at Spring Boot's default), or a
+`Content-Length` that is not a whole number it can hold, such as `abc`, `-1`
+or twenty digits. Those get Tomcat's own HTML 400 page with no `X-Request-Id`.
+`CONNECT`, and a `Transfer-Encoding` that names a coding other than `chunked`,
+such as `gzip` or `identity`, get its HTML 501 page the same way; one that
+puts another coding after `chunked` gets the 400. A path that Spring
 Security's firewall
 refuses, such as one with `;` or `//` in it, gets `400 BAD_REQUEST` in the
 usual JSON envelope instead, from `ApiErrorController`. An unknown metric name,
@@ -233,7 +250,7 @@ container's own error text can name an internal path or exception class.
 ## Error envelope
 
 Every error the three classes below write has one of two JSON shapes.
-Tomcat's HTML 400 page and the actuator's empty 404, described under
+Tomcat's HTML 400 and 501 pages and the actuator's empty 404, described under
 [Request rules](#request-rules), come from outside them. Most errors are
 `{code, message, timestamp}`:
 
@@ -256,11 +273,11 @@ Three classes write them:
 | `security/ErrorResponseWriter.java` | the 401 and 403, for `JsonAuthenticationEntryPoint` and `JsonAccessDeniedHandler`, and the 413 that `RequestBodyLimitFilter` decides itself. Those are decided before the `DispatcherServlet` runs, so the handler above never sees them |
 | `exception/ApiErrorController.java` | `/error`, where the container forwards a failure raised outside Spring MVC, such as a path the firewall refuses or a `TRACE` |
 
-Each sets `Content-Type: application/json` itself, whatever the `Accept`
-header asked for. No controller contains a `try`/`catch`. All three take the
-timestamp from the one injected `Clock`. `RequestIdFilter` returns
-`X-Request-Id` on every response the application handles, 401, 403 and 413
-included.
+Each sets `Content-Type: application/json` itself, with no `charset`
+parameter (JSON is UTF-8), whatever the `Accept` header asked for. No
+controller contains a `try`/`catch`. All three take the timestamp from the
+one injected `Clock`. `RequestIdFilter` returns `X-Request-Id` on every
+response the application handles, 401, 403 and 413 included.
 
 ## Error codes
 
@@ -282,7 +299,7 @@ included.
 | `UNAUTHENTICATED` | 401 | no credentials, or credentials that do not verify; written by `JsonAuthenticationEntryPoint` |
 | `FORBIDDEN` | 403 | authenticated, without the authority this path needs; written by `JsonAccessDeniedHandler` |
 | `VALIDATION_FAILED` | 400 | Bean Validation, per field, including `@DistinctEndpoints`, which refuses a flight from EWR to EWR. A field that breaks more than one rule gets one message, taken in this order: null, blank, size or range, pattern, any other rule. So an empty airport code gets `must not be blank`, not `size must be between 3 and 3`. A flight number with a space, `/` or `%` inside gets `must contain only letters and digits`. An airport code with a digit, symbol or padding gets `must contain only letters`. A passenger name with a control character gets `must not contain control characters`, one with an unpaired UTF-16 surrogate gets `must not contain unpaired surrogates`, one with a text-direction control (U+202A to U+202E, U+2066 to U+2069, U+200E, U+200F or U+061C) or a line or paragraph separator (U+2028, U+2029) gets `must not contain text-direction controls or line separators`, and one made only of spaces, no-break spaces or format characters such as U+200B, U+FEFF and the direction controls above gets `must not be blank`; for the last two that message comes from a pattern, so such a name past 255 characters gets the size message instead. An idempotency key with a character other than letters, digits and `. _ : -` gets `must contain only letters, digits and . _ : -`. A missing or null `departureTime` gets `must not be null` |
-| `MALFORMED_REQUEST` | 400 | unreadable body, a field the request schema does not list, a key sent twice in one object, an unknown enum constant, one with padding around its name or one sent as a number, a `seats` or `totalSeats` that is missing, null, quoted, or written with a decimal point or an exponent (`2.0` included), a `departureTime` that is not an ISO-8601 instant with `Z` or an offset, or is one later than `9999-12-31T23:59:59.999999Z` (a missing or null one is `VALIDATION_FAILED`), bad path variable, missing query parameter, a query value that is not valid percent-encoded UTF-8, a filter with a control character once trimmed (see [Paging and sorting](#paging-and-sorting)), a value the database refuses as invalid data (SQLState class 22), or `page * size` above 2147483647 on either list endpoint |
+| `MALFORMED_REQUEST` | 400 | unreadable body, a field the request schema does not list, a key sent twice in one object, a text field sent as a number or a boolean, an unknown enum constant, one with padding around its name or one sent as a number, a `seats` or `totalSeats` that is missing, null, quoted, or written with a decimal point or an exponent (`2.0` included), a `departureTime` that is not an ISO-8601 instant with `Z` or an offset, or is one later than `9999-12-31T23:59:59.999999Z` (a missing or null one is `VALIDATION_FAILED`), bad path variable, missing query parameter, a query value that is not valid percent-encoded UTF-8, a filter with a control character once trimmed (see [Paging and sorting](#paging-and-sorting)), a value the database refuses as invalid data (SQLState class 22), or `page * size` above 2147483647 on either list endpoint |
 | `RESOURCE_NOT_FOUND` | 404 | an unmapped path the security rules let through, such as `GET /api/v1/does-not-exist` with `flights:read`; a path no rule names, such as `/some/other/thing`, gets 403 from `anyRequest().denyAll()`, or 401 without credentials |
 | `METHOD_NOT_ALLOWED` | 405 | a verb the security rules allow on a path that does not map it, such as `POST` on `/api/v1/flights/UA123`; the `Allow` header lists the mapped verbs. Tomcat refuses `TRACE` before any filter runs, so its 405 comes from `ApiErrorController`, with the servlet's full `Allow` list and no `X-Request-Id`. `PUT` and `OPTIONS` get 403 from `anyRequest().denyAll()`, or 401 without credentials |
 | `PAYLOAD_TOO_LARGE` | 413 | a request body over `app.http.max-body-bytes`, 16384 bytes by default. `RequestBodyLimitFilter` refuses a declared `Content-Length` over it before the body is read and before the credentials are checked. A chunked body is refused with the same code once the read passes the limit |
@@ -473,7 +490,11 @@ character (`\p{Cc}`) once trimmed, such as `?origin=J%00K`, is
 (`controller/QueryParams.java#withoutControlCharacters`). PostgreSQL refuses
 a NUL in a text value, and H2 does not, so the check keeps the two databases
 giving the same answer. Nothing else about a filter is checked: `?origin=J-K`
-is an empty page, like any other code no flight has.
+is an empty page, like any other code no flight has. A filter sent twice is
+joined with a comma, as Spring binds a repeated parameter to one string, so
+`?origin=EWR&origin=EWR` asks for `EWR,EWR` and is an empty page too, and so
+is a repeated `flightNumber` on the bookings list. A repeated `page` or `size`
+takes its first value.
 
 `controller/SortPolicy.java#stable` applies the same rules to both endpoints.
 Each endpoint publishes the properties it sorts by:

@@ -33,11 +33,117 @@ says not yet.
 
 ## Unreleased
 
+### Added
+
+- **Tests for four guarantees the documents state.**
+  `OutboxTest#aLongFailureIsTruncatedAndTheBatchCommits` sends a 2,000-character
+  failure through the drain and reads back `last_error` cut to its 500-character
+  column, with the rest of the batch published: an over-long value would fail
+  the UPDATE and roll back the attempt counter. `LockTimeoutTest` now retries
+  after each `503 LOCK_TIMEOUT`, as `Retry-After` asks: the timed-out booking
+  left no row and took no seat, the timed-out cancellation left the booking
+  active, and each retry succeeds.
+  `ErrorContractTest#pagePastTheLastAddressableRowIsABadRequest` sends both
+  sides of the `page * size` edge at two sizes. `ShutdownBudgetTest` reads the
+  shutdown mode and drain the running context bound, the `preStop` sleep and
+  grace period in `deploy/k8s/base/deployment.yaml` and the ALB's
+  deregistration delay in the Ingress, and fails if the sleep and the drain, or
+  the delay, no longer end inside the grace period.
+
 ### Changed
+
+- **A preflight to the console is tested.** ADR 0017 and SECURITY.md rest on
+  Next answering `OPTIONS` on the console's `/api/` paths itself, with `204`
+  and no CORS headers, and nothing checked it. `web/e2e/ops.spec.ts` now sends
+  a preflight from another origin to a forwarded path, a refused one and the
+  race, checks that no `Access-Control-*` header comes back, and checks that a
+  `GET` on the race gets Next's bare `405`. The route test fails if the `/api`
+  module exports `OPTIONS`. `web/README.md` said the preflight's `Allow` header
+  lists the methods the route exports; it lists `OPTIONS` as well.
+
+- **The console's tests check more of what its README promises.** The e2e
+  specs check that signing in, signing out and a Try again on a flight's or a
+  booking's page each move the focus to the page's title, and that a change of
+  account is announced; a booking page's Try again had no test at all. The
+  airport search waits for the unfiltered list to go before it checks the
+  result, so it can no longer pass on the old list, and the 44 px check covers
+  the header's brand link, as `web/README.md` and ADR 0017 say it does. New
+  unit tests cover a replay that comes back as a different booking, a race
+  that made two bookings, a race call that times out, the race's 500 for an
+  `API_BASE_URL` that is not an origin, the hints for 401, 403 and no answer,
+  and the zone in a formatted time, and one fails if `lib/proxy.ts` or
+  `lib/race.ts` sends a code the error classifier does not know. Vitest runs
+  every `*.test.ts` and `*.test.tsx` file in `web/`, where it took one
+  extension per directory, so a test can no longer sit unrun.
+
+- **A flight's bookings keep the focus and say when they are out of date.**
+  After Next or Previous in the bookings on a flight's page, the old page stayed
+  on screen as if current until the new one came, and a page that failed to
+  arrive took the pager away with the focus on it, which fell back to the page.
+  The card now dims the last answer and marks it busy while another is out, as
+  the flight list does, and a failed page hands the focus to the card's
+  Refresh, which reads that page again. `web/e2e/flights.spec.ts` checks both.
+
+- **The console's hint on a 503 fits a database outage.** It said the service
+  was busy, but `DATABASE_UNAVAILABLE` sends the same `503` and `Retry-After`
+  as `LOCK_TIMEOUT`, so while the database was down every page, and the api
+  account's sign-in, pointed at load. It now says the service could not finish
+  the request just now, and the API's message above it still says which it was.
+
+- **A new sort on the flight list applies the airports the fields show.** The
+  sort reads the list again at once, but it kept the airports last searched, so
+  after typing `EWR` over a searched `ORD` and changing the sort, the list
+  showed `ORD` flights under a field that said `EWR`. It now takes the fields
+  as they stand, as Search does. `web/e2e/flights.spec.ts` checks the request.
+
+- **`doc/api.md` says three more things the service does at its edges.** A
+  `Content-Encoding` is not read, so a compressed body is never expanded. A
+  malformed `Content-Length` gets Tomcat's HTML 400, and `CONNECT` or a
+  transfer coding other than `chunked` its HTML 501, each outside the JSON
+  envelope. A filter sent twice is joined with a comma, and matches nothing.
+  Each was found by probing a running service; none is new behaviour.
+
+- **The OpenAPI document writes every error code one way.** Its 503
+  descriptions put a colon after the code and the others a dash, often both in
+  one operation's list of responses. Every description in `BookingController`
+  and `FlightController` now uses the colon, and `OpenApiTest` fails if an em
+  dash comes back into the document.
+
+- **The flight list no longer cuts a seat count at tablet widths.** Between
+  640 and 790 px a long row made the table wider than its box, which scrolled
+  with no sign that it could, so its edge cut `850/850` to `850/85`. The
+  departure time now wraps first, so the table fits its box from 640 px up. A
+  test in `web/e2e/flights.spec.ts` checks the widest row the API allows at
+  five widths.
 
 - **Version.** Both poms say `1.4.0-SNAPSHOT` until the next tag, so a build
   from `main` no longer reports itself as 1.3.0 in `/actuator/info` and the
   OpenAPI document.
+
+- **Logging a call no longer renders every card again.** `useApi` read the
+  whole request log to get its `record` function, so each logged call rendered
+  every component that calls the API. On `/ops`, one Refresh logs a call for
+  each health card, meter and tag split, and each of those calls rendered all
+  eleven cards. `web/lib/request-log.tsx` now keeps the entries and the actions
+  in two contexts. `useApi` and the session read only the actions, which never
+  change, so logging a call renders only what reads the entries: the frame
+  around the page (`Frame` in `web/components/Shell.tsx`, whose header holds
+  the Requests count) and the drawer, not the page inside it. `/ops` still
+  renders its cards each time one answers, since Refresh counts the reads still
+  out, so there the change spares the calls before a card's last one, such as
+  a meter's whole read before its tag splits. A test in
+  `web/lib/session.test.ts` fails if a logged call renders the component that
+  made it again.
+
+- **A bearer token short of a scope is told which one.** With the resource
+  server on, a 403 from a rule that asks for one scope carries
+  `WWW-Authenticate: Bearer realm="flight-ops-service", error="insufficient_scope", scope="flights:write"`
+  (or `flights:read`), RFC 6750's challenge for a token that lacks a scope.
+  `JsonAccessDeniedHandler` had replaced Spring's bearer handler and sent no
+  challenge at all. It reads the scope from the refusing rule's decision, so a
+  403 no scope can lift, `denyAll()` or the ops role, still carries none, and
+  so does a 403 to a Basic caller
+  (`BearerTokenChallengeTest#aRefusalNoScopeLiftsHasNoChallenge`).
 
 - **The README says more of what is built.** Its opening sentence names Java
   21 and Spring Boot 4.1. It links the latest release, says a release is a
@@ -49,11 +155,82 @@ says not yet.
   actions, downloads and images are pinned, and which merges the ruleset on
   `main` accepts.
 
+- **Dependabot keeps `@types/node` on the console's Node.** The major of
+  `@types/node` is the Node release it describes, and `web/.nvmrc` and
+  `engines` pin Node 24, so Dependabot's offer of 26.x would have let the type
+  check accept a call to an API that Node 24 does not have. The npm entry now
+  ignores its majors, as it does for `next`, `eslint-config-next` and `eslint`.
+  Its minors and patches still arrive in the tooling group, and its major moves
+  by hand with `web/.nvmrc`. The ignore rules now name nine artifacts.
+
+- **A failed row lock is logged on one line.** The WARN lines for a lock
+  timeout or a deadlock, and for a write `@Version` rejected, now go through
+  `GlobalExceptionHandler.printable`, as the line for an unreachable database
+  already did. PgJDBC puts the server's Detail, Hint and Where on lines of
+  their own, so on the plain-text console one deadlock took five lines, and a
+  search for the WARN line missed the rest
+  (`FixedErrorMessagesTest#aMultiLineLockMessageIsLoggedOnOneLine`). The ECS
+  JSON under `prod` was already one object per line.
+
 ### Fixed
+
+- **The flight-number pattern runs in linear time.** Every constraint on a
+  field runs, so the pattern also saw values `@Size` had refused, up to the
+  16 KiB body limit. On a run of spaces that ends in a symbol,
+  `^\s*[A-Za-z0-9]*\s*$` tried every split between its two runs of padding:
+  one request with 16,000 spaces took about 750 ms of CPU in a local run, and
+  any caller with `flights:write` could send it to either write. The pattern
+  is now `^\s*(?:[A-Za-z0-9]+\s*)?$`, which accepts the same strings and
+  backs off one character at a time. `FlightNumberPatternTest` checks it
+  against the rule over every string up to seven characters, and times it on
+  100,000 spaces. The published OpenAPI schema shows the new text.
+
+- **A typo in the sweep patterns fails instead of passing.** `scripts/sweeps.sh`
+  guarded against a missing `SWEEP_PATTERNS` secret but not a corrupt one. grep
+  reports a pattern it cannot compile as an error and matches nothing, and each
+  supplied-pattern check read no match as a pass, so one unbalanced parenthesis
+  in an edit turned all three into a silent pass. A pattern that starts with `-`
+  was read as an option, with the same result, and so was a tracked file whose
+  name starts with `-`. The script now checks the pattern once, fails every run
+  if grep cannot compile it, in the caller's locale or in C, or if it matches an
+  empty line, and never prints it. Each grep takes the pattern after `-e` and
+  the file names after `--`. The sweeps also read what they skipped: the
+  screenshots in `doc/assets/`, read byte by byte with only a matching file's
+  name printed, and each annotated tag's message, which GitHub shows with the
+  release. On GNU grep, which CI runs, a line with a byte that is not UTF-8 is
+  no longer dropped: grep reported a match on such a line only as "binary file
+  matches" on standard error, and every grep now reads its input as text.
+  `scripts/sweeps-selftest.sh` plants each kind of finding in scratch
+  repositories and fails if the script passes one; the `docs-check` job runs it
+  before the real sweep.
 
 - **Maven version in the README.** The `build` row said the enforcer requires
   Maven 3.9; both poms accept 3.9 or later (`requireMavenVersion` is
   `[3.9.0,)`).
+
+- **Text fields take only JSON strings.** `"flightNumber": 123`,
+  `"passengerName": 42` and `"idempotencyKey": true` were read as the text
+  `"123"`, `"42"` and `"true"`, so a create or a booking got 201 for a body
+  the OpenAPI document refuses. `allow-coercion-of-scalars: false` stops a
+  string becoming a number, not a number becoming a string.
+  `config/StrictTextModule` now refuses a number or a boolean for every
+  `String` in a request body with `400 MALFORMED_REQUEST`, as it already
+  refused an array or an object
+  (`MalformedRequestTest#aNumberOrABooleanForATextFieldIsMalformed`,
+  `ErrorContractTest#aFlightNumberSentAsANumberIsRefused`).
+
+- **Every error envelope has one Content-Type.** The 401, the 403 and the
+  413, which `security/ErrorResponseWriter` writes before Spring MVC runs, were
+  sent as `application/json;charset=UTF-8`, while `GlobalExceptionHandler` and
+  `ApiErrorController` send `application/json`, the value `doc/api.md` gives
+  for all three. The writer no longer sets a character encoding, so all three
+  send `application/json`. JSON on the wire is UTF-8 and its media type has no
+  charset parameter (RFC 8259), and the body is the same UTF-8 bytes as before.
+  Responses these three do not write are unchanged: Tomcat's HTML 400 and 501
+  pages, the actuator's empty 404, and the health 503, which the actuator
+  sends with the media type it negotiates. `SecurityRulesTest`,
+  `JsonAccessDeniedHandlerTest` and the real-server tests for the 413 and for
+  `/error` now compare the whole header.
 
 - **Moving to Cognito is not configuration alone.** The README,
   `doc/ARCHITECTURE.md` and SECURITY.md said the bearer-token swap is two
@@ -62,6 +239,25 @@ says not yet.
   its resource server's identifier, and its client-credentials tokens carry no
   `aud`, so it also needs a scope converter and an audience check on
   `client_id`. The documents now say so; neither is built.
+
+- **The console's 409 demonstration made a booking on a fresh key.** On
+  `/book`, "Same key, different body" builds its body from the key's first
+  Book. With no Book on the key yet, it sent the form with one more seat, which
+  was the key's first body: the API made a booking, took the seats, and the
+  status line showed a green 201. A replay then got 409, because it sent the
+  form and not what the key held. The button now sends nothing on such a key
+  and says to Book first
+  (`web/components/BookingForm.test.tsx`, "sends no different body on a key no
+  Book has used").
+
+- **Escape did not close the console's cancel question.** On a flight's page,
+  Cancel flight opens an inline question, Keep it or Yes, cancel it, and moves
+  the focus to Keep it. Escape did nothing there, while it closes the Requests
+  drawer. It now answers the question as Keep it does: nothing is sent, and the
+  focus goes back to Cancel flight. While the cancel is out, Escape does
+  nothing, as Keep it is disabled then (`web/e2e/flights.spec.ts`, "Escape
+  inside the cancel question keeps the flight and hands the focus back to
+  Cancel flight").
 
 - **Smaller claims that had drifted.** ADR 0014 now says both SBOMs are
   uploaded by CI and attached to every release since v1.2.0, and ADR 0009

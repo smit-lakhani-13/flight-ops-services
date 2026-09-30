@@ -10,7 +10,9 @@ import { formatInstant, LINK_CELL, MUTED, SeatBar, StatusBadge, TextLink } from 
 // room inside the scroll box. Below 640 px the status sits under the flight
 // number, the departure under the route, and the seat bar gives way to the
 // count, and the headings may wrap, so every column stays on screen from
-// 320 px up.
+// 320 px up. Above that the departure wraps when the row runs out of room,
+// so the table never scrolls sideways and the box's edge never cuts a seat
+// count.
 export function FlightTable({ flights }: { flights: Flight[] }) {
   const th = "sticky top-0 z-10 border-b border-slate-200 bg-white py-2 font-medium whitespace-normal sm:whitespace-nowrap dark:border-slate-800 dark:bg-slate-900";
   const gap = "pr-2 sm:pr-4";
@@ -47,7 +49,7 @@ export function FlightTable({ flights }: { flights: Flight[] }) {
                 </span>
                 <span className={`block text-xs sm:hidden ${MUTED}`}>{formatInstant(flight.departureTime)}</span>
               </td>
-              <td className={`hidden py-2.5 whitespace-nowrap sm:table-cell ${gap}`}>{formatInstant(flight.departureTime)}</td>
+              <td className={`hidden py-2.5 sm:table-cell ${gap}`}>{formatInstant(flight.departureTime)}</td>
               <td className={`hidden py-2.5 sm:table-cell ${gap}`}>
                 <StatusBadge status={flight.status} />
               </td>

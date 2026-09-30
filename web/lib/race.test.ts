@@ -81,6 +81,36 @@ describe("runRace", () => {
     expect(summariseRace(report.rows).statuses).toEqual({ "0": 1, "409": 9 });
   });
 
+  it("reports a call the API does not answer in time as a timed-out row", async () => {
+    let call = 0;
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+      call += 1;
+      if (call === 3) {
+        // Waits on the signal, as fetch does, so the row's own timeout ends it.
+        return new Promise<Response>((_resolve, reject) => {
+          init.signal?.addEventListener("abort", () => reject(init.signal?.reason));
+        });
+      }
+      return new Response(JSON.stringify({ bookingId: 7 }), { status: 201, headers: { "Content-Type": "application/json" } });
+    }) as unknown as typeof fetch;
+
+    const response = await runRace(raceRequest(JSON.stringify(BOOKING)), { fetch: fetchImpl, baseUrl: BASE, timeoutMs: 20 });
+    const report = (await response.json()) as RaceReport;
+
+    const late = report.rows.filter((row) => row.status === 0);
+    expect(late).toHaveLength(1);
+    expect(late[0]!.body).toMatchObject({ code: "CONSOLE_UPSTREAM_TIMEOUT" });
+    expect(summariseRace(report.rows)).toEqual({ statuses: { "0": 1, "201": 9 }, bookingIds: [7] });
+  });
+
+  it("answers 500 without calling the API when API_BASE_URL is not an origin", async () => {
+    const fetchImpl = vi.fn() as unknown as typeof fetch;
+    const response = await runRace(raceRequest(JSON.stringify(BOOKING)), { fetch: fetchImpl, baseUrl: "http://api.test/prefix" });
+    expect(response.status).toBe(500);
+    expect(await response.json()).toMatchObject({ code: "CONSOLE_MISCONFIGURED" });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("refuses a body that is not one JSON object", async () => {
     const fetchImpl = vi.fn() as unknown as typeof fetch;
     for (const body of ["not json", "[1,2]", "null", "42"]) {

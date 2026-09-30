@@ -1,12 +1,16 @@
-import { expect, test, type Route } from "@playwright/test";
-import { API_ACCOUNT, basic, createBooking, createFlight, go, openFlight, routeOf, signIn, uniqueFlightNumber } from "./support";
-
-// What the console's own server answers while the service is down.
-const serviceDown = (route: Route) =>
-  route.fulfill({
-    status: 502,
-    json: { code: "CONSOLE_UPSTREAM_UNREACHABLE", message: "The console could not reach the API. Is the service running?" },
-  });
+import { expect, test } from "@playwright/test";
+import {
+  API_ACCOUNT,
+  basic,
+  createBooking,
+  createFlight,
+  go,
+  openFlight,
+  routeOf,
+  serviceDown,
+  signIn,
+  uniqueFlightNumber,
+} from "./support";
 
 test("search narrows the list by airport", async ({ page }) => {
   await signIn(page);
@@ -15,9 +19,32 @@ test("search narrows the list by airport", async ({ page }) => {
   await search.getByLabel("Origin").fill("ORD");
   await search.getByRole("button", { name: "Search" }).click();
 
+  // The list keeps the last answer on screen while a search is out, so wait
+  // for UA123 to go before checking what came back in its place.
   const table = page.getByTestId("flight-table");
-  await expect(table).toContainText("UA456");
   await expect(table).not.toContainText("UA123");
+  await expect(table).toContainText("UA456");
+});
+
+test("a new sort searches with the airports the fields show, not the last ones searched", async ({ page }) => {
+  await signIn(page);
+  await go(page, "Flights");
+  const search = page.getByRole("form", { name: "Search flights" });
+  await search.getByLabel("Origin").fill("ORD");
+  await search.getByRole("button", { name: "Search" }).click();
+  const table = page.getByTestId("flight-table");
+  await expect(table).not.toContainText("UA123");
+
+  // EWR is typed but not searched; the sort applies it.
+  await search.getByLabel("Origin").fill("EWR");
+  const sorted = page.waitForRequest((request) => {
+    const url = new URL(request.url());
+    return url.pathname === "/api/v1/flights" && url.searchParams.get("sort") === "flightNumber,asc";
+  });
+  await search.getByLabel("Sort").selectOption("flightNumber,asc");
+  expect(new URL((await sorted).url()).searchParams.get("origin")).toBe("EWR");
+  await expect(table).not.toContainText("UA456");
+  await expect(table).toContainText("UA123");
 });
 
 test("a page of the list that fails to arrive offers Try again, which reads that page again", async ({ page, request }) => {
@@ -114,6 +141,46 @@ test("Try again after an outage reads the flight and its bookings again", async 
   await expect(page.getByTestId("flight-status")).toHaveText("SCHEDULED");
   await expect(page.getByTestId("booking-table")).toContainText(`#${bookingId}`);
   await expect(page.getByTestId("error-banner")).toHaveCount(0);
+  // Try again went with the banner, so the focus is on the heading.
+  await expect(page.getByRole("heading", { level: 1 })).toBeFocused();
+});
+
+test("a page of a flight's bookings that fails to arrive hands the focus to Refresh, which reads that page again", async ({ page, request }) => {
+  // Eleven bookings make two pages of ten.
+  const flightNumber = uniqueFlightNumber();
+  await createFlight(request, flightNumber);
+  for (let i = 0; i < 11; i++) await createBooking(request, flightNumber);
+  await signIn(page);
+  await openFlight(page, flightNumber);
+  const card = page.locator("section").filter({ has: page.getByRole("heading", { name: "Bookings on this flight" }) });
+  const refresh = card.getByRole("button", { name: "Refresh" });
+  const busy = card.locator('div[aria-busy="true"]');
+  await expect(card.getByText("11 total · page 1 of 2")).toBeVisible();
+
+  // The second page is held until the test lets it go, and the first stays on
+  // screen meanwhile, marked busy. Then the service is down for it.
+  const secondPage = (url: URL) =>
+    url.pathname === "/api/v1/bookings" && url.searchParams.get("flightNumber") === flightNumber && url.searchParams.get("page") === "1";
+  let release = () => {};
+  const held = new Promise<void>((resolve) => (release = resolve));
+  await page.route(secondPage, async (route) => {
+    await held;
+    await serviceDown(route);
+  });
+  await card.getByRole("button", { name: "Next" }).press("Enter");
+  await expect(busy).toContainText("page 1 of 2");
+  release();
+
+  // The pager went with the table, so the focus is on Refresh, not the page.
+  await expect(card.getByTestId("error-banner")).toHaveAttribute("data-code", "CONSOLE_UPSTREAM_UNREACHABLE");
+  await expect(refresh).toBeFocused();
+
+  // Refresh reads the second page, not the first, and keeps the focus.
+  await page.unroute(secondPage);
+  await refresh.press("Enter");
+  await expect(card.getByText("11 total · page 2 of 2")).toBeVisible();
+  await expect(busy).toHaveCount(0);
+  await expect(refresh).toBeFocused();
 });
 
 test("a Try again that fails as well is announced once, and a failed Refresh on the bookings still is", async ({ page, request }) => {
@@ -212,4 +279,62 @@ test("cancelling a flight asks first, then marks it CANCELLED and stops sales", 
   expect(refused.status()).toBe(409);
   expect(await refused.json()).toMatchObject({ code: "FLIGHT_NOT_BOOKABLE" });
   await expect(page.getByText("No: a booking gets 409 FLIGHT_NOT_BOOKABLE")).toBeVisible();
+});
+
+test("Escape inside the cancel question keeps the flight and hands the focus back to Cancel flight", async ({ page, request }) => {
+  const flightNumber = uniqueFlightNumber();
+  await createFlight(request, flightNumber);
+  await signIn(page);
+  await openFlight(page, flightNumber);
+
+  const deletes: string[] = [];
+  page.on("request", (sent) => {
+    if (sent.method() === "DELETE") deletes.push(sent.url());
+  });
+  const cancelFlight = page.getByRole("button", { name: "Cancel flight" });
+  const question = page.getByRole("group", { name: `Cancel ${flightNumber}? It cannot be undone.` });
+
+  // From Keep it, where opening the question puts the focus.
+  await cancelFlight.click();
+  await expect(page.getByRole("button", { name: "Keep it" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(question).toHaveCount(0);
+  await expect(cancelFlight).toBeEnabled();
+  await expect(cancelFlight).toBeFocused();
+
+  // From the other answer: Escape never means yes.
+  await cancelFlight.click();
+  await page.getByRole("button", { name: "Yes, cancel it" }).focus();
+  await page.keyboard.press("Escape");
+  await expect(question).toHaveCount(0);
+  await expect(cancelFlight).toBeFocused();
+
+  const kept = await request.get(`/api/v1/flights/${flightNumber}`, { headers: { Authorization: basic(API_ACCOUNT) } });
+  expect(await kept.json()).toMatchObject({ status: "SCHEDULED" });
+  expect(deletes).toEqual([]);
+});
+
+test("the widest flight row fits the table from 640 px up, so no seat count is cut at its edge", async ({ page, request }) => {
+  // Ten characters and 850 seats are the most the API takes. Below 640 px the
+  // departure and the status move into other cells; from there up the
+  // departure wraps before the table would scroll inside its box, where the
+  // box's edge cut 850/850 to 850/85.
+  const flightNumber = `${uniqueFlightNumber()}XYZ`.slice(0, 10);
+  const route = routeOf(flightNumber);
+  await createFlight(request, flightNumber, 850, route);
+  await signIn(page);
+  await go(page, "Flights");
+  const search = page.getByRole("form", { name: "Search flights" });
+  await search.getByLabel("Origin").fill(route.origin);
+  await search.getByLabel("Destination").fill(route.destination);
+  await search.getByRole("button", { name: "Search" }).click();
+  const table = page.getByTestId("flight-table");
+  await expect(table.getByRole("link", { name: flightNumber })).toBeVisible();
+
+  for (const width of [640, 700, 768, 800, 1024]) {
+    await page.setViewportSize({ width, height: 900 });
+    await expect
+      .poll(() => table.evaluate((t) => t.parentElement!.scrollWidth - t.parentElement!.clientWidth), { message: `at ${width} px` })
+      .toBe(0);
+  }
 });

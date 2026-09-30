@@ -135,6 +135,36 @@ test.describe("the proxy's allow-list", () => {
     expect(await plainRace.json()).toMatchObject({ code: "CONSOLE_UNSUPPORTED_MEDIA_TYPE" });
   });
 
+  test("leaves a preflight to Next, which answers it with no CORS headers", async ({ request }) => {
+    // ADR 0017: with no Access-Control-* header on the answer, a page on
+    // another origin cannot send the console a write or read what it returns.
+    const preflights = [
+      ["/api/v1/bookings", "DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT"],
+      ["/api/actuator/env", "DELETE, GET, HEAD, OPTIONS, PATCH, POST, PUT"],
+      ["/api/race", "OPTIONS, POST"],
+    ] as const;
+    for (const [path, allow] of preflights) {
+      const response = await request.fetch(path, {
+        method: "OPTIONS",
+        headers: {
+          Origin: "https://elsewhere.example",
+          "Access-Control-Request-Method": "POST",
+          "Access-Control-Request-Headers": "authorization, content-type",
+        },
+      });
+      expect(response.status(), path).toBe(204);
+      expect(response.headers()["allow"], path).toBe(allow);
+      expect(Object.keys(response.headers()).filter((name) => name.startsWith("access-control-")), path).toEqual([]);
+    }
+
+    // The race exports only POST, so Next refuses a read there itself: a bare
+    // 405, outside the envelope and with no Allow header.
+    const read = await request.get("/api/race");
+    expect(read.status()).toBe(405);
+    expect(read.headers()["allow"]).toBeUndefined();
+    expect((await read.body()).length).toBe(0);
+  });
+
   test("sends the console's security headers on pages and on proxied answers", async ({ request }) => {
     for (const path of ["/", "/api/v1/flights", "/api/actuator/env"]) {
       const headers = (await request.get(path)).headers();

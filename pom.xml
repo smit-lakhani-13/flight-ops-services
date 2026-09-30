@@ -51,7 +51,7 @@
     <properties>
         <java.version>21</java.version>
         <!-- Boot's BOM does not manage the AWS SDK, so this pin is the only thing controlling it. -->
-        <aws.sdk.version>2.55.5</aws.sdk.version>
+        <aws.sdk.version>2.55.6</aws.sdk.version>
 
         <!--
           Not in Boot's BOM either. springdoc 3.x targets Boot 4.x; 3.1.1 is the
@@ -93,7 +93,7 @@
           archunit-junit6, not archunit-junit5: the junit5 artifact binds to JUnit
           Platform 1.x and fails at discovery with a NoSuchMethodError on Boot 4.1's Platform 6.
         -->
-        <archunit.version>1.5.0</archunit.version>
+        <archunit.version>1.5.1</archunit.version>
     </properties>
 
     <dependencyManagement>
