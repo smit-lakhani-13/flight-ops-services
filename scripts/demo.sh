@@ -28,13 +28,19 @@ OPS_AUTH="${OPS_AUTH:--u ops:dev-ops}"
 # direct calls use these arrays, split once here, so an unquoted $AUTH never
 # looks like a forgotten quote.
 #
-# Under `set -u`, bash 3.2 (what macOS ships) treats "${arr[@]}" on an empty
-# array as unbound and aborts. The ${arr[@]+...} form expands to nothing
-# instead.
-read -ra auth_args <<< "$AUTH"
-read -ra ops_args  <<< "$OPS_AUTH"
-AUTH_ARGS=(${auth_args[@]+"${auth_args[@]}"})
-OPS_ARGS=(${ops_args[@]+"${ops_args[@]}"})
+# An empty value takes the default above, but one of only spaces or tabs
+# splits into no words, and under `set -u` bash 3.2 (what macOS ships) aborts
+# on "${arr[@]}" of an empty array with "unbound variable". So a blank value
+# stops here, with a message. Act 7 shows what the API answers a caller with no
+# credentials.
+read -ra AUTH_ARGS <<< "$AUTH"
+read -ra OPS_ARGS  <<< "$OPS_AUTH"
+if [ ${#AUTH_ARGS[@]} -eq 0 ] || [ ${#OPS_ARGS[@]} -eq 0 ]; then
+  echo "AUTH and OPS_AUTH hold curl's credential flags, and one of them is blank."
+  echo "Leave both unset for the default profile's accounts, or set them, as in:"
+  echo "    AUTH='-u someone:something' scripts/demo.sh"
+  exit 1
+fi
 FAST=0
 [[ "${1:-}" == "--fast" ]] && FAST=1
 

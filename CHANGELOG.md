@@ -186,6 +186,21 @@ says not yet.
 
 ### Fixed
 
+- **`scripts/demo.sh` stops on a blank credential with its own message.** An
+  `AUTH` of only spaces or tabs splits into no curl arguments, and under
+  `set -u` the bash 3.2 that macOS ships aborts on the empty array with
+  `AUTH_ARGS[@]: unbound variable`. The credential check before the first act
+  failed that way unnoticed, and the demo ended on "Could not ensure flight
+  UA123 exists (HTTP )." A blank `OPS_AUTH` ran every act. Act 7's ops call
+  went out with no credentials and showed 401 under the line that says 403.
+  Act 8's metrics call aborted the same way and counted 0 lines, and its
+  health call as ops went out with no credentials and showed status only. The
+  script still said "Demo complete." The comment above the arrays said a
+  guard avoided that abort, but the guard covered only the copy into them.
+  The script now refuses a blank value of either before its first request and
+  says how to set one. An empty value still takes the default. Act 7 already
+  shows what the API answers a caller with no credentials.
+
 - **The flight-number pattern runs in linear time.** Every constraint on a
   field runs, so the pattern also saw values `@Size` had refused, up to the
   16 KiB body limit. On a run of spaces that ends in a symbol,
