@@ -51,7 +51,7 @@
         <aws.lambda.events.version>3.16.1</aws.lambda.events.version>
         <aws.lambda.tests.version>1.1.2</aws.lambda.tests.version>
 
-        <!-- Same pin as ../pom.xml. Keep the two in step. -->
+        <!-- Same pin as ../pom.xml. scripts/pincheck.py fails CI when the two differ. -->
         <aws.sdk.version>2.55.6</aws.sdk.version>
 
         <!--
@@ -60,18 +60,23 @@
           this consumer reads it with Jackson 2, so the two sides do not share a
           serialiser. That is why contracts/booking-created-v1.json is tested from
           both sides. Kept at the version of <jackson-2-bom.version> in ../pom.xml,
-          so the repository has one Jackson 2 to patch.
+          so the repository has one Jackson 2 to patch; scripts/pincheck.py fails
+          CI when the two differ.
         -->
         <jackson.version>2.22.2</jackson.version>
 
-        <!-- The service's JUnit major, so both suites share assertions and output. -->
+        <!--
+          The JUnit Boot's BOM gives ../pom.xml, so both suites share assertions and
+          output. scripts/pincheck.py fails CI when the two differ.
+        -->
         <junit.version>6.0.3</junit.version>
         <mockito.version>5.24.0</mockito.version>
         <assertj.version>3.27.7</assertj.version>
 
         <!--
           The version Boot's BOM gives ../pom.xml, which pins no version of its
-          own. Keep the two in step on a Boot upgrade.
+          own. Keep the two in step on a Boot upgrade; scripts/pincheck.py fails CI
+          when they differ.
         -->
         <testcontainers.version>2.0.5</testcontainers.version>
 
