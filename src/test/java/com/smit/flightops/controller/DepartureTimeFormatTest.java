@@ -7,10 +7,13 @@ import com.smit.flightops.service.FlightService;
 import com.smit.flightops.support.MetricsTestConfig;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.system.CapturedOutput;
+import org.springframework.boot.test.system.OutputCaptureExtension;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Import;
@@ -76,16 +79,21 @@ class DepartureTimeFormatTest {
         verify(flightService, never()).create(any());
     }
 
-    /** {@code Instant.parse} reads it, so only the deserialiser's bound refuses it. */
+    /**
+     * {@code Instant.parse} reads it, so only the deserialiser's bound refuses
+     * it. The WARN line names that bound, the last microsecond of 9999.
+     */
     @Test
+    @ExtendWith(OutputCaptureExtension.class)
     @DisplayName("the first instant of the year 10000 is 400 MALFORMED_REQUEST")
-    void aTimeAfterYear9999IsMalformed() throws Exception {
+    void aTimeAfterYear9999IsMalformed(CapturedOutput output) throws Exception {
         createWithDeparture("+10000-01-01T00:00:00Z")
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("MALFORMED_REQUEST"))
                 .andExpect(jsonPath("$.message").value(FIXED_MESSAGE));
 
         verify(flightService, never()).create(any());
+        assertThat(output.getAll()).contains("no later than 9999-12-31T23:59:59.999999Z");
     }
 
     /**

@@ -42,7 +42,7 @@ public final class IsoInstantDeserializer extends StdScalarDeserializer<Instant>
         }
         if (value.isAfter(MAX)) {
             return (Instant) context.handleWeirdStringValue(Instant.class, text,
-                    "expected an instant no later than 9999-12-31T23:59:59Z");
+                    "expected an instant no later than 9999-12-31T23:59:59.999999Z");
         }
         return value;
     }
