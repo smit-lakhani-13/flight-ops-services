@@ -131,7 +131,7 @@ public class FlightController {
                     `destination` equals `origin`, or `departureTime` is missing, null or not in the \
                     future; `fieldErrors` names each one. `MALFORMED_REQUEST`: the body is empty, \
                     not valid JSON or not a JSON object, has a field the schema does not list or a key \
-                    twice in one object, a text field is an array or an object, or \
+                    twice in one object, a text field is a number, a boolean, an array or an object, or \
                     `totalSeats` has the wrong JSON type, is too large for its type, or is missing, \
                     null, a string, or written with a decimal point or an exponent (`2.0` included). \
                     The same code answers a `departureTime` that is not an ISO-8601 instant with `Z` \
