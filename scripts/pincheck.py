@@ -1,20 +1,21 @@
 #!/usr/bin/env python3
 """Checks the version pins that must follow Spring Boot, or each other.
 
-`pom.xml` overrides two versions Boot manages, and `lambda/pom.xml`, which has
+`pom.xml` overrides three versions Boot manages, and `lambda/pom.xml`, which has
 no parent, copies four versions the service runs. Dependabot never proposes a
 change to a property that only Boot's parent reads. The enforcer's
 `requireUpperBoundDeps` fails a pin that Boot's own version has passed only
 where something in the tree asks for Boot's version. Boot's Tomcat starters
 do. For Jackson 2 only Jackson 3 does, for the annotations at its own minor
 (2.21 for Jackson 3.1), so a Jackson 2 that passes the pin within its minor
-line, as 2.22.3 would, fails nothing. Nor does a Boot that reaches the Tomcat
-pin exactly, and the pin stays. And the two modules are separate builds, so a
+line, as 2.22.4 would, fails nothing. Nor does a Boot that reaches the Tomcat
+or the Jackson 3 pin exactly, and the pin stays. And the two modules are separate builds, so a
 lone `/lambda` pull request can split Jackson 2 or the AWS SDK with every
 check green. This fails instead:
 
-- Tomcat: once Boot manages the pinned version or a later one, the pin has
-  done its job; drop `<tomcat.version>`, as the comment beside it says.
+- Tomcat and Jackson 3: once Boot manages the pinned version or a later one,
+  the pin has done its job; drop `<tomcat.version>` or `<jackson-bom.version>`,
+  as the comment beside it says.
 - Jackson 2: Boot's own version must not pass the pin, or the pin would hold
   the service back.
 - `lambda/pom.xml`: the same Jackson 2 and AWS SDK as `pom.xml`, and the
@@ -71,6 +72,10 @@ def problems(root, repo):
     if pinned and order(tomcat) >= order(pinned):
         found.append(f'Boot {boot} manages Tomcat {tomcat}, at or past the pin {pinned}: '
                      'drop <tomcat.version> from pom.xml')
+    jackson3, pinned = managed['jackson-bom.version'], service.get('jackson-bom.version')
+    if pinned and order(jackson3) >= order(pinned):
+        found.append(f'Boot {boot} manages Jackson 3 at {jackson3}, at or past the pin {pinned}: '
+                     'drop <jackson-bom.version> from pom.xml')
     jackson, pinned = managed['jackson-2-bom.version'], service.get('jackson-2-bom.version')
     if pinned and order(jackson) > order(pinned):
         found.append(f'Boot {boot} manages Jackson 2 at {jackson}, past the pin {pinned}: '
@@ -91,9 +96,10 @@ def problems(root, repo):
 POM = ('<project xmlns="http://maven.apache.org/POM/4.0.0"><parent><version>{boot}</version></parent>'
        '<properties>{props}</properties></project>')
 GOOD = {
-    'managed': {'tomcat.version': '11.0.24', 'jackson-2-bom.version': '2.21.5',
+    'managed': {'tomcat.version': '11.0.24', 'jackson-bom.version': '3.1.5', 'jackson-2-bom.version': '2.21.5',
                 'junit-jupiter.version': '6.0.3', 'testcontainers.version': '2.0.5'},
-    'service': {'tomcat.version': '11.0.26', 'jackson-2-bom.version': '2.22.2', 'aws.sdk.version': '2.55.6'},
+    'service': {'tomcat.version': '11.0.26', 'jackson-bom.version': '3.1.7', 'jackson-2-bom.version': '2.22.2',
+                'aws.sdk.version': '2.55.6'},
     'lambda': {'jackson.version': '2.22.2', 'aws.sdk.version': '2.55.6', 'junit.version': '6.0.3',
                'testcontainers.version': '2.0.5'},
 }
@@ -106,6 +112,11 @@ CASES = [
     ('managed', 'tomcat.version', '11.0.26', 'Tomcat'),
     ('managed', 'tomcat.version', '11.0.100', 'Tomcat'),
     ('managed', 'tomcat.version', '12.0.1', 'Tomcat'),
+    ('service', 'jackson-bom.version', None, None),
+    ('managed', 'jackson-bom.version', '3.1.6', None),
+    ('managed', 'jackson-bom.version', '3.1.7', 'Jackson 3 at'),
+    ('managed', 'jackson-bom.version', '3.1.10', 'Jackson 3 at'),
+    ('managed', 'jackson-bom.version', '3.2.0', 'Jackson 3 at'),
     ('managed', 'jackson-2-bom.version', '2.22.2', None),
     ('managed', 'jackson-2-bom.version', '2.22.3', 'Jackson 2 at'),
     ('managed', 'jackson-2-bom.version', '2.23.0', 'Jackson 2 at'),
