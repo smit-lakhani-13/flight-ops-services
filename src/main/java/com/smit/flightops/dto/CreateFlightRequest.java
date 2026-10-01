@@ -14,11 +14,12 @@ import java.time.Instant;
  * {@code UA999}. The airport codes allow no padding, because {@code @Size}
  * counts it and {@code " JF"} would be stored as a two-letter code.
  *
- * <p>The patterns use {@code *}, not {@code +}, so they accept an empty string
- * and leave that failure to {@code @NotBlank}. {@code totalSeats} is marked
- * required for the OpenAPI document, which treats a primitive as optional;
- * Jackson refuses a missing one. A field not listed here, such as
- * {@code status}, is refused with 400 {@code MALFORMED_REQUEST}.
+ * <p>The patterns accept an empty string, the airport codes through
+ * {@code *} and the flight number through its optional group, and leave that
+ * failure to {@code @NotBlank}. {@code totalSeats} is marked required for the
+ * OpenAPI document, which treats a primitive as optional; Jackson refuses a
+ * missing one. A field not listed here, such as {@code status}, is refused
+ * with 400 {@code MALFORMED_REQUEST}.
  */
 @DistinctEndpoints
 @Schema(additionalProperties = Schema.AdditionalPropertiesValue.FALSE)

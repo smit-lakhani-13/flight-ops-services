@@ -47,6 +47,18 @@ says not yet.
   `POST /api/v1/flights` and `POST /api/v1/bookings` still named only an array
   or an object there. Both now name all four, and `OpenApiTest` checks them.
 
+- **Two comments and a log line that had drifted.** The Javadoc of
+  `CreateFlightRequest` said its patterns use `*`, not `+`, but since 1.4.0
+  the flight number's pattern accepts an empty string through an optional
+  group. The Javadoc of
+  `FlightControllerTest#invalidBodyReturns400WithFieldErrors` said that
+  quantifier kept a blank number on `@NotBlank`'s message; since 1.3.0
+  `GlobalExceptionHandler#rank` does that whatever the pattern says. The WARN
+  line for a departure time after 9999 named `9999-12-31T23:59:59Z` as the
+  latest instant, but the service accepts up to `9999-12-31T23:59:59.999999Z`,
+  as `doc/api.md` says
+  (`DepartureTimeFormatTest#aTimeAfterYear9999IsMalformed`).
+
 ### Security
 
 - **Jackson 3.1.7 and Jackson 2.22.3.** Two advisories rated high,

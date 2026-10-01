@@ -129,9 +129,10 @@ class FlightControllerTest {
     }
 
     /**
-     * A blank number must report {@code @NotBlank}'s message. The pattern's
-     * {@code *} quantifier is what keeps it from failing as well, since the
-     * handler keeps only one message per field.
+     * A blank number must report {@code @NotBlank}'s message. The handler keeps
+     * one message per field, and {@code GlobalExceptionHandler#rank} puts a
+     * blank before a pattern; the pattern accepts an empty string in any case,
+     * through its optional group.
      */
     @Test
     @DisplayName("Bean Validation failures come back as 400 with per-field messages")
