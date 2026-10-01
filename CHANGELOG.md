@@ -31,13 +31,17 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
 [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md) records that in a dated line that still
 says not yet.
 
-## Unreleased
+## 1.4.1 — 2026-10-01
 
-### Changed
-
-- **Version.** Both poms say `1.5.0-SNAPSHOT` until the next tag, so a build
-  from `main` no longer reports itself as 1.4.0 in `/actuator/info` and the
-  OpenAPI document.
+A patch for two advisories against jackson-databind, both rated high and
+published on 30 September, after 1.4.0 was tagged. Both modules take the fixed
+versions, Jackson 3.1.7 and 2.22.3, and CI fails once Boot manages the fixed
+Jackson 3 itself, so the pin goes when its job is done. The OpenAPI document's
+400 descriptions now name every JSON type that 1.4.0 refuses for a text field,
+and two comments and a log line that had drifted are corrected. Apart from two
+descriptions in the OpenAPI document, nothing a client gets changes and nothing
+is added, so this release is a patch. The deploy job is still gated off and has
+never run.
 
 ### Fixed
 
