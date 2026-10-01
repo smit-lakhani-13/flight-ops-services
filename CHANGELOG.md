@@ -39,6 +39,14 @@ says not yet.
   from `main` no longer reports itself as 1.4.0 in `/actuator/info` and the
   OpenAPI document.
 
+### Fixed
+
+- **The OpenAPI document says a text field refuses a number or a boolean.**
+  Since 1.4.0 a text field sent as a JSON number or a boolean, such as
+  `"flightNumber": 123`, is `400 MALFORMED_REQUEST`. The 400 descriptions of
+  `POST /api/v1/flights` and `POST /api/v1/bookings` still named only an array
+  or an object there. Both now name all four, and `OpenApiTest` checks them.
+
 ## 1.4.0 — 2026-09-30
 
 Fixes to the service, the console, the scripts and the documents, and tests

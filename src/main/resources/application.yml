@@ -69,7 +69,9 @@ spring:
       allow-coercion-of-scalars: false
     datatype:
       enum:
-        # Otherwise {"status": 4} is read as the fifth constant, CANCELLED.
+        # Jackson would otherwise read {"status": 4} as the constant at that
+        # position. StatusUpdate.ExactName refuses a number on its own; the
+        # setting stays for any enum a request body gains later.
         fail-on-numbers-for-enums: true
     read:
       # {"status": "DELAYED", "status": "CANCELLED"} is refused. Without

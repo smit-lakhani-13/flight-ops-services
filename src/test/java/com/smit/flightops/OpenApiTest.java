@@ -211,7 +211,8 @@ class OpenApiTest {
         assertThat(book.get("201").get("headers").has("Location")).isTrue();
         assertThat(book.get("400").get("description").asString())
                 .contains("VALIDATION_FAILED")
-                .contains("MALFORMED_REQUEST");
+                .contains("MALFORMED_REQUEST")
+                .contains("a text field is a number, a boolean, an array or an object");
         assertThat(book.get("409").get("description").asString())
                 .contains("INSUFFICIENT_SEATS")
                 .contains("FLIGHT_NOT_BOOKABLE")
@@ -237,6 +238,8 @@ class OpenApiTest {
         assertThat(created.get("headers").has("Location")).isTrue();
         assertThat(created.get("content").get("application/json").get("schema").get("$ref").asString())
                 .endsWith("/FlightDto");
+        assertThat(create.get("400").get("description").asString())
+                .contains("a text field is a number, a boolean, an array or an object");
         assertThat(create.get("409").get("description").asString())
                 .contains("DUPLICATE_FLIGHT")
                 .contains("DUPLICATE_REQUEST");

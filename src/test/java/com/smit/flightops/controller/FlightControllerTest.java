@@ -301,8 +301,9 @@ class FlightControllerTest {
     }
 
     /**
-     * Jackson reads a number as the enum constant at that position, so without
-     * {@code fail-on-numbers-for-enums} a status of 4 would cancel the flight.
+     * Jackson's own enum reader takes a number as the constant at that position.
+     * {@code StatusUpdate.ExactName} accepts only a string that is a constant's exact
+     * name, so 4 and "4" are both refused before the service is called.
      */
     @ParameterizedTest
     @ValueSource(strings = {"4", "\"4\""})
