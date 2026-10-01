@@ -47,6 +47,21 @@ says not yet.
   `POST /api/v1/flights` and `POST /api/v1/bookings` still named only an array
   or an object there. Both now name all four, and `OpenApiTest` checks them.
 
+### Security
+
+- **Jackson 3.1.7 and Jackson 2.22.3.** Two advisories rated high,
+  CVE-2026-91776 and CVE-2026-91777, were published on 30 September, after
+  1.4.0 was tagged. Both are fixed in jackson-databind 3.1.7 and 2.22.3. One
+  lets new unknown type ids grow a cache without bound where a polymorphic
+  type has a default type. The other makes resolving forward references to
+  object ids quadratic. Neither the service's code nor the Lambda's uses
+  polymorphic typing or object ids. `trivy-fs` failed on the Jackson 2 that
+  `lambda/pom.xml` pins. It cannot see a version that comes from a BOM, such
+  as the service's Jackson 3, so `pom.xml` now pins `jackson-bom.version`
+  over Boot's 3.1.5, beside `jackson-2-bom.version`. `scripts/pincheck.py`
+  fails CI once Boot manages Jackson 3.1.7 or later, as it does for the
+  Tomcat pin.
+
 ## 1.4.0 — 2026-09-30
 
 Fixes to the service, the console, the scripts and the documents, and tests

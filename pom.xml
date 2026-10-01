@@ -62,13 +62,24 @@
         <!--
           Jackson 2 only, for swagger-core (springdoc), which needs 2.22.1 while Boot
           manages Jackson 2 at 2.21.5; requireUpperBoundDeps refuses the older one. The
-          service serialises with Jackson 3 on Boot's version. The Lambda reads the event
+          service serialises with Jackson 3, pinned below. The Lambda reads the event
           with Jackson 2 (<jackson.version> in lambda/pom.xml), so the two sides do not
           share a serialiser, which is why contracts/booking-created-v1.json is tested
           from both. Keep the two pins in step, and at or past Boot's own, or
-          scripts/pincheck.py fails CI; 2.22.1 is the floor.
+          scripts/pincheck.py fails CI; 2.22.1 is the floor, and 2.22.3 fixes the two
+          advisories named below.
         -->
-        <jackson-2-bom.version>2.22.2</jackson-2-bom.version>
+        <jackson-2-bom.version>2.22.3</jackson-2-bom.version>
+
+        <!--
+          Jackson 3, over the 3.1.5 that Boot 4.1.1 manages. CVE-2026-91776 and
+          CVE-2026-91777, both rated high, are fixed in jackson-databind 3.1.7 and
+          2.22.3. One needs polymorphic typing with a default type and the other object
+          ids, and the service uses neither; the pins take the patch releases anyway.
+          Drop this pin when Boot's own version reaches 3.1.7; scripts/pincheck.py
+          fails CI from then on.
+        -->
+        <jackson-bom.version>3.1.7</jackson-bom.version>
 
         <!--
           Tomcat, over the 11.0.24 that Boot 4.1.1 manages. Trivy rates three of the

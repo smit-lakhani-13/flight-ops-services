@@ -206,7 +206,7 @@ for a commit on `main` that got no push run.
 |---|---|---|
 | `build` | "Build and test", "Build and test the Lambda consumer" | a module does not compile, or a test in it fails |
 | `build` | `maven-enforcer` | wrong JDK, wrong Maven, duplicate dependency versions, or a transitive downgrade (`requireUpperBoundDeps`) |
-| `build` | "The version pins still hold" (`scripts/pincheck.py`) | Boot manages the Tomcat that `<tomcat.version>` pins or a later one, or a later Jackson 2 than `<jackson-2-bom.version>`, or `lambda/pom.xml`'s Jackson 2, AWS SDK, JUnit or Testcontainers differs from the service's. Its self-test runs first, and it runs even when "Build and test" failed |
+| `build` | "The version pins still hold" (`scripts/pincheck.py`) | Boot manages the Tomcat that `<tomcat.version>` pins or a later one, the Jackson 3 that `<jackson-bom.version>` pins or a later one, or a later Jackson 2 than `<jackson-2-bom.version>`, or `lambda/pom.xml`'s Jackson 2, AWS SDK, JUnit or Testcontainers differs from the service's. Its self-test runs first, and it runs even when "Build and test" failed |
 | `build` | JaCoCo | bundle coverage below 80% line or 50% branch |
 | `build` | ArchUnit | any of the 9 rules in `ArchitectureTest` is broken; [Architecture rules](#architecture-rules) lists them |
 | `build` | "Java lines fit in 120 columns" | a tracked Java file in either module has a line longer than the 120 columns `.editorconfig` sets |
@@ -364,8 +364,8 @@ Documentation is part of the change and ships with it:
 | Spring Security | 7.1.1 | Spring Boot |
 | Tomcat | 11.0.26 | `<tomcat.version>` in `pom.xml`, over Boot's 11.0.24 |
 | Hibernate | 7.4.5 | Spring Boot |
-| Jackson 3 | 3.1.5 | Spring Boot |
-| Jackson 2 | 2.22.2 | `<jackson-2-bom.version>` in `pom.xml`, over Boot's 2.21.5; `<jackson.version>` in `lambda/pom.xml` |
+| Jackson 3 | 3.1.7 | `<jackson-bom.version>` in `pom.xml`, over Boot's 3.1.5 |
+| Jackson 2 | 2.22.3 | `<jackson-2-bom.version>` in `pom.xml`, over Boot's 2.21.5; `<jackson.version>` in `lambda/pom.xml` |
 | Flyway | 12.4.0 | Spring Boot |
 | springdoc-openapi | 3.1.1 | `<springdoc.version>` in `pom.xml` |
 | AWS SDK for Java | 2.55.6 | `<aws.sdk.version>` in both POMs |
@@ -376,20 +376,23 @@ Documentation is part of the change and ships with it:
 | React | 19.3.0 | `web/package.json` |
 | TypeScript | 5.9.3 | `web/package.json` |
 
-`pom.xml` changes two dependency versions that Boot manages: it sets
-`tomcat.version` to 11.0.26, as the table says, and `jackson-2-bom.version` to
-2.22.2. Boot 4 runs on Jackson 3 and still manages
-the Jackson 2 coordinates at 2.21.5 for libraries that have not moved. The
-OpenAPI document is built by swagger-core, which is one of them and needs at
-least 2.22.1. Boot's dependency management would have handed it the older
-Jackson 2 with no error, and the enforcer's `requireUpperBoundDeps` rule
-refused the build instead. Setting Boot's own property moves the whole
-Jackson 2 line together, and `lambda/pom.xml` keeps the same version, so the
-repository has one Jackson 2 to patch. `scripts/pincheck.py` fails CI once
-Boot manages Tomcat 11.0.26 or later, or a later Jackson 2 than the pin, or
-once `lambda/pom.xml` disagrees with the service.
-The enforcer and CycloneDX plugin pins in `pom.xml` match the versions Boot
-manages today; they are there so that a Boot upgrade does not move them.
+`pom.xml` changes three dependency versions that Boot manages: it sets
+`tomcat.version` to 11.0.26 and `jackson-bom.version` to 3.1.7, as the table
+says, and `jackson-2-bom.version` to 2.22.3. The Jackson 3 pin, like the
+Tomcat one, takes a patch release that fixes advisories rated high
+(CVE-2026-91776 and CVE-2026-91777) before Boot manages it. Boot 4 runs on
+Jackson 3 and still manages the Jackson 2 coordinates at 2.21.5 for libraries
+that have not moved. The OpenAPI document is built by swagger-core, which is
+one of them and needs at least 2.22.1. Boot's dependency management would have
+handed it the older Jackson 2 with no error, and the enforcer's
+`requireUpperBoundDeps` rule refused the build instead. Setting Boot's own
+property moves the whole Jackson 2 line together, and `lambda/pom.xml` keeps
+the same version, so the repository has one Jackson 2 to patch.
+`scripts/pincheck.py` fails CI once Boot manages Tomcat 11.0.26 or later,
+Jackson 3.1.7 or later, or a later Jackson 2 than the pin, or once
+`lambda/pom.xml` disagrees with the service. The enforcer and CycloneDX plugin
+pins in `pom.xml` match the versions Boot manages today; they are there so
+that a Boot upgrade does not move them.
 
 `./mvnw` pins Maven 3.9.16 and its SHA-256, so CI needs no Maven install step
 and a substituted archive fails the build. The wrapper is
@@ -443,14 +446,15 @@ manages its versions.
   while they differ, so a Boot bump that moves either one also moves the
   Lambda's copy, in the same pull request.
 
-- Dependabot never proposes `<tomcat.version>` or `<jackson-2-bom.version>`
-  in `pom.xml`, because only Boot's parent reads them. A Boot bump that
-  reaches the Tomcat pin fails `scripts/pincheck.py` until the same pull
-  request drops the pin. A Boot bump that manages a later Jackson 2 than
-  `<jackson-2-bom.version>` fails it until the same pull request raises the
-  pin, and `<jackson.version>` in `lambda/pom.xml`, to at least Boot's
-  version. A `/lambda` pull request that moves Jackson 2 fails it until the
-  same pull request raises `<jackson-2-bom.version>` to match.
+- Dependabot never proposes `<tomcat.version>`, `<jackson-bom.version>` or
+  `<jackson-2-bom.version>` in `pom.xml`, because only Boot's parent reads
+  them. A Boot bump that reaches the Tomcat or the Jackson 3 pin fails
+  `scripts/pincheck.py` until the same pull request drops the pin. A Boot bump
+  that manages a later Jackson 2 than `<jackson-2-bom.version>` fails it until
+  the same pull request raises the pin, and `<jackson.version>` in
+  `lambda/pom.xml`, to at least Boot's version. A `/lambda` pull request that
+  moves Jackson 2 fails it until the same pull request raises
+  `<jackson-2-bom.version>` to match.
 
 - Patch and minor updates: merge once CI is green.
 
