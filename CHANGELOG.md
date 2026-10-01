@@ -31,6 +31,14 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
 [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md) records that in a dated line that still
 says not yet.
 
+## Unreleased
+
+### Changed
+
+- **Version.** Both poms say `1.5.0-SNAPSHOT` until the next tag, so a build
+  from `main` no longer reports itself as 1.4.1 in `/actuator/info` and the
+  OpenAPI document.
+
 ## 1.4.1 — 2026-10-01
 
 A patch for two advisories against jackson-databind, both rated high and
