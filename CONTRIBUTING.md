@@ -368,7 +368,7 @@ Documentation is part of the change and ships with it:
 | Jackson 2 | 2.22.3 | `<jackson-2-bom.version>` in `pom.xml`, over Boot's 2.21.5; `<jackson.version>` in `lambda/pom.xml` |
 | Flyway | 12.4.0 | Spring Boot |
 | springdoc-openapi | 3.1.1 | `<springdoc.version>` in `pom.xml` |
-| AWS SDK for Java | 2.55.6 | `<aws.sdk.version>` in both POMs |
+| AWS SDK for Java | 2.55.7 | `<aws.sdk.version>` in both POMs |
 | JUnit | 6.0.3 | Spring Boot in the service; `<junit.version>` in `lambda/pom.xml` |
 | Maven | 3.10.0 | `.mvn/wrapper/maven-wrapper.properties` |
 | Node | 24, from 24.15 | `web/.nvmrc` names the major, which CI reads; `engines` in `web/package.json` sets the floor jsdom needs |
