@@ -204,7 +204,7 @@ STUB
 # Maven wrappers that see JDK 21, JDK 17, and no JDK at all. The first two
 # print the line the real `./mvnw -v` prints.
 for v in 21 17; do
-    printf '#!/usr/bin/env bash\necho "Apache Maven 3.9.16"\necho "Java version: %s.0.8, vendor: Homebrew"\n' \
+    printf '#!/usr/bin/env bash\necho "Apache Maven 3.10.0"\necho "Java version: %s.0.8, vendor: Homebrew"\n' \
         "$v" > "$tmp/mvnw-$v"
 done
 printf '#!/usr/bin/env bash\necho "The JAVA_HOME environment variable is not defined correctly"\nexit 1\n' \

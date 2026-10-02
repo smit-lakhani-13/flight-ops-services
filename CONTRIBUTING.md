@@ -370,7 +370,7 @@ Documentation is part of the change and ships with it:
 | springdoc-openapi | 3.1.1 | `<springdoc.version>` in `pom.xml` |
 | AWS SDK for Java | 2.55.7 | `<aws.sdk.version>` in both POMs |
 | JUnit | 6.0.3 | Spring Boot in the service; `<junit.version>` in `lambda/pom.xml` |
-| Maven | 3.9.16 | `.mvn/wrapper/maven-wrapper.properties` |
+| Maven | 3.10.0 | `.mvn/wrapper/maven-wrapper.properties` |
 | Node | 24, from 24.15 | `web/.nvmrc` names the major, which CI reads; `engines` in `web/package.json` sets the floor jsdom needs |
 | Next.js | 16.3.6 | `web/package.json`, exact pins throughout, resolved by `web/package-lock.json` |
 | React | 19.3.0 | `web/package.json` |
@@ -394,7 +394,7 @@ Jackson 3.1.7 or later, or a later Jackson 2 than the pin, or once
 pins in `pom.xml` match the versions Boot manages today; they are there so
 that a Boot upgrade does not move them.
 
-`./mvnw` pins Maven 3.9.16 and its SHA-256, so CI needs no Maven install step
+`./mvnw` pins Maven 3.10.0 and its SHA-256, so CI needs no Maven install step
 and a substituted archive fails the build. The wrapper is
 `distributionType=only-script`: two scripts, `mvnw` and `mvnw.cmd`, and a
 properties file, with no `maven-wrapper.jar` committed.
