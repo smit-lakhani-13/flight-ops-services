@@ -772,7 +772,7 @@ Re-running an old workflow run is not a rollback when its commit has the
 deploy job's step "Is this commit still the head of main?": its deploy job
 applies nothing unless its commit is still the head of `main`, and says so in
 the job summary. Runs of commits from before that step have no such check, and
-GitHub lets a run be re-run for 30 days after it started. So until 28 October
+GitHub lets a run be re-run for 30 days after it started. So until 27 October
 2026, once `DEPLOY_ENABLED` is set, a re-run of one of those runs could apply
 its commit over the release. Do not re-run them.
 

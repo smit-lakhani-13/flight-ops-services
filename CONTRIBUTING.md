@@ -357,7 +357,7 @@ Documentation is part of the change and ships with it:
 
 | Component | Version | Set by |
 |---|---|---|
-| Java | 21 (21.0.12.1 in the local builds) | `<java.version>` in `pom.xml` and `<maven.compiler.release>` in `lambda/pom.xml`. CI asks `setup-java` for Temurin 21 with no patch release |
+| Java | 21 (21.0.11 in the local builds) | `<java.version>` in `pom.xml` and `<maven.compiler.release>` in `lambda/pom.xml`. CI asks `setup-java` for Temurin 21 with no patch release |
 | Jakarta EE | 11 | Spring Boot (Servlet 6.1, Persistence 3.2, Validation 3.1) |
 | Spring Boot | 4.1.1 | the parent in `pom.xml` |
 | Spring Framework | 7.0.9 | Spring Boot |

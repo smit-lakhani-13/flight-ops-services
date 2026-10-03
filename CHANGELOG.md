@@ -45,14 +45,6 @@ says not yet.
   `FieldErrorRulesTest#theMessageDoesNotFollowAcceptLanguage` sends four
   `Accept-Language` values and reads the English string each time.
 
-### Changed
-
-- **Version.** Both poms say `1.5.0-SNAPSHOT` until the next tag, so a build
-  from `main` no longer reports itself as 1.4.1 in `/actuator/info` and the
-  OpenAPI document.
-
-### Fixed
-
 - **`deploy/aws/up.sh` checks its three upstream version pins before the
   cost prompt.** Step 1 now asks AWS whether `cluster.yaml`'s Kubernetes
   version, `data.yaml`'s RDS engine version and the load balancer controller's
@@ -67,6 +59,22 @@ says not yet.
   so a missing one is named up front instead of as a health check that never
   passes, and its health-check message says the wait is up to 10 minutes, as
   the loop is.
+- **`scripts/numbers.sh` says `n/a` for a surefire directory with no XML.**
+  After a `test-compile`, or a run with the reports off, the unexpanded glob
+  made `grep` exit 2 and the script stopped under `set -e` with no message.
+- **Three documents corrected.** `CONTRIBUTING.md` names the local JDK patch
+  release the builds run on (21.0.11, not 21.0.12.1). `doc/OPERATIONS.md`
+  ends the re-run window on 27 October 2026, thirty days after the head-of-main
+  step landed. `web/README.md` names `CONSOLE_BAD_CREDENTIALS`, the one code
+  the sign-in form produces in the browser and the console's server never
+  sends.
+
+### Changed
+
+- **Version.** Both poms say `1.5.0-SNAPSHOT` until the next tag, so a build
+  from `main` no longer reports itself as 1.4.1 in `/actuator/info` and the
+  OpenAPI document.
+
 ## 1.4.1 — 2026-10-01
 
 A patch for two advisories against jackson-databind, both rated high and
