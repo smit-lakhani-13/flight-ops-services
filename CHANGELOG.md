@@ -31,6 +31,14 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
 [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md) records that in a dated line that still
 says not yet.
 
+## Unreleased
+
+### Changed
+
+- **Version.** Both poms say `1.5.0-SNAPSHOT` until the next tag, so a build
+  from `main` no longer reports itself as 1.4.2 in `/actuator/info` and the
+  OpenAPI document.
+
 ## 1.4.2 — 2026-10-03
 
 A patch for one contract defect and for the deploy script's late failures on a
