@@ -34,4 +34,4 @@ resources:
 # Deployment gains a second container or an initContainer.
 images:
   - name: flight-ops-service
-    newTag: "1.4.1"
+    newTag: "1.4.2"
