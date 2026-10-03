@@ -69,6 +69,61 @@ require_tool() {
     fi
 }
 
+# The three upstream versions the account has to offer, checked at step 1 so
+# that a pin that has gone stale stops the run before anything bills. Each
+# would otherwise fail late: cluster.yaml's Kubernetes version at step 4,
+# minutes in; data.yaml's RDS engine version at step 6, with the cluster
+# already billing and the data stack left in ROLLBACK_COMPLETE; the controller
+# chart at step 8. All three calls are read-only, and each stops with the
+# CLI's own message on any error, so a throttled or expired call is never
+# taken for a version that is not on offer.
+
+# The Kubernetes version cluster.yaml pins under metadata, which up.sh never
+# repeats. Empty when the file has no such line.
+cluster_yaml_version() {
+    sed -n 's/^  version: *"\{0,1\}\([0-9][0-9.]*\)"\{0,1\}.*$/\1/p' "$1" | head -1
+}
+
+# The RDS engine version data.yaml pins. Empty when the file has no such line.
+data_yaml_engine_version() {
+    sed -n "s/^ *EngineVersion: *'\{0,1\}\([0-9][0-9.]*\)'\{0,1\}.*$/\1/p" "$1" | head -1
+}
+
+require_eks_version() {  # require_eks_version <version>
+    local version=$1 out
+    [ -n "$version" ] || die "could not read metadata.version from cluster.yaml"
+    out=$(aws eks describe-cluster-versions --cluster-versions "$version" \
+        --query 'clusterVersions[0].clusterVersion' --output text 2>&1) \
+        || die "could not check whether EKS offers Kubernetes $version: $out"
+    [ "$out" = "$version" ] || die "EKS does not offer Kubernetes $version in $AWS_REGION (the CLI returned '${out:-nothing}').
+    cluster.yaml pins it, and its comment has the command that lists the versions in standard support."
+}
+
+require_rds_engine_version() {  # require_rds_engine_version <engine> <version>
+    local engine=$1 version=$2 out
+    [ -n "$version" ] || die "could not read EngineVersion from data.yaml"
+    out=$(aws rds describe-db-engine-versions --engine "$engine" --engine-version "$version" \
+        --query 'DBEngineVersions[0].EngineVersion' --output text 2>&1) \
+        || die "could not check whether RDS offers $engine $version: $out"
+    [ "$out" = "$version" ] || die "RDS does not offer $engine $version in $AWS_REGION (the CLI returned '${out:-nothing}').
+    data.yaml pins it. The versions on offer:
+    aws rds describe-db-engine-versions --engine $engine --query 'DBEngineVersions[].EngineVersion' --output text"
+}
+
+require_helm_chart() {  # require_helm_chart <repo> <url> <chart> <version>
+    local repo=$1 url=$2 chart=$3 version=$4 out
+    helm repo add "$repo" "$url" --force-update >/dev/null 2>&1 \
+        || die "could not add the Helm repository $repo ($url)"
+    helm repo update "$repo" >/dev/null 2>&1 || die "could not update the Helm repository $repo"
+    out=$(helm search repo "$repo/$chart" --version "$version" --output json 2>&1) \
+        || die "could not search the Helm repository $repo for $chart: $out"
+    case "$out" in
+        *"\"version\":\"$version\""*|*"\"version\": \"$version\""*) ;;
+        *) die "the Helm repository $repo has no $chart chart at version $version (helm search returned '${out:-nothing}').
+    up.sh pins it as LBC_CHART_VERSION; the policy file, its tag and its sum move with it (doc/DEPLOYMENT.md)." ;;
+    esac
+}
+
 # Fails early and legibly, before the first real call fails with an opaque
 # token error twenty seconds in. Callers read it with $(...), where die ends
 # only the subshell, so each one adds `|| exit 1`.

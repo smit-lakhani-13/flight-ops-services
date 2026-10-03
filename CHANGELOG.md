@@ -51,6 +51,22 @@ says not yet.
   from `main` no longer reports itself as 1.4.1 in `/actuator/info` and the
   OpenAPI document.
 
+### Fixed
+
+- **`deploy/aws/up.sh` checks its three upstream version pins before the
+  cost prompt.** Step 1 now asks AWS whether `cluster.yaml`'s Kubernetes
+  version, `data.yaml`'s RDS engine version and the load balancer controller's
+  chart version are on offer in the region, with read-only calls, and stops
+  with the pin to move if one is not. Before, a stale pin failed late: the
+  cluster version at step 4, the RDS version at step 6 with the cluster
+  already billing and the data stack left in `ROLLBACK_COMPLETE`, the chart at
+  step 8. A failed lookup stops the run with the tool's own message and is
+  never taken for a missing version. `deploy/aws/selftest.sh` tests the three
+  checks against stubbed `aws` and `helm`, and still checks that `up.sh` calls
+  them. Step 1 also requires `curl` and `python3`, which steps 11 and 12 use,
+  so a missing one is named up front instead of as a health check that never
+  passes, and its health-check message says the wait is up to 10 minutes, as
+  the loop is.
 ## 1.4.1 — 2026-10-01
 
 A patch for two advisories against jackson-databind, both rated high and
