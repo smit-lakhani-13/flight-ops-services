@@ -180,4 +180,21 @@ class FieldErrorRulesTest {
 
         verify(flightService, never()).updateStatus(any(), any());
     }
+
+    @ParameterizedTest(name = "Accept-Language: {0}")
+    @ValueSource(strings = {"de", "fr", "es", "de-DE,de;q=0.9,en;q=0.1"})
+    @DisplayName("the message does not follow Accept-Language: every client reads the same English string")
+    void theMessageDoesNotFollowAcceptLanguage(String acceptLanguage) throws Exception {
+        // Hibernate Validator ships translated bundles and Spring interpolates in
+        // the request's locale, so without spring.web.locale a German client read
+        // "darf nicht leer sein" here while the @Pattern literals stayed English.
+        mockMvc.perform(post(BOOKINGS)
+                        .header("Accept-Language", acceptLanguage)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(bookingBody("")))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.fieldErrors.passengerName").value("must not be blank"));
+        verifyNoInteractions(bookingService, flightService);
+    }
 }

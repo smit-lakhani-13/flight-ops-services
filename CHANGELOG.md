@@ -33,6 +33,18 @@ says not yet.
 
 ## Unreleased
 
+### Fixed
+
+- **Validation messages no longer follow `Accept-Language`.** Hibernate
+  Validator ships translated message bundles and Spring interpolated each
+  message in the request's locale, so a request with `Accept-Language: de` got
+  `"darf nicht leer sein"` for a blank field while the `@Pattern` messages,
+  which are literals in the records, stayed English. `doc/api.md` promises one
+  fixed string per rule. `spring.web.locale` is now `en` and
+  `spring.web.locale-resolver` is `fixed`, so the header is ignored.
+  `FieldErrorRulesTest#theMessageDoesNotFollowAcceptLanguage` sends four
+  `Accept-Language` values and reads the English string each time.
+
 ### Changed
 
 - **Version.** Both poms say `1.5.0-SNAPSHOT` until the next tag, so a build
