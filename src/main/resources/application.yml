@@ -79,6 +79,18 @@ spring:
       # would show a different request from the one that ran.
       strict-duplicate-detection: true
 
+  web:
+    # Bean Validation messages come from Hibernate Validator's bundles, which
+    # ship translations, and Spring interpolates each message in the request's
+    # locale. Without these two lines a request with Accept-Language: de got
+    # "darf nicht leer sein" for a blank field while the @Pattern messages,
+    # which are literals in the records, stayed English, and the message-text
+    # tiebreak in GlobalExceptionHandler#handleValidation sorted differently
+    # per locale. doc/api.md promises one fixed string per rule, so the locale
+    # is pinned to English and the resolver ignores the header.
+    locale: en
+    locale-resolver: fixed
+
   data:
     web:
       pageable:
