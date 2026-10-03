@@ -30,7 +30,7 @@ cat > "$tmp/bin/aws" <<'STUB'
 #!/usr/bin/env bash
 printf 'aws %s\n' "$*" >> "$STUB_LOG"
 service=${1:-}; op=${2:-}; waiter=${3:-}
-stack='' query='' kubeconfig='' addon='' statuses=''
+stack='' query='' kubeconfig='' addon='' statuses='' cluster_versions='' engine_version=''
 while [ $# -gt 0 ]; do
     case "$1" in
         --stack-status-filter)
@@ -39,6 +39,8 @@ while [ $# -gt 0 ]; do
         --query)      query=$2; shift ;;
         --kubeconfig) kubeconfig=$2; shift ;;
         --addon-name) addon=$2; shift ;;
+        --cluster-versions) cluster_versions=$2; shift ;;
+        --engine-version) engine_version=$2; shift ;;
     esac
     shift
 done
@@ -60,6 +62,15 @@ case "$service $op" in
     # The real CLI applies the --query; the stub prints its result.
     'eks list-associated-access-policies') printf '%s\n' "${STUB_ASSOCIATED:-}" ;;
     'eks describe-cluster') echo "${STUB_ISSUER:-https://oidc.eks.ap-south-1.amazonaws.com/id/AB12}" ;;
+    # The real CLI answers an unknown version with an empty list, which the
+    # --query turns into None. The stub echoes the version asked for unless
+    # told it is missing.
+    'eks describe-cluster-versions')
+        [ "${STUB_EKS_VERSIONS_FAILS:-0}" = 0 ] || { echo 'An error occurred (Throttling): Rate exceeded' >&2; exit 254; }
+        if [ "${STUB_EKS_VERSION_MISSING:-0}" = 0 ]; then echo "$cluster_versions"; else echo None; fi ;;
+    'rds describe-db-engine-versions')
+        [ "${STUB_RDS_VERSIONS_FAILS:-0}" = 0 ] || { echo 'An error occurred (Throttling): Rate exceeded' >&2; exit 254; }
+        if [ "${STUB_RDS_VERSION_MISSING:-0}" = 0 ]; then echo "$engine_version"; else echo None; fi ;;
     'eks describe-addon')
         [ "${STUB_ADDON_LOOKUP_FAILS:-0}" = 0 ] || { echo 'An error occurred (ThrottlingException) when calling the DescribeAddon operation' >&2; exit 254; }
         case " ${STUB_ADDONS_MISSING:-} " in
@@ -177,9 +188,23 @@ case "$1" in
 esac
 STUB
 
+# `helm search repo` answers as the real one does, with the chart at the
+# version asked for, or with an empty list when STUB_HELM_CHART_MISSING is set.
 cat > "$tmp/bin/helm" <<'STUB'
 #!/usr/bin/env bash
 printf 'helm KUBECONFIG=%s %s\n' "${KUBECONFIG:-}" "$*" >> "$STUB_LOG"
+if [ "${1:-}" = search ]; then
+    version=''
+    while [ $# -gt 1 ]; do
+        [ "$1" = --version ] && version=$2
+        shift
+    done
+    if [ "${STUB_HELM_CHART_MISSING:-0}" = 0 ]; then
+        printf '[{"name":"eks/aws-load-balancer-controller","version":"%s","app_version":"v%s"}]\n' "$version" "$version"
+    else
+        echo '[]'
+    fi
+fi
 exit 0
 STUB
 
@@ -706,6 +731,60 @@ if expect_status "$name" 1 && expect_out "$name" "not the $policy_sum recorded f
     expect_status "$name" 1 && expect_out "$name" "has sha256 'no file'" && pass "$name"
 fi
 
+# How up.sh step 1 reads the two pins it then checks with AWS.
+name="cluster_yaml_version and data_yaml_engine_version read the pinned versions"
+run_lib "cluster_yaml_version '$here/cluster.yaml'; data_yaml_engine_version '$here/data.yaml'"
+if expect_status "$name" 0 && [ "$(grep -cE '^[0-9]+\.[0-9]+$' "$OUT")" = 2 ] \
+        && [ "$(wc -l < "$OUT" | tr -d ' ')" = 2 ]; then
+    pass "$name"
+else
+    fail "$name" "expected two versions of the form N.N, one per line"
+fi
+
+name="require_eks_version accepts a version on offer and stops on one that is not, or on a failed call"
+run_lib 'require_eks_version 1.36'
+if expect_status "$name" 0 \
+        && expect_calls "$name" '^aws eks describe-cluster-versions --cluster-versions 1.36 ' 1; then
+    STUB_EKS_VERSION_MISSING=1 run_lib 'require_eks_version 1.36'
+    if expect_status "$name" 1 && expect_out "$name" 'EKS does not offer Kubernetes 1.36 in ap-south-1'; then
+        STUB_EKS_VERSIONS_FAILS=1 run_lib 'require_eks_version 1.36'
+        if expect_status "$name" 1 && expect_out "$name" 'could not check whether EKS offers Kubernetes 1.36' \
+                && expect_out "$name" 'Rate exceeded' && reject_out "$name" 'does not offer'; then
+            run_lib "require_eks_version ''"
+            expect_status "$name" 1 && expect_out "$name" 'could not read metadata.version' \
+                && expect_calls "$name" '^aws ' 0 && pass "$name"
+        fi
+    fi
+fi
+
+name="require_rds_engine_version accepts a version on offer and stops on one that is not, or on a failed call"
+run_lib 'require_rds_engine_version postgres 17.11'
+if expect_status "$name" 0 \
+        && expect_calls "$name" '^aws rds describe-db-engine-versions --engine postgres --engine-version 17.11 ' 1; then
+    STUB_RDS_VERSION_MISSING=1 run_lib 'require_rds_engine_version postgres 17.11'
+    if expect_status "$name" 1 && expect_out "$name" 'RDS does not offer postgres 17.11 in ap-south-1' \
+            && expect_out "$name" 'data.yaml pins it'; then
+        STUB_RDS_VERSIONS_FAILS=1 run_lib 'require_rds_engine_version postgres 17.11'
+        if expect_status "$name" 1 && expect_out "$name" 'could not check whether RDS offers postgres 17.11' \
+                && reject_out "$name" 'does not offer'; then
+            run_lib "require_rds_engine_version postgres ''"
+            expect_status "$name" 1 && expect_out "$name" 'could not read EngineVersion' \
+                && expect_calls "$name" '^aws ' 0 && pass "$name"
+        fi
+    fi
+fi
+
+name="require_helm_chart accepts a chart version the repository has and stops on one it lacks"
+chart='require_helm_chart eks https://aws.github.io/eks-charts aws-load-balancer-controller 3.5.0'
+run_lib "$chart"
+if expect_status "$name" 0 \
+        && expect_calls "$name" '^helm .* repo add eks https://aws.github.io/eks-charts --force-update$' 1 \
+        && expect_calls "$name" '^helm .* search repo eks/aws-load-balancer-controller --version 3.5.0 --output json$' 1; then
+    STUB_HELM_CHART_MISSING=1 run_lib "$chart"
+    expect_status "$name" 1 \
+        && expect_out "$name" 'no aws-load-balancer-controller chart at version 3.5.0' && pass "$name"
+fi
+
 EDIT=arn:aws:eks::aws:cluster-access-policy/AmazonEKSEditPolicy
 grant="grant_namespace_access arn:aws:iam::123456789012:role/github-actions-deploy $EDIT flight-ops"
 
@@ -988,6 +1067,8 @@ missing_calls=''
 # shellcheck disable=SC2016  # the calls are matched as written, unexpanded
 for call in 'require_jdk21 "$repo/mvnw"' 'require_eksctl' \
         'require_sha256 "$LBC_POLICY_FILE" "$LBC_POLICY_SHA256"' 'complete_cluster "$here/cluster.yaml"' \
+        'require_eks_version "$EKS_VERSION"' 'require_rds_engine_version postgres "$RDS_ENGINE_VERSION"' \
+        'require_helm_chart eks https://aws.github.io/eks-charts aws-load-balancer-controller "$LBC_CHART_VERSION"' \
         'grant_namespace_access ' 'if stack_ready "$DATA_STACK"' \
         'require_jdbc_url "$DB_URL"' 'ensure_metrics_server' \
         'use_private_kubeconfig' 'reconcile_secret_db_password "${DB_PASSWORD:-}" "$db_password_origin"' \

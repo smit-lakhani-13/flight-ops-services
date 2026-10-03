@@ -43,7 +43,7 @@ LBC_POLICY_NAME="${LBC_POLICY_PREFIX}${LBC_POLICY_TAG}"
 # ---------------------------------------------------------------------------
 step "1/12  Preflight, and what this is about to cost"
 # ---------------------------------------------------------------------------
-require_tool aws eksctl kubectl helm sam openssl htpasswd
+require_tool aws eksctl kubectl helm sam openssl htpasswd curl python3
 [ -n "${ALERT_EMAIL:-}" ] || die "ALERT_EMAIL is required (budget alerts go there). Example:
     ALERT_EMAIL=you@example.com $SELF_Q"
 
@@ -62,6 +62,17 @@ if [ -n "$profile_region" ] && [ "$profile_region" != "$AWS_REGION" ]; then
     warn "your AWS profile defaults to '$profile_region'; these scripts pin '$AWS_REGION'."
     warn "That is intentional, but remember it when you go looking in the console."
 fi
+
+# The three upstream versions the account has to offer, checked before the
+# cost prompt, because each would otherwise fail a later step with something
+# already billing: cluster.yaml's Kubernetes version at step 4, data.yaml's
+# RDS engine version at step 6, the controller chart at step 8. Read-only.
+EKS_VERSION=$(cluster_yaml_version "$here/cluster.yaml")
+RDS_ENGINE_VERSION=$(data_yaml_engine_version "$here/data.yaml")
+require_eks_version "$EKS_VERSION"
+require_rds_engine_version postgres "$RDS_ENGINE_VERSION"
+require_helm_chart eks https://aws.github.io/eks-charts aws-load-balancer-controller "$LBC_CHART_VERSION"
+ok "on offer in $AWS_REGION: EKS $EKS_VERSION, RDS PostgreSQL $RDS_ENGINE_VERSION, controller chart $LBC_CHART_VERSION"
 
 cat <<COST
 
@@ -483,7 +494,7 @@ ok "http://$ALB_HOST"
 # database that is down, which /actuator/health reports and readiness does
 # not. An unbounded loop would sit there overnight with the whole stack
 # billing.
-log "waiting for /actuator/health to answer through the ALB (up to 5 minutes)..."
+log "waiting for /actuator/health to answer through the ALB (up to 10 minutes)..."
 alb_healthy=0
 for _ in $(seq 1 60); do
     if curl -fsS -o /dev/null --max-time 5 "http://$ALB_HOST/actuator/health"; then

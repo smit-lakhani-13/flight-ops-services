@@ -71,8 +71,14 @@ Give `aws configure` the region `ap-south-1`, and check that
 `aws sts get-caller-identity` prints your account id.
 
 `up.sh` builds the Lambda jar with the Maven wrapper, which needs JDK 21 on
-`JAVA_HOME`; step 1 checks this before anything bills. It also uses `openssl`
-and `htpasswd` (from `httpd`, present on macOS) to generate the passwords.
+`JAVA_HOME`; step 1 checks this before anything bills. Step 1 also asks AWS
+whether the three upstream versions the files pin are on offer in `ap-south-1`:
+`cluster.yaml`'s Kubernetes version, `data.yaml`'s RDS PostgreSQL version and
+the load balancer controller's Helm chart version (`LBC_CHART_VERSION` in
+`up.sh`). Each would otherwise fail a later step with the cluster already
+billing. It also uses `openssl` and `htpasswd` (from `httpd`, present on macOS)
+to generate the passwords, and `curl` and `python3` for the checks at steps 11
+and 12.
 `envsubst` (from `gettext`) is needed only to run `render-aws.sh` by hand.
 
 The IAM user or role running this needs to create EKS clusters, VPCs, IAM roles
@@ -259,6 +265,8 @@ deletes anything names `DEPLOY_ENABLED`, and the end of a clean run lists both.
 | `kubectl get hpa` shows `<unknown>/70%` | metrics-server is not installed. `aws eks describe-addon --cluster-name flight-ops-cluster --addon-name metrics-server` |
 | `up.sh` stops at step 1 on the JDK | the Maven wrapper does not see JDK 21. Point `JAVA_HOME` at `openjdk@21` |
 | `up.sh` stops at step 1: `up.sh needs eksctl 0.184.0 or later` | an older eksctl installs the cluster's networking addons self-managed, and step 4's re-run looks them up as EKS addons. `brew upgrade eksctl` |
+| `up.sh` stops at step 1: `EKS does not offer Kubernetes 1.36`, `RDS does not offer postgres 17.11` or `the Helm repository eks has no aws-load-balancer-controller chart at version 3.5.0` | a pin has gone stale in this region. Move it as the message says: the version in `cluster.yaml` or `data.yaml`, or `LBC_CHART_VERSION` in `up.sh` together with the policy file, its tag and its sum, as `doc/DEPLOYMENT.md` describes. Nothing was created |
+| `up.sh` stops at step 1: `could not check whether EKS offers …`, `could not check whether RDS offers …` or `could not search the Helm repository eks …` | the read-only lookup itself failed: throttling, a missing permission, no network, or an AWS CLI too old for `eks describe-cluster-versions`. The tool's own error is printed with it, and a failed lookup is never taken for a missing version |
 | `up.sh` stops at step 1, or at step 8 if the file changed during the run: `…/lbc-iam-policy-v3.5.0.json has sha256 '…', not the … recorded for it` | the committed controller policy is not the file its sum was recorded for. Restore it with `git checkout -- deploy/aws/lbc-iam-policy-v3.5.0.json`, or, for a new release, change the file, the tag and the sum together as `doc/DEPLOYMENT.md` describes |
 | `up.sh` stops at step 4: `cluster flight-ops-cluster is not ACTIVE` | the cluster is `FAILED` or `DELETING`, or still not `ACTIVE` after 20 minutes. The message prints the `describe-cluster` command to check it |
 | `up.sh` stops at step 4: `addon vpc-cni did not become ACTIVE` or `node group ng-1 did not become ACTIVE` | the addon is `CREATE_FAILED` or `DEGRADED`, or the node group is `CREATE_FAILED`, or the wait ran out (10 minutes for vpc-cni, 40 for the node group). The message prints the command that shows its health. A re-run does not replace a `CREATE_FAILED` node group: delete it with `eksctl delete nodegroup --cluster flight-ops-cluster --name ng-1 --region ap-south-1 --wait`, then re-run |

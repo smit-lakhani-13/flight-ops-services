@@ -77,7 +77,10 @@ printf 'SQS fixtures           %s\n' "$(git ls-files 'lambda/events/*.json' | wc
 rule 'Tests that ran'
 count() {  # sums an attribute across every surefire XML under a directory
   local dir=$1 attribute=$2
-  [ -d "$dir" ] || { echo 'n/a'; return; }
+  # A directory with no surefire XML (a test-compile, or a run with the XML
+  # off) would otherwise make grep exit 2 on the unexpanded glob, and under
+  # set -e the script would stop here with no message.
+  if [ ! -d "$dir" ] || ! ls "$dir"/TEST-*.xml >/dev/null 2>&1; then echo 'n/a'; return; fi
   grep -ho "$attribute=\"[0-9]*\"" "$dir"/TEST-*.xml 2>/dev/null \
     | sed "s/$attribute=\"\([0-9]*\)\"/\1/" | paste -sd+ - | bc
 }

@@ -211,7 +211,13 @@ minutes.
 The preflight checks the tools, the credentials and `./mvnw -v`, which must
 report JDK 21 because the enforcer rule in `lambda/pom.xml` accepts nothing
 else. It also checks the sha256 of the load balancer controller's
-[IAM policy file](#the-load-balancer-controllers-iam-policy). No system Maven
+[IAM policy file](#the-load-balancer-controllers-iam-policy), and asks AWS
+whether the three versions the files pin are on offer in the region: the
+Kubernetes version in `deploy/aws/cluster.yaml`, the RDS engine version in
+`deploy/aws/data.yaml` and the controller's chart version in `deploy/aws/up.sh`.
+Each would otherwise fail a later step with the cluster already billing
+(`deploy/aws/lib.sh#require_eks_version`, `#require_rds_engine_version`,
+`#require_helm_chart`). No system Maven
 is needed. `gettext`, which provides `envsubst`, is needed only to run
 `deploy/aws/render-aws.sh` by hand.
 

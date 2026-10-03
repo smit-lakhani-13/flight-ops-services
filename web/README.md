@@ -124,6 +124,11 @@ shape, with codes that start with `CONSOLE_`:
 | 502 | `CONSOLE_UPSTREAM_UNREACHABLE` | The API did not accept the connection, or dropped it before its answer was complete |
 | 504 | `CONSOLE_UPSTREAM_TIMEOUT` | The API did not finish its answer within 15 s |
 
+One more code never leaves the browser: `CONSOLE_BAD_CREDENTIALS`, which the
+sign-in form shows when the typed name or password cannot be sent as HTTP Basic,
+such as a user name with a colon in it (`lib/session.tsx`). No request is made,
+so the console's server never sees it, and it is not one of the nine above.
+
 `/api/race` is a route of its own and takes only `POST`. Next answers a `GET`,
 `HEAD`, `PUT`, `PATCH` or `DELETE` there itself, with a bare `405`: no body and
 no `Allow` header. `e2e/ops.spec.ts` checks the `GET`.
