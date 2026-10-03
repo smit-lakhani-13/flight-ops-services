@@ -31,7 +31,18 @@ does not mean deployed. Nothing in this repository has ever run in AWS, and
 [doc/DEPLOYMENT.md](doc/DEPLOYMENT.md) records that in a dated line that still
 says not yet.
 
-## Unreleased
+## 1.4.2 — 2026-10-03
+
+A patch for one contract defect and for the deploy script's late failures on a
+stale version pin, both found in a review pass on 3 October, two days after
+1.4.1. The per-field validation messages no longer follow the request's
+`Accept-Language` header, as `doc/api.md` has always promised; four new test
+rows pin it, so the service has 659 tests and both modules 688. `up.sh` now
+checks its three upstream version pins before anything bills, with self-tests
+on stubbed tools, and `numbers.sh` and three documents are corrected. Apart
+from the validation messages a non-English client used to receive, nothing a
+client gets changes and nothing is added, so this release is a patch. The
+deploy job is still gated off and has never run.
 
 ### Fixed
 
@@ -68,12 +79,6 @@ says not yet.
   step landed. `web/README.md` names `CONSOLE_BAD_CREDENTIALS`, the one code
   the sign-in form produces in the browser and the console's server never
   sends.
-
-### Changed
-
-- **Version.** Both poms say `1.5.0-SNAPSHOT` until the next tag, so a build
-  from `main` no longer reports itself as 1.4.1 in `/actuator/info` and the
-  OpenAPI document.
 
 ## 1.4.1 — 2026-10-01
 
