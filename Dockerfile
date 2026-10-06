@@ -8,7 +8,7 @@
 # and a person moves it: Dependabot has offered only maven tags that change
 # the JDK, which the enforcer rejects. The comment above the docker entry in
 # .github/dependabot.yml has the command.
-FROM maven:3.9-eclipse-temurin-21@sha256:aabe2f8902f17a63be0d223846322678a2d3e62d18ca0aef5648bcb02f6bfe4b AS build
+FROM maven:3.9-eclipse-temurin-26@sha256:b2c1ad85954592f9928e84327c65201f308ad9b5d8ed7d5b823717c97bf23fbb AS build
 WORKDIR /app
 
 # The pom first, so dependencies download again only when pom.xml changes. The
