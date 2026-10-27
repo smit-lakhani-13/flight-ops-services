@@ -30,7 +30,7 @@ RUN --mount=type=cache,target=/root/.m2 mvn clean package -DskipTests -B
 # with the new digest when the tag is rebuilt, which is how OS and JRE fixes
 # now arrive. The frontend on the first line, docker/dockerfile:1, is still a
 # tag and is not pinned.
-FROM eclipse-temurin:21-jre-alpine@sha256:51ab5e3302e7141ce665ca3ea85e8b5cd648eafbc3c0c90dd79d6537684e4555
+FROM eclipse-temurin:21-jre-alpine@sha256:b48e02e0ea88d7bfb305335df94923bdef394905f4147dccd52e873cf17b1088
 WORKDIR /app
 
 # CI passes --build-arg GIT_SHA=$GITHUB_SHA. The default keeps a local build
