@@ -57,7 +57,7 @@
           Not in Boot's BOM either. springdoc 3.x targets Boot 4.x; 3.1.1 is the
           first release built against 4.1.
         -->
-        <springdoc.version>3.1.1</springdoc.version>
+        <springdoc.version>3.2.0</springdoc.version>
 
         <!--
           Jackson 2 only, for swagger-core (springdoc), which needs 2.22.1 while Boot
