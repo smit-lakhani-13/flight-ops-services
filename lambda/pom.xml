@@ -47,12 +47,12 @@
         -->
         <maven.compiler.release>21</maven.compiler.release>
 
-        <aws.lambda.core.version>1.4.0</aws.lambda.core.version>
+        <aws.lambda.core.version>1.4.1</aws.lambda.core.version>
         <aws.lambda.events.version>3.16.1</aws.lambda.events.version>
         <aws.lambda.tests.version>1.1.2</aws.lambda.tests.version>
 
         <!-- Same pin as ../pom.xml. scripts/pincheck.py fails CI when the two differ. -->
-        <aws.sdk.version>2.55.7</aws.sdk.version>
+        <aws.sdk.version>2.57.7</aws.sdk.version>
 
         <!--
           Pinned because the AWS SDK BOM does not manage jackson-databind. The
