@@ -108,7 +108,7 @@ jobs:
               sys.exit("\n".join(long))'
 
       - name: Set up JDK 21
-        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           java-version: '21'
           distribution: 'temurin'
@@ -231,7 +231,7 @@ jobs:
       - name: Publish the test reports
         # `always()`: the run that failed is the one whose reports you need.
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: surefire-reports
           path: |
@@ -242,7 +242,7 @@ jobs:
 
       - name: Publish the coverage report
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: coverage-report
           path: target/site/jacoco/
@@ -269,7 +269,7 @@ jobs:
           }
 
       - name: Publish the SBOM
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: sbom
           path: |
@@ -317,7 +317,7 @@ jobs:
       # (components, patch merge semantics), and a runner image bump must not
       # change what this repository renders.
       - name: Set up kubectl
-        uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5.1.0
+        uses: azure/setup-kubectl@bda439f5f36b99b262ebdcd3613869bddb064c8e # v5.2.0
         with:
           version: ${{ env.KUBECTL_VERSION }}
 
@@ -455,7 +455,7 @@ jobs:
       # Push only: a pull request from a fork has a read-only token.
       - name: File the findings in the Security tab
         if: github.event_name == 'push'
-        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           sarif_file: trivy-fs.sarif
           category: trivy-fs
@@ -718,7 +718,7 @@ jobs:
       # jobs" builds, checks and scans it again.
       - name: Hand the image to the deploy job
         if: steps.save.outcome == 'success'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: service-image
           path: ${{ runner.temp }}/service-image.tar.gz
@@ -749,7 +749,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: web/.nvmrc
           cache: npm
@@ -797,7 +797,7 @@ jobs:
         run: npm test
 
       - name: Set up JDK 21
-        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           java-version: '21'
           distribution: 'temurin'
@@ -840,7 +840,7 @@ jobs:
 
       - name: Publish the end-to-end report
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: web-e2e
           path: |
@@ -909,7 +909,7 @@ jobs:
       # is in this step's environment. id-token is granted to the whole job,
       # so the OIDC request variables are.
       - name: Set up kubectl
-        uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5.1.0
+        uses: azure/setup-kubectl@bda439f5f36b99b262ebdcd3613869bddb064c8e # v5.2.0
         with:
           version: ${{ env.KUBECTL_VERSION }}
 
@@ -1012,7 +1012,7 @@ jobs:
       # scan.
       - name: Download the image the image job scanned
         if: steps.image.outputs.exists == 'false'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: service-image
           path: ${{ runner.temp }}/service-image
